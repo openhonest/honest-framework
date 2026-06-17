@@ -93,25 +93,80 @@ def test_p001_does_not_flag_two_branch():
     assert not _has_rule(report, "HC-P001")
 
 
-# --- HC-P014: catch-all recognizer ----------------------------------------
+# --- HC011: catch-all recognizer (spec §8; was mislabeled HC-P014) --------
 
 
-def test_p014_flags_always_true_lambda():
+def test_hc011_flags_always_true_lambda():
     src = "r = lambda s: True\n"
     report = check_source(src)
-    assert _has_rule(report, "HC-P014")
+    assert _has_rule(report, "HC011")
 
 
-def test_p014_flags_always_true_function():
+def test_hc011_flags_always_true_function():
     src = "def recognize(s): return True\n"
     report = check_source(src)
-    assert _has_rule(report, "HC-P014")
+    assert _has_rule(report, "HC011")
 
 
-def test_p014_does_not_flag_real_recognizer():
+def test_hc011_does_not_flag_real_recognizer():
     src = "r = lambda s: '@' in s\n"
     report = check_source(src)
-    assert not _has_rule(report, "HC-P014")
+    assert not _has_rule(report, "HC011")
+
+
+# --- HC003 / HC006 / HC007: construction-time rules via the decl graph ----
+
+
+def test_hc003_flags_overlapping_sets():
+    src = (
+        "from honest_type import vocabulary\n"
+        "v = vocabulary({'a': {'X', 'Y'}, 'b': {'Y', 'Z'}})\n"
+    )
+    report = check_source(src)
+    assert any(d["rule_id"] == "HC003" and d["severity"] == "error"
+               for d in report["diagnostics"])
+
+
+def test_hc003_clean_for_disjoint_sets():
+    src = (
+        "from honest_type import vocabulary\n"
+        "v = vocabulary({'a': {'X'}, 'b': {'Y'}})\n"
+    )
+    report = check_source(src)
+    assert not any(d["rule_id"] == "HC003" and d["severity"] == "error"
+                   for d in report["diagnostics"])
+
+
+def test_hc006_flags_composed_unknown_base():
+    src = (
+        "from honest_type import vocabulary, composed\n"
+        "v = vocabulary({'fmt': {'currency'}},\n"
+        "  composed_types=[composed('cp', requires={'missing': 'currency'}, captures='fmt')])\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC006")
+
+
+def test_hc006_clean_when_bases_known():
+    src = (
+        "from honest_type import vocabulary, composed\n"
+        "v = vocabulary({'fmt': {'currency'}, 'n': {'1'}},\n"
+        "  composed_types=[composed('cp', requires={'fmt': 'currency'}, captures='n')])\n"
+    )
+    report = check_source(src)
+    assert not _has_rule(report, "HC006")
+
+
+def test_hc007_flags_empty_chain():
+    src = "from honest_type import chain\nc = chain()\n"
+    report = check_source(src)
+    assert _has_rule(report, "HC007")
+
+
+def test_hc007_clean_for_nonempty_chain():
+    src = "from honest_type import chain\nc = chain(a, b)\n"
+    report = check_source(src)
+    assert not _has_rule(report, "HC007")
 
 
 # --- Aggregation -----------------------------------------------------------

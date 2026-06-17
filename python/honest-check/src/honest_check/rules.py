@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from honest_check.construction_rules import CONSTRUCTION_CHECKS
 from honest_check.diagnostics import Diagnostic, aggregate_diagnostics, diagnostic
 from honest_check.parse import (
     col_of,
@@ -108,45 +109,12 @@ def check_hc_p001(root, src: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
-# --- HC-P014: catch-all recognizer ----------------------------------------
-
-
-def _returns_only_true(block, src: bytes) -> bool:
-    stmts = [c for c in block.named_children] if block is not None else []
-    if len(stmts) != 1 or stmts[0].type != "return_statement":
-        return False
-    returned = stmts[0].named_children
-    return len(returned) == 1 and returned[0].type == "true"
-
-
-def check_hc_p014(root, src: bytes, path: str) -> list[Diagnostic]:
-    out: list[Diagnostic] = []
-    for lam in find_by_type(root, "lambda"):
-        body = lam.child_by_field_name("body")
-        if body is not None and body.type == "true":
-            out.append(diagnostic(
-                "HC-P014", "error",
-                "Recognizer accepts all inputs (lambda returns True) — "
-                "not a discriminating type.",
-                path, line_of(lam), col_of(lam)))
-    for fn in find_by_type(root, "function_definition"):
-        if _returns_only_true(fn.child_by_field_name("body"), src):
-            name_node = fn.child_by_field_name("name")
-            name = node_text(name_node, src) if name_node is not None else "<fn>"
-            out.append(diagnostic(
-                "HC-P014", "error",
-                f"Recognizer '{name}' returns True for all inputs — "
-                "not a discriminating type.",
-                path, line_of(fn), col_of(fn)))
-    return out
-
-
 # --- Registry + entry point -----------------------------------------------
 
 _ALL_CHECKS = [
     check_hc_p003,
     check_hc_p001,
-    check_hc_p014,
+    *CONSTRUCTION_CHECKS,
 ]
 
 
