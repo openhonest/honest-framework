@@ -557,3 +557,63 @@ def test_hc009_clean_for_safe_predicate():
     src = "r = lambda s: '@' in s\n"
     report = check_source(src)
     assert not _has_rule(report, "HC009")
+
+
+# --- Unit 3f: role / orchestrator rules -----------------------------------
+
+
+def test_hc_r001_flags_orphan_function():
+    src = (
+        "from honest_type import link, vocabulary\n"
+        "v = vocabulary({'a': {'X'}})\n"
+        "@link(accepts=v, emits=v)\n"
+        "def used(m):\n"
+        "    return helper(m)\n"
+        "def helper(m):\n"
+        "    return m\n"
+        "def orphan(m):\n"
+        "    return m\n"
+    )
+    report = check_source(src)
+    msgs = [d for d in report["diagnostics"] if d["rule_id"] == "HC-R001"]
+    assert any("'orphan'" in d["message"] for d in msgs)
+    assert not any("'helper'" in d["message"] for d in msgs)   # reachable from used
+
+
+def test_hc_r001_gated_off_without_roles():
+    # A module with no roled functions is not subject to HC-R001.
+    src = "def a():\n    return 1\ndef b():\n    return 2\n"
+    report = check_source(src)
+    assert not _has_rule(report, "HC-R001")
+
+
+def test_hc_or001_flags_orchestrator_calling_orchestrator():
+    src = (
+        "@orchestrator\n"
+        "def a(m):\n"
+        "    return b(m)\n"
+        "@orchestrator\n"
+        "def b(m):\n"
+        "    return m\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC-OR001")
+
+
+def test_hc_or003_flags_duplication():
+    src = (
+        "@orchestrator\n"
+        "def a(m):\n"
+        "    x = read(m)\n"
+        "    y = validate(x)\n"
+        "    z = save(y)\n"
+        "    return z\n"
+        "@orchestrator\n"
+        "def b(m):\n"
+        "    x = read(m)\n"
+        "    y = validate(x)\n"
+        "    z = save(y)\n"
+        "    return other(z)\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC-OR003")

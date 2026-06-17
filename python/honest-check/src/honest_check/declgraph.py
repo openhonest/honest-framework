@@ -453,3 +453,80 @@ def chain_link_args(root, src: bytes):
         names = [node_text(a, src) if a.type == "identifier" else None for a in positional]
         out.append((call, names))
     return out
+
+
+# --- roles + static call graph (spec §4.2 HC-R001/OR001/OR003) ------------
+
+_ROLES = frozenset({"link", "recognizer", "boundary", "helper", "orchestrator"})
+
+
+def function_role(fn, src: bytes) -> str | None:
+    """The declared role of a function from its decorators, or None."""
+    parent = fn.parent
+    if parent is None or parent.type != "decorated_definition":
+        return None
+    for child in parent.children:
+        if child.type != "decorator":
+            continue
+        expr = child.named_children[0] if child.named_children else None
+        if expr is None:
+            continue
+        if expr.type == "identifier":
+            tail = node_text(expr, src)
+        elif expr.type == "call":
+            tail = _dotted_tail(expr.child_by_field_name("function"), src)
+        else:
+            tail = ""
+        if tail in _ROLES:
+            return tail
+    return None
+
+
+def _fn_name(fn, src: bytes) -> str:
+    name_node = fn.child_by_field_name("name")
+    return node_text(name_node, src) if name_node is not None else ""
+
+
+def role_map(root, src: bytes):
+    """(roles {name: role}, nodes {name: fn_node})."""
+    roles: dict = {}
+    nodes: dict = {}
+    for fn in find_by_type(root, "function_definition"):
+        name = _fn_name(fn, src)
+        nodes[name] = fn
+        role = function_role(fn, src)
+        if role is not None:
+            roles[name] = role
+    return roles, nodes
+
+
+def call_graph(root, src: bytes) -> dict:
+    """fn_name -> set of local function names it calls (over-approximate:
+    includes calls made by nested functions, which is safe for reachability)."""
+    local = local_function_names(root, src)
+    graph: dict = {}
+    for fn in find_by_type(root, "function_definition"):
+        name = _fn_name(fn, src)
+        called = graph.setdefault(name, set())
+        for call in find_by_type(fn, "call"):
+            func = call.child_by_field_name("function")
+            if func is not None and func.type == "identifier":
+                callee = node_text(func, src)
+                if callee in local:
+                    called.add(callee)
+    return graph
+
+
+def call_sequence(fn, src: bytes) -> list:
+    """Ordered tail-names of calls directly in a function (not nested)."""
+    body = fn.child_by_field_name("body")
+    seq: list = []
+    stack = list(body.children)[::-1] if body is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type == "function_definition":
+            continue
+        if node.type == "call":
+            seq.append(_dotted_tail(node.child_by_field_name("function"), src))
+        stack.extend(node.children[::-1])
+    return seq
