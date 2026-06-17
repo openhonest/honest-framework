@@ -19,10 +19,11 @@ def test_fibonacci_both_directions():
 
 
 def test_enumerate_sets_cartesian():
+    # honest-type's runtime recognizer shape: {"kind", "members"}/{"kind", "fn"}.
     vocab = {"base_types": {
-        "fmt": ("set", frozenset({"a", "b"})),
-        "code": ("set", frozenset({"X"})),
-        "num": ("predicate", None),         # predicates excluded from set enum
+        "fmt": {"kind": "set", "members": frozenset({"a", "b"})},
+        "code": {"kind": "set", "members": frozenset({"X"})},
+        "num": {"kind": "predicate", "fn": lambda s: True},   # excluded from set enum
     }}
     points = list(enumerate_sets(vocab))
     assert {"fmt": "a", "code": "X"} in points
