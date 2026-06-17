@@ -244,6 +244,8 @@ def extract_state_machine(call, src: bytes) -> dict:
     states = _name_set(kwargs.get("states"), src)
     events = _name_set(kwargs.get("events"), src)
     initial = _string_value(kwargs.get("initial"), src)
+    terminal = _name_set(kwargs.get("terminal"), src)
+    state_fields = _name_set(kwargs.get("state_fields"), src)
     transitions = []
     trans_node = kwargs.get("transitions")
     if trans_node is not None and trans_node.type == "dictionary":
@@ -251,10 +253,17 @@ def extract_state_machine(call, src: bytes) -> dict:
             if pair.type != "pair":
                 continue
             key = _tuple_strings(pair.child_by_field_name("key"), src)
-            if key is not None:
-                transitions.append(key)
+            if key is None:
+                continue
+            value = pair.child_by_field_name("value")
+            transitions.append({
+                "state": key[0], "event": key[1],
+                "target": _string_value(value, src),   # None when the value is a function
+                "value": value,
+            })
     return {
         "states": states, "events": events, "initial": initial,
+        "terminal": terminal, "state_fields": state_fields,
         "transitions": transitions, "node": call,
     }
 

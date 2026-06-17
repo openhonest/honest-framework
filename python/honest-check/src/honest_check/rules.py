@@ -16,6 +16,7 @@ from collections import Counter
 from honest_check.construction_rules import CONSTRUCTION_CHECKS
 from honest_check.io_rules import IO_CHECKS
 from honest_check.principle_rules import PRINCIPLE_CHECKS
+from honest_check.sm_rules import SM_CHECKS
 from honest_check.suppression import is_suppressed, parse_suppressions
 from honest_check.diagnostics import Diagnostic, aggregate_diagnostics, diagnostic
 from honest_check.parse import (
@@ -120,6 +121,7 @@ _ALL_CHECKS = [
     *PRINCIPLE_CHECKS,
     *IO_CHECKS,
     *CONSTRUCTION_CHECKS,
+    *SM_CHECKS,
 ]
 
 

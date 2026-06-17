@@ -165,16 +165,16 @@ def check_hc_state_machine_vocab(root, src: bytes, path: str) -> list[Diagnostic
     for machine in _state_machines(root, src):
         loc = machine["node"]
         states, events = machine["states"], machine["events"]
-        for state, event in machine["transitions"]:
-            if states and state not in states:
+        for t in machine["transitions"]:
+            if states and t["state"] not in states:
                 out.append(diagnostic(
                     "HC-SM01", "error",
-                    f"State '{state}' in transition table not in states vocabulary.",
+                    f"State '{t['state']}' in transition table not in states vocabulary.",
                     path, line_of(loc), col_of(loc)))
-            if events and event not in events:
+            if events and t["event"] not in events:
                 out.append(diagnostic(
                     "HC-SM02", "error",
-                    f"Event '{event}' in transition table not in events vocabulary.",
+                    f"Event '{t['event']}' in transition table not in events vocabulary.",
                     path, line_of(loc), col_of(loc)))
         initial = machine["initial"]
         if initial is not None and states and initial not in states:

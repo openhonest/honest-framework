@@ -174,7 +174,7 @@ def test_hc007_clean_for_nonempty_chain():
 _SM_BASE = (
     "from honest_state import state_machine\n"
     "m = state_machine(states={'pending', 'paid'}, events={'pay'},\n"
-    "  transitions={('pending', 'pay'): 'paid'%s}, initial=%s)\n"
+    "  transitions={('pending', 'pay'): 'paid'%s}, initial=%s, terminal=['paid'])\n"
 )
 
 
@@ -358,3 +358,65 @@ def test_suppression_records_info():
     report = check_source(src)
     assert any(d["rule_id"] == "HC-P003" and d["severity"] == "info"
                for d in report["diagnostics"])
+
+
+# --- Unit 3c: static state-machine rules ----------------------------------
+
+
+def test_hc_sm04_flags_dead_state():
+    # 'paid' has no outgoing transition and is not terminal.
+    src = (
+        "from honest_state import state_machine\n"
+        "m = state_machine(states={'pending', 'paid'}, events={'pay'},\n"
+        "  transitions={('pending', 'pay'): 'paid'}, initial='pending')\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC-SM04")
+
+
+def test_hc_sm04_clean_when_terminal_declared():
+    src = (
+        "from honest_state import state_machine\n"
+        "m = state_machine(states={'pending', 'paid'}, events={'pay'},\n"
+        "  transitions={('pending', 'pay'): 'paid'}, initial='pending',\n"
+        "  terminal=['paid'])\n"
+    )
+    report = check_source(src)
+    assert not _has_rule(report, "HC-SM04")
+
+
+def test_hc_sm03_flags_unreachable_state():
+    # 'orphan' is in states but no transition reaches it.
+    src = (
+        "from honest_state import state_machine\n"
+        "m = state_machine(states={'a', 'b', 'orphan'}, events={'go'},\n"
+        "  transitions={('a', 'go'): 'b', ('b', 'go'): 'a'}, initial='a',\n"
+        "  terminal=['orphan'])\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC-SM03")
+
+
+def test_hc_sm06_flags_undeclared_field_write():
+    src = (
+        "from honest_state import state_machine\n"
+        "m = state_machine(states={'open', 'done'}, events={'finish'},\n"
+        "  state_fields=['status'],\n"
+        "  transitions={('open', 'finish'): lambda s, e: {**s, 'status': 'done', 'created_at': None}},\n"
+        "  initial='open', terminal=['done'])\n"
+    )
+    report = check_source(src)
+    assert any(d["rule_id"] == "HC-SM06" and d["severity"] == "error"
+               for d in report["diagnostics"])
+
+
+def test_hc_sm06_clean_when_fields_declared():
+    src = (
+        "from honest_state import state_machine\n"
+        "m = state_machine(states={'open', 'done'}, events={'finish'},\n"
+        "  state_fields=['status'],\n"
+        "  transitions={('open', 'finish'): lambda s, e: {**s, 'status': 'done'}},\n"
+        "  initial='open', terminal=['done'])\n"
+    )
+    report = check_source(src)
+    assert not _has_rule(report, "HC-SM06")
