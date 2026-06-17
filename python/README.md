@@ -5,7 +5,7 @@ Status as of this checkpoint:
 | Module | Tests | Status |
 |---|---|---|
 | honest-gherkin | 21 | M1 complete |
-| honest-type | 23 | M1 complete (foundation) |
+| honest-type | 55 | rebuilt to spec §1-11; honest-check clean (foundation) |
 | honest-observe | 14 | M1 complete |
 | honest-persist | 15 | M1 complete (SQLite; Turso pluggable) |
 | honest-check | 13 | M1 complete (HC-P001, HC-P003, HC-P014) |
