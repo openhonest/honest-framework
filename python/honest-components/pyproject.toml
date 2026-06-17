@@ -1,0 +1,20 @@
+[project]
+name = "honest-components"
+version = "0.1.0"
+description = "Three-tier server-rendered UI components."
+authors = [{ name = "Adam Zachary Wasserman" }]
+license = { text = "MIT" }
+requires-python = ">=3.12"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honest_components"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,20 @@
+[project]
+name = "honest-features"
+version = "0.1.0"
+description = "Feature flag subsystem: HMAC-signed toggle + handler dispatch + A/B variants."
+authors = [{ name = "Adam Zachary Wasserman" }]
+license = { text = "MIT" }
+requires-python = ">=3.12"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honest_features"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,22 @@
+[project]
+name = "honest-observe"
+version = "0.1.0"
+description = "Append-only event log + projections for the Honest Framework."
+authors = [{ name = "Adam Zachary Wasserman" }]
+license = { text = "MIT" }
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honest_observe"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

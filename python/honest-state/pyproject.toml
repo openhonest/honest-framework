@@ -1,0 +1,21 @@
+[project]
+name = "honest-state"
+version = "0.1.0"
+description = "State layer: server-side pure-function state machines + DATAOS manifest."
+authors = [{ name = "Adam Zachary Wasserman" }]
+license = { text = "MIT" }
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honest_state"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
