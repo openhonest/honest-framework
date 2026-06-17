@@ -302,3 +302,59 @@ def test_hc_p016_clean_without_mutation():
     )
     report = check_source(src)
     assert not _has_rule(report, "HC-P016")
+
+
+# --- Unit 3b: I/O detection + suppression ---------------------------------
+
+
+def _errors_for(report, rule_id):
+    return [d for d in report["diagnostics"]
+            if d["rule_id"] == rule_id and d["severity"] == "error"]
+
+
+def test_hc_p004_flags_io_in_plain_function():
+    src = "def load():\n    return open('x')\n"
+    report = check_source(src)
+    assert _errors_for(report, "HC-P004")
+
+
+def test_hc_p004_flags_nondeterministic():
+    src = "import time\ndef stamp():\n    return time.time()\n"
+    report = check_source(src)
+    assert _errors_for(report, "HC-P004")
+
+
+def test_hc_p004_clean_for_boundary_decorated():
+    src = (
+        "from honest_type import link\n"
+        "@link(boundary=True)\n"
+        "def load(m):\n"
+        "    return open('x')\n"
+    )
+    report = check_source(src)
+    assert not _errors_for(report, "HC-P004")
+
+
+def test_hc_p004_clean_when_suppressed_file_level():
+    src = "# honest: disable HC-P004\ndef load():\n    return open('x')\n"
+    report = check_source(src)
+    assert not _errors_for(report, "HC-P004")
+
+
+def test_hc_p005_flags_isinstance_in_business_logic():
+    src = "def classify(x):\n    return isinstance(x, str)\n"
+    report = check_source(src)
+    assert _has_rule(report, "HC-P005")
+
+
+def test_suppression_inline_ignore():
+    src = "class Foo:  # honest: ignore HC-P003\n    pass\n"
+    report = check_source(src)
+    assert not _errors_for(report, "HC-P003")
+
+
+def test_suppression_records_info():
+    src = "class Foo:  # honest: ignore HC-P003\n    pass\n"
+    report = check_source(src)
+    assert any(d["rule_id"] == "HC-P003" and d["severity"] == "info"
+               for d in report["diagnostics"])

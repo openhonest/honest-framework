@@ -14,7 +14,9 @@ from __future__ import annotations
 from collections import Counter
 
 from honest_check.construction_rules import CONSTRUCTION_CHECKS
+from honest_check.io_rules import IO_CHECKS
 from honest_check.principle_rules import PRINCIPLE_CHECKS
+from honest_check.suppression import is_suppressed, parse_suppressions
 from honest_check.diagnostics import Diagnostic, aggregate_diagnostics, diagnostic
 from honest_check.parse import (
     col_of,
@@ -116,6 +118,7 @@ _ALL_CHECKS = [
     check_hc_p003,
     check_hc_p001,
     *PRINCIPLE_CHECKS,
+    *IO_CHECKS,
     *CONSTRUCTION_CHECKS,
 ]
 
@@ -132,4 +135,16 @@ def check_source(source: str, path: str = "<source>"):
     diagnostics: list[Diagnostic] = []
     for check in _ALL_CHECKS:
         diagnostics.extend(check(tree.root_node, src, path))
-    return aggregate_diagnostics(diagnostics)
+
+    # Apply suppression (spec §7): a suppressed diagnostic becomes an info so
+    # the suppression stays visible rather than vanishing.
+    supp = parse_suppressions(tree.root_node, src)
+    final: list[Diagnostic] = []
+    for d in diagnostics:
+        if is_suppressed(d["rule_id"], d["line"], supp):
+            final.append(diagnostic(
+                d["rule_id"], "info", f"{d['rule_id']} suppressed",
+                path, d["line"], d["col"]))
+        else:
+            final.append(d)
+    return aggregate_diagnostics(final)

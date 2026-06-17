@@ -1,4 +1,6 @@
 """honest-check CLI."""
+# honest: disable HC-P004
+# The CLI is the I/O boundary: file reads and stdout writes are intentional here.
 from __future__ import annotations
 
 import argparse
