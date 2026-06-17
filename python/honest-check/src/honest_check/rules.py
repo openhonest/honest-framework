@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from honest_check.binding_rules import BINDING_CHECKS
 from honest_check.construction_rules import CONSTRUCTION_CHECKS
 from honest_check.io_rules import IO_CHECKS
 from honest_check.principle_rules import PRINCIPLE_CHECKS
@@ -122,6 +123,7 @@ _ALL_CHECKS = [
     *IO_CHECKS,
     *CONSTRUCTION_CHECKS,
     *SM_CHECKS,
+    *BINDING_CHECKS,
 ]
 
 

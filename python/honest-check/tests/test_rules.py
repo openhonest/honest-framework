@@ -420,3 +420,68 @@ def test_hc_sm06_clean_when_fields_declared():
     )
     report = check_source(src)
     assert not _has_rule(report, "HC-SM06")
+
+
+# --- Unit 3d: vocabulary/binding static rules -----------------------------
+
+
+def test_hc004_flags_dead_vocabulary_type():
+    src = (
+        "from honest_type import vocabulary, binding, classify\n"
+        "v = vocabulary({'a': {'X'}, 'dead': {'Y'}})\n"
+        "b = binding({'a': 'slot_a'})\n"
+        "classify(['X'], v, b)\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC004")
+
+
+def test_hc005_flags_unused_binding_entry():
+    src = (
+        "from honest_type import vocabulary, binding, classify\n"
+        "v = vocabulary({'a': {'X'}})\n"
+        "b = binding({'a': 'slot_a', 'ghost': 'slot_g'})\n"
+        "classify(['X'], v, b)\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC005")
+
+
+def test_hc004_hc005_clean_when_consistent():
+    src = (
+        "from honest_type import vocabulary, binding, classify\n"
+        "v = vocabulary({'a': {'X'}})\n"
+        "b = binding({'a': 'slot_a'})\n"
+        "classify(['X'], v, b)\n"
+    )
+    report = check_source(src)
+    assert not _has_rule(report, "HC004")
+    assert not _has_rule(report, "HC005")
+
+
+def test_hc_p014_flags_shared_recognizer_reference():
+    # sender and receiver are backed by the same recognizer reference (user_id);
+    # both bound to slots -> swap-vulnerable.
+    src = (
+        "from honest_type import vocabulary, binding, classify, predicate\n"
+        "user_id = predicate(lambda s: len(s) == 4)\n"
+        "v = vocabulary({'sender': user_id, 'receiver': user_id})\n"
+        "b = binding({'sender': 'from_slot', 'receiver': 'to_slot'})\n"
+        "classify(['abcd'], v, b)\n"
+    )
+    report = check_source(src)
+    assert any(d["rule_id"] == "HC-P014" and d["severity"] == "error"
+               for d in report["diagnostics"])
+
+
+def test_hc_p014_clean_for_distinct_recognizers():
+    src = (
+        "from honest_type import vocabulary, binding, classify, predicate\n"
+        "snd = predicate(lambda s: s.startswith('snd_'))\n"
+        "rcv = predicate(lambda s: s.startswith('rcv_'))\n"
+        "v = vocabulary({'sender': snd, 'receiver': rcv})\n"
+        "b = binding({'sender': 'from_slot', 'receiver': 'to_slot'})\n"
+        "classify(['snd_1'], v, b)\n"
+    )
+    report = check_source(src)
+    assert not _has_rule(report, "HC-P014")

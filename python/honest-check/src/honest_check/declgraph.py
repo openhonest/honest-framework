@@ -110,9 +110,16 @@ def _set_members(node, src: bytes) -> frozenset[str] | None:
 
 
 def _recognizer_repr(node, src: bytes):
-    """Tag a recognizer value node: ('set'|'insensitive'|'predicate', payload)."""
+    """Tag a recognizer value node: ('set'|'insensitive'|'ref'|'predicate', payload).
+
+    A bare identifier (`'sender': user_id`) is a recognizer reference — tagged
+    'ref' with its name, so two slots backed by the same reference are
+    comparable (HC-P014). Inline lambdas / predicate() calls are 'predicate'
+    (not statically comparable)."""
     if node is None:
         return ("predicate", node)
+    if node.type == "identifier":
+        return ("ref", node_text(node, src))
     if node.type == "set":
         members = _set_members(node, src)
         return ("set", members) if members is not None else ("predicate", node)
@@ -268,6 +275,19 @@ def extract_state_machine(call, src: bytes) -> dict:
     }
 
 
+def extract_binding(call, src: bytes) -> dict:
+    positional, kwargs = _positional_and_kwargs(call, src)
+    node = positional[0] if positional else kwargs.get("rules")
+    entries: dict = {}
+    for type_name, value in _dict_pairs(node, src):
+        slot = _string_value(value, src)
+        if slot is None and value is not None and value.type == "call":
+            cpos, _ = _positional_and_kwargs(value, src)   # maybe("slot")
+            slot = _string_value(cpos[0], src) if cpos else None
+        entries[type_name] = slot
+    return {"entries": entries, "node": call}
+
+
 def find_constructor_calls(root, src: bytes):
     """Yield (constructor_name, call_node) for every resolved honest call."""
     aliases = resolve_aliases(root, src)
@@ -275,3 +295,57 @@ def find_constructor_calls(root, src: bytes):
         ctor = call_constructor(call, src, aliases)
         if ctor is not None:
             yield ctor, call
+
+
+def build_definition_map(root, src: bytes) -> dict:
+    """`NAME` -> (constructor, record) for `NAME = vocabulary(...)/binding(...)`."""
+    aliases = resolve_aliases(root, src)
+    out: dict = {}
+    for assign in find_by_type(root, "assignment"):
+        left = assign.child_by_field_name("left")
+        right = assign.child_by_field_name("right")
+        if (left is None or left.type != "identifier"
+                or right is None or right.type != "call"):
+            continue
+        ctor = call_constructor(right, src, aliases)
+        if ctor == "vocabulary":
+            out[node_text(left, src)] = ("vocabulary", extract_vocabulary(right, src))
+        elif ctor == "binding":
+            out[node_text(left, src)] = ("binding", extract_binding(right, src))
+    return out
+
+
+def _resolve_record(arg, kind: str, src: bytes, defs: dict, aliases):
+    if arg is None:
+        return None
+    if arg.type == "identifier":
+        entry = defs.get(node_text(arg, src))
+        return entry[1] if entry is not None and entry[0] == kind else None
+    if arg.type == "call":
+        ctor = call_constructor(arg, src, aliases)
+        if ctor == "vocabulary" and kind == "vocabulary":
+            return extract_vocabulary(arg, src)
+        if ctor == "binding" and kind == "binding":
+            return extract_binding(arg, src)
+    return None
+
+
+def find_classify_pairings(root, src: bytes):
+    """Yield (vocabulary_record, binding_record|None) for each classify() call,
+    pairing a vocabulary with its binding via call arguments."""
+    aliases = resolve_aliases(root, src)
+    defs = build_definition_map(root, src)
+    out = []
+    for call in find_by_type(root, "call"):
+        func = call.child_by_field_name("function")
+        if func is None or func.type not in ("identifier", "attribute"):
+            continue
+        if node_text(func, src).split(".")[-1] != "classify":
+            continue
+        positional, kwargs = _positional_and_kwargs(call, src)
+        vocab_arg = positional[1] if len(positional) > 1 else kwargs.get("vocabulary")
+        binding_arg = positional[2] if len(positional) > 2 else kwargs.get("binding")
+        vocab = _resolve_record(vocab_arg, "vocabulary", src, defs, aliases)
+        if vocab is not None:
+            out.append((vocab, _resolve_record(binding_arg, "binding", src, defs, aliases)))
+    return out
