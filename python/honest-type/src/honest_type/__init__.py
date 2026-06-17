@@ -1,56 +1,78 @@
 """honest-type — pure function tables as the type system.
 
-A Recognizer is a predicate String → bool. A Vocabulary is a dict mapping
-type names to recognizers. A Binding maps type names to slot names. A
-Ticket is a classified token. A Manifest is the fully resolved binding.
-
-Composition works via Chain (ordered fn names) and the `pipe` helper.
-Classification is one dict lookup and one function call — no hierarchies.
-
-No classes. No methods. Functions in, data out.
+Tokens in, manifest out. General purpose: no web, no HTTP, no I/O in the core
+(the CLI is the only I/O-bearing module). See honest-type-architecture.md.
 """
-from honest_type.binding import binding, resolve_bindings
-from honest_type.chain import chain, compose_chain, pipe, run_chain
-from honest_type.classify import classify, classify_token, emit_rejection
+from honest_type.binding import auto_binding, binding
+from honest_type.boundary import (
+    DEFAULT_REJECTION_POLICY,
+    apply_rejection_policy,
+    catch_at_boundary,
+)
+from honest_type.chain import (
+    chain,
+    execute_chain,
+    execute_chain_async,
+    link,
+    validate_all,
+)
+from honest_type.classify import classify, classify_token, resolve_bindings
 from honest_type.extract import extract_cli_tokens, extract_http_tokens
-from honest_type.manifest import emit_manifest
+from honest_type.reserved import (
+    RESERVED_WORDS,
+    is_reserved,
+    reservation_layer,
+)
+from honest_type.result import err, fault, is_err, is_fault, is_ok, ok
 from honest_type.types import (
-    Binding,
-    Chain,
+    CATEGORIES,
+    FAULT_CODES,
+    FAULT_REGISTRY,
+    FAULT_TO_HTTP,
+    REJECTION_REASONS,
     ComposedType,
     Fault,
-    Link,
-    Manifest,
+    InsensitiveRecognizer,
+    Maybe,
+    Nothing,
+    PredicateRecognizer,
     Recognizer,
     Rejection,
+    SetRecognizer,
     Ticket,
     Vocabulary,
+    composed,
+    insensitive,
+    is_maybe,
+    maybe,
+    predicate,
+    rejection,
+    set_recognizer,
+    ticket,
+    unwrap_maybe,
 )
 from honest_type.vocabulary import merge_vocabularies, vocabulary
 
 __all__ = [
-    "Binding",
-    "Chain",
-    "ComposedType",
-    "Fault",
-    "Link",
-    "Manifest",
-    "Recognizer",
-    "Rejection",
-    "Ticket",
-    "Vocabulary",
-    "binding",
-    "chain",
-    "classify",
-    "classify_token",
-    "compose_chain",
-    "emit_manifest",
-    "emit_rejection",
-    "extract_cli_tokens",
-    "extract_http_tokens",
-    "merge_vocabularies",
-    "pipe",
-    "resolve_bindings",
-    "run_chain",
-    "vocabulary",
+    # types + constructors
+    "Recognizer", "SetRecognizer", "InsensitiveRecognizer", "PredicateRecognizer",
+    "set_recognizer", "insensitive", "predicate",
+    "Maybe", "maybe", "is_maybe", "unwrap_maybe", "Nothing",
+    "ComposedType", "composed", "Vocabulary",
+    "Ticket", "ticket", "Rejection", "rejection", "Fault",
+    "REJECTION_REASONS", "CATEGORIES", "FAULT_REGISTRY", "FAULT_CODES", "FAULT_TO_HTTP",
+    # reserved words
+    "RESERVED_WORDS", "reservation_layer", "is_reserved",
+    # result envelope
+    "ok", "err", "fault", "is_ok", "is_err", "is_fault",
+    # vocabulary + binding
+    "vocabulary", "merge_vocabularies", "binding", "auto_binding",
+    # classify
+    "classify", "classify_token", "resolve_bindings",
+    # chain
+    "chain", "execute_chain", "execute_chain_async", "validate_all", "link",
+    # boundary
+    "catch_at_boundary", "apply_rejection_policy", "DEFAULT_REJECTION_POLICY",
+    # extraction helpers
+    "extract_http_tokens", "extract_cli_tokens",
 ]

@@ -1,93 +1,187 @@
-"""honest-type IR. All TypedDicts + Callable aliases. No classes.
+"""honest-type data structures and bounded vocabularies (spec §7, §10, §11).
 
-Keep in sync with tools/honest-design/examples/honest-type.hd.
+All data is TypedDict. Recognizers are tagged data so classify() dispatches by
+a table on `kind`, never an isinstance ladder. No classes, no behavior.
 """
 from __future__ import annotations
 
-from typing import Callable, TypedDict
+from typing import Callable, NotRequired, TypedDict, Union
 
 
-# A recognizer is a predicate over a token. This IS a type.
-Recognizer = Callable[[str], bool]
+# --- Recognizers (tagged data) -------------------------------------------
 
 
-class Vocabulary(TypedDict):
-    """Named collection of recognizers. Keys are type names (e.g. "email",
-    "order_id"); values are predicates that classify a string.
-    """
-    recognizers: dict[str, Recognizer]
+class SetRecognizer(TypedDict):
+    kind: str                  # "set"
+    members: frozenset[str]
 
 
-class Binding(TypedDict):
-    """Maps type names to slot names. Used after classification to place
-    classified values in named slots: "email" → "user_email".
-    """
-    rules: dict[str, str]
+class InsensitiveRecognizer(TypedDict):
+    kind: str                  # "insensitive"
+    members: frozenset[str]    # lowercased; original token preserved in the ticket
 
 
-class Ticket(TypedDict):
-    """A classified token. One recognizer matched; we know the type."""
-    type: str
-    value: str
-    slot: str  # "" if no binding was applied yet
+class PredicateRecognizer(TypedDict):
+    kind: str                  # "predicate"
+    fn: Callable[[str], bool]
 
 
-class Manifest(TypedDict):
-    """Fully resolved binding result. slot → value."""
-    slots: dict[str, str]
-    tickets: list[Ticket]
+Recognizer = Union[SetRecognizer, InsensitiveRecognizer, PredicateRecognizer]
 
 
-class Rejection(TypedDict):
-    """Unrecognized token. Data, not an exception."""
-    value: str
-    reason: str       # e.g. "unrecognized_shape"
-    attempted: list[str]  # type names that were tried and failed
+def set_recognizer(members) -> SetRecognizer:
+    return {"kind": "set", "members": frozenset(members)}
 
 
-class Fault(TypedDict):
-    """Error in a chain. Data, not an exception. Exceptions only at the HTTP
-    boundary.
-    """
-    code: str
-    category: str   # "client" | "server"
-    message: str
+def insensitive(members) -> InsensitiveRecognizer:
+    """Case-insensitive Set recognizer (spec §9.1). Members lowercased for
+    matching; the original token value is preserved in the ticket."""
+    return {"kind": "insensitive", "members": frozenset(m.lower() for m in members)}
+
+
+def predicate(fn: Callable[[str], bool]) -> PredicateRecognizer:
+    return {"kind": "predicate", "fn": fn}
+
+
+# --- Maybe (optional binding, spec §5) -----------------------------------
+
+
+class Maybe(TypedDict):
+    maybe: str                 # wrapped slot name (binding) or base type (capture)
+
+
+def maybe(name: str) -> Maybe:
+    return {"maybe": name}
+
+
+def is_maybe(value: object) -> bool:
+    return isinstance(value, dict) and "maybe" in value
+
+
+def unwrap_maybe(value) -> str:
+    """Return the slot/type name whether or not it is wrapped in maybe()."""
+    return value["maybe"] if is_maybe(value) else value
+
+
+# Nothing — explicit absence in the manifest (spec §5.6 Python mapping).
+Nothing = None
+
+
+# --- Compositional types (spec §4) ---------------------------------------
 
 
 class ComposedType(TypedDict):
-    """A vocabulary composed from multiple vocabularies. Shape unchanged
-    from Vocabulary; this TypedDict documents intent.
-    """
-    recognizers: dict[str, Recognizer]
-    sources: list[str]  # names of contributing vocabularies
-
-
-class Link(TypedDict):
-    """A function with its declared vocabulary and role. Unit of chain
-    composition.
-    """
     name: str
-    role: str           # boundary_in | orchestrator | pure | boundary_out
-    vocabulary: Vocabulary
-    fn: Callable
-    input_types: list[str]
-    output_types: list[str]
+    requires: dict[str, str]   # base type name -> required value
+    captures: object           # base type name (str) or maybe(type) wrapper
 
 
-class Chain(TypedDict):
-    """Pipeline of links. Each link's output feeds the next link's input."""
-    name: str
-    links: list[Link]
+def composed(name: str, requires: dict[str, str], captures) -> ComposedType:
+    return {"name": name, "requires": dict(requires), "captures": captures}
 
 
-# --- Bounded vocabularies (for test / check) -------------------------------
+# --- Vocabulary + binding ------------------------------------------------
 
-FAULT_CATEGORY_CLIENT = "client"
-FAULT_CATEGORY_SERVER = "server"
 
+class Vocabulary(TypedDict):
+    base_types: dict[str, Recognizer]
+    composed_types: list[ComposedType]
+
+
+# Binding maps a type/composed name to a slot name, or maybe(slot):
+#   Binding = dict[str, str | Maybe]
+
+
+# --- classify() outputs (spec §7) ----------------------------------------
+
+
+class Ticket(TypedDict):
+    type: str
+    value: str
+
+
+def ticket(type: str, value: str) -> Ticket:
+    return {"type": type, "value": value}
+
+
+class Rejection(TypedDict):
+    token: NotRequired[object]       # str, or None for missing_required
+    reason: str                      # one of REJECTION_REASONS
+    detail: NotRequired[object]      # conflicting type/slot, etc.
+
+
+def rejection(token, reason: str, detail=None) -> Rejection:
+    out: Rejection = {"token": token, "reason": reason}
+    if detail is not None:
+        out["detail"] = detail
+    return out
+
+
+# Manifest is a flat dict[str, str | None] plus an optional "_rejections" list;
+# kept as a plain dict. "_rejections" is present only when non-empty (spec §7).
+
+
+# --- Fault (spec §11) ----------------------------------------------------
+
+
+class Fault(TypedDict):
+    code: str
+    message: str
+    category: str                    # "client" | "server"
+    detail: NotRequired[object]      # structured context (offending word, slot, etc.)
+    link: NotRequired[object]
+    input: NotRequired[object]
+    results: NotRequired[list]       # only for validation_failed
+
+
+# --- Bounded vocabularies ------------------------------------------------
+
+# The seven rejection reason codes (spec §7 rejection, §9 rule summary).
 REJECTION_REASONS: frozenset[str] = frozenset({
-    "unrecognized_shape",
-    "identity_unknown",
-    "conflict",
-    "auth_failed",
+    "unrecognized",
+    "reserved_word",
+    "unbound_type",
+    "duplicate_slot",
+    "missing_required",
+    "empty_token",
+    "null_token",
 })
+
+CATEGORIES: frozenset[str] = frozenset({"client", "server"})
+
+# Framework fault-code registry: code -> category (spec §11.3), plus the
+# vocabulary-construction fault (§14.5) and the boundary's unhandled-exception
+# fault (§11.4).
+FAULT_REGISTRY: dict[str, str] = {
+    "validation_failed":           "client",
+    "missing_required":            "client",
+    "unrecognized":                "client",
+    "empty_token":                 "client",
+    "null_token":                  "client",
+    "duplicate_slot":              "client",
+    "predicate_error":             "server",
+    "non_string_token":            "server",
+    "non_result_return":           "server",
+    "unbound_type":                "server",
+    "reserved_word":               "server",
+    "reserved_word_in_vocabulary": "server",
+    "unhandled_exception":         "server",
+}
+
+FAULT_CODES: frozenset[str] = frozenset(FAULT_REGISTRY)
+
+# HTTP mapping for the web boundary (spec §11.4); generic boundaries supply
+# their own output table.
+FAULT_TO_HTTP: dict[str, int] = {
+    "validation_failed": 422,
+    "missing_required":  400,
+    "unrecognized":      400,
+    "empty_token":       400,
+    "null_token":        400,
+    "duplicate_slot":    400,
+    "predicate_error":   500,
+    "non_string_token":  500,
+    "non_result_return": 500,
+    "unbound_type":      500,
+    "reserved_word":     500,
+}
