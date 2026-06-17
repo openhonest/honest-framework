@@ -169,6 +169,53 @@ def test_hc007_clean_for_nonempty_chain():
     assert not _has_rule(report, "HC007")
 
 
+# --- HC-SM01 / HC-SM02 / HC-SM05: state-machine construction (Core) -------
+
+_SM_BASE = (
+    "from honest_state import state_machine\n"
+    "m = state_machine(states={'pending', 'paid'}, events={'pay'},\n"
+    "  transitions={('pending', 'pay'): 'paid'%s}, initial=%s)\n"
+)
+
+
+def test_hc_sm01_flags_unknown_state():
+    src = _SM_BASE % (", ('unknown', 'pay'): 'paid'", "'pending'")
+    report = check_source(src)
+    assert _has_rule(report, "HC-SM01")
+
+
+def test_hc_sm02_flags_unknown_event():
+    src = _SM_BASE % (", ('pending', 'zap'): 'paid'", "'pending'")
+    report = check_source(src)
+    assert _has_rule(report, "HC-SM02")
+
+
+def test_hc_sm05_flags_bad_initial():
+    src = _SM_BASE % ("", "'nope'")
+    report = check_source(src)
+    assert _has_rule(report, "HC-SM05")
+
+
+def test_sm_clean_valid_machine():
+    src = _SM_BASE % ("", "'pending'")
+    report = check_source(src)
+    assert not any(d["rule_id"].startswith("HC-SM") for d in report["diagnostics"])
+
+
+def test_sm_states_from_vocabulary_call():
+    # states/events expressed as vocabulary(...) calls, per honest-type §7c.
+    src = (
+        "from honest_state import state_machine\n"
+        "from honest_type import vocabulary\n"
+        "m = state_machine(\n"
+        "  states=vocabulary({'s': {'pending', 'paid'}}),\n"
+        "  events=vocabulary({'e': {'pay'}}),\n"
+        "  transitions={('ghost', 'pay'): 'paid'}, initial='pending')\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC-SM01")
+
+
 # --- Aggregation -----------------------------------------------------------
 
 

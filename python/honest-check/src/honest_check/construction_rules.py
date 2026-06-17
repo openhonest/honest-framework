@@ -14,6 +14,7 @@ from itertools import combinations
 
 from honest_check.declgraph import (
     extract_chain,
+    extract_state_machine,
     extract_vocabulary,
     find_constructor_calls,
 )
@@ -150,9 +151,44 @@ def check_hc011(root, src: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+# --- HC-SM01 / HC-SM02 / HC-SM05: state-machine vocabulary violations -----
+
+
+def _state_machines(root, src: bytes):
+    return [extract_state_machine(call, src)
+            for ctor, call in find_constructor_calls(root, src)
+            if ctor == "state_machine"]
+
+
+def check_hc_state_machine_vocab(root, src: bytes, path: str) -> list[Diagnostic]:
+    out: list[Diagnostic] = []
+    for machine in _state_machines(root, src):
+        loc = machine["node"]
+        states, events = machine["states"], machine["events"]
+        for state, event in machine["transitions"]:
+            if states and state not in states:
+                out.append(diagnostic(
+                    "HC-SM01", "error",
+                    f"State '{state}' in transition table not in states vocabulary.",
+                    path, line_of(loc), col_of(loc)))
+            if events and event not in events:
+                out.append(diagnostic(
+                    "HC-SM02", "error",
+                    f"Event '{event}' in transition table not in events vocabulary.",
+                    path, line_of(loc), col_of(loc)))
+        initial = machine["initial"]
+        if initial is not None and states and initial not in states:
+            out.append(diagnostic(
+                "HC-SM05", "error",
+                f"Initial state '{initial}' not in states vocabulary.",
+                path, line_of(loc), col_of(loc)))
+    return out
+
+
 CONSTRUCTION_CHECKS = [
     check_hc003,
     check_hc006,
     check_hc007,
     check_hc011,
+    check_hc_state_machine_vocab,
 ]

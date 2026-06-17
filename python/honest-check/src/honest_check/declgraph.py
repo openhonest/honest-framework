@@ -206,6 +206,59 @@ def extract_chain(call, src: bytes) -> dict:
     return {"link_count": len(positional), "node": call}
 
 
+def _name_set(node, src: bytes) -> frozenset[str]:
+    """State/event names from a `{...}`/`[...]` literal or a `vocabulary(...)`
+    call (union of its Set members)."""
+    if node is None:
+        return frozenset()
+    if node.type in ("set", "list"):
+        return frozenset(
+            s for s in (_string_value(e, src) for e in node.named_children)
+            if s is not None
+        )
+    if node.type == "call":
+        func = node.child_by_field_name("function")
+        tail = node_text(func, src).split(".")[-1] if func is not None else ""
+        if tail == "vocabulary":
+            voc = extract_vocabulary(node, src)
+            out: set[str] = set()
+            for kind, payload in voc["base_types"].values():
+                if kind in ("set", "insensitive") and payload:
+                    out |= set(payload)
+            return frozenset(out)
+    return frozenset()
+
+
+def _tuple_strings(node, src: bytes):
+    """The two string members of a `(state, event)` tuple key, or None."""
+    if node is None or node.type != "tuple":
+        return None
+    parts = [_string_value(c, src) for c in node.named_children]
+    if len(parts) == 2 and all(p is not None for p in parts):
+        return (parts[0], parts[1])
+    return None
+
+
+def extract_state_machine(call, src: bytes) -> dict:
+    _, kwargs = _positional_and_kwargs(call, src)
+    states = _name_set(kwargs.get("states"), src)
+    events = _name_set(kwargs.get("events"), src)
+    initial = _string_value(kwargs.get("initial"), src)
+    transitions = []
+    trans_node = kwargs.get("transitions")
+    if trans_node is not None and trans_node.type == "dictionary":
+        for pair in trans_node.named_children:
+            if pair.type != "pair":
+                continue
+            key = _tuple_strings(pair.child_by_field_name("key"), src)
+            if key is not None:
+                transitions.append(key)
+    return {
+        "states": states, "events": events, "initial": initial,
+        "transitions": transitions, "node": call,
+    }
+
+
 def find_constructor_calls(root, src: bytes):
     """Yield (constructor_name, call_node) for every resolved honest call."""
     aliases = resolve_aliases(root, src)
