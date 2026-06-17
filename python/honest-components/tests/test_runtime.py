@@ -1,4 +1,4 @@
-from honest_component_runtime import (
+from honest_components import (
     build_root_block,
     compose_grid_layout,
     enforce_css_namespace,
