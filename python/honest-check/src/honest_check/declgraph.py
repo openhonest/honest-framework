@@ -349,3 +349,107 @@ def find_classify_pairings(root, src: bytes):
         if vocab is not None:
             out.append((vocab, _resolve_record(binding_arg, "binding", src, defs, aliases)))
     return out
+
+
+# --- @link metadata + chain link resolution (spec §4.4, §10) --------------
+
+
+def _link_decorator_call(fn, src: bytes):
+    """If fn is decorated `@link` / `@link(...)`, return the call node (or the
+    bare decorator expr), else None."""
+    parent = fn.parent
+    if parent is None or parent.type != "decorated_definition":
+        return None
+    for child in parent.children:
+        if child.type != "decorator":
+            continue
+        expr = child.named_children[0] if child.named_children else None
+        if expr is None:
+            continue
+        if expr.type == "identifier" and node_text(expr, src) == "link":
+            return expr
+        if expr.type == "call":
+            func = expr.child_by_field_name("function")
+            if func is not None and _dotted_tail(func, src) == "link":
+                return expr
+    return None
+
+
+def _dotted_tail(node, src: bytes) -> str:
+    if node is None:
+        return ""
+    if node.type == "identifier":
+        return node_text(node, src)
+    if node.type == "attribute":
+        attr = node.child_by_field_name("attribute")
+        return node_text(attr, src) if attr is not None else ""
+    return ""
+
+
+def _vocab_typenames(node, src: bytes, defs: dict, aliases) -> set:
+    """Type names of a vocab expression: a name, an inline vocabulary() call, or
+    a `v | w` merge."""
+    if node is None:
+        return set()
+    if node.type == "identifier":
+        entry = defs.get(node_text(node, src))
+        if entry is not None and entry[0] == "vocabulary":
+            v = entry[1]
+            return set(v["base_types"]) | {c["name"] for c in v["composed_types"]}
+        return set()
+    if node.type == "call":
+        if call_constructor(node, src, aliases) == "vocabulary":
+            v = extract_vocabulary(node, src)
+            return set(v["base_types"]) | {c["name"] for c in v["composed_types"]}
+        return set()
+    if node.type == "binary_operator":
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+        return (_vocab_typenames(left, src, defs, aliases)
+                | _vocab_typenames(right, src, defs, aliases))
+    return set()
+
+
+def link_definitions(root, src: bytes) -> dict:
+    """fn_name -> {accepts, emits, boundary, node} for every @link function."""
+    aliases = resolve_aliases(root, src)
+    defs = build_definition_map(root, src)
+    out: dict = {}
+    for fn in find_by_type(root, "function_definition"):
+        deco = _link_decorator_call(fn, src)
+        if deco is None:
+            continue
+        name_node = fn.child_by_field_name("name")
+        name = node_text(name_node, src) if name_node is not None else ""
+        accepts: set = set()
+        emits: set = set()
+        boundary = False
+        if deco.type == "call":
+            _, kwargs = _positional_and_kwargs(deco, src)
+            accepts = _vocab_typenames(kwargs.get("accepts"), src, defs, aliases)
+            emits = _vocab_typenames(kwargs.get("emits"), src, defs, aliases)
+            bv = kwargs.get("boundary")
+            boundary = bv is not None and bv.type == "true"
+        out[name] = {"accepts": accepts, "emits": emits, "boundary": boundary, "node": fn}
+    return out
+
+
+def local_function_names(root, src: bytes) -> set:
+    names = set()
+    for fn in find_by_type(root, "function_definition"):
+        name_node = fn.child_by_field_name("name")
+        if name_node is not None:
+            names.add(node_text(name_node, src))
+    return names
+
+
+def chain_link_args(root, src: bytes):
+    """For each chain() call: (call_node, [arg_name_or_None, ...]) positional."""
+    out = []
+    for ctor, call in find_constructor_calls(root, src):
+        if ctor != "chain":
+            continue
+        positional, _ = _positional_and_kwargs(call, src)
+        names = [node_text(a, src) if a.type == "identifier" else None for a in positional]
+        out.append((call, names))
+    return out

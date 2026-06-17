@@ -485,3 +485,75 @@ def test_hc_p014_clean_for_distinct_recognizers():
     )
     report = check_source(src)
     assert not _has_rule(report, "HC-P014")
+
+
+# --- Unit 3e: chain / link rules ------------------------------------------
+
+
+def test_hc001_flags_undeclared_link():
+    src = (
+        "from honest_type import chain\n"
+        "def plain(m):\n"
+        "    return m\n"
+        "c = chain(plain)\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC001")
+
+
+def test_hc001_clean_for_declared_link():
+    src = (
+        "from honest_type import chain, link, vocabulary\n"
+        "v = vocabulary({'a': {'X'}})\n"
+        "@link(accepts=v, emits=v)\n"
+        "def good(m):\n"
+        "    return m\n"
+        "c = chain(good)\n"
+    )
+    report = check_source(src)
+    assert not _has_rule(report, "HC001")
+
+
+def test_hc002_flags_chain_type_mismatch():
+    src = (
+        "from honest_type import chain, link, vocabulary\n"
+        "va = vocabulary({'a': {'X'}})\n"
+        "vb = vocabulary({'b': {'Y'}})\n"
+        "@link(accepts=va, emits=va)\n"
+        "def first(m):\n"
+        "    return m\n"
+        "@link(accepts=vb, emits=vb)\n"
+        "def second(m):\n"
+        "    return m\n"
+        "c = chain(first, second)\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC002")
+
+
+def test_hc002_clean_when_types_flow():
+    src = (
+        "from honest_type import chain, link, vocabulary\n"
+        "v = vocabulary({'a': {'X'}})\n"
+        "@link(accepts=v, emits=v)\n"
+        "def first(m):\n"
+        "    return m\n"
+        "@link(accepts=v, emits=v)\n"
+        "def second(m):\n"
+        "    return m\n"
+        "c = chain(first, second)\n"
+    )
+    report = check_source(src)
+    assert not _has_rule(report, "HC002")
+
+
+def test_hc009_flags_risky_predicate():
+    src = "r = lambda s: int(s) > 0\n"
+    report = check_source(src)
+    assert _has_rule(report, "HC009")
+
+
+def test_hc009_clean_for_safe_predicate():
+    src = "r = lambda s: '@' in s\n"
+    report = check_source(src)
+    assert not _has_rule(report, "HC009")

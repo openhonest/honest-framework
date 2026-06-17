@@ -16,6 +16,7 @@ from collections import Counter
 from honest_check.binding_rules import BINDING_CHECKS
 from honest_check.construction_rules import CONSTRUCTION_CHECKS
 from honest_check.io_rules import IO_CHECKS
+from honest_check.link_rules import LINK_CHECKS
 from honest_check.principle_rules import PRINCIPLE_CHECKS
 from honest_check.sm_rules import SM_CHECKS
 from honest_check.suppression import is_suppressed, parse_suppressions
@@ -124,6 +125,7 @@ _ALL_CHECKS = [
     *CONSTRUCTION_CHECKS,
     *SM_CHECKS,
     *BINDING_CHECKS,
+    *LINK_CHECKS,
 ]
 
 
