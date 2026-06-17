@@ -1,20 +1,28 @@
-"""honest-check — static linter for Python source against honest-code principles.
+"""honest-check — static linter for Honest Code, founded on tree-sitter.
 
-Rules implemented in M1:
-    HC-P001: No if/elif/else dispatch on type/category discriminant.
-    HC-P003: No `class` declarations (except TypedDict, Protocol, Exception).
-    HC-P014: No catch-all / wildcard recognizers.
-    HC-R003: pure-role fns must not perform I/O side effects.
+honest-check is the pre-auto-generation gate (spec §1): code that passes is
+guaranteed a complete auto-generated test suite. It parses with tree-sitter
+(one grammar stack, portable across language spokes), resolves aliases, walks
+the tree, and reports violations as data. It never executes application code.
 
-The checker is AST-driven — we walk Python source directly rather than
-requiring instrumentation. Reports list diagnostics as data; honest-check
-itself raises no exceptions against user code.
+Rules re-founded on tree-sitter so far:
+    HC-P003: class declaration (bare class or non-approved base).
+    HC-P001: if/elif/else dispatch chain (3+ equality tests on one variable).
+    HC-P014: catch-all recognizer (accepts all inputs).
+    HC-SYN:  source syntax error.
+Construction-time and the remaining static rules land in subsequent units.
 """
-from honest_check.diagnostics import Diagnostic, CheckReport, aggregate_diagnostics
+from honest_check.diagnostics import (
+    CheckReport,
+    Diagnostic,
+    aggregate_diagnostics,
+    diagnostic,
+)
+from honest_check.parse import parse
 from honest_check.rules import (
-    check_hc_p001_if_elif_else_dispatch,
-    check_hc_p003_class_declaration,
-    check_hc_p014_catchall,
+    check_hc_p001,
+    check_hc_p003,
+    check_hc_p014,
     check_source,
 )
 
@@ -22,8 +30,10 @@ __all__ = [
     "CheckReport",
     "Diagnostic",
     "aggregate_diagnostics",
-    "check_hc_p001_if_elif_else_dispatch",
-    "check_hc_p003_class_declaration",
-    "check_hc_p014_catchall",
+    "diagnostic",
+    "parse",
+    "check_hc_p001",
+    "check_hc_p003",
+    "check_hc_p014",
     "check_source",
 ]

@@ -41,10 +41,14 @@ def test_p003_allows_exception_subclass():
     assert not _has_rule(report, "HC-P003")
 
 
-def test_p003_allows_error_suffix_bare():
+def test_p003_flags_bare_class_regardless_of_name():
+    # Spec §4.1/§5.3: a bare class (no declared base) is a violation, with no
+    # name-suffix exception. The prior "Error-suffix is allowed" behavior was
+    # drift; an exception type must explicitly subclass Exception.
     src = "class FooError: pass\n"
     report = check_source(src)
-    assert not _has_rule(report, "HC-P003")
+    assert _has_rule(report, "HC-P003")
+
 
 
 # --- HC-P001: if/elif dispatch --------------------------------------------

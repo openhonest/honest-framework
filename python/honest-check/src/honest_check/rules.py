@@ -1,178 +1,165 @@
-"""AST-based rule checks. Each check returns a list[Diagnostic]."""
+"""Rule checks over tree-sitter nodes (spec §4).
+
+Each rule is a pure function (root_node, source_bytes, path) -> list[Diagnostic].
+Operating on tree-sitter nodes (not a language-locked AST) is what lets the
+same rule logic port to JavaScript, Ruby, and Go.
+
+This unit covers the principle rules that were already implemented, re-founded
+on tree-sitter: HC-P003 (class declaration), HC-P001 (if/elif dispatch chain),
+HC-P014 (catch-all recognizer), plus HC-SYN (syntax error). Construction-time
+and the remaining static rules are added in subsequent units.
+"""
 from __future__ import annotations
 
-import ast
+from collections import Counter
 
-from honest_check.diagnostics import Diagnostic, aggregate_diagnostics
+from honest_check.diagnostics import Diagnostic, aggregate_diagnostics, diagnostic
+from honest_check.parse import (
+    col_of,
+    find_by_type,
+    has_syntax_error,
+    line_of,
+    node_text,
+    parse,
+    source_bytes,
+)
+
+# Spec §4.1 / §5.3: the only approved bases for a class definition.
+_ALLOWED_BASES = frozenset({
+    "TypedDict", "Protocol", "ABC", "Exception", "BaseException", "Error",
+})
 
 
-# --- HC-P003: class declarations ------------------------------------------
-
-# Allowed base classes (TypedDict, Protocol, Exception subclasses).
-_ALLOWED_BASES = {"TypedDict", "Protocol", "Generic"}
-_ALLOWED_SUFFIXES = ("Error", "Exception", "Warning")
+# --- HC-P003: class declaration -------------------------------------------
 
 
-def check_hc_p003_class_declaration(tree: ast.AST, path: str) -> list[Diagnostic]:
+def _base_tail(node, src: bytes) -> str:
+    """The tail identifier of a base expression: `a.b.C` -> "C", `G[T]` -> "G"."""
+    if node.type == "identifier":
+        return node_text(node, src)
+    if node.type == "attribute":
+        attr = node.child_by_field_name("attribute")
+        return node_text(attr, src) if attr is not None else node_text(node, src)
+    if node.type == "subscript":
+        value = node.child_by_field_name("value")
+        return _base_tail(value, src) if value is not None else node_text(node, src)
+    return node_text(node, src)
+
+
+def check_hc_p003(root, src: bytes, path: str) -> list[Diagnostic]:
     out: list[Diagnostic] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
+    for cls in find_by_type(root, "class_definition"):
+        name_node = cls.child_by_field_name("name")
+        name = node_text(name_node, src) if name_node is not None else "<class>"
+        supers = cls.child_by_field_name("superclasses")
+        if supers is None:
+            out.append(diagnostic(
+                "HC-P003", "error",
+                f"Class '{name}' has no declared base. Honest Code permits class "
+                "definitions only as subclasses of TypedDict, Protocol, ABC, or a "
+                "declared Exception. Use a TypedDict or a pure function.",
+                path, line_of(cls), col_of(cls)))
             continue
-        if _class_is_allowed(node):
-            continue
-        out.append(Diagnostic(
-            rule_id="HC-P003",
-            severity="error",
-            message=f"class {node.name!r} is not allowed. Use TypedDict, Protocol, or an Exception subclass.",
-            source_location=f"{path}:{node.lineno}",
-        ))
+        for base in supers.named_children:
+            if base.type == "keyword_argument":
+                continue   # metaclass=... etc., not inheritance
+            tail = _base_tail(base, src)
+            if tail not in _ALLOWED_BASES:
+                out.append(diagnostic(
+                    "HC-P003", "error",
+                    f"Class '{name}' inherits from '{tail}'. "
+                    "Use composition over inheritance.",
+                    path, line_of(cls), col_of(cls)))
     return out
 
 
-def _class_is_allowed(node: ast.ClassDef) -> bool:
-    # Exception-suffixed name is allowed (convention for Exception subclasses).
-    if any(node.name.endswith(suf) for suf in _ALLOWED_SUFFIXES):
-        return True
-    for base in node.bases:
-        name = _base_name(base)
-        if name in _ALLOWED_BASES:
-            return True
-        if name == "Exception" or name.endswith("Error") or name.endswith("Exception"):
-            return True
-    return False
+# --- HC-P001: if/elif/else dispatch chain ---------------------------------
 
 
-def _base_name(node: ast.expr) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    if isinstance(node, ast.Subscript):
-        return _base_name(node.value)
-    return ""
+def _equality_var(cond, src: bytes) -> str | None:
+    """If cond is `<identifier> == <literal>`, return the identifier name."""
+    if cond is None or cond.type != "comparison_operator":
+        return None
+    if not any(c.type == "==" for c in cond.children):
+        return None
+    left = cond.child(0)
+    if left is None or left.type != "identifier":
+        return None
+    return node_text(left, src)
 
 
-# --- HC-P001: if/elif dispatching on a discriminant ------------------------
-
-
-def check_hc_p001_if_elif_else_dispatch(tree: ast.AST, path: str) -> list[Diagnostic]:
-    """Heuristic: any `if X == LITERAL: ... elif X == LITERAL: ... else:`
-    where X is the same variable and there are ≥2 elif branches.
-    """
+def check_hc_p001(root, src: bytes, path: str) -> list[Diagnostic]:
     out: list[Diagnostic] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
+    for if_node in find_by_type(root, "if_statement"):
+        conditions = [if_node.child_by_field_name("condition")]
+        for child in if_node.children:
+            if child.type == "elif_clause":
+                conditions.append(child.child_by_field_name("condition"))
+        variables = [v for v in (_equality_var(c, src) for c in conditions) if v]
+        if not variables:
             continue
-        target_name = _elif_dispatch_target(node)
-        chain_len = _count_elif_chain(node)
-        if target_name and chain_len >= 2:
-            out.append(Diagnostic(
-                rule_id="HC-P001",
-                severity="error",
-                message=f"if/elif chain of length {chain_len + 1} dispatching on {target_name!r}. Use a dict-lookup table instead.",
-                source_location=f"{path}:{node.lineno}",
-            ))
+        top_var, count = Counter(variables).most_common(1)[0]
+        if count >= 3:
+            out.append(diagnostic(
+                "HC-P001", "error",
+                f"if/elif/else chain dispatches on '{top_var}' across {count} "
+                "branches — use a dict lookup. See honest-code-principles.md §3.",
+                path, line_of(if_node), col_of(if_node)))
     return out
 
 
-def _elif_dispatch_target(node: ast.If) -> str:
-    """Return the common discriminant name if the if/elif chain dispatches
-    on one, else "".
-    """
-    name = _eq_comparison_target(node.test)
-    if not name:
-        return ""
-    current = node
-    while current.orelse and len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
-        next_if = current.orelse[0]
-        if _eq_comparison_target(next_if.test) != name:
-            return ""
-        current = next_if
-    return name
+# --- HC-P014: catch-all recognizer ----------------------------------------
 
 
-def _eq_comparison_target(node: ast.expr) -> str:
-    if not isinstance(node, ast.Compare):
-        return ""
-    if len(node.ops) != 1 or not isinstance(node.ops[0], ast.Eq):
-        return ""
-    left = node.left
-    right = node.comparators[0]
-    if isinstance(left, ast.Name) and isinstance(right, ast.Constant):
-        return left.id
-    if isinstance(right, ast.Name) and isinstance(left, ast.Constant):
-        return right.id
-    return ""
+def _returns_only_true(block, src: bytes) -> bool:
+    stmts = [c for c in block.named_children] if block is not None else []
+    if len(stmts) != 1 or stmts[0].type != "return_statement":
+        return False
+    returned = stmts[0].named_children
+    return len(returned) == 1 and returned[0].type == "true"
 
 
-def _count_elif_chain(node: ast.If) -> int:
-    """Count how many elif branches follow (excluding the initial if)."""
-    count = 0
-    current = node
-    while current.orelse and len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
-        count += 1
-        current = current.orelse[0]
-    return count
-
-
-# --- HC-P014: catch-all / wildcard recognizers ----------------------------
-
-
-def check_hc_p014_catchall(tree: ast.AST, path: str) -> list[Diagnostic]:
-    """Flag lambdas / functions that return True unconditionally (likely
-    catch-all recognizers).
-    """
+def check_hc_p014(root, src: bytes, path: str) -> list[Diagnostic]:
     out: list[Diagnostic] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Lambda):
-            if _always_returns_true(node.body):
-                out.append(Diagnostic(
-                    rule_id="HC-P014",
-                    severity="error",
-                    message="lambda recognizer always returns True (catch-all). Every vocabulary must be exhaustively enumerated.",
-                    source_location=f"{path}:{node.lineno}",
-                ))
-        elif isinstance(node, ast.FunctionDef):
-            # Single-statement function that returns True directly.
-            if len(node.body) == 1 and isinstance(node.body[0], ast.Return):
-                ret = node.body[0].value
-                if isinstance(ret, ast.Constant) and ret.value is True:
-                    out.append(Diagnostic(
-                        rule_id="HC-P014",
-                        severity="error",
-                        message=f"function {node.name!r} always returns True. If this is a recognizer, it is a banned catch-all.",
-                        source_location=f"{path}:{node.lineno}",
-                    ))
+    for lam in find_by_type(root, "lambda"):
+        body = lam.child_by_field_name("body")
+        if body is not None and body.type == "true":
+            out.append(diagnostic(
+                "HC-P014", "error",
+                "Recognizer accepts all inputs (lambda returns True) — "
+                "not a discriminating type.",
+                path, line_of(lam), col_of(lam)))
+    for fn in find_by_type(root, "function_definition"):
+        if _returns_only_true(fn.child_by_field_name("body"), src):
+            name_node = fn.child_by_field_name("name")
+            name = node_text(name_node, src) if name_node is not None else "<fn>"
+            out.append(diagnostic(
+                "HC-P014", "error",
+                f"Recognizer '{name}' returns True for all inputs — "
+                "not a discriminating type.",
+                path, line_of(fn), col_of(fn)))
     return out
 
 
-def _always_returns_true(expr: ast.expr) -> bool:
-    return isinstance(expr, ast.Constant) and expr.value is True
-
-
-# --- Top-level driver ------------------------------------------------------
-
+# --- Registry + entry point -----------------------------------------------
 
 _ALL_CHECKS = [
-    check_hc_p003_class_declaration,
-    check_hc_p001_if_elif_else_dispatch,
-    check_hc_p014_catchall,
+    check_hc_p003,
+    check_hc_p001,
+    check_hc_p014,
 ]
 
 
 def check_source(source: str, path: str = "<source>"):
-    """Parse + run every check. Returns a CheckReport."""
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as exc:
-        return aggregate_diagnostics([Diagnostic(
-            rule_id="HC-SYN",
-            severity="error",
-            message=f"syntax error: {exc.msg}",
-            source_location=f"{path}:{exc.lineno or 0}",
-        )])
-
+    """Parse and check one source string. Returns an aggregated CheckReport."""
+    src = source_bytes(source)
+    tree = parse(source)
+    if has_syntax_error(tree):
+        errors = find_by_type(tree.root_node, "ERROR")
+        line = line_of(errors[0]) if errors else 1
+        return aggregate_diagnostics([diagnostic(
+            "HC-SYN", "error", "source has a syntax error", path, line)])
     diagnostics: list[Diagnostic] = []
     for check in _ALL_CHECKS:
-        diagnostics.extend(check(tree, path))
+        diagnostics.extend(check(tree.root_node, src, path))
     return aggregate_diagnostics(diagnostics)
