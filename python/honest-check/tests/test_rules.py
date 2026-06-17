@@ -617,3 +617,65 @@ def test_hc_or003_flags_duplication():
     )
     report = check_source(src)
     assert _has_rule(report, "HC-OR003")
+
+
+# --- Unit 3g: auth / HTTP-surface rules -----------------------------------
+
+
+def test_hc_a001_flags_authorizing_link_without_provider():
+    src = (
+        "from honest_type import link, vocabulary\n"
+        "v = vocabulary({'a': {'X'}})\n"
+        "@link(accepts=v, emits=v, authorizes=True)\n"
+        "def grant(m):\n"
+        "    return m\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC-A001")
+
+
+def test_hc_a001_clean_when_provider_registered():
+    src = (
+        "from honest_type import link, vocabulary\n"
+        "from honest_auth import register_auth_provider\n"
+        "v = vocabulary({'a': {'X'}})\n"
+        "register_auth_provider(my_provider)\n"
+        "@link(accepts=v, emits=v, authorizes=True)\n"
+        "def grant(m):\n"
+        "    return m\n"
+    )
+    report = check_source(src)
+    assert not _has_rule(report, "HC-A001")
+
+
+def test_hc_a001_clean_when_no_authorizing_links():
+    src = (
+        "from honest_type import link, vocabulary\n"
+        "v = vocabulary({'a': {'X'}})\n"
+        "@link(accepts=v, emits=v)\n"
+        "def plain(m):\n"
+        "    return m\n"
+    )
+    report = check_source(src)
+    assert not _has_rule(report, "HC-A001")
+
+
+def test_hc_p017_flags_http_output_without_link():
+    src = (
+        "def handler(req):\n"
+        "    return JSONResponse({'ok': True})\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC-P017")
+
+
+def test_hc_p017_clean_for_link_with_emits():
+    src = (
+        "from honest_type import link, vocabulary\n"
+        "v = vocabulary({'a': {'X'}})\n"
+        "@link(accepts=v, emits=v)\n"
+        "def serialize(m):\n"
+        "    return JSONResponse(m)\n"
+    )
+    report = check_source(src)
+    assert not _has_rule(report, "HC-P017")

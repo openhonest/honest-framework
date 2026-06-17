@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from honest_check.auth_rules import AUTH_CHECKS
 from honest_check.binding_rules import BINDING_CHECKS
 from honest_check.construction_rules import CONSTRUCTION_CHECKS
 from honest_check.io_rules import IO_CHECKS
@@ -128,6 +129,7 @@ _ALL_CHECKS = [
     *BINDING_CHECKS,
     *LINK_CHECKS,
     *ROLE_CHECKS,
+    *AUTH_CHECKS,
 ]
 
 

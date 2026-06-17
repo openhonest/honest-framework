@@ -424,13 +424,17 @@ def link_definitions(root, src: bytes) -> dict:
         accepts: set = set()
         emits: set = set()
         boundary = False
+        authorizes = False
         if deco.type == "call":
             _, kwargs = _positional_and_kwargs(deco, src)
             accepts = _vocab_typenames(kwargs.get("accepts"), src, defs, aliases)
             emits = _vocab_typenames(kwargs.get("emits"), src, defs, aliases)
             bv = kwargs.get("boundary")
             boundary = bv is not None and bv.type == "true"
-        out[name] = {"accepts": accepts, "emits": emits, "boundary": boundary, "node": fn}
+            av = kwargs.get("authorizes")
+            authorizes = av is not None and av.type == "true"
+        out[name] = {"accepts": accepts, "emits": emits, "boundary": boundary,
+                     "authorizes": authorizes, "node": fn}
     return out
 
 
