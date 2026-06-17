@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections import Counter
 
 from honest_check.construction_rules import CONSTRUCTION_CHECKS
+from honest_check.principle_rules import PRINCIPLE_CHECKS
 from honest_check.diagnostics import Diagnostic, aggregate_diagnostics, diagnostic
 from honest_check.parse import (
     col_of,
@@ -114,6 +115,7 @@ def check_hc_p001(root, src: bytes, path: str) -> list[Diagnostic]:
 _ALL_CHECKS = [
     check_hc_p003,
     check_hc_p001,
+    *PRINCIPLE_CHECKS,
     *CONSTRUCTION_CHECKS,
 ]
 

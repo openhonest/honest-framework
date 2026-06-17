@@ -236,3 +236,69 @@ def test_syntax_error_becomes_diagnostic():
     report = check_source("def bad(:\n    pass\n")
     assert report["total_errors"] >= 1
     assert report["diagnostics"][0]["rule_id"] == "HC-SYN"
+
+
+# --- Unit 3a: AST-structural principle rules ------------------------------
+
+
+def test_hc_p002_flags_mutating_method():
+    src = (
+        "class Counter:\n"
+        "    def bump(self):\n"
+        "        self.n = self.n + 1\n"
+    )
+    report = check_source(src)
+    assert any(d["rule_id"] == "HC-P002" and d["severity"] == "error"
+               for d in report["diagnostics"])
+
+
+def test_hc_p002_init_mutation_is_warning():
+    src = (
+        "class Point:\n"
+        "    def __init__(self, x):\n"
+        "        self.x = x\n"
+    )
+    report = check_source(src)
+    p002 = [d for d in report["diagnostics"] if d["rule_id"] == "HC-P002"]
+    assert p002 and all(d["severity"] == "warning" for d in p002)
+
+
+def test_hc_p007_flags_underscore_instance_state():
+    src = (
+        "class Service:\n"
+        "    def __init__(self):\n"
+        "        self._cache = {}\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC-P007")
+
+
+def test_hc_p011_flags_lifecycle_hook():
+    src = "def setup(el):\n    el.addEventListener('click', handler)\n"
+    report = check_source(src)
+    assert _has_rule(report, "HC-P011")
+
+
+def test_hc_p016_flags_nonlocal_mutation():
+    src = (
+        "def outer():\n"
+        "    total = 0\n"
+        "    def inner(x):\n"
+        "        nonlocal total\n"
+        "        total = total + x\n"
+        "    return inner\n"
+    )
+    report = check_source(src)
+    assert _has_rule(report, "HC-P016")
+
+
+def test_hc_p016_clean_without_mutation():
+    src = (
+        "def outer():\n"
+        "    total = 0\n"
+        "    def inner(x):\n"
+        "        return total + x\n"
+        "    return inner\n"
+    )
+    report = check_source(src)
+    assert not _has_rule(report, "HC-P016")
