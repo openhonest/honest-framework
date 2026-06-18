@@ -16,6 +16,7 @@ from honest_check.declgraph import (
     assigned_name,
     call_location,
     constructor_calls,
+    extract_state_machines,
     positional_arg_count,
     resolve_aliases,
     vocabulary_base_types,
@@ -736,10 +737,72 @@ def check_hc003(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+def check_state_machine_vocab(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-SM01/02/05 — transition or initial state/event not in its vocabulary (section 4.1)."""
+    aliases = resolve_aliases(root, source)
+    out: list[Diagnostic] = []
+    for machine in extract_state_machines(root, source, aliases):
+        line, col = machine["location"]
+        if machine["states"]:
+            for state, _event, _next in machine["transitions"]:
+                if state not in machine["states"]:
+                    out.append(diagnostic("HC-SM01", "error", path, line, col,
+                        f"State '{state}' in transition table not in states vocabulary."))
+            initial = machine["initial"]
+            if initial is not None and initial not in machine["states"]:
+                out.append(diagnostic("HC-SM05", "error", path, line, col,
+                    f"Initial state '{initial}' not in states vocabulary."))
+        if machine["events"]:
+            for _state, event, _next in machine["transitions"]:
+                if event not in machine["events"]:
+                    out.append(diagnostic("HC-SM02", "error", path, line, col,
+                        f"Event '{event}' in transition table not in events vocabulary."))
+    return out
+
+
+def _reachable_states(initial: str, transitions) -> set[str]:
+    """States reachable from `initial` by following transitions (BFS)."""
+    reachable = {initial}
+    frontier = [initial]
+    while frontier:
+        nxt: list[str] = []
+        for state in frontier:
+            for source_state, _event, target in transitions:
+                if source_state == state and target is not None and target not in reachable:
+                    reachable.add(target)
+                    nxt.append(target)
+        frontier = nxt
+    return reachable
+
+
+def check_state_machine_reachability(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-SM03/04 — unreachable states and dead non-terminal states (section 4.2)."""
+    aliases = resolve_aliases(root, source)
+    out: list[Diagnostic] = []
+    for machine in extract_state_machines(root, source, aliases):
+        if not machine["states"] or machine["initial"] is None:
+            continue
+        line, col = machine["location"]
+        transitions = machine["transitions"]
+        reachable = _reachable_states(machine["initial"], transitions)
+        for state in sorted(machine["states"]):
+            if state not in reachable and state != machine["initial"]:
+                out.append(diagnostic("HC-SM03", "warning", path, line, col,
+                    f"State '{state}' is unreachable."))
+        for state in sorted(machine["states"]):
+            has_outgoing = any(src == state for src, _event, _target in transitions)
+            if not has_outgoing and state not in machine["terminal"]:
+                out.append(diagnostic("HC-SM04", "warning", path, line, col,
+                    f"State '{state}' has no outgoing transitions and is not declared terminal."))
+    return out
+
+
 # Registry. Order is report order; each entry is one rule function (section 8).
 _ALL_CHECKS = (
     check_hc003,
     check_hc007,
+    check_state_machine_vocab,
+    check_state_machine_reachability,
     check_hc_p001,
     check_hc_p002,
     check_hc_p003,

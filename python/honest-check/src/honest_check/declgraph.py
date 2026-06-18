@@ -164,3 +164,77 @@ def positional_arg_count(call_node) -> int:
 def call_location(call_node):
     """1-based (line, col) of a constructor call."""
     return line_col(call_node)
+
+
+def keyword_args(call_node, source: bytes) -> dict:
+    """{name: value_node} for a call's keyword arguments (e.g. state_machine(...))."""
+    args = call_node.child_by_field_name("arguments")
+    result: dict = {}
+    if args is None:
+        return result
+    for child in args.named_children:
+        if child.type != "keyword_argument":
+            continue
+        name = child.child_by_field_name("name")
+        value = child.child_by_field_name("value")
+        if name is not None and value is not None:
+            result[node_text(name, source)] = value
+    return result
+
+
+def vocabulary_members(vocab_call_node, source: bytes) -> set[str]:
+    """Union of all Set members across an inline vocabulary({...}) call's base types."""
+    members: set[str] = set()
+    for recognizer in vocabulary_base_types(vocab_call_node, source).values():
+        if recognizer[0] == "set":
+            members |= recognizer[1]
+    return members
+
+
+def string_list(node, source: bytes) -> list[str]:
+    """String values of a list/tuple literal (e.g. terminal=[...])."""
+    if node is None or node.type not in ("list", "tuple"):
+        return []
+    return [
+        value
+        for value in (string_value(element, source) for element in node.named_children)
+        if value is not None
+    ]
+
+
+def transition_table(dict_node, source: bytes):
+    """[(state, event, next_state)] from a transitions={(s, e): next, ...} literal."""
+    out = []
+    if dict_node is None or dict_node.type != "dictionary":
+        return out
+    for pair in dict_node.named_children:
+        if pair.type != "pair":
+            continue
+        key = pair.child_by_field_name("key")
+        value = pair.child_by_field_name("value")
+        if key is None or value is None or key.type != "tuple":
+            continue
+        parts = [string_value(element, source) for element in key.named_children]
+        if len(parts) != 2 or parts[0] is None or parts[1] is None:
+            continue
+        out.append((parts[0], parts[1], string_value(value, source)))
+    return out
+
+
+def extract_state_machines(root, source: bytes, aliases) -> list[dict]:
+    """Each state_machine(...) call as a plain dict of its declared parts (section 7c)."""
+    machines: list[dict] = []
+    for call in constructor_calls(root, source, aliases, "state_machine"):
+        kw = keyword_args(call, source)
+        machines.append(
+            {
+                "name": assigned_name(call, source),
+                "location": call_location(call),
+                "states": vocabulary_members(kw["states"], source) if "states" in kw else set(),
+                "events": vocabulary_members(kw["events"], source) if "events" in kw else set(),
+                "initial": string_value(kw["initial"], source) if "initial" in kw else None,
+                "terminal": set(string_list(kw.get("terminal"), source)),
+                "transitions": transition_table(kw.get("transitions"), source),
+            }
+        )
+    return machines
