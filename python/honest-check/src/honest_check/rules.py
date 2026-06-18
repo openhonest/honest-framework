@@ -406,8 +406,164 @@ def _enclosing_function(node):
     return None
 
 
+# Methods that mutate a container in place, and the container-literal node types.
+_MUTATING_METHODS = frozenset(
+    {
+        "append", "add", "update", "pop", "popitem", "clear", "insert",
+        "remove", "extend", "setdefault", "discard", "sort", "reverse",
+    }
+)
+_CONTAINER_LITERALS = frozenset(
+    {"dictionary", "list", "set", "list_comprehension", "set_comprehension", "dictionary_comprehension"}
+)
+
+
+def _module_assignments(root):
+    """Assignment nodes that are top-level statements of the module."""
+    out = []
+    for statement in root.children:
+        if statement.type != "expression_statement":
+            continue
+        for inner in statement.children:
+            if inner.type == "assignment":
+                out.append(inner)
+    return out
+
+
+def _subscript_base(node, source: bytes):
+    """For a subscript target `X[...]`, the base name X (if X is a plain name)."""
+    if node.type != "subscript":
+        return None
+    value = node.child_by_field_name("value")
+    if value is not None and value.type == "identifier":
+        return node_text(value, source)
+    return None
+
+
+def _mutable_module_containers(root, source: bytes) -> set[str]:
+    """Module-level dict/list/set names that are *mutated* — genuine hidden state.
+
+    A module-level container that is never mutated is a constant lookup table — the
+    dict-lookup-polymorphism pattern the framework mandates (honest-code-principles)
+    — and is exempt. Only containers written to (subscript-assign, mutating method,
+    del, or reassignment) carry state across calls and are flagged.
+    """
+    candidates: set[str] = set()
+    assign_count: dict[str, int] = {}
+    for assignment in _module_assignments(root):
+        left = assignment.child_by_field_name("left")
+        right = assignment.child_by_field_name("right")
+        if left is None or right is None or left.type != "identifier":
+            continue
+        name = node_text(left, source)
+        assign_count[name] = assign_count.get(name, 0) + 1
+        if right.type in _CONTAINER_LITERALS:
+            candidates.add(name)
+
+    mutated: set[str] = set()
+    for node in walk(root):
+        if node.type in ("assignment", "augmented_assignment"):
+            left = node.child_by_field_name("left")
+            base = _subscript_base(left, source) if left is not None else None
+            if base is not None:
+                mutated.add(base)
+        if node.type == "delete_statement":
+            for target in node.named_children:
+                base = _subscript_base(target, source)
+                if base is not None:
+                    mutated.add(base)
+        if node.type == "call":
+            fn = node.child_by_field_name("function")
+            if fn is not None and fn.type == "attribute":
+                obj = fn.child_by_field_name("object")
+                attr = fn.child_by_field_name("attribute")
+                if (
+                    obj is not None
+                    and obj.type == "identifier"
+                    and attr is not None
+                    and node_text(attr, source) in _MUTATING_METHODS
+                ):
+                    mutated.add(node_text(obj, source))
+    for name, count in assign_count.items():
+        if count > 1:
+            mutated.add(name)
+    return candidates & mutated
+
+
+def _local_names(func_node, source: bytes) -> set[str]:
+    """Names bound locally in a function: parameters, assignment and for targets."""
+    names: set[str] = set()
+    params = func_node.child_by_field_name("parameters")
+    if params is not None:
+        for param in params.named_children:
+            for sub in walk(param):
+                if sub.type == "identifier":
+                    names.add(node_text(sub, source))
+                    break
+    body = func_node.child_by_field_name("body")
+    if body is not None:
+        for node in walk(body):
+            if node.type in ("assignment", "augmented_assignment"):
+                left = node.child_by_field_name("left")
+                if left is not None and left.type == "identifier":
+                    names.add(node_text(left, source))
+            if node.type == "for_statement":
+                left = node.child_by_field_name("left")
+                if left is not None:
+                    for sub in walk(left):
+                        if sub.type == "identifier":
+                            names.add(node_text(sub, source))
+    return names
+
+
+def _is_value_load(node) -> bool:
+    """True if an identifier is read as a value, not used as a name label."""
+    parent = node.parent
+    if parent is None:
+        return True
+    if parent.type == "attribute" and parent.child_by_field_name("attribute") is node:
+        return False
+    if parent.type == "keyword_argument" and parent.child_by_field_name("name") is node:
+        return False
+    return True
+
+
+def _check_global_reads(root, source: bytes, path: str, mutable: set[str]) -> list[Diagnostic]:
+    """Reads of module-level mutable state inside non-boundary functions (HC-P004)."""
+    out: list[Diagnostic] = []
+    for func in walk(root):
+        if func.type != "function_definition" or _is_boundary_function(func, source):
+            continue
+        body = func.child_by_field_name("body")
+        if body is None:
+            continue
+        local = _local_names(func, source)
+        seen: set[str] = set()
+        for node in walk(body):
+            if node.type != "identifier":
+                continue
+            name = node_text(node, source)
+            if name not in mutable or name in local or name in seen or not _is_value_load(node):
+                continue
+            seen.add(name)
+            line, col = line_col(node)
+            out.append(
+                diagnostic(
+                    "HC-P004",
+                    "error",
+                    path,
+                    line,
+                    col,
+                    f"Reads module-level mutable state '{name}' inside a non-boundary "
+                    "function. Module-level mutable state is hidden state — pass it as a "
+                    "parameter or move it into persist.",
+                )
+            )
+    return out
+
+
 def check_hc_p004(root, source: bytes, path: str) -> list[Diagnostic]:
-    """HC-P004 — I/O or non-determinism inside a non-boundary function (error)."""
+    """HC-P004 — I/O, non-determinism, or hidden module state in a non-boundary function."""
     io = IO_WATCH_LIST["python"]
     nondeterministic = NONDETERMINISTIC_WATCH_LIST["python"]
     out: list[Diagnostic] = []
@@ -433,6 +589,7 @@ def check_hc_p004(root, source: bytes, path: str) -> list[Diagnostic]:
                 "@link(boundary=True)), or it cannot be verified for purity.",
             )
         )
+    out.extend(_check_global_reads(root, source, path, _mutable_module_containers(root, source)))
     return out
 
 

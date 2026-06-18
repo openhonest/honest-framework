@@ -7,20 +7,25 @@ directly. The grammar handles live in a table keyed by language so adding a
 target language is adding a row, not branching control flow.
 """
 
+import types
+
 import tree_sitter_python as ts_python
 from tree_sitter import Language, Parser
 
-# One compiled grammar per language. Frozen at import; never reassigned.
-_LANGUAGES = {
-    "python": Language(ts_python.language()),
-}
-
-_PARSERS = {name: Parser(language) for name, language in _LANGUAGES.items()}
+# Compiled grammars are immutable. They are exposed only through a read-only
+# mapping (MappingProxyType), so there is no module-level mutable container here at
+# all. A tree-sitter Parser carries internal state, so one is built per call rather
+# than held as a shared singleton — `parse` stays free of hidden cross-call state.
+_LANGUAGES = types.MappingProxyType(
+    {
+        "python": Language(ts_python.language()),
+    }
+)
 
 
 def parse(source: bytes, language: str):
     """Parse source bytes in the named language; return the tree-sitter tree."""
-    return _PARSERS[language].parse(source)
+    return Parser(_LANGUAGES[language]).parse(source)
 
 
 def parse_python(source: bytes):
