@@ -23,12 +23,17 @@ _ALPHA = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 
 def set_members(vocabulary: dict) -> dict:
-    """Map each Set/insensitive base type to its member list."""
+    """Map each Set/insensitive base type to its member list.
+
+    Recognizers are honest-type's runtime dict shape:
+    {"kind": "set"|"insensitive", "members": frozenset} / {"kind": "predicate", "fn": ...}.
+    """
     out: dict = {}
     for name, recognizer in vocabulary.get("base_types", {}).items():
-        kind, payload = recognizer
-        if kind in ("set", "insensitive") and payload is not None:
-            out[name] = sorted(payload)
+        if recognizer.get("kind") in ("set", "insensitive"):
+            members = recognizer.get("members")
+            if members:
+                out[name] = sorted(members)
     return out
 
 
