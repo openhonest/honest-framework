@@ -295,6 +295,58 @@ def function_name(func_node, source: bytes) -> str:
     return node_text(name, source) if name is not None else "<anonymous>"
 
 
+# The declared function roles auto-generation exercises (sections HC-R001, HC-OR001).
+_ROLE_DECORATORS = frozenset({"link", "recognizer", "boundary", "helper", "orchestrator"})
+
+
+def function_role(func_node, source: bytes):
+    """The declared role of a function from its decorators, or None."""
+    parent = func_node.parent
+    if parent is None or parent.type != "decorated_definition":
+        return None
+    for child in parent.children:
+        if child.type != "decorator":
+            continue
+        expr = child.named_children[0] if child.named_children else None
+        if expr is None:
+            continue
+        if expr.type == "identifier":
+            name = node_text(expr, source)
+        elif expr.type == "call":
+            fn = expr.child_by_field_name("function")
+            name = node_text(fn, source) if fn is not None else ""
+        else:
+            name = ""
+        role = name.split(".")[-1]
+        if role in _ROLE_DECORATORS:
+            return role
+    return None
+
+
+def function_calls(func_node, source: bytes) -> set[str]:
+    """Names of functions called (by bare identifier) inside a function body."""
+    calls: set[str] = set()
+    body = func_node.child_by_field_name("body")
+    if body is None:
+        return calls
+    for node in walk(body):
+        if node.type != "call":
+            continue
+        fn = node.child_by_field_name("function")
+        if fn is not None and fn.type == "identifier":
+            calls.add(node_text(fn, source))
+    return calls
+
+
+def functions_by_name(root, source: bytes) -> dict:
+    """{function_name: function_definition node} for the module."""
+    return {
+        function_name(node, source): node
+        for node in walk(root)
+        if node.type == "function_definition"
+    }
+
+
 def defined_function_names(root, source: bytes) -> set[str]:
     """Names of every function defined in the module."""
     return {

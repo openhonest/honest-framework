@@ -65,6 +65,10 @@ Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1),
 | **Constant lookup table vs hidden state** | A module-level dict/list/set that is *never mutated* is an honest dispatch table (exempt). One that is mutated (subscript-assign, mutating method, del, reassignment) is hidden state and is flagged (HC-P004). |
 | **Suppression** | `# honest: ignore\|disable\|enable RULE` directives. A suppressed diagnostic is downgraded to `info` (visible, never dropped), so suppressions can't silently accumulate. |
 | **Conformance level** | `Core` = all construction-time rules pass; `Full` = all static-analysis rules pass; `Complete` = Full + LSP + framework-startup integration. |
+| **Role** | A function's declared kind — `@link`, `@recognizer`, `@boundary`, `@helper`, or `@orchestrator` — which determines how auto-generation exercises it. Every function must have a role or be reachable from one (HC-R001). |
+| **Orchestrator** | The root of a request/operation: it wires input I/O, chain execution, and output I/O. Orchestrators do **not** compose — one may not call another (HC-OR001); shared logic becomes a helper or a chain. |
+| **Helper** | A roled-but-internal function, exercised transitively through the roled functions that call it; must be branchless so every reachable path is exhaustively covered. |
+| **Orphan** | A function with no role that is not reachable from any roled function — auto-generation cannot reach it, so it has no test story (HC-R001). |
 
 ## Tooling
 

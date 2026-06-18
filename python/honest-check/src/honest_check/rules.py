@@ -22,6 +22,9 @@ from honest_check.declgraph import (
     extract_composed_types,
     extract_links,
     extract_state_machines,
+    function_calls,
+    function_role,
+    functions_by_name,
     keyword_args,
     link_decorator_call,
     module_assignments,
@@ -793,6 +796,73 @@ def check_state_machine_reachability(root, source: bytes, path: str) -> list[Dia
     return out
 
 
+def check_hc_r001(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-R001 — orphan function: no declared role and not reachable from a roled one.
+
+    Gated to files that declare at least one role, so plain non-framework modules are
+    not swept. Auto-generation reaches roled functions and, transitively, the helpers
+    they call; anything left over has no test story.
+    """
+    aliases = resolve_aliases(root, source)
+    functions = functions_by_name(root, source)
+    roled = {name for name, node in functions.items() if function_role(node, source) is not None}
+    if not roled:
+        return []
+    calls = {name: function_calls(node, source) for name, node in functions.items()}
+    reachable = set(roled)
+    frontier = list(roled)
+    while frontier:
+        nxt: list[str] = []
+        for caller in frontier:
+            for callee in calls.get(caller, set()):
+                if callee in functions and callee not in reachable:
+                    reachable.add(callee)
+                    nxt.append(callee)
+        frontier = nxt
+    out: list[Diagnostic] = []
+    for name, node in functions.items():
+        if name in reachable:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-R001",
+                "error",
+                path,
+                line,
+                col,
+                f"Function '{name}' has no declared role and is not called by any roled "
+                "function. Declare a role (@link / @recognizer / @boundary / @helper) or remove it.",
+            )
+        )
+    return out
+
+
+def check_hc_or001(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-OR001 — an orchestrator calls another orchestrator (error). They do not compose."""
+    functions = functions_by_name(root, source)
+    orchestrators = {
+        name for name, node in functions.items() if function_role(node, source) == "orchestrator"
+    }
+    out: list[Diagnostic] = []
+    for name in sorted(orchestrators):
+        for callee in sorted(function_calls(functions[name], source)):
+            if callee in orchestrators:
+                line, col = line_col(functions[name])
+                out.append(
+                    diagnostic(
+                        "HC-OR001",
+                        "error",
+                        path,
+                        line,
+                        col,
+                        f"Orchestrator '{name}' calls orchestrator '{callee}'. Orchestrators "
+                        "do not compose — extract shared logic as a pure helper or a chain.",
+                    )
+                )
+    return out
+
+
 def check_hc008(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC008 — a non-boundary @link performs I/O or non-deterministic work (warning).
 
@@ -1053,7 +1123,9 @@ _ALL_CHECKS = (
     check_hc008,
     check_hc009,
     check_hc011,
+    check_hc_or001,
     check_hc_p017,
+    check_hc_r001,
     check_state_machine_vocab,
     check_state_machine_reachability,
     check_hc_p001,
