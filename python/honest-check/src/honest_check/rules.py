@@ -147,10 +147,209 @@ def check_hc_p001(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+# Section 4.2 / 5.7 — framework lifecycle hooks. Their presence means behaviour is
+# wired to a hidden lifecycle instead of to server-rendered HTML / HTMX attributes.
+_LIFECYCLE_HOOKS = frozenset(
+    {
+        "useEffect",
+        "useLayoutEffect",
+        "componentDidMount",
+        "componentDidUpdate",
+        "componentWillUnmount",
+        "ngOnInit",
+        "ngOnDestroy",
+        "addEventListener",
+        "removeEventListener",
+    }
+)
+
+
+def _call_name(call_node, source: bytes) -> str:
+    """The callee name of a call: 'foo' for foo(), 'bar' for obj.bar()."""
+    fn = call_node.child_by_field_name("function")
+    if fn is None:
+        return ""
+    if fn.type == "attribute":
+        attr = fn.child_by_field_name("attribute")
+        return node_text(attr, source) if attr is not None else ""
+    return node_text(fn, source)
+
+
+def check_hc_p011(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P011 — framework lifecycle hook. Use HTMX attributes / server-rendered HTML."""
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "call":
+            continue
+        name = _call_name(node, source)
+        if name not in _LIFECYCLE_HOOKS:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P011",
+                "error",
+                path,
+                line,
+                col,
+                f"Lifecycle hook '{name}'. Use HTMX attributes or server-rendered HTML.",
+            )
+        )
+    return out
+
+
+def _class_methods(class_node):
+    """The function_definition nodes directly in a class body."""
+    body = class_node.child_by_field_name("body")
+    if body is None:
+        return []
+    return [child for child in body.children if child.type == "function_definition"]
+
+
+def _function_name(func_node, source: bytes) -> str:
+    name_node = func_node.child_by_field_name("name")
+    return node_text(name_node, source) if name_node is not None else "<anonymous>"
+
+
+def _self_attr_writes(func_node, source: bytes) -> list[str]:
+    """Attribute names assigned on `self` anywhere in a method body."""
+    writes: list[str] = []
+    for node in walk(func_node):
+        if node.type not in ("assignment", "augmented_assignment"):
+            continue
+        left = node.child_by_field_name("left")
+        if left is None:
+            continue
+        for sub in walk(left):
+            if sub.type != "attribute":
+                continue
+            obj = sub.child_by_field_name("object")
+            attr = sub.child_by_field_name("attribute")
+            if obj is None or attr is None:
+                continue
+            if node_text(obj, source) == "self":
+                writes.append(node_text(attr, source))
+    return writes
+
+
+def check_hc_p002(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P002 — class method mutates self. __init__ is a warning; others are errors."""
+    out: list[Diagnostic] = []
+    for cls in walk(root):
+        if cls.type != "class_definition":
+            continue
+        for method in _class_methods(cls):
+            if not _self_attr_writes(method, source):
+                continue
+            name = _function_name(method, source)
+            severity = "warning" if name == "__init__" else "error"
+            line, col = line_col(method)
+            out.append(
+                diagnostic(
+                    "HC-P002",
+                    severity,
+                    path,
+                    line,
+                    col,
+                    f"Method '{name}' mutates self. Use TypedDict + pure function.",
+                )
+            )
+    return out
+
+
+def check_hc_p007(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P007 — underscore-prefixed instance state set in a constructor (warning)."""
+    out: list[Diagnostic] = []
+    for cls in walk(root):
+        if cls.type != "class_definition":
+            continue
+        for method in _class_methods(cls):
+            if _function_name(method, source) != "__init__":
+                continue
+            for attr in _self_attr_writes(method, source):
+                if not attr.startswith("_"):
+                    continue
+                line, col = line_col(method)
+                out.append(
+                    diagnostic(
+                        "HC-P007",
+                        "warning",
+                        path,
+                        line,
+                        col,
+                        f"Instance state '{attr}'. Pass as parameter or use context manager.",
+                    )
+                )
+    return out
+
+
+def _direct_nonlocal_names(func_node, source: bytes) -> set[str]:
+    """Names declared `nonlocal` at the top level of a function body."""
+    names: set[str] = set()
+    body = func_node.child_by_field_name("body")
+    if body is None:
+        return names
+    for child in body.children:
+        if child.type != "nonlocal_statement":
+            continue
+        for ident in child.named_children:
+            names.add(node_text(ident, source))
+    return names
+
+
+def _rebinds_name(func_node, name: str, source: bytes) -> bool:
+    """True if `name` is the direct target of an assignment in the function."""
+    for node in walk(func_node):
+        if node.type not in ("assignment", "augmented_assignment"):
+            continue
+        left = node.child_by_field_name("left")
+        if left is None:
+            continue
+        if left.type == "identifier" and node_text(left, source) == name:
+            return True
+        if left.type in ("pattern_list", "tuple_pattern", "tuple"):
+            for sub in left.named_children:
+                if sub.type == "identifier" and node_text(sub, source) == name:
+                    return True
+    return False
+
+
+def check_hc_p016(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P016 — inner function captures an enclosing name via nonlocal and mutates it."""
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "function_definition":
+            continue
+        captured = _direct_nonlocal_names(node, source)
+        if not captured:
+            continue
+        mutated = sorted(n for n in captured if _rebinds_name(node, n, source))
+        if not mutated:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P016",
+                "error",
+                path,
+                line,
+                col,
+                f"Inner function '{_function_name(node, source)}' captures {mutated} via "
+                "nonlocal and mutates it. Closures may not carry mutable state — use pure "
+                "parameters or move state into persist.",
+            )
+        )
+    return out
+
+
 # Registry. Order is report order; each entry is one rule function (section 8).
 _ALL_CHECKS = (
     check_hc_p001,
+    check_hc_p002,
     check_hc_p003,
+    check_hc_p007,
+    check_hc_p011,
+    check_hc_p016,
 )
 
 
