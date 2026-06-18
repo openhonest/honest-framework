@@ -879,6 +879,109 @@ def check_hc_p002(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+# The canonical persist read API (honest-persist §7.4/§7.5). A guard slot whose value
+# traces to one of these is stale at commit — the cross-chain TOCTOU HC-P015 rejects.
+_PERSIST_READ_CALLS = frozenset({"persist.read", "persist.execute", "persist.query"})
+
+
+def _is_persist_read(call_node, source: bytes) -> bool:
+    return _qualified_call_name(call_node, source) in _PERSIST_READ_CALLS
+
+
+def _subscript_string_key(subscript_node, source: bytes):
+    """The string key of a `manifest['slot']` subscript target, or None."""
+    for child in subscript_node.named_children:
+        if child.type == "string":
+            return string_value(child, source)
+    return None
+
+
+def _guard_slot_names(guard_node, source: bytes) -> set[str]:
+    """Every slot('name') term reachable in a guard expression tree (honest-persist §7.5)."""
+    names: set[str] = set()
+    for node in walk(guard_node):
+        if node.type != "call" or _call_name(node, source) != "slot":
+            continue
+        args = node.child_by_field_name("arguments")
+        if args is None:
+            continue
+        for arg in args.named_children:
+            if arg.type == "string":
+                value = string_value(arg, source)
+                if value is not None:
+                    names.add(value)
+                break
+    return names
+
+
+def _persist_tainted_slots(func_node, source: bytes) -> set[str]:
+    """Manifest slots written from a persist read (directly or one hop via a local var)."""
+    body = func_node.child_by_field_name("body")
+    if body is None:
+        return set()
+    tainted_vars: set[str] = set()
+    for node in walk(body):
+        if node.type != "assignment":
+            continue
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+        if left is None or right is None or left.type != "identifier":
+            continue
+        if right.type == "call" and _is_persist_read(right, source):
+            tainted_vars.add(node_text(left, source))
+    tainted_slots: set[str] = set()
+    for node in walk(body):
+        if node.type != "assignment":
+            continue
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+        if left is None or right is None or left.type != "subscript":
+            continue
+        key = _subscript_string_key(left, source)
+        if key is None:
+            continue
+        if right.type == "call" and _is_persist_read(right, source):
+            tainted_slots.add(key)
+        elif right.type == "identifier" and node_text(right, source) in tainted_vars:
+            tainted_slots.add(key)
+    return tainted_slots
+
+
+def check_hc_p015(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P015 — a guard references a slot whose value came from a prior persist read (error)."""
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "call" or _call_name(node, source) != "guarded_mutation":
+            continue
+        guard = keyword_args(node, source).get("guard")
+        if guard is None:
+            continue
+        guard_slots = _guard_slot_names(guard, source)
+        if not guard_slots:
+            continue
+        enclosing = _enclosing_function(node)
+        if enclosing is None:
+            continue
+        stale = sorted(guard_slots & _persist_tainted_slots(enclosing, source))
+        if not stale:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P015",
+                "error",
+                path,
+                line,
+                col,
+                f"Guard references slot(s) {stale} whose value comes from a prior persist "
+                "read in the chain — a cross-chain TOCTOU; the read may be stale at commit. "
+                "Move the check into the guard via a persist-side lookup (lookup/derive/"
+                "count), or fuse the read and the write into one guarded_mutation.",
+            )
+        )
+    return out
+
+
 def check_hc_a001(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC-A001 — links declare authorizes=True but no AuthProvider is registered (warning)."""
     aliases = resolve_aliases(root, source)
@@ -1442,6 +1545,7 @@ _ALL_CHECKS = (
     check_hc011,
     check_hc_a001,
     check_hc_a002,
+    check_hc_p015,
     check_hc_or001,
     check_hc_or003,
     check_hc_p017,
