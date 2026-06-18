@@ -12,6 +12,7 @@ HC-P001 (if/elif/else dispatch). Both cite honest-check-architecture.md section 
 
 from honest_check.diagnostics import Diagnostic, diagnostic
 from honest_check.parse import first_error_node, line_col, node_text, parse_python, walk
+from honest_check.suppression import build_suppressions, is_suppressed
 
 # Section 4.2 / 5.3 — the only class bases Honest Code permits.
 _ALLOWED_CLASS_BASES = frozenset(
@@ -354,13 +355,32 @@ _ALL_CHECKS = (
 
 
 def check_source(source: str, path: str) -> list[Diagnostic]:
-    """Parse `source`, then run every registered rule. The entry point (section 1)."""
+    """Parse `source`, run every registered rule, then apply suppressions (section 1, 7)."""
     src_bytes = source.encode("utf-8")
     root = parse_python(src_bytes).root_node
     syntax = check_hc_syn(root, src_bytes, path)
     if syntax:
         return syntax
-    out: list[Diagnostic] = []
+
+    raw: list[Diagnostic] = []
     for check in _ALL_CHECKS:
-        out.extend(check(root, src_bytes, path))
+        raw.extend(check(root, src_bytes, path))
+
+    max_line = root.end_point[0] + 1
+    inline, ranges = build_suppressions(root, src_bytes, max_line)
+    out: list[Diagnostic] = []
+    for d in raw:
+        if is_suppressed(d["rule"], d["line"], inline, ranges):
+            out.append(
+                diagnostic(
+                    d["rule"],
+                    "info",
+                    d["path"],
+                    d["line"],
+                    d["col"],
+                    f"{d['rule']} suppressed by directive.",
+                )
+            )
+        else:
+            out.append(d)
     return out
