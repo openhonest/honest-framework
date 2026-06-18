@@ -452,6 +452,68 @@ def check_hc_p005(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+# Section 4.2 / 5.6 — cache decorators. A cache is a performance claim and must be
+# backed by profiling evidence, else it is unjustified hidden state.
+_CACHE_DECORATORS = frozenset({"lru_cache", "cache", "memoize", "cached_property"})
+
+
+def _decorator_name(decorator, source: bytes) -> str:
+    """Bare name of a decorator: '@functools.lru_cache(maxsize=8)' -> 'lru_cache'."""
+    body = node_text(decorator, source).lstrip("@").strip()
+    return body.split("(")[0].split(".")[-1].strip()
+
+
+def _is_profiled_comment(node, source: bytes) -> bool:
+    text = node_text(node, source)
+    return node.type == "comment" and "honest:" in text and "profiled" in text
+
+
+def _has_profiling_evidence(func_node, source: bytes) -> bool:
+    """True if the function carries @profiled or a '# honest: profiled' comment."""
+    for decorator in _decorators(func_node):
+        if _decorator_name(decorator, source) == "profiled":
+            return True
+    parent = func_node.parent
+    anchor = parent if parent is not None and parent.type == "decorated_definition" else func_node
+    # Comments between decorators (inside the definition).
+    for node in walk(anchor):
+        if _is_profiled_comment(node, source):
+            return True
+    # Comments on the lines immediately preceding the (decorated) definition.
+    sibling = anchor.prev_sibling
+    while sibling is not None and sibling.type == "comment":
+        if _is_profiled_comment(sibling, source):
+            return True
+        sibling = sibling.prev_sibling
+    return False
+
+
+def check_hc_p006(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P006 — cache decorator without profiling annotation (warning)."""
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "function_definition":
+            continue
+        cache_decorators = [
+            d for d in _decorators(node) if _decorator_name(d, source) in _CACHE_DECORATORS
+        ]
+        if not cache_decorators or _has_profiling_evidence(node, source):
+            continue
+        line, col = line_col(cache_decorators[0])
+        out.append(
+            diagnostic(
+                "HC-P006",
+                "warning",
+                path,
+                line,
+                col,
+                "Cache detected without profiling evidence. Add a @profiled annotation "
+                "or a '# honest: profiled' comment.",
+            )
+        )
+    return out
+
+
 # Registry. Order is report order; each entry is one rule function (section 8).
 _ALL_CHECKS = (
     check_hc_p001,
@@ -459,6 +521,7 @@ _ALL_CHECKS = (
     check_hc_p003,
     check_hc_p004,
     check_hc_p005,
+    check_hc_p006,
     check_hc_p007,
     check_hc_p011,
     check_hc_p016,
