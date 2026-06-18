@@ -1101,6 +1101,68 @@ def check_hc_p014(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+# Minimum shared consecutive-call run before HC-OR003 fires (section 4.2, default 3).
+_OR003_MIN_RUN = 3
+
+
+def _orchestrator_call_sequence(func_node, source: bytes) -> list[str]:
+    """The orchestrator body normalized to its ordered sequence of qualified call names."""
+    body = func_node.child_by_field_name("body")
+    if body is None:
+        return []
+    return [
+        _qualified_call_name(node, source)
+        for node in walk(body)
+        if node.type == "call" and _qualified_call_name(node, source)
+    ]
+
+
+def _longest_common_run(first: list[str], second: list[str]) -> int:
+    """Length of the longest common *contiguous* sublist of two sequences."""
+    if not first or not second:
+        return 0
+    best = 0
+    previous = [0] * (len(second) + 1)
+    for i in range(1, len(first) + 1):
+        current = [0] * (len(second) + 1)
+        for j in range(1, len(second) + 1):
+            if first[i - 1] == second[j - 1]:
+                current[j] = previous[j - 1] + 1
+                best = max(best, current[j])
+        previous = current
+    return best
+
+
+def check_hc_or003(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-OR003 — two orchestrators share a run of consecutive operations (warning, soft)."""
+    functions = functions_by_name(root, source)
+    orchestrators = {
+        name: node for name, node in functions.items() if function_role(node, source) == "orchestrator"
+    }
+    sequences = {
+        name: _orchestrator_call_sequence(node, source) for name, node in orchestrators.items()
+    }
+    out: list[Diagnostic] = []
+    for first, second in combinations(sorted(orchestrators), 2):
+        run = _longest_common_run(sequences[first], sequences[second])
+        if run < _OR003_MIN_RUN:
+            continue
+        line, col = line_col(orchestrators[first])
+        out.append(
+            diagnostic(
+                "HC-OR003",
+                "warning",
+                path,
+                line,
+                col,
+                f"Orchestrators '{first}' and '{second}' share {run} consecutive operations. "
+                "Consider extracting the shared sequence as a pure helper (if side-effect-free) "
+                "or a chain (if I/O is involved). Orchestrators are not composable (HC-OR001).",
+            )
+        )
+    return out
+
+
 def check_hc008(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC008 — a non-boundary @link performs I/O or non-deterministic work (warning).
 
@@ -1368,6 +1430,7 @@ _ALL_CHECKS = (
     check_hc_a001,
     check_hc_a002,
     check_hc_or001,
+    check_hc_or003,
     check_hc_p017,
     check_hc_r001,
     check_state_machine_vocab,
