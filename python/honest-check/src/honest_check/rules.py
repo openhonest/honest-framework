@@ -866,6 +866,43 @@ def check_hc_or001(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+def _has_except_clause(try_node) -> bool:
+    """True if a try statement catches (has an except clause), vs try/finally cleanup."""
+    return any(
+        child.type in ("except_clause", "except_group_clause") for child in try_node.children
+    )
+
+
+def check_hc_p013(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P013 — an exception is caught inside a non-boundary function (error).
+
+    Honest Code principle 'Typed Exceptions at the Boundary': business logic raises;
+    boundaries catch. A try/except in a non-boundary function swallows faults and hides
+    the caught path from the manifest. try/finally without except (cleanup) is allowed.
+    """
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "try_statement" or not _has_except_clause(node):
+            continue
+        enclosing = _enclosing_function(node)
+        if enclosing is None or _is_boundary_function(enclosing, source):
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P013",
+                "error",
+                path,
+                line,
+                col,
+                f"Function '{function_name(enclosing, source)}' catches an exception in "
+                "business logic. Let it raise and catch at the boundary (@boundary / route "
+                "handler), or return a fault as data.",
+            )
+        )
+    return out
+
+
 def check_hc_a001(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC-A001 — links declare authorizes=True but no AuthProvider is registered (warning)."""
     aliases = resolve_aliases(root, source)
@@ -1431,6 +1468,7 @@ _ALL_CHECKS = (
     check_hc_a002,
     check_hc_or001,
     check_hc_or003,
+    check_hc_p013,
     check_hc_p017,
     check_hc_r001,
     check_state_machine_vocab,
