@@ -119,7 +119,7 @@ def _recognizer(value_node, source: bytes):
 
 
 def _dictionary_arg(call_node):
-    """The first dictionary literal argument of a call, or None."""
+    """The base-types dict of a vocabulary call: positional, or a base_types= keyword."""
     args = call_node.child_by_field_name("arguments")
     if args is None:
         return None
@@ -147,6 +147,64 @@ def vocabulary_base_types(call_node, source: bytes) -> dict:
             continue
         base_types[type_name] = _recognizer(value, source)
     return base_types
+
+
+def _parse_composed(call_node, source: bytes) -> dict:
+    """A composed(name, requires={...}, captures=...) call -> its record (section 7)."""
+    kw = keyword_args(call_node, source)
+    name = None
+    args = call_node.child_by_field_name("arguments")
+    if args is not None:
+        for child in args.named_children:
+            if child.type == "string":
+                name = string_value(child, source)
+                break
+    if name is None and "name" in kw:
+        name = string_value(kw["name"], source)
+
+    requires: set[str] = set()
+    requires_node = kw.get("requires")
+    if requires_node is not None and requires_node.type == "dictionary":
+        for pair in requires_node.named_children:
+            if pair.type != "pair":
+                continue
+            key = pair.child_by_field_name("key")
+            type_name = string_value(key, source) if key is not None else None
+            if type_name is not None:
+                requires.add(type_name)
+
+    captures = None
+    captures_node = kw.get("captures")
+    if captures_node is not None:
+        if captures_node.type == "call":  # maybe("integer") -> unwrap
+            inner = captures_node.child_by_field_name("arguments")
+            if inner is not None:
+                for child in inner.named_children:
+                    if child.type == "string":
+                        captures = string_value(child, source)
+                        break
+        else:
+            captures = string_value(captures_node, source)
+
+    return {"name": name, "requires": requires, "captures": captures, "location": line_col(call_node)}
+
+
+def extract_composed_types(vocab_call, source: bytes, aliases) -> list[dict]:
+    """Composed records from a vocabulary call's composed_types=[composed(...)] list."""
+    names, _modules = aliases
+    kw = keyword_args(vocab_call, source)
+    composed_list = kw.get("composed_types")
+    out: list[dict] = []
+    if composed_list is None or composed_list.type != "list":
+        return out
+    for element in composed_list.named_children:
+        if element.type != "call":
+            continue
+        fn = element.child_by_field_name("function")
+        if fn is None or fn.type != "identifier" or names.get(node_text(fn, source)) != "composed":
+            continue
+        out.append(_parse_composed(element, source))
+    return out
 
 
 def positional_arg_count(call_node) -> int:

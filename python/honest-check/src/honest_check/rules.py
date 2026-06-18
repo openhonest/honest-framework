@@ -19,6 +19,7 @@ from honest_check.declgraph import (
     constructor_calls,
     defined_function_names,
     extract_chains,
+    extract_composed_types,
     extract_links,
     extract_state_machines,
     module_assignments,
@@ -872,6 +873,25 @@ def _risky_predicate_ops(value_node, source: bytes) -> set[str]:
     return risky
 
 
+def check_hc006(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC006 — a composed type's requires/captures names a base type not in the vocabulary."""
+    aliases = resolve_aliases(root, source)
+    out: list[Diagnostic] = []
+    for call in constructor_calls(root, source, aliases, "vocabulary"):
+        base_names = set(vocabulary_base_types(call, source).keys())
+        for composed in extract_composed_types(call, source, aliases):
+            line, col = composed["location"]
+            for required in sorted(composed["requires"]):
+                if required not in base_names:
+                    out.append(diagnostic("HC006", "error", path, line, col,
+                        f"Composed type '{composed['name']}' requires unknown base type '{required}'."))
+            captures = composed["captures"]
+            if captures is not None and captures not in base_names:
+                out.append(diagnostic("HC006", "error", path, line, col,
+                    f"Composed type '{composed['name']}' captures unknown base type '{captures}'."))
+    return out
+
+
 def check_hc009(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC009 — a predicate may throw on non-matching input (warning)."""
     aliases = resolve_aliases(root, source)
@@ -932,6 +952,7 @@ _ALL_CHECKS = (
     check_hc001,
     check_hc002,
     check_hc003,
+    check_hc006,
     check_hc007,
     check_hc009,
     check_hc011,
