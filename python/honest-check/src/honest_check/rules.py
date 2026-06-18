@@ -10,6 +10,16 @@ value-dispatch chains impossible to represent: HC-P003 (class declaration) and
 HC-P001 (if/elif/else dispatch). Both cite honest-check-architecture.md section 4.2.
 """
 
+from itertools import combinations
+
+from honest_check.declgraph import (
+    assigned_name,
+    call_location,
+    constructor_calls,
+    positional_arg_count,
+    resolve_aliases,
+    vocabulary_base_types,
+)
 from honest_check.diagnostics import Diagnostic, diagnostic
 from honest_check.parse import first_error_node, line_col, node_text, parse_python, walk
 from honest_check.suppression import build_suppressions, is_suppressed
@@ -514,8 +524,65 @@ def check_hc_p006(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+def check_hc007(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC007 — a chain() with no links cannot be tested (error, section 4.1)."""
+    aliases = resolve_aliases(root, source)
+    out: list[Diagnostic] = []
+    for call in constructor_calls(root, source, aliases, "chain"):
+        if positional_arg_count(call) != 0:
+            continue
+        line, col = call_location(call)
+        name = assigned_name(call, source) or "<anonymous>"
+        out.append(diagnostic("HC007", "error", path, line, col, f"Chain '{name}' has no links."))
+    return out
+
+
+def check_hc003(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC003 — two types in one vocabulary match the same token (section 4.1).
+
+    Set x Set overlap is decidable here (error). Predicate x Predicate cannot be
+    decided statically, so an info points to honest-test. Set x Predicate (needs
+    evaluating the predicate over the Set) is deferred to honest-test.
+    """
+    aliases = resolve_aliases(root, source)
+    out: list[Diagnostic] = []
+    for call in constructor_calls(root, source, aliases, "vocabulary"):
+        line, col = call_location(call)
+        for (name_a, rec_a), (name_b, rec_b) in combinations(
+            sorted(vocabulary_base_types(call, source).items()), 2
+        ):
+            if rec_a[0] == "set" and rec_b[0] == "set":
+                overlap = rec_a[1] & rec_b[1]
+                if overlap:
+                    out.append(
+                        diagnostic(
+                            "HC003",
+                            "error",
+                            path,
+                            line,
+                            col,
+                            f"Types '{name_a}' and '{name_b}' share values: {sorted(overlap)}.",
+                        )
+                    )
+            if rec_a[0] == "predicate" and rec_b[0] == "predicate":
+                out.append(
+                    diagnostic(
+                        "HC003",
+                        "info",
+                        path,
+                        line,
+                        col,
+                        f"Predicate types '{name_a}' and '{name_b}' may overlap — "
+                        "cannot be checked statically; verified by honest-test.",
+                    )
+                )
+    return out
+
+
 # Registry. Order is report order; each entry is one rule function (section 8).
 _ALL_CHECKS = (
+    check_hc003,
+    check_hc007,
     check_hc_p001,
     check_hc_p002,
     check_hc_p003,
