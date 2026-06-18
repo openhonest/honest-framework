@@ -1,59 +1,46 @@
-"""Tree-sitter parse layer (spec §3).
+"""Source parsing via tree-sitter — the single parsing boundary (section 3).
 
-honest-check parses with tree-sitter, one grammar stack, so the same rule
-logic ports across the framework's language implementations (Python, then
-JavaScript, Ruby, Go). Rules operate on tree-sitter nodes via the helpers
-here, never on a language-locked AST.
-
-A new language is added by registering its grammar callable in `_GRAMMARS`;
-the traversal helpers are language-agnostic.
+honest-check reads abstract syntax trees, never executes application code. This
+module owns the tree-sitter handle and the small set of node helpers the rules
+share, so rule modules depend on these helpers rather than on tree-sitter
+directly. The grammar handles live in a table keyed by language so adding a
+target language is adding a row, not branching control flow.
 """
-from __future__ import annotations
 
-from typing import Iterator
+import tree_sitter_python as ts_python
+from tree_sitter import Language, Parser
 
-import tree_sitter_python
-from tree_sitter import Language, Node, Parser
-
-# language name -> zero-arg callable returning the grammar pointer
-_GRAMMARS = {
-    "python": tree_sitter_python.language,
+# One compiled grammar per language. Frozen at import; never reassigned.
+_LANGUAGES = {
+    "python": Language(ts_python.language()),
 }
 
-_LANGUAGES: dict[str, Language] = {}   # lazy cache, built on first use
+_PARSERS = {name: Parser(language) for name, language in _LANGUAGES.items()}
 
 
-def _language(name: str) -> Language:
-    cached = _LANGUAGES.get(name)
-    if cached is not None:
-        return cached
-    grammar = _GRAMMARS.get(name)
-    if grammar is None:
-        raise ValueError(
-            f"no tree-sitter grammar registered for language {name!r}; "
-            f"known: {sorted(_GRAMMARS)}"
-        )
-    lang = Language(grammar())
-    _LANGUAGES[name] = lang
-    return lang
+def parse(source: bytes, language: str):
+    """Parse source bytes in the named language; return the tree-sitter tree."""
+    return _PARSERS[language].parse(source)
 
 
-def parse(source: str, language: str = "python"):
-    """Parse source text into a tree-sitter tree."""
-    parser = Parser(_language(language))
-    return parser.parse(source.encode("utf-8"))
+def parse_python(source: bytes):
+    """Convenience wrapper for the Python grammar."""
+    return parse(source, "python")
 
 
-def source_bytes(source: str) -> bytes:
-    return source.encode("utf-8")
+def node_text(node, source: bytes) -> str:
+    """The source slice a node spans, decoded as UTF-8."""
+    return source[node.start_byte : node.end_byte].decode("utf-8", "replace")
 
 
-def node_text(node: Node, src: bytes) -> str:
-    return src[node.start_byte:node.end_byte].decode("utf-8", "replace")
+def line_col(node) -> tuple[int, int]:
+    """1-based (line, column) for a node's start, per section 6.1."""
+    row, col = node.start_point
+    return row + 1, col + 1
 
 
-def descendants(node: Node) -> Iterator[Node]:
-    """Pre-order traversal of node and all its descendants."""
+def walk(node):
+    """Yield every node in the subtree, depth-first, parents before children."""
     stack = [node]
     while stack:
         current = stack.pop()
@@ -61,23 +48,9 @@ def descendants(node: Node) -> Iterator[Node]:
         stack.extend(reversed(current.children))
 
 
-def find_by_type(node: Node, type_name: str) -> list[Node]:
-    return [n for n in descendants(node) if n.type == type_name]
-
-
-def named_children_of_type(node: Node, type_name: str) -> list[Node]:
-    return [c for c in node.named_children if c.type == type_name]
-
-
-def has_syntax_error(tree) -> bool:
-    return tree.root_node.has_error
-
-
-def line_of(node: Node) -> int:
-    """1-based line number of a node's start."""
-    return node.start_point[0] + 1
-
-
-def col_of(node: Node) -> int:
-    """1-based column of a node's start."""
-    return node.start_point[1] + 1
+def first_error_node(root):
+    """The first ERROR or MISSING node in the tree, or None if the tree is clean."""
+    for node in walk(root):
+        if node.is_error or node.is_missing:
+            return node
+    return None

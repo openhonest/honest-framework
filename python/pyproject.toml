@@ -1,0 +1,12 @@
+[project]
+name = "honest-workspace"
+version = "0"
+description = "uv workspace root for the Honest Framework Python reference implementation."
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv.workspace]
+members = ["honest-*"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"

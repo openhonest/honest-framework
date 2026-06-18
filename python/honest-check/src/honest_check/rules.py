@@ -1,160 +1,167 @@
-"""Rule checks over tree-sitter nodes (spec §4).
+"""Rule registry and the check_source entry point (sections 4, 8).
 
-Each rule is a pure function (root_node, source_bytes, path) -> list[Diagnostic].
-Operating on tree-sitter nodes (not a language-locked AST) is what lets the
-same rule logic port to JavaScript, Ruby, and Go.
+Each rule is a pure function `check(root_node, source_bytes, path) -> list[Diagnostic]`.
+Rules are registered in `_ALL_CHECKS`; `check_source` parses once, short-circuits on
+a syntax error (HC-SYN), then runs every registered rule. New rules are added by
+writing the function and appending it to the registry — a row, not a branch.
 
-This unit covers the principle rules that were already implemented, re-founded
-on tree-sitter: HC-P003 (class declaration), HC-P001 (if/elif dispatch chain),
-HC-P014 (catch-all recognizer), plus HC-SYN (syntax error). Construction-time
-and the remaining static rules are added in subsequent units.
+This unit implements the two structural rules that make class-based smuggling and
+value-dispatch chains impossible to represent: HC-P003 (class declaration) and
+HC-P001 (if/elif/else dispatch). Both cite honest-check-architecture.md section 4.2.
 """
-from __future__ import annotations
 
-from collections import Counter
+from honest_check.diagnostics import Diagnostic, diagnostic
+from honest_check.parse import first_error_node, line_col, node_text, parse_python, walk
 
-from honest_check.auth_rules import AUTH_CHECKS
-from honest_check.binding_rules import BINDING_CHECKS
-from honest_check.construction_rules import CONSTRUCTION_CHECKS
-from honest_check.io_rules import IO_CHECKS
-from honest_check.link_rules import LINK_CHECKS
-from honest_check.principle_rules import PRINCIPLE_CHECKS
-from honest_check.role_rules import ROLE_CHECKS
-from honest_check.sm_rules import SM_CHECKS
-from honest_check.suppression import is_suppressed, parse_suppressions
-from honest_check.diagnostics import Diagnostic, aggregate_diagnostics, diagnostic
-from honest_check.parse import (
-    col_of,
-    find_by_type,
-    has_syntax_error,
-    line_of,
-    node_text,
-    parse,
-    source_bytes,
+# Section 4.2 / 5.3 — the only class bases Honest Code permits.
+_ALLOWED_CLASS_BASES = frozenset(
+    {"TypedDict", "Protocol", "ABC", "Exception", "BaseException", "Error"}
 )
 
-# Spec §4.1 / §5.3: the only approved bases for a class definition.
-_ALLOWED_BASES = frozenset({
-    "TypedDict", "Protocol", "ABC", "Exception", "BaseException", "Error",
-})
+# Minimum branch count for HC-P001 to consider an if-chain a dispatch (section 4.2).
+_DISPATCH_BRANCH_THRESHOLD = 3
 
 
-# --- HC-P003: class declaration -------------------------------------------
+def check_hc_syn(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-SYN — source does not parse. Short-circuits all other rules."""
+    if not root.has_error:
+        return []
+    node = first_error_node(root)
+    line, col = line_col(node) if node is not None else (1, 1)
+    return [
+        diagnostic("HC-SYN", "error", path, line, col, "Source does not parse.")
+    ]
 
 
-def _base_tail(node, src: bytes) -> str:
-    """The tail identifier of a base expression: `a.b.C` -> "C", `G[T]` -> "G"."""
-    if node.type == "identifier":
-        return node_text(node, src)
-    if node.type == "attribute":
-        attr = node.child_by_field_name("attribute")
-        return node_text(attr, src) if attr is not None else node_text(node, src)
-    if node.type == "subscript":
-        value = node.child_by_field_name("value")
-        return _base_tail(value, src) if value is not None else node_text(node, src)
-    return node_text(node, src)
+def _simple_base_name(text: str) -> str:
+    """Reduce a base expression to its bare name: 'typing.Protocol' -> 'Protocol'."""
+    return text.split("[")[0].split(".")[-1].strip()
 
 
-def check_hc_p003(root, src: bytes, path: str) -> list[Diagnostic]:
+def _class_base_names(class_node, source: bytes) -> list[str]:
+    """Names of a class's explicit bases, ignoring keyword args like total=False."""
+    supers = class_node.child_by_field_name("superclasses")
+    if supers is None:
+        return []
+    names = []
+    for child in supers.named_children:
+        if child.type == "subscript":
+            value = child.child_by_field_name("value")
+            names.append(node_text(value, source) if value is not None else "")
+        if child.type in ("identifier", "attribute"):
+            names.append(node_text(child, source))
+    return names
+
+
+def check_hc_p003(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P003 — class declaration (bare class, or inheritance from a non-approved base)."""
     out: list[Diagnostic] = []
-    for cls in find_by_type(root, "class_definition"):
-        name_node = cls.child_by_field_name("name")
-        name = node_text(name_node, src) if name_node is not None else "<class>"
-        supers = cls.child_by_field_name("superclasses")
-        if supers is None:
-            out.append(diagnostic(
-                "HC-P003", "error",
-                f"Class '{name}' has no declared base. Honest Code permits class "
-                "definitions only as subclasses of TypedDict, Protocol, ABC, or a "
-                "declared Exception. Use a TypedDict or a pure function.",
-                path, line_of(cls), col_of(cls)))
+    for node in walk(root):
+        if node.type != "class_definition":
             continue
-        for base in supers.named_children:
-            if base.type == "keyword_argument":
-                continue   # metaclass=... etc., not inheritance
-            tail = _base_tail(base, src)
-            if tail not in _ALLOWED_BASES:
-                out.append(diagnostic(
-                    "HC-P003", "error",
-                    f"Class '{name}' inherits from '{tail}'. "
-                    "Use composition over inheritance.",
-                    path, line_of(cls), col_of(cls)))
+        name_node = node.child_by_field_name("name")
+        name = node_text(name_node, source) if name_node is not None else "<anonymous>"
+        line, col = line_col(node)
+        bases = _class_base_names(node, source)
+        if not bases:
+            out.append(
+                diagnostic(
+                    "HC-P003",
+                    "error",
+                    path,
+                    line,
+                    col,
+                    f"Class '{name}' has no declared base. Honest Code permits class "
+                    "definitions only as subclasses of TypedDict, Protocol, ABC, or a "
+                    "declared Exception. Use a TypedDict for data shapes or a pure function.",
+                )
+            )
+            continue
+        for base in bases:
+            if _simple_base_name(base) not in _ALLOWED_CLASS_BASES:
+                out.append(
+                    diagnostic(
+                        "HC-P003",
+                        "error",
+                        path,
+                        line,
+                        col,
+                        f"Class '{name}' inherits from '{base}'. "
+                        "Use composition over inheritance.",
+                    )
+                )
     return out
 
 
-# --- HC-P001: if/elif/else dispatch chain ---------------------------------
-
-
-def _equality_var(cond, src: bytes) -> str | None:
-    """If cond is `<identifier> == <literal>`, return the identifier name."""
-    if cond is None or cond.type != "comparison_operator":
+def _equality_target(condition, source: bytes) -> str | None:
+    """If `condition` is `IDENT == value`, return IDENT's text; else None."""
+    if condition.type != "comparison_operator":
         return None
-    if not any(c.type == "==" for c in cond.children):
+    if not any(child.type == "==" for child in condition.children):
         return None
-    left = cond.child(0)
-    if left is None or left.type != "identifier":
+    operands = condition.named_children
+    if len(operands) < 2:
         return None
-    return node_text(left, src)
+    left = operands[0]
+    if left.type != "identifier":
+        return None
+    return node_text(left, source)
 
 
-def check_hc_p001(root, src: bytes, path: str) -> list[Diagnostic]:
+def _if_chain_conditions(if_node):
+    """Every condition guarding a branch of an if-statement: the if plus each elif."""
+    conditions = [if_node.child_by_field_name("condition")]
+    for child in if_node.children:
+        if child.type == "elif_clause":
+            conditions.append(child.child_by_field_name("condition"))
+    return [c for c in conditions if c is not None]
+
+
+def check_hc_p001(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P001 — if/elif/else chain dispatching on a single value. Use a dict table."""
     out: list[Diagnostic] = []
-    for if_node in find_by_type(root, "if_statement"):
-        conditions = [if_node.child_by_field_name("condition")]
-        for child in if_node.children:
-            if child.type == "elif_clause":
-                conditions.append(child.child_by_field_name("condition"))
-        variables = [v for v in (_equality_var(c, src) for c in conditions) if v]
-        if not variables:
+    for node in walk(root):
+        if node.type != "if_statement":
             continue
-        top_var, count = Counter(variables).most_common(1)[0]
-        if count >= 3:
-            out.append(diagnostic(
-                "HC-P001", "error",
-                f"if/elif/else chain dispatches on '{top_var}' across {count} "
-                "branches — use a dict lookup. See honest-code-principles.md §3.",
-                path, line_of(if_node), col_of(if_node)))
+        targets = [
+            t
+            for t in (_equality_target(c, source) for c in _if_chain_conditions(node))
+            if t is not None
+        ]
+        if len(targets) < _DISPATCH_BRANCH_THRESHOLD:
+            continue
+        if len(set(targets)) != 1:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P001",
+                "error",
+                path,
+                line,
+                col,
+                "if/elif/else chain dispatches on value — use dict lookup. "
+                "See honest-code-principles.md §3.",
+            )
+        )
     return out
 
 
-# --- Registry + entry point -----------------------------------------------
-
-_ALL_CHECKS = [
-    check_hc_p003,
+# Registry. Order is report order; each entry is one rule function (section 8).
+_ALL_CHECKS = (
     check_hc_p001,
-    *PRINCIPLE_CHECKS,
-    *IO_CHECKS,
-    *CONSTRUCTION_CHECKS,
-    *SM_CHECKS,
-    *BINDING_CHECKS,
-    *LINK_CHECKS,
-    *ROLE_CHECKS,
-    *AUTH_CHECKS,
-]
+    check_hc_p003,
+)
 
 
-def check_source(source: str, path: str = "<source>"):
-    """Parse and check one source string. Returns an aggregated CheckReport."""
-    src = source_bytes(source)
-    tree = parse(source)
-    if has_syntax_error(tree):
-        errors = find_by_type(tree.root_node, "ERROR")
-        line = line_of(errors[0]) if errors else 1
-        return aggregate_diagnostics([diagnostic(
-            "HC-SYN", "error", "source has a syntax error", path, line)])
-    diagnostics: list[Diagnostic] = []
+def check_source(source: str, path: str) -> list[Diagnostic]:
+    """Parse `source`, then run every registered rule. The entry point (section 1)."""
+    src_bytes = source.encode("utf-8")
+    root = parse_python(src_bytes).root_node
+    syntax = check_hc_syn(root, src_bytes, path)
+    if syntax:
+        return syntax
+    out: list[Diagnostic] = []
     for check in _ALL_CHECKS:
-        diagnostics.extend(check(tree.root_node, src, path))
-
-    # Apply suppression (spec §7): a suppressed diagnostic becomes an info so
-    # the suppression stays visible rather than vanishing.
-    supp = parse_suppressions(tree.root_node, src)
-    final: list[Diagnostic] = []
-    for d in diagnostics:
-        if is_suppressed(d["rule_id"], d["line"], supp):
-            final.append(diagnostic(
-                d["rule_id"], "info", f"{d['rule_id']} suppressed",
-                path, d["line"], d["col"]))
-        else:
-            final.append(d)
-    return aggregate_diagnostics(final)
+        out.extend(check(root, src_bytes, path))
+    return out
