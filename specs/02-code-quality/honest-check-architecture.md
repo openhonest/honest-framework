@@ -24,9 +24,9 @@ Every HC rule is a precondition for auto-generation. Each rule, when it fires, n
 | HC006, HC007 | Cannot generate composed-type or chain tests — references unresolved or chain empty |
 | HC-SM01/02/05/06 | Cannot generate exhaustive state machine tests — state/event/field space incomplete |
 | HC-P001 | Cannot enumerate dispatch paths — branches are not data |
-| HC-P002, HC-P003, HC-P010 | Cannot verify purity — hidden state in class, inheritance, non-serializable data |
+| HC-P003, HC-P010 | Cannot verify purity — no classes (inheritance), non-serializable data |
+| HC-P002 | Cannot verify the caught path — catching in business logic hides faults from the manifest |
 | HC-P004, HC008 | Cannot verify boundary isolation — I/O outside declared boundaries |
-| HC-P013 | Cannot verify the caught path — catching in business logic hides faults from the manifest |
 | HC-P014 | Cannot distinguish slots — recognizer reuse collapses semantic roles |
 | HC-P015 | Cannot verify serializable correctness — guard references stale provenance |
 | HC-P016 | Cannot verify purity — closure carries mutable state |
@@ -410,7 +410,7 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-SM03 | Warning | ✓ | Unreachable state |
 | HC-SM04 | Warning | ✓ | Dead state (no outgoing transitions) |
 | HC-P001 | Error | ✓ | if/elif/else dispatch chain |
-| HC-P002 | Error | ✓ | Class with mutating methods |
+| HC-P002 | Error | ✓ | Exception caught in non-boundary function |
 | HC-P003 | Error | ✓ | Inheritance from non-framework base |
 | HC-P004 | Error | ✓ | I/O inside non-boundary function |
 | HC-P005 | Warning | ✓ | isinstance() / type() in business logic |
@@ -418,7 +418,6 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-P007 | Warning | ✓ | Instance state in constructor |
 | HC-P010 | Error | ✓ | Non-serializable return value |
 | HC-P011 | Error | ✓ | Framework lifecycle hook |
-| HC-P013 | Error | ✓ | Exception caught in non-boundary function |
 | HC-P014 | Error | ✓ | Recognizer reused across slots |
 | HC-P015 | Error | ✓ | Cross-chain TOCTOU in guard expression |
 | HC-P016 | Error | ✓ | Nonlocal closure over mutable state |
@@ -700,20 +699,27 @@ FUNCTION check_HC_P001(ast):
 
 Detection: three or more string/enum equality tests on the same variable, e.g. `if x == "a": ... elif x == "b": ... elif x == "c":`.
 
-#### HC-P002 — Class with mutating methods
+#### HC-P002 — Exception caught in non-boundary function
+
+Honest Code principle *Typed Exceptions at the Boundary*: business logic does not catch. Functions raise; the boundary (route handler, supervisor, or any `@boundary` / `@link(boundary=True)` function) catches, inspects the typed exception, and maps it to a response. A `try`/`except` inside a non-boundary function is a structural violation — it swallows faults, hides control flow inside the raise/catch pair, and produces a result auto-generation cannot verify, because the caught path is invisible to the manifest. Faults inside business logic must be **data** (rejections, faults), not exceptions.
+
+> **Note.** This rule was formerly "class with mutating methods." That rule was redundant: Honest Code admits no classes (HC-P003 permits only TypedDict / Protocol / ABC / Exception bases, none of which carry mutating behaviour), so there is no "class with mutating methods" to police. The poka-yoke inventory always assigned HC-P002 to *typed faults at the boundary*; the rule now matches the inventory.
 
 ```
 FUNCTION check_HC_P002(ast):
-    FOR EACH class_def IN ast.all_classes:
-        FOR EACH method IN class_def.methods:
-            IF method assigns to self.*:
-                severity ← "warning" if method.name = "__init__" else "error"
-                EMIT diagnostic(severity, HC-P002, method.location,
-                    f"Method '{method.name}' mutates self. "
-                    "Use TypedDict + pure function.")
+    FOR EACH function_def IN ast.all_functions:
+        IF function_def is a boundary (decorated @boundary or @link(boundary=True)):
+            CONTINUE
+        FOR EACH try_stmt IN function_def.body:
+            IF try_stmt has an except clause:
+                EMIT error(HC-P002, try_stmt.location,
+                    f"Function '{function_def.name}' catches an exception in business "
+                    "logic. Let the function raise; catch at the boundary (@boundary / "
+                    "route handler), or return a fault as data. A `try`/`finally` with "
+                    "no `except` is permitted for cleanup, but prefer a context manager.")
 ```
 
-`__init__` that only sets immutable values from parameters is a warning. All other mutating methods are errors.
+A `try` with only a `finally` (cleanup, no `except`) is not a catch and does not fire HC-P002, though Honest Code prefers a context manager (principle *Context Managers Over Instance State*). The rule eliminates the bug category the poka-yoke inventory names under *Typed faults at the boundary*: exception swallowing, control-flow-via-raise, and unchecked exception propagation inside business logic.
 
 #### HC-P003 — Class declaration
 
@@ -741,7 +747,7 @@ FUNCTION check_HC_P003(ast):
                     "Use composition over inheritance.")
 ```
 
-**Why this matters for the challenge:** a bare `class Foo:` is the primary smuggling vector for non-honest code. It can carry hidden state (class attributes), mutating methods (flagged by HC-P002 individually but only if mutation is present), and serve as a dispatch-via-method-resolution substitute for if/elif/else. Without the empty-bases check, a challenger could introduce a class that escapes HC-P003, hide state in it, and defeat purity/idempotency guarantees. With the check, every class that is not a data-shape declaration (TypedDict) or a typed-exception (Exception subclass) fails auto-generation and the code is rejected as dishonest.
+**Why this matters for the challenge:** a bare `class Foo:` is the primary smuggling vector for non-honest code. It can carry hidden state (class attributes and mutable instance state) and serve as a dispatch-via-method-resolution substitute for if/elif/else. Without the empty-bases check, a challenger could introduce a class that escapes HC-P003, hide state in it, and defeat purity/idempotency guarantees. With the check, every class that is not a data-shape declaration (TypedDict) or a typed-exception (Exception subclass) fails auto-generation and the code is rejected as dishonest.
 
 #### HC-P004 — I/O inside non-boundary function
 
@@ -820,35 +826,6 @@ FUNCTION check_HC_P011(ast):
                 f"Lifecycle hook '{call.name}'. "
                 "Use HTMX attributes or server-rendered HTML.")
 ```
-
-#### HC-P013 — Exception caught in non-boundary function
-
-Honest Code principle *Typed Exceptions at the Boundary*: business logic does not catch. Functions raise; the boundary (route handler, supervisor, or any `@boundary` / `@link(boundary=True)` function) catches, inspects the typed exception, and maps it to a response. A `try`/`except` inside a non-boundary function is a structural violation — it swallows faults, hides control flow inside the raise/catch pair, and produces a result that auto-generation cannot verify, because the caught path is invisible to the manifest. Faults inside business logic must be **data** (rejections, faults), not exceptions.
-
-```
-FUNCTION check_HC_P013(ast):
-    FOR EACH function_def IN ast.all_functions:
-        IF function_def is a boundary (decorated @boundary or @link(boundary=True)):
-            CONTINUE
-        FOR EACH try_stmt IN function_def.body:
-            IF try_stmt has an except clause:
-                EMIT error(HC-P013, try_stmt.location,
-                    f"Function '{function_def.name}' catches an exception in business "
-                    "logic. Let the function raise; catch at the boundary (@boundary / "
-                    "route handler), or return a fault as data. A `try`/`finally` with "
-                    "no `except` is permitted for cleanup, but prefer a context manager.")
-```
-
-A `try` with only a `finally` (cleanup, no `except`) is not a catch and does not fire HC-P013, though Honest Code prefers a context manager (principle *Context Managers Over Instance State*). The rule eliminates the bug category the poka-yoke inventory names under *Typed faults at the boundary*: exception swallowing, control-flow-via-raise, and unchecked exception propagation inside business logic.
-
-**Language equivalents:**
-
-| Language | Catch construct to detect in non-boundary functions |
-|---|---|
-| Python | `try: ... except ...:` |
-| JavaScript / TypeScript | `try { ... } catch (e) { ... }` |
-| Ruby | `begin ... rescue ... end`, or inline `rescue` |
-| Go | `recover()` inside a deferred function |
 
 #### HC-P014 — Recognizer reused across slots
 
@@ -1153,16 +1130,16 @@ The rules in section 4 are language-agnostic. This section maps each rule to its
 
 Note: Go `switch` statements are semantically dict lookups and are HC-P001 compliant. `if/else if` chains in Go are violations.
 
-### 5.2 HC-P002: Mutating Methods
+### 5.2 HC-P002: Exception Caught in Non-Boundary Function
 
-| Language | What to look for |
+| Language | Catch construct to detect in non-boundary functions |
 |---|---|
-| Python | Method assigns to `self.*` |
-| JavaScript | Method assigns to `this.*` |
-| Ruby | Method assigns to `@*` instance variables |
-| Go | Method on pointer receiver (`func (s *MyStruct)`) that assigns to `s.*` |
+| Python | `try: ... except ...:` |
+| JavaScript / TypeScript | `try { ... } catch (e) { ... }` |
+| Ruby | `begin ... rescue ... end`, or inline `rescue` |
+| Go | `recover()` inside a deferred function |
 
-Go struct methods on value receivers are not mutations and are HC-P002 compliant.
+A `try`/`finally` (or equivalent) with no catch clause is cleanup, not catching, and is compliant — though a context manager is preferred (HC-P007 / principle *Context Managers Over Instance State*). Boundary functions (`@boundary`, `@link(boundary=True)`, route handlers) may catch.
 
 ### 5.3 HC-P003: Class declaration
 
@@ -1362,7 +1339,7 @@ This ensures suppressions are visible in CI and do not silently accumulate.
 | HC-SM04 | Warning | Static | — | Dead state |
 | HC-SM05 | Error | Construction | ✓ | Initial state not in vocabulary |
 | HC-P001 | Error | Static | — | if/elif/else dispatch chain |
-| HC-P002 | Error/Warning | Static | — | Class with mutating methods |
+| HC-P002 | Error | Static | — | Exception caught in non-boundary function |
 | HC-P003 | Error | Static | — | Class declaration (inheritance or bare class) |
 | HC-P004 | Error | Static | — | I/O inside non-boundary function |
 | HC-P005 | Warning | Static | — | isinstance() in business logic |
@@ -1372,7 +1349,6 @@ This ensures suppressions are visible in CI and do not silently accumulate.
 | HC-P009 | Warning | Test | — | Chain missing .feature file (honest-test) |
 | HC-P010 | Error | Static | — | Non-serializable return value |
 | HC-P011 | Error | Static | — | Framework lifecycle hook |
-| HC-P013 | Error | Static | — | Exception caught in non-boundary function |
 | HC-P014 | Error | Static | — | Recognizer reused across slots |
 | HC-P015 | Error | Static | — | Cross-chain TOCTOU in guard expression |
 | HC-P016 | Error | Static | — | Nonlocal closure over mutable state |

@@ -112,7 +112,7 @@ Each row: the architectural decision and the bug category it makes unreachable.
 | **Flat composition over inheritance** | super() ambiguity, method override conflicts, deep-stack debugging |
 | **DATAOS (DOM as authority on state)** | Client–server state-sync bugs, Redux/store drift, shadow-copy staleness |
 | **SQL over application caches** | Cache invalidation bugs, read-your-own-writes violations |
-| **Typed faults at the boundary** (HC-P013) | Exception swallowing, control-flow-via-raise, unchecked exception propagation |
+| **Typed faults at the boundary** (HC-P002) | Exception swallowing, control-flow-via-raise, unchecked exception propagation |
 | **Bounded vocabularies → exhaustive testing** | Unknown-input bugs, edge-case miss, sampled-testing blind spots |
 | **Chain contracts** (HC001, HC002) | Interface-mismatch between components, silently-dropped fields |
 | **Guarded mutations** (HC-P015 + honest-persist §7.5) | TOCTOU, lost-update, stale-read-based writes |
