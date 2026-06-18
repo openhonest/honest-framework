@@ -26,6 +26,7 @@ Every HC rule is a precondition for auto-generation. Each rule, when it fires, n
 | HC-P001 | Cannot enumerate dispatch paths — branches are not data |
 | HC-P002, HC-P003, HC-P010 | Cannot verify purity — hidden state in class, inheritance, non-serializable data |
 | HC-P004, HC008 | Cannot verify boundary isolation — I/O outside declared boundaries |
+| HC-P013 | Cannot verify the caught path — catching in business logic hides faults from the manifest |
 | HC-P014 | Cannot distinguish slots — recognizer reuse collapses semantic roles |
 | HC-P015 | Cannot verify serializable correctness — guard references stale provenance |
 | HC-P016 | Cannot verify purity — closure carries mutable state |
@@ -417,6 +418,7 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-P007 | Warning | ✓ | Instance state in constructor |
 | HC-P010 | Error | ✓ | Non-serializable return value |
 | HC-P011 | Error | ✓ | Framework lifecycle hook |
+| HC-P013 | Error | ✓ | Exception caught in non-boundary function |
 | HC-P014 | Error | ✓ | Recognizer reused across slots |
 | HC-P015 | Error | ✓ | Cross-chain TOCTOU in guard expression |
 | HC-P016 | Error | ✓ | Nonlocal closure over mutable state |
@@ -818,6 +820,35 @@ FUNCTION check_HC_P011(ast):
                 f"Lifecycle hook '{call.name}'. "
                 "Use HTMX attributes or server-rendered HTML.")
 ```
+
+#### HC-P013 — Exception caught in non-boundary function
+
+Honest Code principle *Typed Exceptions at the Boundary*: business logic does not catch. Functions raise; the boundary (route handler, supervisor, or any `@boundary` / `@link(boundary=True)` function) catches, inspects the typed exception, and maps it to a response. A `try`/`except` inside a non-boundary function is a structural violation — it swallows faults, hides control flow inside the raise/catch pair, and produces a result that auto-generation cannot verify, because the caught path is invisible to the manifest. Faults inside business logic must be **data** (rejections, faults), not exceptions.
+
+```
+FUNCTION check_HC_P013(ast):
+    FOR EACH function_def IN ast.all_functions:
+        IF function_def is a boundary (decorated @boundary or @link(boundary=True)):
+            CONTINUE
+        FOR EACH try_stmt IN function_def.body:
+            IF try_stmt has an except clause:
+                EMIT error(HC-P013, try_stmt.location,
+                    f"Function '{function_def.name}' catches an exception in business "
+                    "logic. Let the function raise; catch at the boundary (@boundary / "
+                    "route handler), or return a fault as data. A `try`/`finally` with "
+                    "no `except` is permitted for cleanup, but prefer a context manager.")
+```
+
+A `try` with only a `finally` (cleanup, no `except`) is not a catch and does not fire HC-P013, though Honest Code prefers a context manager (principle *Context Managers Over Instance State*). The rule eliminates the bug category the poka-yoke inventory names under *Typed faults at the boundary*: exception swallowing, control-flow-via-raise, and unchecked exception propagation inside business logic.
+
+**Language equivalents:**
+
+| Language | Catch construct to detect in non-boundary functions |
+|---|---|
+| Python | `try: ... except ...:` |
+| JavaScript / TypeScript | `try { ... } catch (e) { ... }` |
+| Ruby | `begin ... rescue ... end`, or inline `rescue` |
+| Go | `recover()` inside a deferred function |
 
 #### HC-P014 — Recognizer reused across slots
 
@@ -1341,6 +1372,7 @@ This ensures suppressions are visible in CI and do not silently accumulate.
 | HC-P009 | Warning | Test | — | Chain missing .feature file (honest-test) |
 | HC-P010 | Error | Static | — | Non-serializable return value |
 | HC-P011 | Error | Static | — | Framework lifecycle hook |
+| HC-P013 | Error | Static | — | Exception caught in non-boundary function |
 | HC-P014 | Error | Static | — | Recognizer reused across slots |
 | HC-P015 | Error | Static | — | Cross-chain TOCTOU in guard expression |
 | HC-P016 | Error | Static | — | Nonlocal closure over mutable state |
