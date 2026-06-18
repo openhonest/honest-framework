@@ -263,31 +263,6 @@ def _self_attr_writes(func_node, source: bytes) -> list[str]:
     return writes
 
 
-def check_hc_p002(root, source: bytes, path: str) -> list[Diagnostic]:
-    """HC-P002 — class method mutates self. __init__ is a warning; others are errors."""
-    out: list[Diagnostic] = []
-    for cls in walk(root):
-        if cls.type != "class_definition":
-            continue
-        for method in _class_methods(cls):
-            if not _self_attr_writes(method, source):
-                continue
-            name = function_name(method, source)
-            severity = "warning" if name == "__init__" else "error"
-            line, col = line_col(method)
-            out.append(
-                diagnostic(
-                    "HC-P002",
-                    severity,
-                    path,
-                    line,
-                    col,
-                    f"Method '{name}' mutates self. Use TypedDict + pure function.",
-                )
-            )
-    return out
-
-
 def check_hc_p007(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC-P007 — underscore-prefixed instance state set in a constructor (warning)."""
     out: list[Diagnostic] = []
@@ -873,12 +848,13 @@ def _has_except_clause(try_node) -> bool:
     )
 
 
-def check_hc_p013(root, source: bytes, path: str) -> list[Diagnostic]:
-    """HC-P013 — an exception is caught inside a non-boundary function (error).
+def check_hc_p002(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P002 — an exception is caught inside a non-boundary function (error).
 
     Honest Code principle 'Typed Exceptions at the Boundary': business logic raises;
     boundaries catch. A try/except in a non-boundary function swallows faults and hides
     the caught path from the manifest. try/finally without except (cleanup) is allowed.
+    (Formerly 'class with mutating methods' — redundant under NO CLASSES / HC-P003.)
     """
     out: list[Diagnostic] = []
     for node in walk(root):
@@ -890,7 +866,7 @@ def check_hc_p013(root, source: bytes, path: str) -> list[Diagnostic]:
         line, col = line_col(node)
         out.append(
             diagnostic(
-                "HC-P013",
+                "HC-P002",
                 "error",
                 path,
                 line,
@@ -1468,7 +1444,6 @@ _ALL_CHECKS = (
     check_hc_a002,
     check_hc_or001,
     check_hc_or003,
-    check_hc_p013,
     check_hc_p017,
     check_hc_r001,
     check_state_machine_vocab,

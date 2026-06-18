@@ -6,7 +6,7 @@ the **manual** audit of honest-check's own source against each not-yet-automated
 rule. Re-run the audit whenever the source changes; promote a row to "automated"
 when its rule lands in `_ALL_CHECKS`.
 
-Automated rules (33 — the structural maximum for honest-check alone) enforce
+Automated rules (32 — the structural maximum for honest-check alone) enforce
 themselves on every self-lint (`python -m honest_check.cli src/honest_check`, exit
 0). The rows below are the manual gap (3 rules: 1 exemption, 2 N/A-and-blocked).
 

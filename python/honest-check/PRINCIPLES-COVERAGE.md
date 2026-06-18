@@ -7,13 +7,13 @@ the guard against a principle silently losing enforcement.
 | # | Principle | Enforced by | Coverage |
 |---|---|---|---|
 | 1 | Dict-Lookup Polymorphism | HC-P001 | ✅ honest-check |
-| 2 | Typed Dicts Over Classes | HC-P003, HC-P002, HC-P007, HC-P010 | ✅ honest-check |
-| 3 | Pure Functions Over Methods | HC-P002, HC-P003, HC-P004 | ✅ honest-check |
+| 2 | Typed Dicts Over Classes | HC-P003, HC-P007, HC-P010 | ✅ honest-check |
+| 3 | Pure Functions Over Methods | HC-P003, HC-P004 | ✅ honest-check |
 | 4 | I/O at the Boundary | HC-P004, HC008 | ✅ honest-check |
 | 5 | Flat Composition Over Inheritance | HC-P003, HC-OR001 | ✅ honest-check |
 | 6 | DOM as State (DATAOS) | `localStorage` etc. via IO watch list (HC-P004); Redux/Zustand/MobX | ◐ client-side — full enforcement belongs to the JS impl / honest-DOM |
 | 7 | HTML Attributes over Imperative DOM | `addEventListener` via HC-P011; querySelector/innerHTML | ◐ client-side — full enforcement belongs to the JS impl / honest-DOM |
-| 8 | **Typed Exceptions at the Boundary** | **HC-P013** | ✅ honest-check (gap closed 2026-06-18) |
+| 8 | **Typed Exceptions at the Boundary** | **HC-P002** | ✅ honest-check (gap closed 2026-06-18) |
 | 9 | SQL Over Application Caches | HC-P006 | ✅ honest-check |
 | 10 | Pure Function Assertions Over Mocks | HC-P012 | ◑ honest-test (test-time) |
 | 11 | Type Declarations Over Imperative Validation | HC-P005 | ✅ honest-check |
