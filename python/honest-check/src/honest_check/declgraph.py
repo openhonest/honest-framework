@@ -166,6 +166,128 @@ def call_location(call_node):
     return line_col(call_node)
 
 
+def module_assignments(root):
+    """Assignment nodes that are top-level statements of the module."""
+    out = []
+    for statement in root.children:
+        if statement.type != "expression_statement":
+            continue
+        for inner in statement.children:
+            if inner.type == "assignment":
+                out.append(inner)
+    return out
+
+
+def vocab_expr_type_names(node, source: bytes, vocab_defs) -> set[str]:
+    """Resolve a vocabulary expression to its set of type names.
+
+    Handles a name referencing a defined vocabulary, an inline vocabulary({...})
+    call, and a `a | b` merge (section, vocabulary merge); parenthesized too.
+    """
+    if node is None:
+        return set()
+    if node.type == "identifier":
+        return set(vocab_defs.get(node_text(node, source), set()))
+    if node.type == "call":
+        return set(vocabulary_base_types(node, source).keys())
+    if node.type == "binary_operator":
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+        return vocab_expr_type_names(left, source, vocab_defs) | vocab_expr_type_names(
+            right, source, vocab_defs
+        )
+    if node.type == "parenthesized_expression":
+        inner = node.named_children[0] if node.named_children else None
+        return vocab_expr_type_names(inner, source, vocab_defs)
+    return set()
+
+
+def build_vocabulary_definitions(root, source: bytes, aliases) -> dict:
+    """{var_name: set(type_names)} for module-level vocabulary assignments and merges."""
+    defs: dict = {}
+    for assignment in module_assignments(root):
+        left = assignment.child_by_field_name("left")
+        right = assignment.child_by_field_name("right")
+        if left is None or right is None or left.type != "identifier":
+            continue
+        defs[node_text(left, source)] = vocab_expr_type_names(right, source, defs)
+    return defs
+
+
+def _link_decorator_call(func_node, source: bytes, aliases):
+    """The @link(...) decorator call node on a function, or None."""
+    parent = func_node.parent
+    if parent is None or parent.type != "decorated_definition":
+        return None
+    names, _modules = aliases
+    for child in parent.children:
+        if child.type != "decorator":
+            continue
+        expr = child.named_children[0] if child.named_children else None
+        if expr is None or expr.type != "call":
+            continue
+        fn = expr.child_by_field_name("function")
+        if fn is not None and fn.type == "identifier" and names.get(node_text(fn, source)) == "link":
+            return expr
+    return None
+
+
+def function_name(func_node, source: bytes) -> str:
+    name = func_node.child_by_field_name("name")
+    return node_text(name, source) if name is not None else "<anonymous>"
+
+
+def defined_function_names(root, source: bytes) -> set[str]:
+    """Names of every function defined in the module."""
+    return {
+        function_name(node, source)
+        for node in walk(root)
+        if node.type == "function_definition"
+    }
+
+
+def extract_links(root, source: bytes, aliases, vocab_defs) -> dict:
+    """{func_name: {accepts, emits, boundary, location}} for each @link function."""
+    links: dict = {}
+    for node in walk(root):
+        if node.type != "function_definition":
+            continue
+        decorator = _link_decorator_call(node, source, aliases)
+        if decorator is None:
+            continue
+        kw = keyword_args(decorator, source)
+        accepts = vocab_expr_type_names(kw.get("accepts"), source, vocab_defs)
+        emits = vocab_expr_type_names(kw.get("emits"), source, vocab_defs)
+        boundary = "boundary" in kw and node_text(kw["boundary"], source) == "True"
+        links[function_name(node, source)] = {
+            "accepts": accepts,
+            "emits": emits,
+            "boundary": boundary,
+            "location": line_col(node),
+        }
+    return links
+
+
+def extract_chains(root, source: bytes, aliases) -> list[dict]:
+    """Each chain(link, ...) call as {name, links: [identifier names], location}."""
+    chains: list[dict] = []
+    for call in constructor_calls(root, source, aliases, "chain"):
+        args = call.child_by_field_name("arguments")
+        link_names = []
+        if args is not None:
+            for child in args.named_children:
+                if child.type == "identifier":
+                    link_names.append(node_text(child, source))
+        chains.append(
+            {
+                "name": assigned_name(call, source),
+                "links": link_names,
+                "location": call_location(call),
+            }
+        )
+    return chains
+
+
 def keyword_args(call_node, source: bytes) -> dict:
     """{name: value_node} for a call's keyword arguments (e.g. state_machine(...))."""
     args = call_node.child_by_field_name("arguments")

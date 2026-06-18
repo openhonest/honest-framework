@@ -14,9 +14,14 @@ from itertools import combinations
 
 from honest_check.declgraph import (
     assigned_name,
+    build_vocabulary_definitions,
     call_location,
     constructor_calls,
+    defined_function_names,
+    extract_chains,
+    extract_links,
     extract_state_machines,
+    module_assignments,
     positional_arg_count,
     resolve_aliases,
     vocabulary_base_types,
@@ -419,18 +424,6 @@ _CONTAINER_LITERALS = frozenset(
 )
 
 
-def _module_assignments(root):
-    """Assignment nodes that are top-level statements of the module."""
-    out = []
-    for statement in root.children:
-        if statement.type != "expression_statement":
-            continue
-        for inner in statement.children:
-            if inner.type == "assignment":
-                out.append(inner)
-    return out
-
-
 def _subscript_base(node, source: bytes):
     """For a subscript target `X[...]`, the base name X (if X is a plain name)."""
     if node.type != "subscript":
@@ -451,7 +444,7 @@ def _mutable_module_containers(root, source: bytes) -> set[str]:
     """
     candidates: set[str] = set()
     assign_count: dict[str, int] = {}
-    for assignment in _module_assignments(root):
+    for assignment in module_assignments(root):
         left = assignment.child_by_field_name("left")
         right = assignment.child_by_field_name("right")
         if left is None or right is None or left.type != "identifier":
@@ -797,8 +790,71 @@ def check_state_machine_reachability(root, source: bytes, path: str) -> list[Dia
     return out
 
 
+def check_hc001(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC001 — a function used in a chain has no @link vocabulary declared (error)."""
+    aliases = resolve_aliases(root, source)
+    vocab_defs = build_vocabulary_definitions(root, source, aliases)
+    links = extract_links(root, source, aliases, vocab_defs)
+    defined = defined_function_names(root, source)
+    out: list[Diagnostic] = []
+    for chain in extract_chains(root, source, aliases):
+        line, col = chain["location"]
+        for link_name in chain["links"]:
+            if link_name in links or link_name not in defined:
+                # A link, or an external/chain reference we cannot judge — skip.
+                continue
+            out.append(
+                diagnostic(
+                    "HC001",
+                    "error",
+                    path,
+                    line,
+                    col,
+                    f"Function '{link_name}' in chain has no vocabulary declared. "
+                    "Wrap with @link(accepts=..., emits=...).",
+                )
+            )
+    return out
+
+
+def check_hc002(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC002 — a link accepts types its predecessor does not emit (error)."""
+    aliases = resolve_aliases(root, source)
+    vocab_defs = build_vocabulary_definitions(root, source, aliases)
+    links = extract_links(root, source, aliases, vocab_defs)
+    out: list[Diagnostic] = []
+    for chain in extract_chains(root, source, aliases):
+        line, col = chain["location"]
+        sequence = chain["links"]
+        for index in range(1, len(sequence)):
+            previous = links.get(sequence[index - 1])
+            current = links.get(sequence[index])
+            if previous is None or current is None:
+                continue
+            emits = previous["emits"]
+            accepts = current["accepts"]
+            if not emits or not accepts:
+                continue
+            missing = accepts - emits
+            if missing:
+                out.append(
+                    diagnostic(
+                        "HC002",
+                        "error",
+                        path,
+                        line,
+                        col,
+                        f"Link '{sequence[index]}' accepts types not provided by previous "
+                        f"link '{sequence[index - 1]}': {sorted(missing)}.",
+                    )
+                )
+    return out
+
+
 # Registry. Order is report order; each entry is one rule function (section 8).
 _ALL_CHECKS = (
+    check_hc001,
+    check_hc002,
     check_hc003,
     check_hc007,
     check_state_machine_vocab,
