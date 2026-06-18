@@ -272,7 +272,7 @@ def build_vocabulary_definitions(root, source: bytes, aliases) -> dict:
     return defs
 
 
-def _link_decorator_call(func_node, source: bytes, aliases):
+def link_decorator_call(func_node, source: bytes, aliases):
     """The @link(...) decorator call node on a function, or None."""
     parent = func_node.parent
     if parent is None or parent.type != "decorated_definition":
@@ -310,7 +310,7 @@ def extract_links(root, source: bytes, aliases, vocab_defs) -> dict:
     for node in walk(root):
         if node.type != "function_definition":
             continue
-        decorator = _link_decorator_call(node, source, aliases)
+        decorator = link_decorator_call(node, source, aliases)
         if decorator is None:
             continue
         kw = keyword_args(decorator, source)

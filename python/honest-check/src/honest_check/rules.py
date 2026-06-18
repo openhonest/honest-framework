@@ -22,6 +22,8 @@ from honest_check.declgraph import (
     extract_composed_types,
     extract_links,
     extract_state_machines,
+    keyword_args,
+    link_decorator_call,
     module_assignments,
     positional_arg_count,
     resolve_aliases,
@@ -791,6 +793,100 @@ def check_state_machine_reachability(root, source: bytes, path: str) -> list[Dia
     return out
 
 
+def check_hc008(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC008 — a non-boundary @link performs I/O or non-deterministic work (warning).
+
+    The framework-tier companion to HC-P004: links are the I/O-adjacent layer, so an
+    impure link gets a warning nudging boundary=True. HC-P004 still raises the
+    principle-tier error on the offending call.
+    """
+    aliases = resolve_aliases(root, source)
+    io = IO_WATCH_LIST["python"]
+    nondeterministic = NONDETERMINISTIC_WATCH_LIST["python"]
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "function_definition":
+            continue
+        decorator = link_decorator_call(node, source, aliases)
+        if decorator is None:
+            continue
+        kw = keyword_args(decorator, source)
+        if "boundary" in kw and node_text(kw["boundary"], source) == "True":
+            continue
+        body = node.child_by_field_name("body")
+        if body is None:
+            continue
+        hits = sorted(
+            {
+                name
+                for sub in walk(body)
+                if sub.type == "call"
+                for name in [_qualified_call_name(sub, source)]
+                if matches_watchlist(name, io) or matches_watchlist(name, nondeterministic)
+            }
+        )
+        if not hits:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC008",
+                "warning",
+                path,
+                line,
+                col,
+                f"Link '{_function_name(node, source)}' may be impure: {hits}. "
+                "Add boundary=True if the I/O is intentional.",
+            )
+        )
+    return out
+
+
+_HTTP_RESPONSE_MARKERS = frozenset(
+    {
+        "Response", "JSONResponse", "HTMLResponse", "PlainTextResponse",
+        "RedirectResponse", "StreamingResponse", "FileResponse",
+    }
+)
+
+
+def check_hc_p017(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P017 — function produces HTTP output but is not a @link with emits (error)."""
+    aliases = resolve_aliases(root, source)
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "function_definition":
+            continue
+        body = node.child_by_field_name("body")
+        if body is None:
+            continue
+        marker = None
+        for sub in walk(body):
+            if sub.type == "call" and _call_name(sub, source) in _HTTP_RESPONSE_MARKERS:
+                marker = _call_name(sub, source)
+                break
+        if marker is None:
+            continue
+        decorator = link_decorator_call(node, source, aliases)
+        if decorator is not None and "emits" in keyword_args(decorator, source):
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P017",
+                "error",
+                path,
+                line,
+                col,
+                f"Function '{_function_name(node, source)}' produces HTTP output "
+                f"('{marker}') without being a declared @link with emits vocabulary. "
+                "Declare emits covering status, content-type, and body shape, or "
+                "delegate to a serializer link.",
+            )
+        )
+    return out
+
+
 def check_hc001(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC001 — a function used in a chain has no @link vocabulary declared (error)."""
     aliases = resolve_aliases(root, source)
@@ -954,8 +1050,10 @@ _ALL_CHECKS = (
     check_hc003,
     check_hc006,
     check_hc007,
+    check_hc008,
     check_hc009,
     check_hc011,
+    check_hc_p017,
     check_state_machine_vocab,
     check_state_machine_reachability,
     check_hc_p001,

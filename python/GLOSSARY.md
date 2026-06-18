@@ -33,6 +33,7 @@ Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1),
 | **classify()** | Runs recognizers over a token list → manifest. Two passes: base classification, then composition + binding resolution. |
 | **Link** | A function wrapped with `@link(accepts=, emits=, boundary=)` so it receives a typed manifest. Pure unless declared a boundary. |
 | **Chain** | An ordered list of links; the manifest flows from one to the next. A chain is itself a link (chains compose). |
+| **Serializer link** | A link that produces HTTP output (a `Response`/`JSONResponse`/etc.) and declares an `emits` vocabulary covering the protocol surface (status, content-type, body shape). Inline serialization outside such a link escapes chain-contract testing (HC-P017). |
 | **State machine** | A lookup table `(state, event) → next_state`. States and events are vocabularies; `transition()` is pure. `state_machine(states=, events=, initial=, terminal=, transitions={(s,e): next})`. |
 | **Transition** | One `(state, event) → next_state` entry in a state machine's table. |
 
