@@ -628,10 +628,27 @@ TableTarget = {
     key:    dict[String, Any]?   -- primary-key values for update/delete; null for insert
 }
 
-GuardExpression = {
-    kind:   "and" | "or" | "not" | "compare" | "exists" | "count" | "lookup",
-    ...    -- shape depends on kind
-}
+GuardExpression =                  -- a boolean-valued predicate (the full grammar is normative; see "Guard Expression DSL" below)
+    { kind: "and",     operands: [GuardExpression] }
+  | { kind: "or",      operands: [GuardExpression] }
+  | { kind: "not",     operand:  GuardExpression }
+  | { kind: "compare", left: GuardTerm, op: CompareOp, right: GuardTerm }
+  | { kind: "exists",  source: { table: String }, where: [Match] }
+  | { kind: "true" }               -- the trivial guard; structurally useless, flagged by HC-P018
+
+CompareOp = "=" | "!=" | "<" | "<=" | ">" | ">=" | "in" | "not_in"
+
+GuardTerm =                        -- a value-valued operand; its `kind` fixes its provenance class (see table below)
+    { kind: "literal", value: Scalar }                                -- provenance: constant
+  | { kind: "column",  name: String }                                 -- provenance: target_snapshot
+  | { kind: "slot",    name: String }                                 -- provenance: chain-traced (the only non-fixed class)
+  | { kind: "derive",  name: String, args: [GuardTerm] }              -- provenance: in_transaction_derivation
+  | { kind: "lookup",  name: String, args: [GuardTerm] }              -- provenance: transaction_snapshot
+  | { kind: "count",   source: { table: String }, where: [Match] }    -- provenance: transaction_snapshot
+  | { kind: "param",   name: String }                                 -- a placeholder, only inside a GuardExpressionTemplate
+
+Match  = { column: String, term: GuardTerm }
+Scalar = String | Number | Boolean | Null
 
 UpdateExpression = {
     kind:   "set"      | "insert_row" | "delete_row" | "increment" | "upsert",
@@ -739,6 +756,37 @@ WHERE user_id = $2
 ```
 
 Sole owner demote → owner_count is 1 → guard fails → `guard_failed` returned. Cannot produce an orphan under any interleaving, because the guard and the update are atomic per SSI.
+
+#### The Guard Expression DSL
+
+The guard is **data, not code** — a tagged-union value tree, identical in meaning across every language target. This is the same discipline as honest-type vocabularies: a closed set of node kinds, built by pure constructor functions, statically analysable by honest-check, exhaustively enumerable by honest-test, and compiled to a backend-specific atomic operation by the dialect. No language's exception, lambda, or object syntax appears in a guard; a guard is a value that can be serialised, compared, and inspected.
+
+A guard expression separates two layers: **predicates** (the `GuardExpression` kinds — boolean-valued: `and`/`or`/`not`/`compare`/`exists`/`true`) and **terms** (the `GuardTerm` kinds — value-valued operands of `compare`/`exists`/`count`). The kind sets are closed; an implementation that introduces a new kind is non-conformant.
+
+**Provenance — the property that makes the guard safe.** Every term carries a *provenance class* that says where its value comes from relative to the mutation's atomic scope. Provenance is the whole point: a guard is only sound if every value it tests is evaluated *inside* the same transaction that performs the write (serializable isolation, §11). A value derived *before* the transaction may be stale at commit, which is the cross-chain TOCTOU honest-check rejects (HC-P015).
+
+| Term kind | Provenance class | Evaluated where | Permitted in a guard? |
+|---|---|---|---|
+| `literal` | `constant` | n/a | Always. |
+| `column` | `target_snapshot` | the row(s) under mutation, read atomically with the write | Always. |
+| `derive` | `in_transaction_derivation` | inside the transaction (e.g. the AuthProvider's actor derivation from a token) | Always. |
+| `lookup` | `transaction_snapshot` | a registered scalar (`role_of`, `owner_count`) over the current snapshot, inside the transaction | Always. |
+| `count` | `transaction_snapshot` | an aggregate over the current snapshot, inside the transaction | Always. |
+| `slot` | **chain-traced** | a manifest slot value carried into the link | **Only if** the slot was classified at the HTTP boundary. **Forbidden** if its value is the result of a prior `persist.read()`/`persist.execute()` in the same chain. |
+
+Six of the seven term kinds have a *statically fixed* provenance that is always inside the transaction — so they are always sound. The **only** term whose safety depends on context is `slot`, and its provenance is decidable by tracing where the slot was last written in the enclosing chain. This is exactly the boundary that makes HC-P015 a pure static check rather than a runtime one.
+
+**Static-analysis contract (what honest-check consumes).** honest-check operates only on the guard value tree, never by executing it:
+
+- **HC-P015 (cross-chain TOCTOU).** Collect every `{kind: "slot"}` term reachable in the guard. For each, trace the slot's provenance in the enclosing chain. If any slot's value originates from a prior `persist.read()`/`persist.execute()` rather than from boundary classification, emit `HC-P015`. Every other term kind is statically `transaction_snapshot` / `target_snapshot` / `in_transaction_derivation` / `constant`, so it can never trip the rule. The check is therefore total and decidable.
+- **HC-A002 (authorizing link references the provider's derivation).** An `@link` declared `authorizes=True` must contain a `{kind: "derive", name: <D>}` term in its guard where `<D>` equals the registered AuthProvider's `derivation_expression` name (e.g. `"session_actor"`). Absence is `HC-A002`: actor identity is being trusted from input rather than derived in-transaction.
+- **HC-P018 (non-trivial guard, forthcoming).** A guard whose top-level predicate is `{kind: "true"}`, or an `exists`/`compare` solely over the target's own primary key with no further constraint, is structurally useless and is flagged so a developer cannot write a guarded mutation that guards nothing.
+
+**Composition with honest-auth.** An AuthProvider's `derivation_expression` is a **`GuardExpressionTemplate`**: a `GuardExpression`/`GuardTerm` tree in which some leaves are `{kind: "param", name}` placeholders. `instantiate(template, bindings)` replaces each `param` with the supplied term, yielding a concrete `GuardExpression`. The honest-auth example `GuardExpressionTemplate.lookup("session_actor", args=[Slot("token")])` denotes the template `derive("session_actor", [param("token")])`; an authorizing link composes it by binding `token → slot("token")` (the boundary-classified token slot) and `and`-ing the result into its guard. `GuardExpressionTemplate.literal(True)` denotes `{kind: "true"}` — the no-auth provider, which requires no derivation reference (HC-A002 is satisfied vacuously, HC-P018 will warn).
+
+**Language-agnostic representation.** Each language ships pure constructor functions that build the *same* value tree; only the surface idiom differs. A reference naming (any language maps these to its idiom): `and(...)`, `or(...)`, `not(g)`, `compare(left, op, right)`, `exists(table, matches)`, `truthy()`; and for terms `literal(v)`, `column(name)`, `slot(name)`, `derive(name, args)`, `lookup(name, args)`, `count(table, matches)`, `param(name)`. The constructors are total and side-effect-free; they validate kind and arity at construction (a malformed guard is a construction-time error, never a runtime surprise). Because the kind set is closed and finite, honest-test enumerates it to verify that every kind compiles correctly on every supported dialect (§11), and honest-check recognises the constructor calls the same way it recognises `vocabulary()`/`binding()`/`link()` — by alias-resolved call-site analysis, with no need to execute the guard.
+
+**Registered term names.** `derive` and `lookup` names are not free strings: they are drawn from a registry the application declares (the AuthProvider contributes its derivation name; persist-side scalars like `role_of`, `owner_count` are declared with their snapshot query and result type). A `derive`/`lookup` term naming an unregistered function is a construction-time error, which keeps the guard vocabulary closed and the provenance table exhaustive.
 
 ### 7.6 Transaction Composition
 
