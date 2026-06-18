@@ -6,18 +6,17 @@ the **manual** audit of honest-check's own source against each not-yet-automated
 rule. Re-run the audit whenever the source changes; promote a row to "automated"
 when its rule lands in `_ALL_CHECKS`.
 
-Automated rules (28) enforce themselves on every self-lint (`python -m
+Automated rules (31) enforce themselves on every self-lint (`python -m
 honest_check.cli src/honest_check`, exit 0). The rows below are the manual gap
-(7 rules remaining).
+(4 rules remaining: 1 intent, 1 exemption, 2 N/A-and-blocked).
 
 | Rule | Manual audit result |
 |---|---|
-| ~~HC004 / HC005 / HC-P014~~ | **Now AUTOMATED** (binding tier, in `_ALL_CHECKS`). No longer a manual row. |
-| **HC010** declared emission never produced | **N/A.** No `@link` declarations on our own functions; the `@link` tokens in source are detection strings/docstrings. |
-| **HC-A001** no auth provider | **N/A.** No `@link(authorizes=True)` and no `register_auth_provider()`. |
-| **HC-A002** authorizing link missing derivation | **N/A.** No authorizing links. |
-| **HC-SM06** transition writes undeclared field | **N/A.** No `state_machine()` declarations. |
-| **HC-P015** cross-chain TOCTOU guard | **N/A.** No `guarded_mutation()` / guard expressions. |
+| ~~HC004 / HC005 / HC-P014~~ | **Now AUTOMATED** (binding tier). No longer a manual row. |
+| ~~HC010 / HC-A001 / HC-A002~~ | **Now AUTOMATED** (emission + auth tier). No longer a manual row. |
+| **HC-OR003** duplication between orchestrators | **Buildable; not yet automated.** No `@orchestrator` functions (formally N/A). Manual enforcement = the no-duplication intent (see the `function_name` dedup, `git f7c02e9`). Re-audit on new helpers. |
+| **HC-SM06** transition writes undeclared field | **N/A + blocked.** No `state_machine()` declarations; rule also needs the honest-state model. |
+| **HC-P015** cross-chain TOCTOU guard | **N/A + blocked.** No `guarded_mutation()` / guard expressions; rule also needs honest-persist's guard DSL. |
 | **HC-OR003** duplication between orchestrators | **Audited — one finding, fixed.** No `@orchestrator` functions (rule formally N/A), but enforcing the underlying no-duplication intent: `function_name` was duplicated as `rules._function_name`. Removed; `rules.py` now imports `declgraph.function_name`. Re-audit on new helpers. |
 | **HC-P010** non-serializable return value | **Audited — standing exemption documented (below).** |
 

@@ -14,6 +14,7 @@ from itertools import combinations
 
 from honest_check.declgraph import (
     assigned_name,
+    authorizing_links,
     build_vocabulary_definitions,
     call_location,
     constructor_calls,
@@ -24,7 +25,6 @@ from honest_check.declgraph import (
     extract_links,
     extract_state_machines,
     extract_vocabularies,
-    vocab_binding_pairings,
     function_calls,
     function_name,
     function_role,
@@ -33,7 +33,11 @@ from honest_check.declgraph import (
     link_decorator_call,
     module_assignments,
     positional_arg_count,
+    registered_provider_signature,
     resolve_aliases,
+    string_value,
+    vocab_binding_pairings,
+    vocab_expr_type_names,
     vocabulary_base_types,
 )
 from honest_check.diagnostics import Diagnostic, diagnostic
@@ -862,6 +866,138 @@ def check_hc_or001(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+def check_hc_a001(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-A001 — links declare authorizes=True but no AuthProvider is registered (warning)."""
+    aliases = resolve_aliases(root, source)
+    links = authorizing_links(root, source, aliases)
+    if not links:
+        return []
+    if registered_provider_signature(root, source, aliases) is not None:
+        return []
+    line, col = line_col(links[0][1])
+    names = sorted(name for name, _ in links)
+    return [
+        diagnostic(
+            "HC-A001",
+            "warning",
+            path,
+            line,
+            col,
+            f"No AuthProvider registered, but these links declare authorizes=True and "
+            f"cannot be verified: {names}. Register a provider, or declare authorizes=False.",
+        )
+    ]
+
+
+def check_hc_a002(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-A002 — an authorizing link does not reference the provider's derivation (error).
+
+    The guard must derive actor identity via the registered provider's derivation
+    expression. Until honest-persist's guarded_mutation guard DSL exists, this checks
+    the link body references the derivation name; it tightens to the guard later.
+    """
+    aliases = resolve_aliases(root, source)
+    links = authorizing_links(root, source, aliases)
+    if not links:
+        return []
+    signature = registered_provider_signature(root, source, aliases)
+    if signature is None or signature == "":
+        # None: HC-A001 handles it. '': literal (no-auth) derivation — nothing to reference.
+        return []
+    out: list[Diagnostic] = []
+    for name, node in links:
+        body = node.child_by_field_name("body")
+        referenced = body is not None and any(
+            sub.type == "identifier" and node_text(sub, source) == signature
+            for sub in walk(body)
+        )
+        if referenced:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-A002",
+                "error",
+                path,
+                line,
+                col,
+                f"Link '{name}' declares authorizes=True but its guard does not reference "
+                f"the registered provider's derivation expression '{signature}'. Actor "
+                "identity must be derived inside the guard, not trusted from input.",
+            )
+        )
+    return out
+
+
+def _produced_slot_keys(func_node, source: bytes) -> set[str]:
+    """Manifest slot keys a link body writes: subscript-assign targets and dict-literal keys."""
+    keys: set[str] = set()
+    body = func_node.child_by_field_name("body")
+    if body is None:
+        return keys
+    for node in walk(body):
+        if node.type in ("assignment", "augmented_assignment"):
+            left = node.child_by_field_name("left")
+            if left is not None and left.type == "subscript":
+                for child in left.named_children:
+                    if child.type == "string":
+                        value = string_value(child, source)
+                        if value is not None:
+                            keys.add(value)
+        if node.type == "dictionary":
+            for pair in node.named_children:
+                if pair.type != "pair":
+                    continue
+                key = pair.child_by_field_name("key")
+                value = string_value(key, source) if key is not None else None
+                if value is not None:
+                    keys.add(value)
+    return keys
+
+
+def check_hc010(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC010 — a link declares emission of a type its body never produces (warning)."""
+    aliases = resolve_aliases(root, source)
+    vocab_defs = build_vocabulary_definitions(root, source, aliases)
+    bindings = extract_bindings(root, source, aliases)
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "function_definition":
+            continue
+        decorator = link_decorator_call(node, source, aliases)
+        if decorator is None:
+            continue
+        kw = keyword_args(decorator, source)
+        if "emits" not in kw:
+            continue
+        emits = vocab_expr_type_names(kw["emits"], source, vocab_defs)
+        accepts = vocab_expr_type_names(kw.get("accepts"), source, vocab_defs)
+        new_emits = emits - accepts
+        if not new_emits:
+            continue
+        binds = kw.get("binds")
+        if binds is None or binds.type != "identifier" or node_text(binds, source) not in bindings:
+            continue  # cannot reverse-map slot->type without the paired binding
+        reverse = {slot: type_name for type_name, slot in bindings[node_text(binds, source)]["table"].items()}
+        produced = {reverse[key] for key in _produced_slot_keys(node, source) if key in reverse}
+        phantom = new_emits - produced
+        if not phantom:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC010",
+                "warning",
+                path,
+                line,
+                col,
+                f"Link '{function_name(node, source)}' declares emission of types never "
+                f"produced: {sorted(phantom)}.",
+            )
+        )
+    return out
+
+
 def check_hc004(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC004 — a base type is defined in a vocabulary but never bound or composed (warning)."""
     aliases = resolve_aliases(root, source)
@@ -1225,9 +1361,12 @@ _ALL_CHECKS = (
     check_hc006,
     check_hc007,
     check_hc008,
+    check_hc010,
     check_hc_p014,
     check_hc009,
     check_hc011,
+    check_hc_a001,
+    check_hc_a002,
     check_hc_or001,
     check_hc_p017,
     check_hc_r001,

@@ -286,6 +286,84 @@ def vocab_binding_pairings(root, source: bytes, aliases):
     return pairs
 
 
+def _calls_by_name(root, source: bytes, callee: str):
+    """All call nodes whose callee is the bare identifier `callee`."""
+    out = []
+    for node in walk(root):
+        if node.type != "call":
+            continue
+        fn = node.child_by_field_name("function")
+        if fn is not None and fn.type == "identifier" and node_text(fn, source) == callee:
+            out.append(node)
+    return out
+
+
+def authorizing_links(root, source: bytes, aliases):
+    """[(func_name, func_node)] for functions decorated @link(authorizes=True)."""
+    out = []
+    for node in walk(root):
+        if node.type != "function_definition":
+            continue
+        decorator = link_decorator_call(node, source, aliases)
+        if decorator is None:
+            continue
+        kw = keyword_args(decorator, source)
+        if "authorizes" in kw and node_text(kw["authorizes"], source) == "True":
+            out.append((function_name(node, source), node))
+    return out
+
+
+def _derivation_signature(deriv_node, source: bytes) -> str:
+    """The derivation name in GuardExpressionTemplate.lookup('name', ...); '' for literal."""
+    if deriv_node.type != "call":
+        return ""
+    fn = deriv_node.child_by_field_name("function")
+    method = node_text(fn, source).split(".")[-1] if fn is not None else ""
+    if method != "lookup":
+        return ""  # .literal(...) etc. — no derivation expression to reference
+    args = deriv_node.child_by_field_name("arguments")
+    if args is None:
+        return ""
+    for child in args.named_children:
+        if child.type == "string":
+            return string_value(child, source) or ""
+    return ""
+
+
+def registered_provider_signature(root, source: bytes, aliases):
+    """The registered provider's derivation signature.
+
+    Returns None if no provider is registered; '' if registered with a literal
+    (no-auth) derivation; otherwise the derivation name authorizing links must
+    reference (e.g. 'session_actor'). Auth is a wrapper over a 3rd-party provider:
+    register_auth_provider(p) where p = AuthProvider(derivation_expression=...).
+    """
+    registrations = _calls_by_name(root, source, "register_auth_provider")
+    if not registrations:
+        return None
+    provider_vars: set[str] = set()
+    for call in registrations:
+        args = call.child_by_field_name("arguments")
+        if args is None:
+            continue
+        for child in args.named_children:
+            if child.type == "identifier":
+                provider_vars.add(node_text(child, source))
+    for assignment in module_assignments(root):
+        left = assignment.child_by_field_name("left")
+        right = assignment.child_by_field_name("right")
+        if left is None or right is None or left.type != "identifier" or right.type != "call":
+            continue
+        if node_text(left, source) not in provider_vars:
+            continue
+        fn = right.child_by_field_name("function")
+        if fn is None or node_text(fn, source).split(".")[-1] != "AuthProvider":
+            continue
+        deriv = keyword_args(right, source).get("derivation_expression")
+        return _derivation_signature(deriv, source) if deriv is not None else ""
+    return ""  # registered, but provider definition not inline
+
+
 def positional_arg_count(call_node) -> int:
     """Number of positional arguments (excludes keyword args and comments)."""
     args = call_node.child_by_field_name("arguments")
