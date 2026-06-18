@@ -6,15 +6,14 @@ the **manual** audit of honest-check's own source against each not-yet-automated
 rule. Re-run the audit whenever the source changes; promote a row to "automated"
 when its rule lands in `_ALL_CHECKS`.
 
-Automated rules (25) enforce themselves on every self-lint (`python -m
-honest_check.cli src/honest_check`, exit 0). The rows below are the manual gap.
+Automated rules (28) enforce themselves on every self-lint (`python -m
+honest_check.cli src/honest_check`, exit 0). The rows below are the manual gap
+(7 rules remaining).
 
 | Rule | Manual audit result |
 |---|---|
-| **HC004** dead vocabulary type | **N/A.** honest-check declares no `vocabulary()`; it reads vocabularies in target code. No type to leave unbound. |
-| **HC005** unused binding | **N/A.** No `binding()` declarations. |
+| ~~HC004 / HC005 / HC-P014~~ | **Now AUTOMATED** (binding tier, in `_ALL_CHECKS`). No longer a manual row. |
 | **HC010** declared emission never produced | **N/A.** No `@link` declarations on our own functions; the `@link` tokens in source are detection strings/docstrings. |
-| **HC-P014** recognizer reused across slots | **N/A.** No vocabularies/bindings declared. |
 | **HC-A001** no auth provider | **N/A.** No `@link(authorizes=True)` and no `register_auth_provider()`. |
 | **HC-A002** authorizing link missing derivation | **N/A.** No authorizing links. |
 | **HC-SM06** transition writes undeclared field | **N/A.** No `state_machine()` declarations. |

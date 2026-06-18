@@ -18,10 +18,13 @@ from honest_check.declgraph import (
     call_location,
     constructor_calls,
     defined_function_names,
+    extract_bindings,
     extract_chains,
     extract_composed_types,
     extract_links,
     extract_state_machines,
+    extract_vocabularies,
+    vocab_binding_pairings,
     function_calls,
     function_name,
     function_role,
@@ -859,6 +862,109 @@ def check_hc_or001(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+def check_hc004(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC004 — a base type is defined in a vocabulary but never bound or composed (warning)."""
+    aliases = resolve_aliases(root, source)
+    vocabularies = extract_vocabularies(root, source, aliases)
+    bindings = extract_bindings(root, source, aliases)
+    out: list[Diagnostic] = []
+    seen: set = set()
+    for vocab_var, binding_var in vocab_binding_pairings(root, source, aliases):
+        if vocab_var not in vocabularies or binding_var not in bindings:
+            continue
+        vocab = vocabularies[vocab_var]
+        table = bindings[binding_var]["table"]
+        line, col = vocab["location"]
+        for type_name in vocab["base"]:
+            in_binding = type_name in table
+            in_composed = any(
+                type_name in record["requires"] or type_name == record["captures"]
+                for record in vocab["composed"]
+            )
+            if in_binding or in_composed:
+                continue
+            key = (vocab_var, binding_var, type_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(diagnostic("HC004", "warning", path, line, col,
+                f"Type '{type_name}' defined in vocabulary '{vocab_var}' but never bound or composed."))
+    return out
+
+
+def check_hc005(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC005 — a binding entry names a type that is not in the paired vocabulary (warning)."""
+    aliases = resolve_aliases(root, source)
+    vocabularies = extract_vocabularies(root, source, aliases)
+    bindings = extract_bindings(root, source, aliases)
+    out: list[Diagnostic] = []
+    seen: set = set()
+    for vocab_var, binding_var in vocab_binding_pairings(root, source, aliases):
+        if vocab_var not in vocabularies or binding_var not in bindings:
+            continue
+        vocab = vocabularies[vocab_var]
+        binding = bindings[binding_var]
+        valid = set(vocab["base"].keys()) | vocab["composed_names"]
+        line, col = binding["location"]
+        for type_name in binding["table"]:
+            if type_name in valid:
+                continue
+            key = (vocab_var, binding_var, type_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(diagnostic("HC005", "warning", path, line, col,
+                f"Binding '{binding_var}' references type '{type_name}' not found in "
+                f"vocabulary '{vocab_var}'."))
+    return out
+
+
+def _recognizer_identity(recognizer):
+    """A hashable identity for a recognizer, or None if it cannot be compared statically."""
+    kind = recognizer[0]
+    if kind == "set":
+        return ("set", recognizer[1])
+    if kind == "ref":
+        return ("ref", recognizer[1])
+    return None  # predicates are opaque — treat each as unique, no reuse detection
+
+
+def check_hc_p014(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P014 — one recognizer is shared by types bound to different slots (field-swap risk)."""
+    aliases = resolve_aliases(root, source)
+    vocabularies = extract_vocabularies(root, source, aliases)
+    bindings = extract_bindings(root, source, aliases)
+    out: list[Diagnostic] = []
+    seen: set = set()
+    for vocab_var, binding_var in vocab_binding_pairings(root, source, aliases):
+        if vocab_var not in vocabularies or binding_var not in bindings:
+            continue
+        vocab = vocabularies[vocab_var]
+        table = bindings[binding_var]["table"]
+        line, col = vocab["location"]
+        recognizer_to_types: dict = {}
+        for type_name, recognizer in vocab["base"].items():
+            identity = _recognizer_identity(recognizer)
+            if identity is None:
+                continue
+            recognizer_to_types.setdefault(identity, []).append(type_name)
+        for identity, type_names in recognizer_to_types.items():
+            if len(type_names) < 2:
+                continue
+            slots = sorted({table[name] for name in type_names if name in table})
+            if len(slots) < 2:
+                continue
+            key = (vocab_var, binding_var, tuple(sorted(type_names)))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(diagnostic("HC-P014", "error", path, line, col,
+                f"One recognizer is shared by types {sorted(type_names)} bound to distinct "
+                f"slots {slots}. Give each slot a semantically distinct recognizer, or the "
+                "chain contract cannot catch a swap between them."))
+    return out
+
+
 def check_hc008(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC008 — a non-boundary @link performs I/O or non-deterministic work (warning).
 
@@ -1114,9 +1220,12 @@ _ALL_CHECKS = (
     check_hc001,
     check_hc002,
     check_hc003,
+    check_hc004,
+    check_hc005,
     check_hc006,
     check_hc007,
     check_hc008,
+    check_hc_p014,
     check_hc009,
     check_hc011,
     check_hc_or001,

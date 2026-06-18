@@ -15,7 +15,10 @@ A recognizer is tagged by kind so rules can reason about it without re-parsing:
 from honest_check.parse import line_col, node_text, walk
 
 _HONEST_TYPE_NAMES = frozenset(
-    {"vocabulary", "binding", "composed", "chain", "link", "predicate", "state_machine"}
+    {
+        "vocabulary", "binding", "composed", "chain", "link", "predicate",
+        "state_machine", "classify",
+    }
 )
 
 
@@ -205,6 +208,82 @@ def extract_composed_types(vocab_call, source: bytes, aliases) -> list[dict]:
             continue
         out.append(_parse_composed(element, source))
     return out
+
+
+def extract_bindings(root, source: bytes, aliases) -> dict:
+    """{var_name: {'table': {type: slot}, 'location': (line, col)}} for binding() calls."""
+    out: dict = {}
+    for call in constructor_calls(root, source, aliases, "binding"):
+        name = assigned_name(call, source)
+        if name is None:
+            continue
+        table: dict = {}
+        dict_node = _dictionary_arg(call)
+        if dict_node is not None:
+            for pair in dict_node.named_children:
+                if pair.type != "pair":
+                    continue
+                key = pair.child_by_field_name("key")
+                value = pair.child_by_field_name("value")
+                type_name = string_value(key, source) if key is not None else None
+                slot_name = string_value(value, source) if value is not None else None
+                if type_name is not None and slot_name is not None:
+                    table[type_name] = slot_name
+        out[name] = {"table": table, "location": call_location(call)}
+    return out
+
+
+def extract_vocabularies(root, source: bytes, aliases) -> dict:
+    """{var_name: {'base': {type: recognizer}, 'composed': [records], 'composed_names': set,
+    'location': (line, col)}} for vocabulary() assignments."""
+    out: dict = {}
+    for call in constructor_calls(root, source, aliases, "vocabulary"):
+        name = assigned_name(call, source)
+        if name is None:
+            continue
+        composed = extract_composed_types(call, source, aliases)
+        out[name] = {
+            "base": vocabulary_base_types(call, source),
+            "composed": composed,
+            "composed_names": {record["name"] for record in composed if record["name"]},
+            "location": call_location(call),
+        }
+    return out
+
+
+def vocab_binding_pairings(root, source: bytes, aliases):
+    """[(vocab_var, binding_var)] paired via @link(accepts=, binds=) or classify(vocab=, bind=)."""
+    pairs = []
+    for node in walk(root):
+        if node.type != "function_definition":
+            continue
+        decorator = link_decorator_call(node, source, aliases)
+        if decorator is None:
+            continue
+        kw = keyword_args(decorator, source)
+        vocab = kw.get("accepts")
+        binding = kw.get("binds")
+        if vocab is not None and vocab.type == "identifier" and binding is not None and binding.type == "identifier":
+            pairs.append((node_text(vocab, source), node_text(binding, source)))
+
+    for call in constructor_calls(root, source, aliases, "classify"):
+        kw = keyword_args(call, source)
+        vocab = kw.get("vocab")
+        binding = kw.get("bind")
+        if vocab is None or binding is None:
+            args = call.child_by_field_name("arguments")
+            positional = [
+                child
+                for child in (args.named_children if args is not None else [])
+                if child.type != "keyword_argument"
+            ]
+            if vocab is None and len(positional) >= 2:
+                vocab = positional[1]
+            if binding is None and len(positional) >= 3:
+                binding = positional[2]
+        if vocab is not None and vocab.type == "identifier" and binding is not None and binding.type == "identifier":
+            pairs.append((node_text(vocab, source), node_text(binding, source)))
+    return pairs
 
 
 def positional_arg_count(call_node) -> int:
