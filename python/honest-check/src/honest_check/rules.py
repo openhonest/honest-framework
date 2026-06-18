@@ -851,12 +851,90 @@ def check_hc002(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+# Calls that throw on input outside their expected shape (section 4.2, HC009).
+_RISKY_PREDICATE_CALLS = frozenset({"int", "float"})
+
+
+def _risky_predicate_ops(value_node, source: bytes) -> set[str]:
+    """Operations in a predicate body that can raise on non-matching input."""
+    risky: set[str] = set()
+    for node in walk(value_node):
+        if node.type == "call":
+            fn = node.child_by_field_name("function")
+            if fn is not None and fn.type == "identifier" and node_text(fn, source) in _RISKY_PREDICATE_CALLS:
+                risky.add(node_text(fn, source) + "()")
+        if node.type == "subscript":
+            risky.add("index")
+        if node.type == "binary_operator":
+            for child in node.children:
+                if child.type in ("/", "//"):
+                    risky.add("division")
+    return risky
+
+
+def check_hc009(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC009 — a predicate may throw on non-matching input (warning)."""
+    aliases = resolve_aliases(root, source)
+    out: list[Diagnostic] = []
+    for call in constructor_calls(root, source, aliases, "vocabulary"):
+        for type_name, recognizer in vocabulary_base_types(call, source).items():
+            if recognizer[0] != "predicate":
+                continue
+            risky = _risky_predicate_ops(recognizer[1], source)
+            if not risky:
+                continue
+            line, col = line_col(recognizer[1])
+            out.append(
+                diagnostic(
+                    "HC009",
+                    "warning",
+                    path,
+                    line,
+                    col,
+                    f"Predicate '{type_name}' may throw on non-matching input: "
+                    f"{sorted(risky)}. Guard the access or wrap in try/except.",
+                )
+            )
+    return out
+
+
+def check_hc011(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC011 — catch-all recognizer. Sets are bounded; predicates defer to honest-test.
+
+    A Set recognizer is bounded by construction and can never be a catch-all, so it
+    is clean. Detecting a catch-all predicate requires sampling the predicate
+    (section 4.1) — that is a runtime check, so honest-check emits an info routing
+    it to honest-test (section 4.3) rather than evaluating arbitrary code.
+    """
+    aliases = resolve_aliases(root, source)
+    out: list[Diagnostic] = []
+    for call in constructor_calls(root, source, aliases, "vocabulary"):
+        for type_name, recognizer in vocabulary_base_types(call, source).items():
+            if recognizer[0] != "predicate":
+                continue
+            line, col = line_col(recognizer[1])
+            out.append(
+                diagnostic(
+                    "HC011",
+                    "info",
+                    path,
+                    line,
+                    col,
+                    f"Catch-all check for predicate type '{type_name}' requires sampling "
+                    "and is verified by honest-test.",
+                )
+            )
+    return out
+
+
 # Registry. Order is report order; each entry is one rule function (section 8).
 _ALL_CHECKS = (
     check_hc001,
     check_hc002,
     check_hc003,
     check_hc007,
+    check_hc009,
+    check_hc011,
     check_state_machine_vocab,
     check_state_machine_reachability,
     check_hc_p001,
