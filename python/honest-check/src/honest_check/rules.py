@@ -23,6 +23,7 @@ from honest_check.declgraph import (
     extract_links,
     extract_state_machines,
     function_calls,
+    function_name,
     function_role,
     functions_by_name,
     keyword_args,
@@ -234,11 +235,6 @@ def _class_methods(class_node):
     return [child for child in body.children if child.type == "function_definition"]
 
 
-def _function_name(func_node, source: bytes) -> str:
-    name_node = func_node.child_by_field_name("name")
-    return node_text(name_node, source) if name_node is not None else "<anonymous>"
-
-
 def _self_attr_writes(func_node, source: bytes) -> list[str]:
     """Attribute names assigned on `self` anywhere in a method body."""
     writes: list[str] = []
@@ -269,7 +265,7 @@ def check_hc_p002(root, source: bytes, path: str) -> list[Diagnostic]:
         for method in _class_methods(cls):
             if not _self_attr_writes(method, source):
                 continue
-            name = _function_name(method, source)
+            name = function_name(method, source)
             severity = "warning" if name == "__init__" else "error"
             line, col = line_col(method)
             out.append(
@@ -292,7 +288,7 @@ def check_hc_p007(root, source: bytes, path: str) -> list[Diagnostic]:
         if cls.type != "class_definition":
             continue
         for method in _class_methods(cls):
-            if _function_name(method, source) != "__init__":
+            if function_name(method, source) != "__init__":
                 continue
             for attr in _self_attr_writes(method, source):
                 if not attr.startswith("_"):
@@ -362,7 +358,7 @@ def check_hc_p016(root, source: bytes, path: str) -> list[Diagnostic]:
                 path,
                 line,
                 col,
-                f"Inner function '{_function_name(node, source)}' captures {mutated} via "
+                f"Inner function '{function_name(node, source)}' captures {mutated} via "
                 "nonlocal and mutates it. Closures may not carry mutable state — use pure "
                 "parameters or move state into persist.",
             )
@@ -905,7 +901,7 @@ def check_hc008(root, source: bytes, path: str) -> list[Diagnostic]:
                 path,
                 line,
                 col,
-                f"Link '{_function_name(node, source)}' may be impure: {hits}. "
+                f"Link '{function_name(node, source)}' may be impure: {hits}. "
                 "Add boundary=True if the I/O is intentional.",
             )
         )
@@ -948,7 +944,7 @@ def check_hc_p017(root, source: bytes, path: str) -> list[Diagnostic]:
                 path,
                 line,
                 col,
-                f"Function '{_function_name(node, source)}' produces HTTP output "
+                f"Function '{function_name(node, source)}' produces HTTP output "
                 f"('{marker}') without being a declared @link with emits vocabulary. "
                 "Declare emits covering status, content-type, and body shape, or "
                 "delegate to a serializer link.",
