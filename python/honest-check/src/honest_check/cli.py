@@ -6,6 +6,11 @@ codes CI depends on: 0 = no errors, 1 = one or more errors, 2 = internal failure
 All impurity lives here, at the edge; the analysis underneath is pure.
 """
 
+# This module IS the I/O boundary (section 2.1): it reads files and writes stdout
+# by design. Once honest-type ships the @boundary decorator these functions will
+# carry it; until then the boundary is declared here. (section 7.2)
+# honest: disable HC-P004
+
 import sys
 from pathlib import Path
 

@@ -13,6 +13,11 @@ HC-P001 (if/elif/else dispatch). Both cite honest-check-architecture.md section 
 from honest_check.diagnostics import Diagnostic, diagnostic
 from honest_check.parse import first_error_node, line_col, node_text, parse_python, walk
 from honest_check.suppression import build_suppressions, is_suppressed
+from honest_check.watchlists import (
+    IO_WATCH_LIST,
+    NONDETERMINISTIC_WATCH_LIST,
+    matches_watchlist,
+)
 
 # Section 4.2 / 5.3 — the only class bases Honest Code permits.
 _ALLOWED_CLASS_BASES = frozenset(
@@ -343,11 +348,117 @@ def check_hc_p016(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+def _dotted_name(node, source: bytes) -> str:
+    """The dotted path of a name/attribute expression: 'os.path.join', 'print', or ''."""
+    if node.type == "identifier":
+        return node_text(node, source)
+    if node.type == "attribute":
+        obj = node.child_by_field_name("object")
+        attr = node.child_by_field_name("attribute")
+        name = node_text(attr, source) if attr is not None else ""
+        prefix = _dotted_name(obj, source) if obj is not None else ""
+        return f"{prefix}.{name}" if prefix else name
+    return ""
+
+
+def _qualified_call_name(call_node, source: bytes) -> str:
+    """The dotted callee of a call expression, or '' if the callee is not a name path."""
+    fn = call_node.child_by_field_name("function")
+    return _dotted_name(fn, source) if fn is not None else ""
+
+
+def _decorators(func_node):
+    """Decorator nodes attached to a function (via its decorated_definition parent)."""
+    parent = func_node.parent
+    if parent is None or parent.type != "decorated_definition":
+        return []
+    return [child for child in parent.children if child.type == "decorator"]
+
+
+def _is_boundary_function(func_node, source: bytes) -> bool:
+    """A function is a boundary if decorated @boundary or @link(..., boundary=True)."""
+    for decorator in _decorators(func_node):
+        compact = node_text(decorator, source).replace(" ", "")
+        if compact == "@boundary" or compact.startswith("@boundary("):
+            return True
+        if "boundary=True" in compact:
+            return True
+    return False
+
+
+def _enclosing_function(node):
+    """The nearest enclosing function_definition, or None if at module level."""
+    current = node.parent
+    while current is not None:
+        if current.type == "function_definition":
+            return current
+        current = current.parent
+    return None
+
+
+def check_hc_p004(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P004 — I/O or non-determinism inside a non-boundary function (error)."""
+    io = IO_WATCH_LIST["python"]
+    nondeterministic = NONDETERMINISTIC_WATCH_LIST["python"]
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "call":
+            continue
+        name = _qualified_call_name(node, source)
+        if not (matches_watchlist(name, io) or matches_watchlist(name, nondeterministic)):
+            continue
+        enclosing = _enclosing_function(node)
+        if enclosing is None or _is_boundary_function(enclosing, source):
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P004",
+                "error",
+                path,
+                line,
+                col,
+                f"Call '{name}' performs I/O or non-deterministic work inside a "
+                "non-boundary function. Move it to a boundary (decorate @boundary or "
+                "@link(boundary=True)), or it cannot be verified for purity.",
+            )
+        )
+    return out
+
+
+def check_hc_p005(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P005 — isinstance()/type() used outside a boundary function (warning)."""
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "call":
+            continue
+        name = _qualified_call_name(node, source)
+        if name not in ("isinstance", "type"):
+            continue
+        enclosing = _enclosing_function(node)
+        if enclosing is not None and _is_boundary_function(enclosing, source):
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P005",
+                "warning",
+                path,
+                line,
+                col,
+                f"{name}() check in business logic. Consider a vocabulary declaration instead.",
+            )
+        )
+    return out
+
+
 # Registry. Order is report order; each entry is one rule function (section 8).
 _ALL_CHECKS = (
     check_hc_p001,
     check_hc_p002,
     check_hc_p003,
+    check_hc_p004,
+    check_hc_p005,
     check_hc_p007,
     check_hc_p011,
     check_hc_p016,
