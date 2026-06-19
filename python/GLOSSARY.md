@@ -75,6 +75,15 @@ Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1),
 | **Helper** | A roled-but-internal function, exercised transitively through the roled functions that call it; must be branchless so every reachable path is exhaustively covered. |
 | **Orphan** | A function with no role that is not reachable from any roled function — auto-generation cannot reach it, so it has no test story (HC-R001). |
 
+## honest-test (the auto-generated verification layer)
+
+| Term | Definition |
+|---|---|
+| **honest-test** | The behavioural half of the gate. It runs the suite honest-check confirmed is generatable: every test case is derived from declarations, never hand-written. *Defining is testing.* |
+| **Set enumeration** | The full cartesian product of a vocabulary's bounded Set types (section 3.2) — exhaustive, no sampling. A maybe-bound type adds Nothing. `enumerate_sets(vocab, bind)`. |
+| **Adversarial neighbours** | For every Set member, the near-miss inputs that must be rejected (section 3.5): edit-distance-1, Unicode confusables, control characters, length extensions, encoding variants. `adversarial_neighbors(value)`. A neighbour that is accepted is a recognizer bug. |
+| **Predicate classification** | Reading a predicate's AST to pick a generation strategy (numeric → Fibonacci, length-bounded → enumerate lengths, character-class, external-lookup → supplied-values). |
+
 ## Tooling
 
 | Term | Definition |

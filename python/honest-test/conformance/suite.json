@@ -1,0 +1,137 @@
+{
+  "version": "0.1",
+  "module": "honest-test",
+  "note": "Unit 1 - generation engine. enumeration: Set cartesian product (section 3.2), maybe adds Nothing (null). adversarial: neighbour classes (section 3.5). Cases are data; the runner builds the vocabulary and calls the generators. Non-printable neighbours are encoded as JSON \\u escapes. The two byte-level Class 5 variants are deferred, so encoding cases assert only the string-valued variants.",
+  "cases": [
+    {
+      "id": "enum-product-2x2",
+      "declarations": {
+        "a": [
+          "x",
+          "y"
+        ],
+        "b": [
+          "1",
+          "2"
+        ]
+      },
+      "expect_count": 4,
+      "expect_contains": [
+        {
+          "a": "x",
+          "b": "1"
+        },
+        {
+          "a": "y",
+          "b": "2"
+        }
+      ]
+    },
+    {
+      "id": "enum-single-set",
+      "declarations": {
+        "t": [
+          "alpha",
+          "beta",
+          "gamma"
+        ]
+      },
+      "expect_count": 3,
+      "expect_contains": [
+        {
+          "t": "alpha"
+        },
+        {
+          "t": "gamma"
+        }
+      ]
+    },
+    {
+      "id": "enum-three-sets-product",
+      "declarations": {
+        "a": [
+          "x"
+        ],
+        "b": [
+          "1",
+          "2"
+        ],
+        "c": [
+          "p",
+          "q"
+        ]
+      },
+      "expect_count": 4
+    },
+    {
+      "id": "enum-maybe-adds-nothing",
+      "declarations": {
+        "a": [
+          "x",
+          "y"
+        ]
+      },
+      "maybe": [
+        "a"
+      ],
+      "expect_count": 3,
+      "expect_contains": [
+        {
+          "a": "x"
+        },
+        {
+          "a": "y"
+        },
+        {
+          "a": null
+        }
+      ]
+    },
+    {
+      "id": "adv-edit-distance-and-control",
+      "value": "USD",
+      "expect_contains": [
+        "US",
+        "UD",
+        "SD",
+        "usd",
+        "Usd",
+        " USD",
+        "USD ",
+        "U SD"
+      ],
+      "expect_excludes": [
+        "USD"
+      ],
+      "expect_count_min": 100
+    },
+    {
+      "id": "adv-confusable-cyrillic-a",
+      "value": "abc",
+      "expect_contains": [
+        "\u0430bc"
+      ]
+    },
+    {
+      "id": "adv-encoding-string-variants",
+      "value": "a b",
+      "expect_contains": [
+        "\ufeffa b",
+        "a%2520b",
+        "a\u00a0b",
+        "a\u2028b"
+      ],
+      "expect_excludes": [
+        "a b"
+      ]
+    },
+    {
+      "id": "adv-bidi-override-injected",
+      "value": "USD",
+      "expect_contains": [
+        "\u202eUSD",
+        "USD\u202e"
+      ]
+    }
+  ]
+}

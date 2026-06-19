@@ -27,7 +27,8 @@ author works against. Read the path that fits you:
 | Package | Role | Adopter-facing? |
 |---|---|---|
 | [`honest-check`](honest-check/) | The static linter — the honesty gate. Parses source with tree-sitter and flags structural dishonesty. Also the toolchain that gates this repo. | Yes — you run it on your tree. |
-| [`honest-type`](honest-type/) | The pure-function-table type system — recognizers, vocabularies, `classify()`. The substrate the upper modules build on. | No — plumbing. The modules call it for you. |
+| [`honest-type`](honest-type/) | The pure-function-table type system — recognizers, vocabularies, `classify()`, links, chains. The substrate the upper modules build on. | No — plumbing. The modules call it for you. |
+| [`honest-test`](honest-test/) | The auto-generated verification layer — test cases derived from declarations (Set enumeration, adversarial neighbours). The behavioural half of the gate. | No — plumbing. You declare; it generates. |
 
 The package inventory and per-module status are the authoritative checkpoint; this
 table is the short form.
