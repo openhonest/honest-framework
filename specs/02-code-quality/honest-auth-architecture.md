@@ -77,7 +77,7 @@ Examples:
 - honest-auth-capabilities: predicate matching Macaroon serialization format
 - honest-auth-jwt: predicate matching three dot-separated base64url segments
 
-The recognizer must be strict: malformed tokens, including near-misses (edit-distance-1 and the other adversarial classes in honest-test §3.6), must be rejected at the recognizer and never reach a guard.
+The recognizer must be strict: malformed tokens, including near-misses (edit-distance-1 and the other adversarial classes in honest-test §3.5), must be rejected at the recognizer and never reach a guard.
 
 ### 2.3 `derivation_expression`
 

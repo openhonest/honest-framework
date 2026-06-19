@@ -1951,7 +1951,6 @@ Before generating test cases, honest-test classifies each predicate by analyzing
 |---|---|---|
 | **Numeric** | Contains `int(s)`, `float(s)`, numeric comparison | Fibonacci sequence |
 | **Length-bounded** | Contains `len(s) ==` or `len(s) <` fixed value | Enumerate valid lengths |
-| **Regex** | Contains `re.match`, `re.fullmatch`, `re.compile` | Generate from pattern |
 | **Character-class** | Contains `s.isdigit()`, `s.isalpha()`, `s.isupper()` | Enumerate character classes |
 | **External lookup** | Calls function not in codebase (external library) | Programmer-supplied via YAML |
 | **Composite** | Calls function defined in codebase | Recurse into callee AST |

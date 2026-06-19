@@ -20,7 +20,7 @@ Developers write **no test code** — the vocabulary, link, recognizer, state ma
 
 honest-test has three distinct responsibilities, all auto-generated from declarations:
 
-1. **Classification and chain tests** — every vocabulary member is fed through every chain that consumes it. Every valid output of link N is fed to link N+1 and confirmed accepted. Exhaustive for bounded vocabularies; boundary-sampled for predicates (Fibonacci, length enumeration, regex generation).
+1. **Classification and chain tests** — every vocabulary member is fed through every chain that consumes it. Every valid output of link N is fed to link N+1 and confirmed accepted. Exhaustive for bounded vocabularies; boundary-sampled for predicates (Fibonacci, length enumeration).
 
 2. **Honesty properties** — for every `@link`, the harness verifies purity (same input, same output, twice), mutation isolation (manifest unchanged), idempotency (same chain, same result), and boundary isolation (no I/O or non-determinism outside declared boundaries). Every `@recognizer` is adversarially probed (edit-distance-1, Unicode confusables, control characters, length-extension). Every `@helper` is exercised transitively.
 
@@ -63,7 +63,6 @@ Before generating test cases, honest-test classifies each predicate by analyzing
 |---|---|---|
 | **Numeric** | Contains `int(s)`, `float(s)`, numeric comparison | Fibonacci sequence |
 | **Length-bounded** | Contains `len(s) ==` or `len(s) <` fixed value | Enumerate valid lengths |
-| **Regex** | Contains `re.match`, `re.fullmatch`, `re.compile` | Generate from pattern |
 | **Character-class** | Contains `s.isdigit()`, `s.isalpha()`, `s.isupper()` | Enumerate character classes |
 | **External lookup** | Calls function not in codebase | Programmer-supplied via `honest-test.yaml` |
 | **Composite** | Calls function defined in codebase | Recurse into callee AST |
@@ -150,22 +149,7 @@ FUNCTION enumerate_lengths(predicate_ast):
     RETURN valid, invalid
 ```
 
-### 3.5 Regex-Based Generation
-
-For predicates that use regular expressions, honest-test generates strings from the pattern using a reverse-regex generator.
-
-```
-FUNCTION generate_from_regex(pattern):
-    generator ← build_reverse_generator(pattern)
-    valid     ← generator.generate(count=20)
-    invalid   ← adversarial_neighbors(valid[0])   // near-misses
-
-    RETURN valid, invalid
-```
-
-Language-specific reverse-regex libraries are used per implementation. The spec requires at minimum 10 valid examples and a set of adversarial near-misses.
-
-### 3.6 Adversarial Input Generation
+### 3.5 Adversarial Input Generation
 
 For every Set member, honest-test generates adversarial neighbors across five classes. Every neighbor must produce a rejection. A neighbor that is accepted represents a vocabulary overlap, a case-sensitivity bug, a normalization flaw, or an encoding vulnerability. The adversarial set is **conformance-tested** — every neighbor class below must be exercised by a conformant implementation.
 
@@ -322,7 +306,7 @@ FUNCTION encoding_variants(value):
 
 **Conformance.** The reference vocabulary for each class is published in the hub repository at `honest/honest-test-conformance/adversarial/{class}.json`. A conformant implementation must exercise every entry in the reference vocabulary; failing to reject any listed neighbor is a recognizer bug and a conformance failure.
 
-### 3.7 Programmer-Supplied Test Values
+### 3.6 Programmer-Supplied Test Values
 
 For predicates that cannot be analyzed (external lookups, context-dependent), programmers supply test values in `honest-test.yaml`:
 
@@ -869,10 +853,8 @@ Then the response status is in {status_class}        # "2xx", "3xx", "4xx", "5xx
 Then the response Content-Type is "{mime_type}"
 Then the response charset is "{charset}"
 Then the response header "{name}" equals "{value}"
-Then the response header "{name}" matches /{regex}/
 Then the response has no header "{name}"
 Then the response body bytes equal "{literal}"
-Then the response body matches /{regex}/
 Then the response body is JSON conforming to {schema_name}
 Then the response body is HTML containing the selector "{css_selector}"
 Then the response sets cookie "{name}" with value "{value}"
