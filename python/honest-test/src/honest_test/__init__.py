@@ -25,6 +25,11 @@ from honest_test.honesty import (
 from honest_test.length import enumerate_lengths, extract_length_bounds
 from honest_test.numeric import DEFAULT_LIMIT, fibonacci_sequence, numeric_values
 from honest_test.predicate import classify_predicate, classify_source
+from honest_test.statemachine import (
+    test_adversarial_transitions,
+    test_invalid_transitions,
+    test_valid_transitions,
+)
 from honest_test.supplied import load_config, supplied_for
 
 __all__ = [
@@ -43,6 +48,9 @@ __all__ = [
     "verify_idempotency",
     "enumerate_test_cases",
     "test_chain_contracts",
+    "test_valid_transitions",
+    "test_invalid_transitions",
+    "test_adversarial_transitions",
     "adversarial_neighbors",
     "adversarial_neighbours",
     "edit_distance_1",

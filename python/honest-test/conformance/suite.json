@@ -168,6 +168,10 @@
     {"id": "honesty-idempotency-impure-chain", "honesty": "idempotency", "chain": ["impure"], "manifest": {"x": "1"}, "expect_ok": false, "expect_code": "not_idempotent"},
     {"id": "contract-server-fault-is-violation", "contract": true, "chain": ["emit_format", "accepts_currency"], "expect_ok": false},
     {"id": "contract-client-fault-not-violation", "contract": true, "chain": ["emit_format", "client_picky"], "expect_ok": true},
-    {"id": "contract-all-outputs-accepted", "contract": true, "chain": ["emit_format", "always_ok"], "expect_ok": true}
+    {"id": "contract-all-outputs-accepted", "contract": true, "chain": ["emit_format", "always_ok"], "expect_ok": true},
+    {"id": "sm-valid-transitions-clean", "sm_test": "valid", "states": ["pending", "paid", "shipped", "cancelled"], "events": ["pay", "ship", "cancel", "refund"], "transitions": [["pending", "pay", "paid"], ["pending", "cancel", "cancelled"], ["paid", "ship", "shipped"], ["paid", "cancel", "cancelled"], ["shipped", "refund", "cancelled"]], "initial": "pending", "expect_findings": 0},
+    {"id": "sm-invalid-transitions-clean", "sm_test": "invalid", "states": ["pending", "paid", "shipped", "cancelled"], "events": ["pay", "ship", "cancel", "refund"], "transitions": [["pending", "pay", "paid"], ["pending", "cancel", "cancelled"], ["paid", "ship", "shipped"], ["paid", "cancel", "cancelled"], ["shipped", "refund", "cancelled"]], "initial": "pending", "expect_findings": 0},
+    {"id": "sm-adversarial-clean", "sm_test": "adversarial", "states": ["pending", "paid", "shipped", "cancelled"], "events": ["pay", "ship", "cancel", "refund"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "expect_findings": 0},
+    {"id": "sm-adversarial-detects-similar-states", "sm_test": "adversarial", "states": ["cat", "car"], "events": ["go"], "transitions": [["cat", "go", "car"]], "initial": "cat", "expect_min_findings": 1}
   ]
 }

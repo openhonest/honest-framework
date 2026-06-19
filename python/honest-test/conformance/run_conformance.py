@@ -15,7 +15,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from honest_type import binding, fault, link, maybe, ok, vocabulary
+from honest_type import binding, fault, link, maybe, ok, state_machine, vocabulary
 
 from honest_test import (
     adversarial_neighbors,
@@ -25,10 +25,24 @@ from honest_test import (
     enumerate_sets,
     numeric_values,
     supplied_for,
+    test_adversarial_transitions,
     test_chain_contracts,
+    test_invalid_transitions,
+    test_valid_transitions,
     verify_idempotency,
     verify_purity,
 )
+
+_SM_TESTS = {
+    "valid": test_valid_transitions,
+    "invalid": test_invalid_transitions,
+    "adversarial": test_adversarial_transitions,
+}
+
+
+def _build_machine(case):
+    transitions = {(t[0], t[1]): t[2] for t in case["transitions"]}
+    return state_machine(set(case["states"]), set(case["events"]), transitions, case["initial"])
 
 # Honesty-test fixtures: live links (functions), so they live in the runner, not the suite.
 _counter = {"n": 0}
@@ -194,6 +208,13 @@ def _check_contract(case):
     return len(findings) >= 1, f"got {findings}"
 
 
+def _check_statemachine(case):
+    findings = _SM_TESTS[case["sm_test"]](_build_machine(case))
+    if "expect_findings" in case:
+        return len(findings) == case["expect_findings"], f"got {len(findings)} findings"
+    return len(findings) >= case["expect_min_findings"], f"got {len(findings)} findings"
+
+
 _CHECKERS = {
     "enumeration": _check_enumeration,
     "adversarial": _check_adversarial,
@@ -203,10 +224,13 @@ _CHECKERS = {
     "supplied": _check_supplied,
     "honesty": _check_honesty,
     "contract": _check_contract,
+    "statemachine": _check_statemachine,
 }
 
 
 def _kind(case):
+    if "sm_test" in case:
+        return "statemachine"
     if "contract" in case:
         return "contract"
     if "honesty" in case:
