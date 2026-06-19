@@ -46,6 +46,14 @@
 
     {"id": "link-records-boundary-and-name", "link": "declared", "expect_boundary": true, "expect_name": "_declared_link"},
     {"id": "link-records-accepts", "link": "declared", "expect_accepts": "user_vocab"},
-    {"id": "declared-link-still-runs-in-chain", "combinator": "chain", "links": ["declared", "set_role"], "initial": {}, "expect": "ok", "expect_manifest": {"role": "admin"}}
+    {"id": "declared-link-still-runs-in-chain", "combinator": "chain", "links": ["declared", "set_role"], "initial": {}, "expect": "ok", "expect_manifest": {"role": "admin"}},
+
+    {"id": "sm-construct-valid", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "expect": "ok"},
+    {"id": "sm-construct-bad-next-state", "sm": true, "states": ["pending"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "expect": "error", "error_contains": "unknown state"},
+    {"id": "sm-construct-bad-initial", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "zzz", "expect": "error", "error_contains": "Initial state"},
+    {"id": "sm-transition-valid", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["pending", "pay"], "expect_state": "paid"},
+    {"id": "sm-transition-invalid-state", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["zzz", "pay"], "expect_code": "invalid_state"},
+    {"id": "sm-transition-invalid-event", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["pending", "zzz"], "expect_code": "invalid_event"},
+    {"id": "sm-transition-no-transition", "sm": true, "states": ["pending", "paid"], "events": ["pay", "ship"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["paid", "ship"], "expect_code": "no_transition"}
   ]
 }

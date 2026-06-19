@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 from honest_type import (
+    StateMachineError,
     VocabularyError,
     binding,
     catch_at_boundary,
@@ -31,9 +32,18 @@ from honest_type import (
     maybe,
     merge,
     ok,
+    state_machine,
+    transition,
     validate_all,
     vocabulary,
 )
+
+
+def _build_sm(case):
+    transitions = {(t[0], t[1]): t[2] for t in case["transitions"]}
+    return state_machine(
+        set(case["states"]), set(case["events"]), transitions, case["initial"], case.get("terminal")
+    )
 
 
 def _vocab(declarations):
@@ -196,6 +206,23 @@ def _check_linkmeta(case):
     return matched, f"got {meta}"
 
 
+def _check_statemachine(case):
+    if "apply" in case:
+        machine = _build_sm(case)
+        state, event = case["apply"]
+        result = transition(machine, state, event)
+        if "expect_state" in case:
+            return "ok" in result and result["ok"]["state"] == case["expect_state"], f"got {result}"
+        return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"
+    try:
+        _build_sm(case)
+        outcome, message = "ok", ""
+    except StateMachineError as exc:
+        outcome, message = "error", str(exc)
+    ok_ = outcome == case["expect"] and case.get("error_contains", "") in message
+    return ok_, f"got {outcome} ({message[:40]})"
+
+
 _CHECKERS = {
     "construction": _check_construction,
     "classify": _check_classify,
@@ -204,10 +231,13 @@ _CHECKERS = {
     "boundary": _check_boundary,
     "rejections": _check_rejections,
     "linkmeta": _check_linkmeta,
+    "statemachine": _check_statemachine,
 }
 
 
 def _kind(case):
+    if "sm" in case:
+        return "statemachine"
     if "link" in case:
         return "linkmeta"
     if "expect_status" in case:
