@@ -16,7 +16,7 @@ The pipeline is two-stage and unidirectional:
 1. **honest-check** asks *can the complete auto-generated test suite be generated from this code?* If no, the code is dishonest and rejected at pre-commit. No suite exists to run.
 2. **honest-test** runs the auto-generated suite. If any test fails, the code is buggy and rejected.
 
-Developers write **no test code** — the vocabulary, link, recognizer, state machine, invariant, and BDD-feature declarations are the test specification. Auto-generation derives every test case, every property check, every invariant assertion, every permutation. *Defining is testing.*
+Developers write **no test code** — the vocabulary, link, recognizer, state machine, guard, and BDD-feature declarations are the test specification. Auto-generation derives every test case, every property check, every guard check, every permutation. *Defining is testing.*
 
 honest-test has three distinct responsibilities, all auto-generated from declarations:
 
@@ -24,7 +24,7 @@ honest-test has three distinct responsibilities, all auto-generated from declara
 
 2. **Honesty properties** — for every `@link`, the harness verifies purity (same input, same output, twice), mutation isolation (manifest unchanged), idempotency (same chain, same result), and boundary isolation (no I/O or non-determinism outside declared boundaries). Every `@recognizer` is adversarially probed (edit-distance-1, Unicode confusables, control characters, length-extension). Every `@helper` is exercised transitively.
 
-3. **State machine enumeration** — every (state, event) pair is exercised; every declared invariant is checked on every reachable post-state; every K-step event sequence (default K=4) is enumerated with invariant checks at every intermediate state.
+3. **State machine enumeration** — every (condition, event) pair is exercised; every transition action's guards are checked after the mutation, over bounded value-sources; every K-step event sequence (default K=4) is enumerated with guard checks at every intermediate step.
 
 4. **BDD features** — developer-authored Gherkin `.feature` files at the system-requirement level. Scaffolding is auto-generated from `@link` declarations; the developer writes only the `.feature` files themselves. BDD covers semantic correctness of multi-step user journeys — what auto-generation of properties alone cannot cover.
 
@@ -560,54 +560,41 @@ FUNCTION test_adversarial_state_machine(machine):
 
 ---
 
-### 5.4 State Invariants
+### 5.4 Data Invariants (Action Guards)
 
-A state machine may declare **invariants** — predicates over the state tuple that must hold in every reachable state, not just in specific transitions. honest-test checks every declared invariant on every post-state produced by exhaustive transition enumeration.
+In the discrete model a transition's value side carries more than the next condition: it carries the **action** to perform and the **values** that action operates on — `(condition, event) → (next_condition, action, values)`. The action is typically a **guarded mutation** of persisted or DOM data, and its values come from the only three places a value can: user input, persistence, or a calculation over those (§3, §6).
 
-**Declaration form (illustrative; exact syntax is per-spoke):**
+Aggregate properties — "every task has at least one owner", "no user holds two roles", "a deleted task has no members" — are **not** properties of the discrete condition. The condition is a label (`active`, `archived`); the owners and roles live in **persist**, not in the machine. So they are not state-machine invariants. They are **guards on the action's mutation**: `GuardExpression`s (honest-persist §7.5), the same guards HC-P015 and §5.5 protect from TOCTOU. The machine dispatches the action; the guard keeps the data honest.
 
-```
-task_permission_machine = state_machine(
-    states       = {"active", "archived", "deleted"},
-    events       = {"promote", "demote", "transfer", "revoke"},
-    state_fields = {"owners", "rw", "ro", "status"},
-    initial      = "active",
-    invariants   = [
-        invariant("at_least_one_owner", lambda s: len(s.owners) >= 1),
-        invariant("no_user_in_multiple_roles",
-                   lambda s: (s.owners & s.rw) == set()
-                         and (s.owners & s.ro) == set()
-                         and (s.rw & s.ro)     == set()),
-        invariant("deleted_is_terminal",
-                   lambda s: s.status != "deleted" or (s.owners | s.rw | s.ro) == set()),
-    ],
-    transitions  = { ... }
-)
-```
+honest-test checks that **no action can leave the data in a guard-violating state.** For every transition whose action is a guarded mutation, it runs the action over its value-sources — each drawn from a bounded domain, so the check is exhaustive without enumerating the unbounded data space:
+
+- input values from the recognizer vocabularies (§3),
+- persisted values from the schema mock-data generator (§6.2),
+- calculated values transitively, as pure functions of those.
 
 **Harness algorithm:**
 
 ```
-FUNCTION check_state_invariants(machine):
-    FOR EACH initial_state IN enumerate_initial_states(machine):
-        FOR EACH (state, event), transition_fn IN machine.transitions:
-            // Exercise the transition from this initial state
-            start_state ← reach(initial_state, path_to(state))
-            IF start_state IS reachable:
-                result ← transition_fn(start_state, event)
-                IF result is ok:
-                    post_state ← result.ok.state
-                    FOR EACH invariant IN machine.invariants:
-                        IF NOT invariant.predicate(post_state):
-                            EMIT failure("invariant_violation",
-                                f"Invariant '{invariant.name}' violated after "
-                                f"transition ({state}, {event}) from "
-                                f"{start_state}. Post-state: {post_state}.")
+FUNCTION check_action_guards(machine):
+    FOR EACH (condition, event), (next_condition, action, value_spec) IN machine.transitions:
+        FOR EACH data IN mock_data_states(action.guards):          // bounded mock-persist
+            FOR EACH values IN enumerate_value_sources(value_spec):  // input × actors, bounded
+                result ← run_action(action, data, values)
+                IF result is ok:                                    // the mutation went through
+                    after ← result.ok.data
+                    FOR EACH guard IN action.guards:
+                        IF NOT guard.holds(after):
+                            EMIT failure("guard_violation",
+                                f"Action '{action.name}' on ({condition}, {event}) left "
+                                f"guard '{guard.name}' violated. Values: {values}.")
+                // a result the guard REJECTED (err) is correct, not a failure
 ```
 
-**Relationship to transition correctness testing (§5.1).** §5.1 checks that `(state, event) → expected_next_state` matches the declared transition table. §5.4 checks that the post-state, whatever it is, satisfies declared invariants. Both run on the same enumeration pass.
+**Relationship to transition testing (§5.1).** §5.1 checks the discrete table — `(condition, event) → next_condition`. §5.4 checks that the **action** bound to that transition cannot corrupt the data its guards protect. Both run on the same pass over the table.
 
-**Rationale for the challenge:** a challenger can introduce a transition that produces a valid-looking next state, passes §5.1 (it matches the transition table entry), but violates an aggregate invariant like "every task has ≥1 owner." Without invariant checking, only an integration test catches the orphaned task. With §5.4, the harness finds the violation during enumeration and rejects the code.
+**Dependency.** Guard evaluation and mock data are honest-persist concerns (§6; honest-persist §7.5). §5.4 is the state-machine driver over honest-persist's guard model — it cannot run before honest-persist provides `run_action`, the guard evaluator, and the mock-data generator.
+
+**Rationale for the challenge:** a challenger can write an action that moves to a valid-looking next condition — passing §5.1 — whose mutation drops the last owner. Without guard checking, only an integration test catches the orphaned task. With §5.4 the harness runs the action over the bounded value-sources and finds the guard violation at enumeration time.
 
 ### 5.5 TOCTOU Detection — Runtime Analog of HC-P015
 
@@ -640,40 +627,38 @@ Runtime detection complements static HC-P015: every call path that HC-P015 can s
 
 ### 5.6 K-Step Sequence Enumeration
 
-Single-transition invariant checking (§5.4) catches violations introduced by one event. Many semantic aggregate bugs only manifest after a sequence of events — e.g., `grant → revoke → grant → demote` leaves a state that single-step enumeration cannot reach from any initial state in one hop.
+Single-step guard checking (§5.4) catches a violation introduced by one action. Many aggregate bugs surface only after a **sequence** — `grant → transfer → revoke` can leave zero owners through three individually-legal transitions, a state no single step reaches.
 
-honest-test enumerates every event sequence of length ≤ K from every initial state, checking every declared invariant at every intermediate and final state.
+Because conditions and events are bounded Sets (HC-SM01, HC-SM02), the sequence space is finite. honest-test enumerates every event sequence of length ≤ K from each initial condition, runs each transition's action with values from the bounded sources, and checks the action's guards after **every** step.
 
 ```
 FUNCTION enumerate_k_step_sequences(machine, K):
-    initial_states ← enumerate_initial_states(machine)
-
-    FOR EACH start IN initial_states:
-        FOR EACH sequence IN all_event_sequences(machine.events, length ≤ K):
-            current_state ← start
-            FOR i, event IN enumerate(sequence):
-                result ← transition(machine, current_state, event)
-                IF result is fault:
-                    BREAK   // sequence diverges from reachable space here
-                next_state ← result.ok.state
-
-                FOR EACH invariant IN machine.invariants:
-                    IF NOT invariant.predicate(next_state):
-                        EMIT failure("invariant_violation_at_depth",
-                            f"Invariant '{invariant.name}' violated at step {i+1} "
-                            f"of sequence {sequence[:i+1]} from {start}. "
-                            f"Intermediate state: {next_state}.")
-
-                current_state ← next_state
+    FOR EACH start IN enumerate_initial_conditions(machine):
+        FOR EACH data IN enumerate_initial_data(machine):          // bounded mock-persist states
+            FOR EACH sequence IN all_event_sequences(machine.events, length ≤ K):
+                condition ← start
+                state     ← data
+                FOR i, event IN enumerate(sequence):
+                    entry ← machine.transitions.get((condition, event))
+                    IF entry IS NONE: BREAK    // sequence leaves the reachable space
+                    next_condition, action, value_spec ← entry
+                    FOR EACH values IN enumerate_value_sources(value_spec):
+                        result ← run_action(action, state, values)
+                        IF result is ok:
+                            state ← result.ok.data
+                            FOR EACH guard IN action.guards:
+                                IF NOT guard.holds(state):
+                                    EMIT failure("guard_violation_at_depth",
+                                        f"Guard '{guard.name}' violated at step {i+1} "
+                                        f"of sequence {sequence[:i+1]} from {start}.")
+                    condition ← next_condition
 ```
 
-**Configuration.** K is declared per state machine, default K=4. K is capped by state-space size: `|events|^K` sequences per initial state. For `|events| = 8, K = 4`, that is 4,096 sequences per initial state, tractable in seconds.
+**Bounding the space.** Three things must stay bounded for the enumeration to be finite and exhaustive: the **conditions** and **events** (bounded Sets by construction), and the **value-sources** the actions consume. Input values are bounded by their vocabularies (§3); persisted values by the schema mock-data generator (§6.2); action parameters drawn from an actor-like domain are bounded to a small fixed test pool. A small pool suffices by the **small-scope hypothesis** — almost every aggregate or role-confusion bug manifests at small instances, so two or three test actors exhibit it. You do not need a thousand users to reach the orphaned-task state.
 
-**Why K=4 by default.** The majority of real-world aggregate bugs require 2–3 events; K=4 gives one step of safety margin. Implementations may raise K for high-assurance domains (authorization state machines, financial workflows). K=1 reduces the check to single-transition invariant testing (§5.4).
+**Configuration.** K is declared per machine, default K = 4. The space is `|events|^K` sequences per starting point (initial condition × initial data × value combination). For `|events| = 8, K = 4`, that is 4,096 event sequences per starting point — tractable in seconds. Raise K for high-assurance domains (authorization, financial workflows); K = 1 reduces to single-step guard checking (§5.4).
 
-**Bounded by construction.** If events are a bounded Set (HC-SM02) and states are a bounded Set (HC-SM01), the sequence space is finite. The enumeration is deterministic, reproducible, and exhaustive within K.
-
-**Rationale for the challenge:** a challenger can introduce a transition that produces a correct next state for every single (state, event) pair — passing §5.1 and §5.4 — but corrupts state after N events. §5.6 catches such mutations whenever N ≤ K. Without K-step enumeration, only an integration test running the full multi-step user flow catches the bug.
+**Rationale for the challenge:** a challenger can write actions correct for every single `(condition, event)` pair — passing §5.1 and §5.4 — that corrupt the data only after N events. §5.6 catches such sequences whenever N ≤ K, at enumeration time, without an integration test running the full multi-step flow.
 
 ## 6. honest-persist Tests
 
