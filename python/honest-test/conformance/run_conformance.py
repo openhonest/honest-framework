@@ -15,16 +15,56 @@ import sys
 import tomllib
 from pathlib import Path
 
-from honest_type import binding, maybe, vocabulary
+from honest_type import binding, link, maybe, ok, vocabulary
 
 from honest_test import (
     adversarial_neighbors,
     classify_source,
+    detect_mutation,
     enumerate_lengths,
     enumerate_sets,
     numeric_values,
     supplied_for,
+    verify_idempotency,
+    verify_purity,
 )
+
+# Honesty-test fixtures: live links (functions), so they live in the runner, not the suite.
+_counter = {"n": 0}
+
+
+@link()
+def _pure_link(manifest):
+    return ok({**manifest, "seen": True})
+
+
+def _impure_link(manifest):
+    _counter["n"] += 1
+    return ok({**manifest, "n": _counter["n"]})
+
+
+def _mutating_link(manifest):
+    manifest["touched"] = True
+    return ok(manifest)
+
+
+@link(boundary=True)
+def _boundary_impure(manifest):
+    _counter["n"] += 1
+    return ok({**manifest, "n": _counter["n"]})
+
+
+def _set_role(manifest):
+    return ok({**manifest, "role": "admin"})
+
+
+_HONESTY_LINKS = {
+    "pure": _pure_link,
+    "impure": _impure_link,
+    "mutating": _mutating_link,
+    "boundary_impure": _boundary_impure,
+    "set_role": _set_role,
+}
 
 
 def _vocab(declarations):
@@ -98,6 +138,20 @@ def _check_supplied(case):
     return ok, f"got {result}"
 
 
+def _check_honesty(case):
+    manifest = case["manifest"]
+    if case["honesty"] == "idempotency":
+        finding = verify_idempotency([_HONESTY_LINKS[n] for n in case["chain"]], manifest)
+    elif case["honesty"] == "mutation":
+        finding = detect_mutation(_HONESTY_LINKS[case["link"]], manifest)
+    else:
+        finding = verify_purity(_HONESTY_LINKS[case["link"]], manifest)
+    ok_ = (finding is None) == case["expect_ok"]
+    if finding is not None and "expect_code" in case:
+        ok_ = ok_ and finding["code"] == case["expect_code"]
+    return ok_, f"got {finding}"
+
+
 _CHECKERS = {
     "enumeration": _check_enumeration,
     "adversarial": _check_adversarial,
@@ -105,10 +159,13 @@ _CHECKERS = {
     "numeric": _check_numeric,
     "length": _check_length,
     "supplied": _check_supplied,
+    "honesty": _check_honesty,
 }
 
 
 def _kind(case):
+    if "honesty" in case:
+        return "honesty"
     if "predicate" in case:
         return "supplied"
     if case.get("gen") in ("numeric", "length"):
