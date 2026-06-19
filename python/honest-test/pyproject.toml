@@ -3,10 +3,11 @@ name = "honest-test"
 version = "0.1.0"
 description = "The auto-generated verification layer of the Honest Framework: test generation from declarations."
 requires-python = ">=3.11"
-dependencies = ["honest-type"]
+dependencies = ["honest-type", "honest-parse"]
 
 [tool.uv.sources]
 honest-type = { workspace = true }
+honest-parse = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

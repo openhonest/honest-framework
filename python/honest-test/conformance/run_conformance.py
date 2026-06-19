@@ -16,7 +16,7 @@ from pathlib import Path
 
 from honest_type import binding, maybe, vocabulary
 
-from honest_test import adversarial_neighbors, enumerate_sets
+from honest_test import adversarial_neighbors, classify_source, enumerate_sets
 
 
 def _vocab(declarations):
@@ -49,10 +49,22 @@ def _check_adversarial(case):
     return ok, f"got {len(neighbours)} neighbours"
 
 
-_CHECKERS = {"enumeration": _check_enumeration, "adversarial": _check_adversarial}
+def _check_predicate(case):
+    codebase = set(case["codebase"]) if "codebase" in case else None
+    got = classify_source(case["source"], codebase)
+    return got == case["expect_class"], f"got {got}"
+
+
+_CHECKERS = {
+    "enumeration": _check_enumeration,
+    "adversarial": _check_adversarial,
+    "predicate": _check_predicate,
+}
 
 
 def _kind(case):
+    if "expect_class" in case:
+        return "predicate"
     return "adversarial" if "value" in case else "enumeration"
 
 

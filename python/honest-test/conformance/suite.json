@@ -132,6 +132,18 @@
         "\u202eUSD",
         "USD\u202e"
       ]
-    }
+    },
+    {"id": "pred-numeric-int", "source": "lambda s: int(s) > 0", "expect_class": "numeric"},
+    {"id": "pred-numeric-float", "source": "def f(s):\n    return float(s) < 1.0\n", "expect_class": "numeric"},
+    {"id": "pred-length-eq", "source": "def f(s):\n    return len(s) == 5\n", "expect_class": "length"},
+    {"id": "pred-length-lt", "source": "lambda s: len(s) < 10", "expect_class": "length"},
+    {"id": "pred-charclass-isdigit", "source": "lambda s: s.isdigit()", "expect_class": "character_class"},
+    {"id": "pred-charclass-isalpha", "source": "def f(s):\n    return s.isalpha()\n", "expect_class": "character_class"},
+    {"id": "pred-catchall-true", "source": "lambda s: True", "expect_class": "catch_all"},
+    {"id": "pred-catchall-isinstance", "source": "lambda s: isinstance(s, str)", "expect_class": "catch_all"},
+    {"id": "pred-external-call", "source": "lambda s: lookup(s)", "expect_class": "external"},
+    {"id": "pred-composite-call", "source": "lambda s: validate(s)", "codebase": ["validate"], "expect_class": "composite"},
+    {"id": "pred-length-beats-numeric", "source": "lambda s: len(s) == 5", "expect_class": "length"},
+    {"id": "pred-unknown-string-compare", "source": "lambda s: s == 'x'", "expect_class": "unknown"}
   ]
 }

@@ -15,9 +15,12 @@ from honest_test.adversarial import (
     unicode_confusables,
 )
 from honest_test.enumeration import enumerate_sets
+from honest_test.predicate import classify_predicate, classify_source
 
 __all__ = [
     "enumerate_sets",
+    "classify_source",
+    "classify_predicate",
     "adversarial_neighbors",
     "adversarial_neighbours",
     "edit_distance_1",
