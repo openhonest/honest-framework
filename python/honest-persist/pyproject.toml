@@ -1,0 +1,17 @@
+[project]
+name = "honest-persist"
+version = "0.1.0"
+description = "Schema-first, pure-function persistence: schema as data, migrations as diff, queries as data."
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honest_persist"]
+
+[tool.honest-check]
+conformance = "python"
+conformance-suite-version = "0"

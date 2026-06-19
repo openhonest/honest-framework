@@ -1,0 +1,16 @@
+{
+  "version": "0.1",
+  "module": "honest-persist",
+  "note": "Schema diff (section 5.1). Each case: current + target schema (plain dicts), and the operations diff() must produce in order. Increment 1: table/column create/drop/rename/alter in the safe emit order; dependency ordering (5.4) and ambiguity (5.3) follow with FK/index ops.",
+  "cases": [
+    {"id": "diff-create-table", "current": {}, "target": {"users": {"columns": {"id": {"type": "uuid"}}}}, "expect_operations": [{"op": "create_table", "table": "users"}]},
+    {"id": "diff-drop-table", "current": {"users": {"columns": {"id": {"type": "uuid"}}}}, "target": {}, "expect_operations": [{"op": "drop_table", "table": "users"}]},
+    {"id": "diff-no-change", "current": {"users": {"columns": {"id": {"type": "uuid"}}}}, "target": {"users": {"columns": {"id": {"type": "uuid"}}}}, "expect_operations": []},
+    {"id": "diff-rename-table", "current": {"old_users": {"columns": {"id": {"type": "uuid"}}}}, "target": {"app_users": {"renamed_from": "old_users", "columns": {"id": {"type": "uuid"}}}}, "expect_operations": [{"op": "rename_table", "table": "old_users", "details": {"new_name": "app_users"}}]},
+    {"id": "diff-add-column", "current": {"users": {"columns": {"id": {"type": "uuid"}}}}, "target": {"users": {"columns": {"id": {"type": "uuid"}, "email": {"type": "text"}}}}, "expect_operations": [{"op": "add_column", "table": "users", "details": {"column": "email"}}]},
+    {"id": "diff-drop-column", "current": {"users": {"columns": {"id": {"type": "uuid"}, "email": {"type": "text"}}}}, "target": {"users": {"columns": {"id": {"type": "uuid"}}}}, "expect_operations": [{"op": "drop_column", "table": "users", "details": {"column": "email"}}]},
+    {"id": "diff-rename-column", "current": {"users": {"columns": {"id": {"type": "uuid"}, "mail": {"type": "text"}}}}, "target": {"users": {"columns": {"id": {"type": "uuid"}, "email": {"renamed_from": "mail", "type": "text"}}}}, "expect_operations": [{"op": "rename_column", "table": "users", "details": {"from": "mail", "to": "email"}}]},
+    {"id": "diff-alter-column-type", "current": {"users": {"columns": {"id": {"type": "text"}}}}, "target": {"users": {"columns": {"id": {"type": "uuid"}}}}, "expect_operations": [{"op": "alter_column", "table": "users", "details": {"column": "id"}}]},
+    {"id": "diff-alter-column-no-change-on-unrelated", "current": {"users": {"columns": {"id": {"type": "uuid", "nullable": false}}}}, "target": {"users": {"columns": {"id": {"type": "uuid", "nullable": false}}}}, "expect_operations": []}
+  ]
+}
