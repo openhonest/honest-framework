@@ -13,8 +13,9 @@ fi
 
 status=0
 for runner in "${runners[@]}"; do
+    pkg=${runner%%/*}              # honest-<mod>/conformance/... -> honest-<mod>
     echo "== conformance: $runner"
-    uv run --package honest-check python "$runner" || status=1
+    uv run --package "$pkg" python "$runner" || status=1
 done
 [ "$status" -eq 0 ] && echo "test-all: all conformance suites pass." || echo "test-all: conformance FAILED." >&2
 exit "$status"

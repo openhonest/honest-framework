@@ -17,7 +17,7 @@ for mod in $mods; do
     runner="$mod/conformance/run_conformance.py"
     if [ -f "$runner" ]; then
         echo "== conformance: $mod"
-        uv run --package honest-check python "$runner" || status=1
+        uv run --package "$mod" python "$runner" || status=1
     fi
 done
 exit $status

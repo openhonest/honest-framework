@@ -1,0 +1,14 @@
+{
+  "version": "0.1",
+  "module": "honest-type",
+  "note": "Unit 1 — vocabulary construction contract (sections 2, 3). Set members as arrays; the runner builds the vocabulary and checks ok vs VocabularyError. classify() cases follow with unit 2.",
+  "cases": [
+    {"id": "vocab-valid", "declarations": {"currency_code": ["USD", "EUR", "GBP"], "format_name": ["currency", "number", "percent"]}, "expect": "ok"},
+    {"id": "vocab-single", "declarations": {"t": ["alpha", "beta"]}, "expect": "ok"},
+    {"id": "vocab-no-overlap", "declarations": {"a": ["x"], "b": ["y"]}, "expect": "ok"},
+    {"id": "vocab-reserved-class", "declarations": {"x": ["class"]}, "expect": "error", "error_contains": "reserved"},
+    {"id": "vocab-reserved-return", "declarations": {"y": ["return", "ok"]}, "expect": "error", "error_contains": "reserved"},
+    {"id": "vocab-reserved-manifest", "declarations": {"z": ["manifest"]}, "expect": "error", "error_contains": "framework"},
+    {"id": "vocab-overlap", "declarations": {"a": ["x", "y"], "b": ["y", "z"]}, "expect": "error", "error_contains": "share"}
+  ]
+}
