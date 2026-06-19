@@ -33,6 +33,7 @@ from honest_check.formats import (
     render,
     supported_formats,
 )
+from honest_check.lsp import serve
 from honest_check.rules import check_source
 
 
@@ -72,6 +73,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         description="The pre-auto-generation honesty gate of the Honest Framework.",
     )
     parser.add_argument("paths", nargs="*", default=[], help="files or directories to check")
+    parser.add_argument("--lsp", action="store_true", help="run as a Language Server over stdio")
     parser.add_argument("--config", default=None, help="path to honest-check.toml")
     parser.add_argument("--format", choices=supported_formats(), default="human")
     parser.add_argument("--severity", choices=["error", "warning", "info"], default=None)
@@ -83,6 +85,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """Run honest-check over the given paths; return the process exit code."""
     args = _parse_args(list(sys.argv[1:]) if argv is None else list(argv))
+
+    if args.lsp:
+        return serve()
 
     try:
         config = _load_config(_find_config(args.config))
