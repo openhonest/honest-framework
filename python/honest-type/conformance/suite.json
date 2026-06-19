@@ -34,6 +34,14 @@
     {"id": "chain-short-circuits-on-fault", "combinator": "chain", "links": ["fault", "set_role"], "initial": {}, "expect": "err", "expect_code": "boom"},
     {"id": "chain-non-result-return", "combinator": "chain", "links": ["bad"], "initial": {}, "expect": "err", "expect_code": "non_result_return"},
     {"id": "validate-all-ok", "combinator": "validate_all", "links": ["pass", "set_role"], "initial": {"x": "1"}, "expect": "ok", "expect_manifest": {"x": "1"}},
-    {"id": "validate-all-accumulates-fault", "combinator": "validate_all", "links": ["pass", "fault"], "initial": {}, "expect": "err", "expect_code": "validation_failed"}
+    {"id": "validate-all-accumulates-fault", "combinator": "validate_all", "links": ["pass", "fault"], "initial": {}, "expect": "err", "expect_code": "validation_failed"},
+
+    {"id": "boundary-ok-success-output", "links": ["pass", "set_role"], "initial": {}, "expect_status": 200},
+    {"id": "boundary-server-fault-default", "links": ["fault"], "initial": {}, "expect_status": 500, "expect_code": "boom"},
+    {"id": "boundary-fault-table-hit", "links": ["unrecognized"], "initial": {}, "expect_status": 422, "expect_code": "unrecognized"},
+    {"id": "boundary-catches-exception", "links": ["raise"], "initial": {}, "expect_status": 500, "expect_code": "unhandled_exception"},
+
+    {"id": "rejections-block-on-fault", "rejection_manifest": {"cc": "USD", "_rejections": [{"token": "zz", "reason": "unrecognized", "detail": null}]}, "expect": "err", "expect_code": "unrecognized"},
+    {"id": "rejections-warn-passes-clean", "rejection_manifest": {"cc": "USD", "_rejections": [{"token": "", "reason": "empty_token", "detail": null}]}, "expect": "ok"}
   ]
 }

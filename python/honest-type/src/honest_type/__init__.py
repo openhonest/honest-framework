@@ -4,6 +4,11 @@ Unit 1 (this release): recognizers + vocabulary construction with reserved-word 
 overlap validation, plus the data shapes. classify() and chains follow.
 """
 
+from honest_type.boundary import (
+    DEFAULT_REJECTION_POLICY,
+    catch_at_boundary,
+    check_rejections,
+)
 from honest_type.chains import chain, execute_chain, validate_all
 from honest_type.classify import classify
 from honest_type.recognizers import insensitive, predicate, recognize
@@ -24,6 +29,9 @@ __all__ = [
     "chain",
     "execute_chain",
     "validate_all",
+    "catch_at_boundary",
+    "check_rejections",
+    "DEFAULT_REJECTION_POLICY",
     "ok",
     "err",
     "vocabulary",

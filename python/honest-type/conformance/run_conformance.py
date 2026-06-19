@@ -18,7 +18,9 @@ from pathlib import Path
 from honest_type import (
     VocabularyError,
     binding,
+    catch_at_boundary,
     chain,
+    check_rejections,
     classify,
     composed,
     err,
@@ -53,8 +55,39 @@ def _link_bad(manifest):
     return {"weird": 1}  # neither ok nor err -> non_result_return
 
 
-_LINKS = {"pass": _link_pass, "set_role": _link_set_role, "fault": _link_fault, "bad": _link_bad}
+def _link_unrecognized(manifest):
+    return err(fault("unrecognized", "no", "client"))
+
+
+def _link_raise(manifest):
+    raise ValueError("kaboom")
+
+
+_LINKS = {
+    "pass": _link_pass,
+    "set_role": _link_set_role,
+    "fault": _link_fault,
+    "bad": _link_bad,
+    "unrecognized": _link_unrecognized,
+    "raise": _link_raise,
+}
 _COMBINATORS = {"chain": chain, "validate_all": validate_all}
+
+
+# Boundary output fixtures (section 11.4): output functions, not status codes.
+def _out_success(manifest):
+    return {"status": 200, "body": manifest}
+
+
+def _out_server(failure):
+    return {"status": 500, "code": failure["code"]}
+
+
+def _out_client(failure):
+    return {"status": 400, "code": failure["code"]}
+
+
+_FAULT_TO_OUTPUT = {"unrecognized": lambda failure: {"status": 422, "code": failure["code"]}}
 
 
 def _slot(spec):
@@ -123,15 +156,41 @@ def _check_chainrun(case):
     return matched, f"got {result}"
 
 
+def _check_boundary(case):
+    handler = chain(*[_LINKS[name] for name in case["links"]])
+    wrapped = catch_at_boundary(
+        handler, _FAULT_TO_OUTPUT, _out_success, _out_server, _out_client
+    )
+    result = wrapped(case["initial"])
+    status_ok = result["status"] == case["expect_status"]
+    code_ok = "expect_code" not in case or result.get("code") == case["expect_code"]
+    return status_ok and code_ok, f"got {result}"
+
+
+def _check_rejections(case):
+    result = check_rejections(case["rejection_manifest"])
+    if case["expect"] == "err":
+        matched = "err" in result and result["err"]["code"] == case["expect_code"]
+        return matched, f"got {result}"
+    matched = "ok" in result and "_rejections" not in result["ok"]
+    return matched, f"got {result}"
+
+
 _CHECKERS = {
     "construction": _check_construction,
     "classify": _check_classify,
     "merge": _check_merge,
     "chainrun": _check_chainrun,
+    "boundary": _check_boundary,
+    "rejections": _check_rejections,
 }
 
 
 def _kind(case):
+    if "expect_status" in case:
+        return "boundary"
+    if "rejection_manifest" in case:
+        return "rejections"
     if "combinator" in case:
         return "chainrun"
     if "merge_a" in case:
