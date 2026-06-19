@@ -148,6 +148,12 @@
     {"id": "numeric-fib-limit-10", "gen": "numeric", "limit": 10, "expect_values": [-1, -1, -2, -3, -5, -8, -13, 0, 1, 1, 2, 3, 5, 8, 13]},
     {"id": "numeric-no-negative", "gen": "numeric", "limit": 10, "negative": false, "expect_values": [0, 1, 1, 2, 3, 5, 8, 13]},
     {"id": "numeric-float-divides-by-100", "gen": "numeric", "limit": 10, "as_float": true, "expect_contains": [0.0, 0.01, 0.05, 0.13, -0.13]},
-    {"id": "numeric-default-spread", "gen": "numeric", "expect_contains": [0, 1, -1], "expect_count_min": 40}
+    {"id": "numeric-default-spread", "gen": "numeric", "expect_contains": [0, 1, -1], "expect_count_min": 40},
+    {"id": "length-exact-eq", "gen": "length", "source": "lambda s: len(s) == 5", "expect_min": 5, "expect_max": 5, "expect_valid_lengths": [5], "expect_invalid_lengths": [4, 6]},
+    {"id": "length-le", "gen": "length", "source": "lambda s: len(s) <= 8", "expect_min": 1, "expect_max": 8, "expect_valid_lengths": [1, 2, 3, 4, 5, 6, 7, 8], "expect_invalid_lengths": [9]},
+    {"id": "length-lt", "gen": "length", "source": "lambda s: len(s) < 8", "expect_min": 1, "expect_max": 7, "expect_valid_lengths": [1, 2, 3, 4, 5, 6, 7], "expect_invalid_lengths": [8]},
+    {"id": "length-range-tests-one-under", "gen": "length", "source": "def f(s):\n    return 3 <= len(s) <= 8\n", "expect_min": 3, "expect_max": 8, "expect_valid_lengths": [3, 4, 5, 6, 7, 8], "expect_invalid_lengths": [2, 9]},
+    {"id": "length-ge-unbounded-falls-through", "gen": "length", "source": "lambda s: len(s) >= 3", "expect_min": 3, "expect_max": null, "expect_valid_lengths": [], "expect_invalid_lengths": []},
+    {"id": "length-beyond-charset", "gen": "length", "source": "lambda s: len(s) == 50", "expect_min": 50, "expect_max": 50, "expect_valid_lengths": [50], "expect_invalid_lengths": [49, 51]}
   ]
 }

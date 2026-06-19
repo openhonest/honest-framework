@@ -16,7 +16,13 @@ from pathlib import Path
 
 from honest_type import binding, maybe, vocabulary
 
-from honest_test import adversarial_neighbors, classify_source, enumerate_sets, numeric_values
+from honest_test import (
+    adversarial_neighbors,
+    classify_source,
+    enumerate_lengths,
+    enumerate_sets,
+    numeric_values,
+)
 
 
 def _vocab(declarations):
@@ -65,17 +71,30 @@ def _check_numeric(case):
     return ok, f"got {len(values)} values"
 
 
+def _check_length(case):
+    result = enumerate_lengths(case["source"])
+    valid_lengths = sorted(len(s) for s in result["valid"])
+    invalid_lengths = sorted(len(s) for s in result["invalid"])
+    ok = result["min"] == case["expect_min"] and result["max"] == case["expect_max"]
+    if "expect_valid_lengths" in case:
+        ok = ok and valid_lengths == sorted(case["expect_valid_lengths"])
+    if "expect_invalid_lengths" in case:
+        ok = ok and invalid_lengths == sorted(case["expect_invalid_lengths"])
+    return ok, f"got min={result['min']} max={result['max']} valid={valid_lengths} invalid={invalid_lengths}"
+
+
 _CHECKERS = {
     "enumeration": _check_enumeration,
     "adversarial": _check_adversarial,
     "predicate": _check_predicate,
     "numeric": _check_numeric,
+    "length": _check_length,
 }
 
 
 def _kind(case):
-    if case.get("gen") == "numeric":
-        return "numeric"
+    if case.get("gen") in ("numeric", "length"):
+        return case["gen"]
     if "expect_class" in case:
         return "predicate"
     return "adversarial" if "value" in case else "enumeration"
