@@ -9,7 +9,14 @@ from honest_type.boundary import (
     catch_at_boundary,
     check_rejections,
 )
-from honest_type.chains import chain, execute_chain, validate_all
+from honest_type.chains import (
+    chain,
+    execute_chain,
+    is_link,
+    link,
+    link_meta,
+    validate_all,
+)
 from honest_type.classify import classify
 from honest_type.recognizers import insensitive, predicate, recognize
 from honest_type.reserved import RESERVED_WORDS, is_reserved
@@ -29,6 +36,9 @@ __all__ = [
     "chain",
     "execute_chain",
     "validate_all",
+    "link",
+    "is_link",
+    "link_meta",
     "catch_at_boundary",
     "check_rejections",
     "DEFAULT_REJECTION_POLICY",

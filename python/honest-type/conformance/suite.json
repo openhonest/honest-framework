@@ -42,6 +42,10 @@
     {"id": "boundary-catches-exception", "links": ["raise"], "initial": {}, "expect_status": 500, "expect_code": "unhandled_exception"},
 
     {"id": "rejections-block-on-fault", "rejection_manifest": {"cc": "USD", "_rejections": [{"token": "zz", "reason": "unrecognized", "detail": null}]}, "expect": "err", "expect_code": "unrecognized"},
-    {"id": "rejections-warn-passes-clean", "rejection_manifest": {"cc": "USD", "_rejections": [{"token": "", "reason": "empty_token", "detail": null}]}, "expect": "ok"}
+    {"id": "rejections-warn-passes-clean", "rejection_manifest": {"cc": "USD", "_rejections": [{"token": "", "reason": "empty_token", "detail": null}]}, "expect": "ok"},
+
+    {"id": "link-records-boundary-and-name", "link": "declared", "expect_boundary": true, "expect_name": "_declared_link"},
+    {"id": "link-records-accepts", "link": "declared", "expect_accepts": "user_vocab"},
+    {"id": "declared-link-still-runs-in-chain", "combinator": "chain", "links": ["declared", "set_role"], "initial": {}, "expect": "ok", "expect_manifest": {"role": "admin"}}
   ]
 }

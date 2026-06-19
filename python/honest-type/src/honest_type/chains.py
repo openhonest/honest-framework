@@ -13,6 +13,37 @@ place that catches.
 from honest_type.types import err, fault, ok
 
 
+def link(accepts=None, binds=None, boundary=False, authorizes=False, emits=None):
+    """Declare a link (section 10.5). Attaches vocabulary/role metadata to a function for
+    honest-check introspection and honest-test generation. The function stays callable and
+    its runtime behaviour is unchanged — the decorator records intent, it never scopes or
+    filters the manifest. Metadata is read with link_meta(); see is_link()."""
+
+    def declare(fn):
+        fn.__honest_link__ = {
+            "name": fn.__name__,
+            "accepts": accepts,
+            "binds": binds,
+            "boundary": boundary,
+            "authorizes": authorizes,
+            "emits": emits,
+        }
+        return fn
+
+    return declare
+
+
+def is_link(fn) -> bool:
+    """True if fn was declared with @link()."""
+    return hasattr(fn, "__honest_link__")
+
+
+def link_meta(fn) -> dict:
+    """A declared link's metadata (section 10.5): name, accepts, binds, boundary, authorizes,
+    emits. Empty for an undeclared function."""
+    return getattr(fn, "__honest_link__", {})
+
+
 def execute_chain(links, initial_manifest) -> dict:
     """Run links in sequence, short-circuiting on the first err (section 10.3). A link that
     returns neither ok nor err is a server fault (non_result_return)."""

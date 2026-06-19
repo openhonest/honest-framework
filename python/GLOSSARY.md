@@ -31,7 +31,7 @@ Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1),
 | **Fault** | A processing error — data `{code, message, category, detail}`, not an exception. `category` (`client`\|`server`) is required (a fault without one is itself a server error). Exceptions only at the boundary. |
 | **Maybe** | Optional binding. A slot declared `maybe()` is always present in the manifest, as a value or as `Nothing`. |
 | **classify()** | Runs recognizers over a token list → manifest. Two passes: base classification, then composition + binding resolution. |
-| **Link** | A function wrapped with `@link(accepts=, emits=, boundary=)` so it receives a typed manifest. Pure unless declared a boundary. |
+| **Link** | A function declared with `@link(accepts=, binds=, boundary=, authorizes=, emits=)`. The decorator attaches metadata (read via `link_meta()`) and leaves the function callable and its behaviour unchanged — it records intent, never scopes the manifest. Pure unless declared a boundary. |
 | **Chain** | An ordered list of links; the manifest flows from one to the next. A chain is itself a link (chains compose). `chain(*links)` builds one; `execute_chain(links, manifest)` runs it, short-circuiting on the first `err`. |
 | **Result** | The only two shapes a link may return: `ok(manifest)` → `{"ok": manifest}` or `err(fault)` → `{"err": fault}`. A link returning neither is a `non_result_return` server fault. |
 | **validate_all** | An accumulating combinator, itself a link: `validate_all(*links)` runs every link against the *same* manifest; any failure yields a `validation_failed` fault carrying every result, `ok` and `err` alike. |

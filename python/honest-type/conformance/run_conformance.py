@@ -25,6 +25,9 @@ from honest_type import (
     composed,
     err,
     fault,
+    is_link,
+    link,
+    link_meta,
     maybe,
     merge,
     ok,
@@ -63,6 +66,11 @@ def _link_raise(manifest):
     raise ValueError("kaboom")
 
 
+@link(boundary=True, accepts="user_vocab")
+def _declared_link(manifest):
+    return ok({**manifest, "role": "admin"})
+
+
 _LINKS = {
     "pass": _link_pass,
     "set_role": _link_set_role,
@@ -70,6 +78,7 @@ _LINKS = {
     "bad": _link_bad,
     "unrecognized": _link_unrecognized,
     "raise": _link_raise,
+    "declared": _declared_link,
 }
 _COMBINATORS = {"chain": chain, "validate_all": validate_all}
 
@@ -176,6 +185,17 @@ def _check_rejections(case):
     return matched, f"got {result}"
 
 
+def _check_linkmeta(case):
+    fn = _LINKS[case["link"]]
+    meta = link_meta(fn)
+    matched = is_link(fn) and callable(fn)
+    for field in ("boundary", "name", "accepts"):
+        key = f"expect_{field}"
+        if key in case:
+            matched = matched and meta.get(field) == case[key]
+    return matched, f"got {meta}"
+
+
 _CHECKERS = {
     "construction": _check_construction,
     "classify": _check_classify,
@@ -183,10 +203,13 @@ _CHECKERS = {
     "chainrun": _check_chainrun,
     "boundary": _check_boundary,
     "rejections": _check_rejections,
+    "linkmeta": _check_linkmeta,
 }
 
 
 def _kind(case):
+    if "link" in case:
+        return "linkmeta"
     if "expect_status" in case:
         return "boundary"
     if "rejection_manifest" in case:
