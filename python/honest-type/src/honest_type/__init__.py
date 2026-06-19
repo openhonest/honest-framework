@@ -8,13 +8,22 @@ from honest_type.classify import classify
 from honest_type.recognizers import insensitive, predicate, recognize
 from honest_type.reserved import RESERVED_WORDS, is_reserved
 from honest_type.types import Fault, Rejection, Ticket, fault, rejection, ticket
-from honest_type.vocabulary import VocabularyError, auto_binding, binding, vocabulary
+from honest_type.vocabulary import (
+    VocabularyError,
+    auto_binding,
+    binding,
+    composed,
+    maybe,
+    vocabulary,
+)
 
 __all__ = [
     "classify",
     "vocabulary",
     "binding",
     "auto_binding",
+    "composed",
+    "maybe",
     "predicate",
     "insensitive",
     "recognize",

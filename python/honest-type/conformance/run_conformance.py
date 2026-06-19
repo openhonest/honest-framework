@@ -15,7 +15,19 @@ import json
 import sys
 from pathlib import Path
 
-from honest_type import VocabularyError, binding, classify, vocabulary
+from honest_type import VocabularyError, binding, classify, composed, maybe, vocabulary
+
+
+def _slot(spec):
+    """A binding value from data: 'slot' or {'maybe': 'slot'}."""
+    if hasattr(spec, "get") and "maybe" in spec:
+        return maybe(spec["maybe"])
+    return spec
+
+
+def _composed(spec):
+    """A composed type from data; captures is 'type' or {'maybe': 'type'}."""
+    return composed(spec["name"], spec["requires"], _slot(spec["captures"]))
 
 
 def _check_construction(case):
@@ -29,14 +41,22 @@ def _check_construction(case):
 
 
 def _check_classify(case):
-    vocab = vocabulary({name: set(members) for name, members in case["declarations"].items()})
-    bind = binding(case["binding"]) if "binding" in case else None
+    composed_types = [_composed(spec) for spec in case.get("composed_types", [])]
+    vocab = vocabulary(
+        {name: set(members) for name, members in case["declarations"].items()},
+        composed_types=composed_types,
+    )
+    bind = binding({k: _slot(v) for k, v in case["binding"].items()}) if "binding" in case else None
     result = classify(case["tokens"], vocab, bind)
     if "expect_fault" in case:
         ok = "err" in result and result["err"]["code"] == case["expect_fault"]
         return ok, f"got {result}"
     reasons = [r["reason"] for r in result.get("_rejections", [])]
-    manifest_ok = all(result.get(slot) == value for slot, value in case.get("expect_manifest", {}).items())
+    # `slot in result` distinguishes Nothing (present, null) from an absent slot.
+    manifest_ok = all(
+        slot in result and result.get(slot) == value
+        for slot, value in case.get("expect_manifest", {}).items()
+    )
     rejections_ok = all(reason in reasons for reason in case.get("expect_rejections", []))
     return manifest_ok and rejections_ok, f"got {result}"
 

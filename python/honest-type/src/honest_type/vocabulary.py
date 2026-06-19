@@ -15,7 +15,28 @@ from honest_type.reserved import is_reserved, reservation_layer
 
 
 class VocabularyError(Exception):
-    """A vocabulary that cannot be built: reserved-word or overlap collision (sections 2, 3)."""
+    """A vocabulary that cannot be built: reserved-word, overlap, or unknown composed base."""
+
+
+def maybe(slot: str) -> dict:
+    """An optional binding slot (section 5): absent token -> Nothing, not a rejection."""
+    return {"kind": "maybe", "slot": slot}
+
+
+def is_maybe(slot_or_maybe) -> bool:
+    return hasattr(slot_or_maybe, "get") and slot_or_maybe.get("kind") == "maybe"
+
+
+def unwrap_maybe(slot_or_maybe) -> str:
+    """The bare slot name, whether it was wrapped in maybe() or not."""
+    return slot_or_maybe["slot"] if is_maybe(slot_or_maybe) else slot_or_maybe
+
+
+def composed(name: str, requires: dict, captures) -> dict:
+    """A composed (multi-token) type (section 4): matches when `requires` base types are
+    present with the given values; binds the `captures` base type's value to its slot.
+    `captures` may be a bare type name or `maybe(type_name)`."""
+    return {"name": name, "requires": dict(requires), "captures": captures}
 
 
 def _check_reserved(type_name: str, recognizer: dict) -> None:
@@ -40,13 +61,30 @@ def _check_overlap(base_types: dict) -> None:
             )
 
 
+def _check_composed(base_types: dict, composed_list: list) -> None:
+    base_names = set(base_types)
+    for comp in composed_list:
+        for required_type in comp["requires"]:
+            if required_type not in base_names:
+                raise VocabularyError(
+                    f"Composed type '{comp['name']}' requires unknown base type '{required_type}'."
+                )
+        capture_type = unwrap_maybe(comp["captures"])
+        if capture_type not in base_names:
+            raise VocabularyError(
+                f"Composed type '{comp['name']}' captures unknown base type '{capture_type}'."
+            )
+
+
 def vocabulary(base_declarations: dict, composed_types=None) -> dict:
     """Build a validated vocabulary from {type_name: declaration}. Raises VocabularyError."""
     base_types = {name: normalize(declaration) for name, declaration in base_declarations.items()}
     for type_name, recognizer in base_types.items():
         _check_reserved(type_name, recognizer)
     _check_overlap(base_types)
-    return {"base_types": base_types, "composed_types": list(composed_types or [])}
+    composed_list = list(composed_types or [])
+    _check_composed(base_types, composed_list)
+    return {"base_types": base_types, "composed_types": composed_list}
 
 
 def binding(table: dict) -> dict:
