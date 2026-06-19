@@ -136,18 +136,34 @@ predicates:
 
 ### 3.4 Length-Bounded Predicate Generation
 
-For predicates that constrain string length, generate strings at every valid length from 1 to the declared maximum, plus one above the maximum (which must be rejected).
+For predicates that constrain string length, generate a string at every valid length, plus the boundary lengths just outside the valid range — which must be rejected. Boundary testing is symmetric: probe one under the minimum and one over the maximum, not only one over.
+
+The constraint is read from the comparison **operator**, not just a bound, so `==` (a single exact length) is distinguished from `<=` (a range up to a maximum):
+
+| Predicate | (min, max) | Valid lengths | Invalid (boundary) |
+|---|---|---|---|
+| `len(s) == 5` | (5, 5) | 5 | 4, 6 |
+| `len(s) <= 8` | (1, 8) | 1..8 | 9 |
+| `len(s) < 8` | (1, 7) | 1..7 | 8 |
+| `len(s) >= 3` (no max) | (3, ∞) | unbounded — falls to supplied-values |
+| `3 <= len(s) <= 8` | (3, 8) | 3..8 | 2, 9 |
 
 ```
 FUNCTION enumerate_lengths(predicate_ast):
-    max_len ← extract_length_constraint(predicate_ast)
-    chars   ← "abcdefghijklmnopqrstuvwxyz0123456789"
+    min_len, max_len ← extract_length_bounds(predicate_ast)   // from the operator(s)
+    chars            ← "abcdefghijklmnopqrstuvwxyz0123456789"
 
-    valid   ← [chars[:n] FOR n IN range(1, max_len + 1)]
-    invalid ← [chars[:max_len + 1]]    // one over — must be rejected
+    valid   ← [string_of_length(n, chars) FOR n IN range(min_len, max_len + 1)]
+
+    invalid ← [string_of_length(max_len + 1, chars)]          // one over — must be rejected
+    IF min_len > 1:                                           // one under, when it is non-empty
+        invalid ← invalid + [string_of_length(min_len - 1, chars)]
+    // min_len == 1 -> one under is the empty string, already an empty_token rejection (section 9.3)
 
     RETURN valid, invalid
 ```
+
+A pure lower bound with no maximum (`len(s) >= 3` alone) is unbounded above and not finitely enumerable; it falls to supplied-values (section 3.6), like any predicate this strategy cannot fully generate. `string_of_length(n, chars)` produces a length-`n` string by repeating `chars` as needed, so lengths beyond `len(chars)` are still generated.
 
 ### 3.5 Adversarial Input Generation
 
