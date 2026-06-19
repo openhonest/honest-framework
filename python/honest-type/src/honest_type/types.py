@@ -24,10 +24,12 @@ class Rejection(TypedDict):
 
 
 class Fault(TypedDict):
-    """A processing error (server bug). Data, not an exception."""
+    """A processing error. Data, not an exception. `category` ('client'|'server') is
+    required (section 11.2) — a fault without a category is itself a server error."""
 
     code: str
     message: str
+    category: str
     detail: dict[str, Any] | None
 
 
@@ -39,5 +41,5 @@ def rejection(token, reason: str, detail=None) -> Rejection:
     return {"token": token, "reason": reason, "detail": detail}
 
 
-def fault(code: str, message: str, detail=None) -> Fault:
-    return {"code": code, "message": message, "detail": detail}
+def fault(code: str, message: str, category: str, detail=None) -> Fault:
+    return {"code": code, "message": message, "category": category, "detail": detail}

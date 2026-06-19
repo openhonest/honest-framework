@@ -9,6 +9,15 @@
     {"id": "vocab-reserved-class", "declarations": {"x": ["class"]}, "expect": "error", "error_contains": "reserved"},
     {"id": "vocab-reserved-return", "declarations": {"y": ["return", "ok"]}, "expect": "error", "error_contains": "reserved"},
     {"id": "vocab-reserved-manifest", "declarations": {"z": ["manifest"]}, "expect": "error", "error_contains": "framework"},
-    {"id": "vocab-overlap", "declarations": {"a": ["x", "y"], "b": ["y", "z"]}, "expect": "error", "error_contains": "share"}
+    {"id": "vocab-overlap", "declarations": {"a": ["x", "y"], "b": ["y", "z"]}, "expect": "error", "error_contains": "share"},
+
+    {"id": "classify-binding", "declarations": {"currency_code": ["USD", "EUR"], "format_name": ["currency", "number"]}, "binding": {"currency_code": "currency", "format_name": "format"}, "tokens": ["currency", "EUR"], "expect_manifest": {"format": "currency", "currency": "EUR"}, "expect_rejections": []},
+    {"id": "classify-order-independent", "declarations": {"currency_code": ["USD", "EUR"], "format_name": ["currency", "number"]}, "binding": {"currency_code": "currency", "format_name": "format"}, "tokens": ["EUR", "currency"], "expect_manifest": {"format": "currency", "currency": "EUR"}},
+    {"id": "classify-auto-binding", "declarations": {"cc": ["USD", "EUR"]}, "tokens": ["USD"], "expect_manifest": {"cc": "USD"}, "expect_rejections": []},
+    {"id": "classify-unrecognized", "declarations": {"cc": ["USD"]}, "tokens": ["zzz"], "expect_rejections": ["unrecognized", "missing_required"]},
+    {"id": "classify-duplicate-slot", "declarations": {"format_name": ["currency", "number"]}, "tokens": ["currency", "number"], "expect_manifest": {"format_name": "currency"}, "expect_rejections": ["duplicate_slot"]},
+    {"id": "classify-missing-required", "declarations": {"a": ["x"], "b": ["y"]}, "tokens": [], "expect_rejections": ["missing_required"]},
+    {"id": "classify-null-token", "declarations": {"cc": ["USD"]}, "tokens": [null, "USD"], "expect_manifest": {"cc": "USD"}, "expect_rejections": ["null_token"]},
+    {"id": "classify-empty-token", "declarations": {"cc": ["USD"]}, "tokens": ["", "USD"], "expect_manifest": {"cc": "USD"}, "expect_rejections": ["empty_token"]}
   ]
 }
