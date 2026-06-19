@@ -14,6 +14,7 @@ from honest_test.adversarial import (
     length_extensions,
     unicode_confusables,
 )
+from honest_test.driver import discover, verify
 from honest_test.enumeration import enumerate_sets
 from honest_test.honesty import (
     detect_mutation,
@@ -33,6 +34,8 @@ from honest_test.statemachine import (
 from honest_test.supplied import load_config, supplied_for
 
 __all__ = [
+    "discover",
+    "verify",
     "enumerate_sets",
     "classify_source",
     "classify_predicate",

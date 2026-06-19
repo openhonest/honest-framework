@@ -15,6 +15,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import app_buggy
+import app_clean
 from honest_type import binding, fault, link, maybe, ok, state_machine, vocabulary
 
 from honest_test import (
@@ -29,9 +31,12 @@ from honest_test import (
     test_chain_contracts,
     test_invalid_transitions,
     test_valid_transitions,
+    verify,
     verify_idempotency,
     verify_purity,
 )
+
+_APPS = {"clean": app_clean, "buggy": app_buggy}
 
 _SM_TESTS = {
     "valid": test_valid_transitions,
@@ -215,6 +220,13 @@ def _check_statemachine(case):
     return len(findings) >= case["expect_min_findings"], f"got {len(findings)} findings"
 
 
+def _check_driver(case):
+    findings = verify(_APPS[case["app"]])
+    if "expect_findings" in case:
+        return len(findings) == case["expect_findings"], f"got {len(findings)} findings"
+    return len(findings) >= case["expect_min_findings"], f"got {len(findings)} findings"
+
+
 _CHECKERS = {
     "enumeration": _check_enumeration,
     "adversarial": _check_adversarial,
@@ -225,10 +237,13 @@ _CHECKERS = {
     "honesty": _check_honesty,
     "contract": _check_contract,
     "statemachine": _check_statemachine,
+    "driver": _check_driver,
 }
 
 
 def _kind(case):
+    if "app" in case:
+        return "driver"
     if "sm_test" in case:
         return "statemachine"
     if "contract" in case:
