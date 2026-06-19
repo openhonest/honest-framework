@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# pre-commit — Verification First: no Python commit lands while the framework fails
+# its own linter. Runs only when Python sources are staged, so non-Python commits are
+# never blocked. Enabled via `core.hooksPath=.githooks` (see bootstrap.sh).
+set -uo pipefail
+
+staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^python/.*\.py$' || true)
+[ -z "$staged" ] && exit 0
+
+echo "honest-check gate (staged Python detected)…"
+root=$(git rev-parse --show-toplevel)
+exec "$root/python/lint-all.sh"
