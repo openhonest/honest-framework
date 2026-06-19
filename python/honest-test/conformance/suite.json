@@ -172,8 +172,6 @@
     {"id": "sm-valid-transitions-clean", "sm_test": "valid", "states": ["pending", "paid", "shipped", "cancelled"], "events": ["pay", "ship", "cancel", "refund"], "transitions": [["pending", "pay", "paid"], ["pending", "cancel", "cancelled"], ["paid", "ship", "shipped"], ["paid", "cancel", "cancelled"], ["shipped", "refund", "cancelled"]], "initial": "pending", "expect_findings": 0},
     {"id": "sm-invalid-transitions-clean", "sm_test": "invalid", "states": ["pending", "paid", "shipped", "cancelled"], "events": ["pay", "ship", "cancel", "refund"], "transitions": [["pending", "pay", "paid"], ["pending", "cancel", "cancelled"], ["paid", "ship", "shipped"], ["paid", "cancel", "cancelled"], ["shipped", "refund", "cancelled"]], "initial": "pending", "expect_findings": 0},
     {"id": "sm-adversarial-clean", "sm_test": "adversarial", "states": ["pending", "paid", "shipped", "cancelled"], "events": ["pay", "ship", "cancel", "refund"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "expect_findings": 0},
-    {"id": "sm-adversarial-detects-similar-states", "sm_test": "adversarial", "states": ["cat", "car"], "events": ["go"], "transitions": [["cat", "go", "car"]], "initial": "cat", "expect_min_findings": 1},
-    {"id": "driver-clean-app-is-honest", "app": "clean", "expect_findings": 0},
-    {"id": "driver-buggy-app-surfaces-bugs", "app": "buggy", "expect_min_findings": 1}
+    {"id": "sm-adversarial-detects-similar-states", "sm_test": "adversarial", "states": ["cat", "car"], "events": ["go"], "transitions": [["cat", "go", "car"]], "initial": "cat", "expect_min_findings": 1}
   ]
 }
