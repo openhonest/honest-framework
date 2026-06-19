@@ -165,6 +165,9 @@
     {"id": "honesty-mutation-pure-link", "honesty": "mutation", "link": "pure", "manifest": {"x": "1"}, "expect_ok": true},
     {"id": "honesty-mutation-mutating-link", "honesty": "mutation", "link": "mutating", "manifest": {"x": "1"}, "expect_ok": false, "expect_code": "manifest_mutated"},
     {"id": "honesty-idempotency-pure-chain", "honesty": "idempotency", "chain": ["pure", "set_role"], "manifest": {"x": "1"}, "expect_ok": true},
-    {"id": "honesty-idempotency-impure-chain", "honesty": "idempotency", "chain": ["impure"], "manifest": {"x": "1"}, "expect_ok": false, "expect_code": "not_idempotent"}
+    {"id": "honesty-idempotency-impure-chain", "honesty": "idempotency", "chain": ["impure"], "manifest": {"x": "1"}, "expect_ok": false, "expect_code": "not_idempotent"},
+    {"id": "contract-server-fault-is-violation", "contract": true, "chain": ["emit_format", "accepts_currency"], "expect_ok": false},
+    {"id": "contract-client-fault-not-violation", "contract": true, "chain": ["emit_format", "client_picky"], "expect_ok": true},
+    {"id": "contract-all-outputs-accepted", "contract": true, "chain": ["emit_format", "always_ok"], "expect_ok": true}
   ]
 }

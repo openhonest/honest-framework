@@ -15,7 +15,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from honest_type import binding, link, maybe, ok, vocabulary
+from honest_type import binding, fault, link, maybe, ok, vocabulary
 
 from honest_test import (
     adversarial_neighbors,
@@ -25,6 +25,7 @@ from honest_test import (
     enumerate_sets,
     numeric_values,
     supplied_for,
+    test_chain_contracts,
     verify_idempotency,
     verify_purity,
 )
@@ -64,6 +65,40 @@ _HONESTY_LINKS = {
     "mutating": _mutating_link,
     "boundary_impure": _boundary_impure,
     "set_role": _set_role,
+}
+
+# Chain-contract fixtures: a producer that declares an accepts vocabulary, and consumers that
+# accept or reject its outputs in different ways.
+_fmt_vocab = vocabulary({"fmt": {"currency", "number"}})
+_fmt_binding = binding({"fmt": "format"})
+
+
+@link(accepts=_fmt_vocab, binds=_fmt_binding)
+def _emit_format(manifest):
+    return ok(manifest)
+
+
+def _accepts_currency(manifest):
+    if manifest.get("format") == "currency":
+        return ok(manifest)
+    return {"err": fault("wrong_format", "needs currency", "server")}
+
+
+def _client_picky(manifest):
+    if manifest.get("format") == "currency":
+        return ok(manifest)
+    return {"err": fault("bad_input", "client rejects", "client")}
+
+
+def _always_ok(manifest):
+    return ok(manifest)
+
+
+_CONTRACT_LINKS = {
+    "emit_format": _emit_format,
+    "accepts_currency": _accepts_currency,
+    "client_picky": _client_picky,
+    "always_ok": _always_ok,
 }
 
 
@@ -152,6 +187,13 @@ def _check_honesty(case):
     return ok_, f"got {finding}"
 
 
+def _check_contract(case):
+    findings = test_chain_contracts([_CONTRACT_LINKS[n] for n in case["chain"]])
+    if case["expect_ok"]:
+        return len(findings) == 0, f"got {findings}"
+    return len(findings) >= 1, f"got {findings}"
+
+
 _CHECKERS = {
     "enumeration": _check_enumeration,
     "adversarial": _check_adversarial,
@@ -160,10 +202,13 @@ _CHECKERS = {
     "length": _check_length,
     "supplied": _check_supplied,
     "honesty": _check_honesty,
+    "contract": _check_contract,
 }
 
 
 def _kind(case):
+    if "contract" in case:
+        return "contract"
     if "honesty" in case:
         return "honesty"
     if "predicate" in case:

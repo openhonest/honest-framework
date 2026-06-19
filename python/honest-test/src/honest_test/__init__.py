@@ -15,7 +15,13 @@ from honest_test.adversarial import (
     unicode_confusables,
 )
 from honest_test.enumeration import enumerate_sets
-from honest_test.honesty import detect_mutation, verify_idempotency, verify_purity
+from honest_test.honesty import (
+    detect_mutation,
+    enumerate_test_cases,
+    test_chain_contracts,
+    verify_idempotency,
+    verify_purity,
+)
 from honest_test.length import enumerate_lengths, extract_length_bounds
 from honest_test.numeric import DEFAULT_LIMIT, fibonacci_sequence, numeric_values
 from honest_test.predicate import classify_predicate, classify_source
@@ -35,6 +41,8 @@ __all__ = [
     "verify_purity",
     "detect_mutation",
     "verify_idempotency",
+    "enumerate_test_cases",
+    "test_chain_contracts",
     "adversarial_neighbors",
     "adversarial_neighbours",
     "edit_distance_1",
