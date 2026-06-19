@@ -15,7 +15,11 @@ import json
 import sys
 from pathlib import Path
 
-from honest_type import VocabularyError, binding, classify, composed, maybe, vocabulary
+from honest_type import VocabularyError, binding, classify, composed, maybe, merge, vocabulary
+
+
+def _vocab(declarations):
+    return vocabulary({name: set(members) for name, members in declarations.items()})
 
 
 def _slot(spec):
@@ -61,10 +65,26 @@ def _check_classify(case):
     return manifest_ok and rejections_ok, f"got {result}"
 
 
-_CHECKERS = {"construction": _check_construction, "classify": _check_classify}
+def _check_merge(case):
+    try:
+        merge(_vocab(case["merge_a"]), _vocab(case["merge_b"]))
+        result, message = "ok", ""
+    except VocabularyError as exc:
+        result, message = "error", str(exc)
+    ok = result == case["expect"] and case.get("error_contains", "") in message
+    return ok, f"got {result} ({message[:50]})"
+
+
+_CHECKERS = {
+    "construction": _check_construction,
+    "classify": _check_classify,
+    "merge": _check_merge,
+}
 
 
 def _kind(case):
+    if "merge_a" in case:
+        return "merge"
     return "classify" if "tokens" in case else "construction"
 
 

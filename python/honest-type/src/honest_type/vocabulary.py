@@ -87,6 +87,28 @@ def vocabulary(base_declarations: dict, composed_types=None) -> dict:
     return {"base_types": base_types, "composed_types": composed_list}
 
 
+def _type_names(vocab: dict) -> set:
+    """Every type name a vocabulary defines — base and composed alike (they share one
+    flat binding table, section 4.3)."""
+    return set(vocab["base_types"]) | {comp["name"] for comp in vocab["composed_types"]}
+
+
+def merge(vocab_a: dict, vocab_b: dict) -> dict:
+    """Combine two vocabularies into one (section 3). Fails at construction time on a name
+    collision (a type defined by both) or a value collision (a Set member shared across the
+    two under different type names). Predicate overlaps are left to honest-test."""
+    shared_names = _type_names(vocab_a) & _type_names(vocab_b)
+    if shared_names:
+        raise VocabularyError(
+            f"Vocabularies both define type name(s) {sorted(shared_names)}."
+        )
+    base_types = {**vocab_a["base_types"], **vocab_b["base_types"]}
+    composed_list = [*vocab_a["composed_types"], *vocab_b["composed_types"]]
+    _check_overlap(base_types)  # cross-vocabulary Set x Set value collision (section 3)
+    _check_composed(base_types, composed_list)
+    return {"base_types": base_types, "composed_types": composed_list}
+
+
 def binding(table: dict) -> dict:
     """A binding table mapping type names to slot names. Plain data."""
     return dict(table)

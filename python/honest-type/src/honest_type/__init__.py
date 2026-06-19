@@ -14,6 +14,7 @@ from honest_type.vocabulary import (
     binding,
     composed,
     maybe,
+    merge,
     vocabulary,
 )
 
@@ -24,6 +25,7 @@ __all__ = [
     "auto_binding",
     "composed",
     "maybe",
+    "merge",
     "predicate",
     "insensitive",
     "recognize",

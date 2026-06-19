@@ -24,6 +24,10 @@
     {"id": "composed-off-falls-through", "declarations": {"format_name": ["currency", "number"], "currency_code": ["USD", "EUR"], "integer": ["2", "3"]}, "composed_types": [{"name": "currency_precision", "requires": {"format_name": "currency"}, "captures": "integer"}], "binding": {"format_name": "format", "currency_code": "currency", "integer": "precision", "currency_precision": "decimals"}, "tokens": ["2", "EUR", "number"], "expect_manifest": {"format": "number", "currency": "EUR", "precision": "2"}, "expect_rejections": []},
     {"id": "maybe-absent-nothing", "declarations": {"cc": ["USD"], "intg": ["2"]}, "binding": {"cc": "currency", "intg": {"maybe": "precision"}}, "tokens": ["USD"], "expect_manifest": {"currency": "USD", "precision": null}, "expect_rejections": []},
     {"id": "maybe-present-value", "declarations": {"cc": ["USD"], "intg": ["2"]}, "binding": {"cc": "currency", "intg": {"maybe": "precision"}}, "tokens": ["USD", "2"], "expect_manifest": {"currency": "USD", "precision": "2"}, "expect_rejections": []},
-    {"id": "composed-maybe-capture-absent", "declarations": {"format_name": ["currency"], "integer": ["2"]}, "composed_types": [{"name": "cp", "requires": {"format_name": "currency"}, "captures": {"maybe": "integer"}}], "binding": {"format_name": "format", "integer": "precision", "cp": "decimals"}, "tokens": ["currency"], "expect_manifest": {"format": "currency", "decimals": null}, "expect_rejections": []}
+    {"id": "composed-maybe-capture-absent", "declarations": {"format_name": ["currency"], "integer": ["2"]}, "composed_types": [{"name": "cp", "requires": {"format_name": "currency"}, "captures": {"maybe": "integer"}}], "binding": {"format_name": "format", "integer": "precision", "cp": "decimals"}, "tokens": ["currency"], "expect_manifest": {"format": "currency", "decimals": null}, "expect_rejections": []},
+
+    {"id": "merge-disjoint", "merge_a": {"currency_code": ["USD", "EUR"]}, "merge_b": {"format_name": ["currency", "number"]}, "expect": "ok"},
+    {"id": "merge-name-collision", "merge_a": {"cc": ["USD", "EUR"]}, "merge_b": {"cc": ["GBP"]}, "expect": "error", "error_contains": "both define"},
+    {"id": "merge-value-collision", "merge_a": {"a": ["x", "y"]}, "merge_b": {"b": ["y", "z"]}, "expect": "error", "error_contains": "share"}
   ]
 }
