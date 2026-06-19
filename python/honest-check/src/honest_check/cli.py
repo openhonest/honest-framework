@@ -15,8 +15,16 @@ it; until then the boundary is declared here (section 7.2).
 
 import argparse
 import sys
+import tomllib
 from pathlib import Path
 
+from honest_check.config import (
+    empty_config,
+    is_excluded,
+    normalize_config,
+    resolve_paths,
+    resolve_severity,
+)
 from honest_check.diagnostics import Diagnostic
 from honest_check.formats import (
     filter_by_rule,
@@ -28,16 +36,34 @@ from honest_check.formats import (
 from honest_check.rules import check_source
 
 
-def _discover_files(paths: list[str]) -> list[Path]:
-    """Expand CLI paths into a sorted list of .py files (section 3.2)."""
+def _discover_files(paths: list[str], exclude: list[str]) -> list[Path]:
+    """Expand paths into a sorted list of .py files, honoring exclude globs (section 3.2)."""
     files: list[Path] = []
     for raw in paths:
         path = Path(raw)
-        if path.is_dir():
-            files.extend(sorted(path.rglob("*.py")))
-        else:
-            files.append(path)
+        candidates = sorted(path.rglob("*.py")) if path.is_dir() else [path]
+        files.extend(c for c in candidates if not is_excluded(str(c), exclude))
     return files
+
+
+def _find_config(explicit: str | None) -> Path | None:
+    """The honest-check.toml to use: --config if given, else the nearest ancestor's."""
+    if explicit:
+        return Path(explicit)
+    here = Path.cwd()
+    for directory in [here, *here.parents]:
+        candidate = directory / "honest-check.toml"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _load_config(path: Path | None) -> dict:
+    """Read + normalize honest-check.toml (boundary I/O), or defaults if absent."""
+    if path is None or not path.is_file():
+        return empty_config()
+    with path.open("rb") as handle:
+        return normalize_config(tomllib.load(handle))
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -45,9 +71,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         prog="honest-check",
         description="The pre-auto-generation honesty gate of the Honest Framework.",
     )
-    parser.add_argument("paths", nargs="*", default=["."], help="files or directories to check")
+    parser.add_argument("paths", nargs="*", default=[], help="files or directories to check")
+    parser.add_argument("--config", default=None, help="path to honest-check.toml")
     parser.add_argument("--format", choices=supported_formats(), default="human")
-    parser.add_argument("--severity", choices=["error", "warning", "info"], default="warning")
+    parser.add_argument("--severity", choices=["error", "warning", "info"], default=None)
     parser.add_argument("--rule", action="append", default=[], help="run only this rule (repeatable)")
     parser.add_argument("--no-rule", action="append", default=[], dest="no_rule", help="suppress this rule (repeatable)")
     return parser.parse_args(argv)
@@ -57,17 +84,27 @@ def main(argv: list[str] | None = None) -> int:
     """Run honest-check over the given paths; return the process exit code."""
     args = _parse_args(list(sys.argv[1:]) if argv is None else list(argv))
 
+    try:
+        config = _load_config(_find_config(args.config))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        print(f"honest-check: cannot load config: {exc}", file=sys.stderr)
+        return 2
+
+    paths = resolve_paths(args.paths, config["paths"])
+    severity = resolve_severity(args.severity, config["severity"])
+    suppress = frozenset(args.no_rule) | frozenset(config["disable"])
+
     diagnostics: list[Diagnostic] = []
     try:
-        for file in _discover_files(args.paths):
+        for file in _discover_files(paths, config["exclude"]):
             diagnostics.extend(check_source(file.read_text(encoding="utf-8"), str(file)))
     except OSError as exc:
         print(f"honest-check: cannot read source: {exc}", file=sys.stderr)
         return 2
 
-    diagnostics = filter_by_rule(diagnostics, frozenset(args.rule), frozenset(args.no_rule))
+    diagnostics = filter_by_rule(diagnostics, frozenset(args.rule), suppress)
     blocking = has_errors(diagnostics)
-    shown = filter_by_severity(diagnostics, args.severity)
+    shown = filter_by_severity(diagnostics, severity)
 
     rendered = render(shown, args.format)
     if rendered:
