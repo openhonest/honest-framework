@@ -16,7 +16,7 @@ from pathlib import Path
 
 from honest_type import binding, maybe, vocabulary
 
-from honest_test import adversarial_neighbors, classify_source, enumerate_sets
+from honest_test import adversarial_neighbors, classify_source, enumerate_sets, numeric_values
 
 
 def _vocab(declarations):
@@ -55,14 +55,27 @@ def _check_predicate(case):
     return got == case["expect_class"], f"got {got}"
 
 
+def _check_numeric(case):
+    kwargs = {key: case[key] for key in ("limit", "negative", "as_float") if key in case}
+    values = numeric_values(**kwargs)
+    if "expect_values" in case:
+        return values == case["expect_values"], f"got {values}"
+    ok = all(want in values for want in case.get("expect_contains", []))
+    ok = ok and len(values) >= case.get("expect_count_min", 0)
+    return ok, f"got {len(values)} values"
+
+
 _CHECKERS = {
     "enumeration": _check_enumeration,
     "adversarial": _check_adversarial,
     "predicate": _check_predicate,
+    "numeric": _check_numeric,
 }
 
 
 def _kind(case):
+    if case.get("gen") == "numeric":
+        return "numeric"
     if "expect_class" in case:
         return "predicate"
     return "adversarial" if "value" in case else "enumeration"

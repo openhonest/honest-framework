@@ -144,6 +144,10 @@
     {"id": "pred-external-call", "source": "lambda s: lookup(s)", "expect_class": "external"},
     {"id": "pred-composite-call", "source": "lambda s: validate(s)", "codebase": ["validate"], "expect_class": "composite"},
     {"id": "pred-length-beats-numeric", "source": "lambda s: len(s) == 5", "expect_class": "length"},
-    {"id": "pred-unknown-string-compare", "source": "lambda s: s == 'x'", "expect_class": "unknown"}
+    {"id": "pred-unknown-string-compare", "source": "lambda s: s == 'x'", "expect_class": "unknown"},
+    {"id": "numeric-fib-limit-10", "gen": "numeric", "limit": 10, "expect_values": [-1, -1, -2, -3, -5, -8, -13, 0, 1, 1, 2, 3, 5, 8, 13]},
+    {"id": "numeric-no-negative", "gen": "numeric", "limit": 10, "negative": false, "expect_values": [0, 1, 1, 2, 3, 5, 8, 13]},
+    {"id": "numeric-float-divides-by-100", "gen": "numeric", "limit": 10, "as_float": true, "expect_contains": [0.0, 0.01, 0.05, 0.13, -0.13]},
+    {"id": "numeric-default-spread", "gen": "numeric", "expect_contains": [0, 1, -1], "expect_count_min": 40}
   ]
 }
