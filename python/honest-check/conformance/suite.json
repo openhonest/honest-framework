@@ -1,0 +1,645 @@
+{
+  "version": "0.1",
+  "module": "honest-check",
+  "cases": [
+    {
+      "id": "HC-SYN-001",
+      "category": "HC-SYN",
+      "input": {
+        "language": "python",
+        "source": "def f(:\n    pass"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-SYN",
+            "severity": "error",
+            "line": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P001-001",
+      "category": "HC-P001",
+      "input": {
+        "language": "python",
+        "source": "def h(r):\n    if r=='a':\n        return 1\n    elif r=='b':\n        return 2\n    elif r=='c':\n        return 3"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P001",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P001-clean",
+      "category": "HC-P001",
+      "input": {
+        "language": "python",
+        "source": "HANDLERS={'a':1,'b':2,'c':3}\ndef h(k):\n    return HANDLERS[k]"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P002-001",
+      "category": "HC-P002",
+      "input": {
+        "language": "python",
+        "source": "def f(s):\n    try:\n        return int(s)\n    except ValueError:\n        return 0"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P002",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P003-001",
+      "category": "HC-P003",
+      "input": {
+        "language": "python",
+        "source": "class Foo:\n    pass"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P003",
+            "severity": "error",
+            "line": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P003-002",
+      "category": "HC-P003",
+      "input": {
+        "language": "python",
+        "source": "class Foo(Bar):\n    pass"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P003",
+            "severity": "error",
+            "line": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P003-clean",
+      "category": "HC-P003",
+      "input": {
+        "language": "python",
+        "source": "from typing import TypedDict\nclass U(TypedDict):\n    x: int"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P004-001",
+      "category": "HC-P004",
+      "input": {
+        "language": "python",
+        "source": "import subprocess\ndef run():\n    subprocess.run(['ls'])"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P004",
+            "severity": "error",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P004-clean",
+      "category": "HC-P004",
+      "input": {
+        "language": "python",
+        "source": "import subprocess\n@boundary\ndef run():\n    subprocess.run(['ls'])"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P005-001",
+      "category": "HC-P005",
+      "input": {
+        "language": "python",
+        "source": "def f(x):\n    return isinstance(x, int)"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P005",
+            "severity": "warning",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P006-001",
+      "category": "HC-P006",
+      "input": {
+        "language": "python",
+        "source": "from functools import lru_cache\n@lru_cache\ndef f(x):\n    return x"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P006",
+            "severity": "warning",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P007-001",
+      "category": "HC-P007",
+      "input": {
+        "language": "python",
+        "source": "class C(ABC):\n    def __init__(self):\n        self._cache = {}"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P007",
+            "severity": "warning",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P011-001",
+      "category": "HC-P011",
+      "input": {
+        "language": "python",
+        "source": "def s(el):\n    el.addEventListener('click', f)"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P011",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P016-001",
+      "category": "HC-P016",
+      "input": {
+        "language": "python",
+        "source": "def o():\n    n=0\n    def i():\n        nonlocal n\n        n+=1\n    return i"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P016",
+            "severity": "error",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P017-001",
+      "category": "HC-P017",
+      "input": {
+        "language": "python",
+        "source": "def h(req):\n    return JSONResponse({})"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P017",
+            "severity": "error",
+            "line": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC003-001",
+      "category": "HC003",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import vocabulary\nv = vocabulary({'a': {'x'}, 'b': {'x'}})"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC003",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC006-001",
+      "category": "HC006",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import vocabulary, composed\nv = vocabulary({'a':{'x'}}, composed_types=[composed('c', requires={'nope':'x'}, captures='a')])"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC006",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC007-001",
+      "category": "HC007",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import chain\np = chain()"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC007",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC009-001",
+      "category": "HC009",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import vocabulary, predicate\nv=vocabulary({'n': predicate(lambda s: int(s)>0)})"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC009",
+            "severity": "warning",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC011-001",
+      "category": "HC011",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import vocabulary, predicate\nv=vocabulary({'a': predicate(f)})"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC011",
+            "severity": "info",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC001-001",
+      "category": "HC001",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import chain, link, vocabulary\nv = vocabulary({'a': {'x'}})\n@link(accepts=v, emits=v)\ndef good(m): return m\ndef bad(m): return m\np = chain(good, bad)"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC001",
+            "severity": "error",
+            "line": 6
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC002-001",
+      "category": "HC002",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import chain, link, vocabulary\nvin = vocabulary({'a': {'x'}})\nvout = vocabulary({'b': {'y'}})\n@link(accepts=vin, emits=vin)\ndef first(m): return m\n@link(accepts=vout, emits=vout)\ndef second(m): return m\np = chain(first, second)"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC002",
+            "severity": "error",
+            "line": 8
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC004-001",
+      "category": "HC004",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import vocabulary, binding, link\nv=vocabulary({'a':{'x'},'b':{'y'}})\nbd=binding({'a':'slotA'})\n@link(accepts=v, binds=bd)\ndef f(m): return m"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC004",
+            "severity": "warning",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC005-001",
+      "category": "HC005",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import vocabulary, binding, link\nv=vocabulary({'a':{'x'}})\nbd=binding({'a':'slotA','ghost':'slotG'})\n@link(accepts=v, binds=bd)\ndef f(m): return m"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC005",
+            "severity": "warning",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P014-001",
+      "category": "HC-P014",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import vocabulary, binding, link\nv=vocabulary({'sender':{'u1','u2'},'receiver':{'u1','u2'}})\nbd=binding({'sender':'from','receiver':'to'})\n@link(accepts=v, binds=bd)\ndef f(m): return m"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P014",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC008-001",
+      "category": "HC008",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import link, vocabulary\nimport requests\nv=vocabulary({'a':{'x'}})\n@link(accepts=v, emits=v)\ndef fetch(m):\n    return requests.get('u')"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC008",
+            "severity": "warning",
+            "line": 5
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC010-001",
+      "category": "HC010",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import link, vocabulary, binding\nvin=vocabulary({'a':{'x'}})\nvout=vocabulary({'a':{'x'},'b':{'y'}})\nbd=binding({'a':'slotA','b':'slotB'})\n@link(accepts=vin, emits=vout, binds=bd)\ndef f(m):\n    return m"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC010",
+            "severity": "warning",
+            "line": 6
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-SM01-001",
+      "category": "HC-SM01",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import state_machine, vocabulary\nm = state_machine(\n  states=vocabulary({'s': {'pending','paid'}}),\n  events=vocabulary({'e': {'pay'}}),\n  initial='pending',\n  transitions={('PENDING','pay'):'paid'})"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-SM01",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-SM02-001",
+      "category": "HC-SM02",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import state_machine, vocabulary\nm = state_machine(\n  states=vocabulary({'s': {'pending','paid'}}),\n  events=vocabulary({'e': {'pay'}}),\n  initial='pending',\n  transitions={('pending','PAY'):'paid'})"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-SM02",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-SM03-001",
+      "category": "HC-SM03",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import state_machine, vocabulary\nm = state_machine(\n  states=vocabulary({'s': {'pending','paid','orphan'}}),\n  events=vocabulary({'e': {'pay'}}),\n  initial='pending',\n  transitions={('pending','pay'):'paid'})"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-SM03",
+            "severity": "warning",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-SM05-001",
+      "category": "HC-SM05",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import state_machine, vocabulary\nm = state_machine(\n  states=vocabulary({'s': {'pending','paid'}}),\n  events=vocabulary({'e': {'pay'}}),\n  initial='START',\n  transitions={('pending','pay'):'paid'})"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-SM05",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-SM04-001",
+      "category": "HC-SM04",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import state_machine, vocabulary\nm = state_machine(\n  states=vocabulary({'s': {'pending','paid'}}),\n  events=vocabulary({'e': {'pay'}}),\n  initial='pending',\n  transitions={('pending','pay'):'paid'})"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-SM04",
+            "severity": "warning",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-OR001-001",
+      "category": "HC-OR001",
+      "input": {
+        "language": "python",
+        "source": "@orchestrator\ndef root(req):\n    return sub(req)\n@orchestrator\ndef sub(req):\n    return req"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-OR001",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-OR003-001",
+      "category": "HC-OR003",
+      "input": {
+        "language": "python",
+        "source": "@orchestrator\ndef a(r):\n    validate(r)\n    build(r)\n    persist(r)\n    a_only(r)\n@orchestrator\ndef b(r):\n    setup(r)\n    validate(r)\n    build(r)\n    persist(r)"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-OR003",
+            "severity": "warning",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-R001-001",
+      "category": "HC-R001",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import link\n@link(accepts=v, emits=v)\ndef a(m):\n    return helper(m)\ndef helper(m):\n    return m\ndef orphan(x):\n    return x"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-R001",
+            "severity": "error",
+            "line": 7
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-A001-001",
+      "category": "HC-A001",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import link\n@link(accepts=v, emits=v, authorizes=True)\ndef grant(m):\n    return m"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-A001",
+            "severity": "warning",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-A002-001",
+      "category": "HC-A002",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import link\nsp = AuthProvider(name='p', derivation_expression=GuardExpressionTemplate.lookup('session_actor', args=[Slot('token')]))\nregister_auth_provider(sp)\n@link(accepts=v, emits=v, authorizes=True)\ndef grant(m):\n    return persist_write(m)"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-A002",
+            "severity": "error",
+            "line": 5
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P015-001",
+      "category": "HC-P015",
+      "input": {
+        "language": "python",
+        "source": "def grant(m):\n    m['role'] = persist.read('SELECT role')\n    return guarded_mutation(target=t, guard=compare(slot('role'), '=', literal('owner')), update=u, op='update')"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P015",
+            "severity": "error",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "clean-pure",
+      "category": "clean",
+      "input": {
+        "language": "python",
+        "source": "def add(a, b):\n    return a + b"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    }
+  ]
+}

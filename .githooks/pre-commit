@@ -9,4 +9,5 @@ staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^python/.*\.
 
 echo "honest-check gate (staged Python detected)…"
 root=$(git rev-parse --show-toplevel)
-exec "$root/python/lint-affected.sh"
+"$root/python/lint-affected.sh" || exit 1   # structural: must be Honest Code
+"$root/python/test-affected.sh" || exit 1   # behavioral: must pass its conformance suite

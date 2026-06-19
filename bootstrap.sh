@@ -12,7 +12,7 @@ cd "$(dirname "$0")"
 
 echo "bootstrap: enabling repo git hooks (.githooks)…"
 git config core.hooksPath .githooks
-chmod +x .githooks/pre-commit .githooks/commit-msg python/lint-all.sh python/lint-affected.sh 2>/dev/null || true
+chmod +x .githooks/pre-commit .githooks/commit-msg python/lint-all.sh python/lint-affected.sh python/test-all.sh python/test-affected.sh 2>/dev/null || true
 
 echo "bootstrap: checking uv…"
 command -v uv >/dev/null 2>&1 || {
