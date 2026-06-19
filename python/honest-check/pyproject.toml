@@ -3,10 +3,10 @@ name = "honest-check"
 version = "0.1.0"
 description = "Static linter enforcing Honest Code principles — the pre-auto-generation gate of the Honest Framework."
 requires-python = ">=3.11"
-dependencies = [
-    "tree-sitter>=0.23",
-    "tree-sitter-python>=0.23",
-]
+dependencies = ["honest-parse"]
+
+[tool.uv.sources]
+honest-parse = { workspace = true }
 
 [project.scripts]
 honest-check = "honest_check.cli:main"

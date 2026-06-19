@@ -1,0 +1,13 @@
+{
+  "version": "0.1",
+  "module": "honest-parse",
+  "note": "The shared tree-sitter parsing boundary. error cases assert syntax-error detection; text cases assert the root node spans the whole source. Cases are data; the runner parses and checks.",
+  "cases": [
+    {"id": "valid-assignment", "source": "x = 1", "expect_error": false},
+    {"id": "valid-function", "source": "def f():\n    return 1\n", "expect_error": false},
+    {"id": "valid-empty", "source": "", "expect_error": false},
+    {"id": "syntax-error-def", "source": "def f(:", "expect_error": true},
+    {"id": "unterminated-string", "source": "x = 'abc", "expect_error": true},
+    {"id": "root-text-spans-source", "source": "a = 2", "expect_root_text": "a = 2"}
+  ]
+}

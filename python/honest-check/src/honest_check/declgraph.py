@@ -12,7 +12,7 @@ A recognizer is tagged by kind so rules can reason about it without re-parsing:
     ("ref", name)                 a bare name referring to a recognizer defined elsewhere
 """
 
-from honest_check.parse import line_col, node_text, walk
+from honest_parse import line_col, node_text, walk
 
 _HONEST_TYPE_NAMES = frozenset(
     {

@@ -12,7 +12,7 @@ Directive forms (sections 7.1-7.2):
     # honest: disable HC-P001, HC-P003    multiple rules, comma- or space-separated
 """
 
-from honest_check.parse import node_text, walk
+from honest_parse import node_text, walk
 
 _VERBS = frozenset({"ignore", "disable", "enable"})
 

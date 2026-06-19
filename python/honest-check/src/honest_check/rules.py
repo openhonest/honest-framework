@@ -41,7 +41,7 @@ from honest_check.declgraph import (
     vocabulary_base_types,
 )
 from honest_check.diagnostics import Diagnostic, diagnostic
-from honest_check.parse import first_error_node, line_col, node_text, parse_python, walk
+from honest_parse import first_error_node, line_col, node_text, parse_python, walk
 from honest_check.suppression import build_suppressions, is_suppressed
 from honest_check.watchlists import (
     IO_WATCH_LIST,

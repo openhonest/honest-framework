@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 [manifest]
 members = [
     "honest-check",
+    "honest-parse",
     "honest-test",
     "honest-type",
     "honest-workspace",
@@ -14,6 +15,17 @@ members = [
 name = "honest-check"
 version = "0.1.0"
 source = { editable = "honest-check" }
+dependencies = [
+    { name = "honest-parse" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "honest-parse", editable = "honest-parse" }]
+
+[[package]]
+name = "honest-parse"
+version = "0.1.0"
+source = { editable = "honest-parse" }
 dependencies = [
     { name = "tree-sitter" },
     { name = "tree-sitter-python" },
