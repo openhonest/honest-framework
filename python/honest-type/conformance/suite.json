@@ -28,6 +28,12 @@
 
     {"id": "merge-disjoint", "merge_a": {"currency_code": ["USD", "EUR"]}, "merge_b": {"format_name": ["currency", "number"]}, "expect": "ok"},
     {"id": "merge-name-collision", "merge_a": {"cc": ["USD", "EUR"]}, "merge_b": {"cc": ["GBP"]}, "expect": "error", "error_contains": "both define"},
-    {"id": "merge-value-collision", "merge_a": {"a": ["x", "y"]}, "merge_b": {"b": ["y", "z"]}, "expect": "error", "error_contains": "share"}
+    {"id": "merge-value-collision", "merge_a": {"a": ["x", "y"]}, "merge_b": {"b": ["y", "z"]}, "expect": "error", "error_contains": "share"},
+
+    {"id": "chain-ok-transforms", "combinator": "chain", "links": ["pass", "set_role"], "initial": {"email": "a@b"}, "expect": "ok", "expect_manifest": {"role": "admin", "email": "a@b"}},
+    {"id": "chain-short-circuits-on-fault", "combinator": "chain", "links": ["fault", "set_role"], "initial": {}, "expect": "err", "expect_code": "boom"},
+    {"id": "chain-non-result-return", "combinator": "chain", "links": ["bad"], "initial": {}, "expect": "err", "expect_code": "non_result_return"},
+    {"id": "validate-all-ok", "combinator": "validate_all", "links": ["pass", "set_role"], "initial": {"x": "1"}, "expect": "ok", "expect_manifest": {"x": "1"}},
+    {"id": "validate-all-accumulates-fault", "combinator": "validate_all", "links": ["pass", "fault"], "initial": {}, "expect": "err", "expect_code": "validation_failed"}
   ]
 }

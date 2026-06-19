@@ -15,11 +15,46 @@ import json
 import sys
 from pathlib import Path
 
-from honest_type import VocabularyError, binding, classify, composed, maybe, merge, vocabulary
+from honest_type import (
+    VocabularyError,
+    binding,
+    chain,
+    classify,
+    composed,
+    err,
+    fault,
+    maybe,
+    merge,
+    ok,
+    validate_all,
+    vocabulary,
+)
 
 
 def _vocab(declarations):
     return vocabulary({name: set(members) for name, members in declarations.items()})
+
+
+# Link fixtures for the chain cases (section 10). Links are functions, so they cannot be
+# JSON; the cases name them and the runner supplies the implementations.
+def _link_pass(manifest):
+    return ok(manifest)
+
+
+def _link_set_role(manifest):
+    return ok({**manifest, "role": "admin"})
+
+
+def _link_fault(manifest):
+    return err(fault("boom", "boom", "server"))
+
+
+def _link_bad(manifest):
+    return {"weird": 1}  # neither ok nor err -> non_result_return
+
+
+_LINKS = {"pass": _link_pass, "set_role": _link_set_role, "fault": _link_fault, "bad": _link_bad}
+_COMBINATORS = {"chain": chain, "validate_all": validate_all}
 
 
 def _slot(spec):
@@ -75,14 +110,30 @@ def _check_merge(case):
     return ok, f"got {result} ({message[:50]})"
 
 
+def _check_chainrun(case):
+    links = [_LINKS[name] for name in case["links"]]
+    result = _COMBINATORS[case["combinator"]](*links)(case["initial"])
+    if case["expect"] == "err":
+        matched = "err" in result and result["err"]["code"] == case["expect_code"]
+        return matched, f"got {result}"
+    manifest = result.get("ok", {})
+    matched = "ok" in result and all(
+        manifest.get(slot) == value for slot, value in case.get("expect_manifest", {}).items()
+    )
+    return matched, f"got {result}"
+
+
 _CHECKERS = {
     "construction": _check_construction,
     "classify": _check_classify,
     "merge": _check_merge,
+    "chainrun": _check_chainrun,
 }
 
 
 def _kind(case):
+    if "combinator" in case:
+        return "chainrun"
     if "merge_a" in case:
         return "merge"
     return "classify" if "tokens" in case else "construction"

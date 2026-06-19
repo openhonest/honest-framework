@@ -43,3 +43,13 @@ def rejection(token, reason: str, detail=None) -> Rejection:
 
 def fault(code: str, message: str, category: str, detail=None) -> Fault:
     return {"code": code, "message": message, "category": category, "detail": detail}
+
+
+def ok(manifest) -> dict:
+    """A successful link Result (section 10.1): {"ok": manifest}."""
+    return {"ok": manifest}
+
+
+def err(fault_data: Fault) -> dict:
+    """A failed link Result (section 10.1): {"err": fault_data}."""
+    return {"err": fault_data}
