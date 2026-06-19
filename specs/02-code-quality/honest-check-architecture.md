@@ -22,7 +22,7 @@ Every HC rule is a precondition for auto-generation. Each rule, when it fires, n
 | HC001, HC002 | Cannot generate chain contract tests — vocabulary missing or incompatible |
 | HC003, HC011 | Cannot generate unambiguous classification — recognizers overlap or are catch-all |
 | HC006, HC007 | Cannot generate composed-type or chain tests — references unresolved or chain empty |
-| HC-SM01/02/05/06 | Cannot generate exhaustive state machine tests — state/event/field space incomplete |
+| HC-SM01/02/05 | Cannot generate exhaustive state machine tests — state/event space incomplete |
 | HC-P001 | Cannot enumerate dispatch paths — branches are not data |
 | HC-P003, HC-P010 | Cannot verify purity — no classes (inheritance), non-serializable data |
 | HC-P002 | Cannot verify the caught path — catching in business logic hides faults from the manifest |
@@ -422,7 +422,6 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-P015 | Error | ✓ | Cross-chain TOCTOU in guard expression |
 | HC-P016 | Error | ✓ | Nonlocal closure over mutable state |
 | HC-P017 | Error | ✓ | Serializer not declared as chain link |
-| HC-SM06 | Error | ✓ | Transition writes to undeclared state field |
 | HC-R001 | Error | ✓ | Orphan function (no role, not reachable) |
 | HC-OR001 | Error | ✓ | Orchestrator calls another orchestrator |
 | HC-OR003 | Warning | ✓ | Suspected duplication between orchestrators |
@@ -856,30 +855,6 @@ FUNCTION check_HC_P014(bindings):
 1. **Distinct recognizers per semantic role.** `sender_id`, `receiver_id`, `assignee_id` — each with its own value space (e.g., prefixed IDs: `snd_<uuid>`, `rcv_<uuid>`).
 2. **Composed / sum types.** Declare a `transfer` composed type that captures `{from: user_id, to: user_id}` as a single slot. The composed type preserves both values but binds as a single slot.
 3. **Explicit acknowledgement.** A `# honest: allow-recognizer-reuse <reason>` comment suppresses HC-P014 at the binding site, but requires a BDD feature file named `{chain_name}_swap.feature` to be present and cover each slot's semantic role. honest-test verifies the feature presence.
-
-#### HC-SM06 — Transition writes to undeclared state field
-
-A state machine declares its state as an enumerated set of fields. Transition functions may only write to fields in that declared set. Writes to auxiliary fields — even fields the transition "logically" belongs to — escape state invariant checking because the invariant operator only inspects declared fields.
-
-```
-FUNCTION check_HC_SM06(state_machine):
-    declared_fields ← state_machine.state_fields   // e.g., {owners, rw, ro, status}
-
-    FOR EACH (state, event), transition_fn IN state_machine.transitions:
-        ast ← transition_fn.ast
-        writes ← extract_field_writes(ast)
-        // e.g., `return {...state, status: 'complete'}` → writes = {status}
-        // e.g., `return {...state, status: 'complete', created_at: None}` → {status, created_at}
-
-        undeclared ← writes - declared_fields
-        IF undeclared is not empty:
-            EMIT error(HC-SM06, transition_fn.location,
-                f"Transition ({state}, {event}) writes to fields not declared in "
-                f"state_machine.state_fields: {undeclared}. Either add these fields "
-                f"to the state declaration or move the write to a separate chain.")
-```
-
-**Rationale:** a challenger could introduce a transition that correctly updates the primary state field but also silently mutates an auxiliary field (e.g., resetting `created_at` on completion). The state-machine invariant, operating only over declared fields, would pass. HC-SM06 forces every field touched by any transition to be declared in the state tuple, making it visible to invariant checking.
 
 #### HC-P015 — Cross-chain TOCTOU in guard expression
 
@@ -1353,13 +1328,14 @@ This ensures suppressions are visible in CI and do not silently accumulate.
 | HC-P015 | Error | Static | — | Cross-chain TOCTOU in guard expression |
 | HC-P016 | Error | Static | — | Nonlocal closure over mutable state |
 | HC-P017 | Error | Static | — | Serializer not declared as chain link |
-| HC-SM06 | Error | Static | — | Transition writes to undeclared state field |
 | HC-R001 | Error | Static | — | Orphan function (no role, not reachable) |
 | HC-OR001 | Error | Static | — | Orchestrator calls another orchestrator |
 | HC-OR003 | Warning | Static | — | Suspected duplication between orchestrators |
 | HC-A001 | Warning | Static | — | No AuthProvider registered |
 | HC-A002 | Error | Static | — | Authorizing link does not reference provider's derivation |
 | HC-P012 | Warning | Test | — | Excessive mocks in test (honest-test) |
+
+**Withdrawn:** *HC-SM06 ("transition writes to undeclared state field")* has been removed. It assumed a state-machine model where a state is a record of fields and transitions are field-writing functions. The canonical model (`honest-state-architecture.md`) defines a state as an atomic name and `transition()` as a pure `(state, event) → next_state` lookup that writes nothing — the caller persists the next state via `guarded_mutation`, where field-level writes are governed (HC-P015). There are no transition-written fields to police, so the rule described a model the framework does not have. honest-state §4 correctly lists only HC-SM01/02/03/04/05.
 
 ---
 
