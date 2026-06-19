@@ -1,59 +1,66 @@
 # honest-state: Architecture Specification
 
-**Version:** 0.1 (Draft)
-**Date:** March 15, 2026
-**Status:** Active
+**Version:** 0.2 (Draft)
+**Date:** June 18, 2026
+**Status:** §1 re-authored as the foundation (taxonomy + single-mutator law); §2 onward is prior-draft mechanical detail under reconciliation
 **Author:** Adam Zachary Wasserman
 
 ---
 
-## 1. There Is No Such Thing As "The State"
+## 1. Foundational Law: There Is No "The State"
 
-Every framework that has ever failed you began with a lie: that your application has state, singular, and your job is to manage it.
+Two ground truths govern everything in honest-state.
 
-This is wrong. It is wrong architecturally, wrong philosophically, and wrong in practice. It has produced Redux, MobX, Vuex, NgRx, Zustand, Jotai, and a graveyard of state management libraries whose entire existence is the management of complexity that should never have existed. The complexity was introduced by treating categorically different things as one thing.
+**1. There is no such thing as "the state."** There are many *kinds* of state, and each kind deserves its own treatment, store, and handling. The DOM is the store for *individual user* state — one kind among many, not "the" store. Login/session state that must be visible to every instance in a horizontally-scaled deployment lives in a shared store (Redis). Persisted domain state lives in the database. Conflating these — the mistake every general-purpose "state manager" makes — is the disease.
 
-Your application does not have state. It has several distinct kinds of state, each with its own scope, lifecycle, ownership, and rules. Conflating them is the disease. Honest-state is the diagnosis and the treatment.
+**2. Indiscriminately mutable state is the enemy.** Unconstrained mutators produce a combinatorial explosion of reachable states, and that explosion is precisely what makes software unverifiable — the exact thing this framework exists to defeat. Hence the law:
 
-### 1.1 The Taxonomy
+> **Every declared piece of state has exactly one mutator.**
 
-Every piece of state in every application belongs to exactly one of these categories:
+One mutator means one place to enumerate; mutation stays bounded; bounded is what makes exhaustive verification possible. This is not a rule bolted on — it is the spine that `guarded_mutation` (persisted state), the DOM-as-single-store (user state), HC-P016 (closures), and the HC-P004 global-read clause (module state) are each a vertebra of.
 
-**User state** is the configuration a user has established in their current session: which filters are active, what the sort order is, which columns are visible, where they are in a multi-step wizard, what they have typed in a search field. User state is owned by the client. It is ephemeral. It lives and dies with the session. It is never the server's concern.
+### 1.1 The single-mutator law, precisely
 
-**Domain state** is the current condition of a business entity as it moves through a defined lifecycle: an order that is pending, paid, shipped, or cancelled. A ticket that is open, in-progress, or resolved. Domain state is owned by the server. It is durable. It is governed by explicit transition rules. It lives in the persistence layer.
+The unit of ownership is the **declared piece of state**, not the physical store. A *declaration* (e.g. the DATAOS manifest) carves a store into owned regions — which is what lets more than one writer touch the same physical store without contention.
 
-**Transaction state** is the in-flight condition of an operation in progress: a payment being processed, a file being uploaded, a long-running job executing. Transaction state is transient. It exists only while the operation is active. It is neither user state nor domain state; it is process state.
+A second mutator of a store is legitimate **if and only if** it is:
 
-**Session state** is the authenticated identity and authorization context of a connected user: who they are, what they are allowed to do, when their session expires. Session state spans requests. It is managed by the authentication layer. Honest-auth owns this concern.
+- **honest** — it does not *hide* the state it mutates, and
+- **disjoint** — it does not *touch* any state another mutator already owns.
 
-**Configuration state** is the operational parameters of the application itself: feature flags, environment settings, rate limits, tenant-specific overrides. Configuration state is set by operators, not users. It is read-only at runtime. It lives in honest-persist as declared records, not in code.
+Two honest, disjoint mutators of one store are not a synchronization problem; they never write the same declared state. Two mutators of the *same* declared state always are. And "shared across N instances" never means "N mutators": a shared store with a single authoritative writer (see session/login) keeps the law intact under horizontal scaling — **share the store, keep the writer singular.**
 
-**System state** is the health and operational condition of the running application: database connectivity, queue depth, cache hit rates, circuit breaker status. System state is observed, not managed. Honest-observe owns this concern.
+### 1.2 The taxonomy of state kinds
 
-### 1.2 The Universal Rules
+Every piece of state belongs to exactly one kind, and every kind names exactly one mutator:
 
-Regardless of which kind of state you are dealing with, these rules apply without exception:
+| Kind of state | Lives in | Single mutator |
+|---|---|---|
+| Individual user state | manifest-declared regions of the DOM | the user (any user-initiated action) |
+| Server (SSE) state | non-declared regions of the DOM (alerts/notifications) | the server / alert source (honest-alerts) |
+| Shared session / login | a shared store — Redis (scale-out) | the auth provider |
+| Persisted domain state | the database | `guarded_mutation` |
+| Cache | at / preferably across an I/O boundary | refresh-from-source (only write) |
+| Transient request state | the chain (the manifest), in-memory | a link's return value (functional threading) |
+| Static config | process memory, frozen at startup | startup (then read-only) |
+| Dynamic config (flags, A/B) | an external flag store | the flag service (app only reads) |
+| Contended writes (db write / mutex / flag) | on the other side of a queue | the queue's single consumer |
 
-**One source of truth.** Every piece of state has exactly one owner. Two owners means a synchronization problem. A synchronization problem means bugs that are structurally guaranteed. There is no "eventual consistency" for state that two things claim to own simultaneously.
+The acceptance test for a row: **can you name exactly one mutator?** If a candidate kind seems to need two, it is really two kinds — or one is a derived view, not state. (That test is how static and dynamic config separated, and how the non-declared DOM resolved to a side effect rather than state.)
 
-**Never synchronize.** Synchronization is what you do when you have two copies of something. The solution is not better synchronization. The solution is one copy. If you are synchronizing, you have already made the mistake.
+### 1.3 The DOM, fully decomposed
 
-**Never put your state in someone else's code.** User state does not belong in a Redux store that also holds server data. Domain state does not belong in a React component. Session state does not belong in a URL parameter. Each kind of state lives in the layer that owns it. Mixing ownership mixes concerns and destroys the boundary.
+"The DOM is the state store" is imprecise; this is the exact statement. The DOM is not state — *part* of it is:
 
-**Make transitions explicit.** State does not change; it transitions. A transition has a source state, an event, and a destination state. Every valid transition is declared. Every undeclared transition is rejected. There are no surprises.
+- **manifest-declared regions** are **user state**; the single mutator is the user. A server round-trip (HTMX swap) and an in-browser JS change are two *mechanisms* of that one mutator, not two mutators.
+- **server/SSE-driven regions** are **server state** (honest-alerts); the single mutator is the server/alert source — a legitimate *second* mutator of the DOM because it is honest (non-hiding) and disjoint (it never touches a manifest slot).
+- **everything else** is a **side effect** — a derived projection of the two above, with no mutator of its own. It is re-derived, never written (the cache pattern).
 
-**State changes happen at boundaries.** User state changes when the user acts. Domain state changes when an authenticated, validated request reaches the server. Configuration state changes through an explicit operational act. State changes are not scattered through business logic; they happen at declared, visible boundaries.
+So every part of the DOM is either declared state with exactly one mutator, or a pure projection of state. No hidden, unowned, indiscriminately-mutable corner remains.
 
-### 1.3 What honest-state Owns
+---
 
-Honest-state owns two of the six kinds of state:
-
-**User state** on the client, via the DATAOS pattern: DOM As The Authority On State. The DOM is the owner, the manifest is the declaration, `collect()` is the reader, `apply()` is the writer, `observe()` is the watcher.
-
-**Domain state** on the server, via pure function state machines: a lookup table from `(current_state, event)` to `next_state`. Pure functions in, data out. No classes, no mutation, no hidden transitions.
-
-The other four kinds of state are owned by honest-auth (session), honest-persist (configuration), honest-observe (system), and the application's own business logic (transaction). Honest-state does not reach into their territory.
+> **Status of the sections below.** §2 onward (the DATAOS client primitives — manifest / `collect` / `apply` / `observe`; the state-machine execution model) is prior-draft mechanical detail, retained for the mechanisms it documents and **to be reconciled against this foundation.** Where the older text conflicts with §1 it does not govern — in particular the earlier six-category taxonomy (replaced by §1.2), any framing of "one *owner*" rather than one *mutator per declared region*, and the claim that no state is shared across machines (§3.6), which the scale-out session/login row refutes.
 
 ---
 
