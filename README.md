@@ -36,8 +36,9 @@ It points git at the in-repo hooks, verifies `uv`, and syncs the workspace. Idem
 - `INSTRUMENT_CONE_SYNTHESIS.md` — epistemic anchor: the instrument defines what is visible. A reminder that current code-quality metrics can't find what they aren't looking for; the framework's value is partly about expanding the cone of what's visible.
 - `analyst-strategy-handoff.md` — industry analyst landscape positioning
 - `bootstrap.sh` — one-time setup after clone (idempotent): enables the git hooks, verifies uv, syncs the workspace. Turns on the honesty gate (see above).
-- `.githooks/` — `pre-commit` (the **honesty gate**: runs `honest-check` over every module and blocks dishonest Python) and `commit-msg` (enforces commit-message prefixes for research instrumentation).
-- `python/lint-all.sh` — the gate's logic: `honest-check` across every `honest-*` module; a module that fails its own linter is dishonest by definition and blocks.
+- `.githooks/` — `pre-commit` (the **honesty gate**: runs `honest-check` on the **modules with staged changes** and blocks dishonest Python) and `commit-msg` (enforces commit-message prefixes for research instrumentation).
+- `python/lint-affected.sh` — the gate's fast path: `honest-check` over only the `honest-*` modules with staged changes (single invocation). Used by the pre-commit hook.
+- `python/lint-all.sh` — full sweep for CI: `honest-check` across every `honest-*` module. A module that fails its own linter is dishonest by definition and blocks.
 
 The architectural-diagram renderer (honest-design) is proprietary and lives at `~/dev/commercial-honest/copyright/software/explorer/`; rendered output for FOSS modules is published at `~/dev/open-honest/honestframework-website/explorer/`. The `ui-audit` reference tool lives at `~/dev/open-honest/slop-audit/tools/ui-audit/` since it instruments one aspect of Slop Audit dimension 4.18.
 

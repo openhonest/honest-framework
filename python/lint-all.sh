@@ -1,32 +1,24 @@
 #!/usr/bin/env bash
-# lint-all.sh — the honesty gate.
+# lint-all.sh — full sweep: every honest-* module must pass honest-check (the framework's
+# own linter). For CI and manual full checks. The pre-commit gate uses lint-affected.sh
+# (changed modules only). A module that fails its own linter is dishonest and must not land.
 #
-# Every honest-* module must pass honest-check (the framework's own linter). A module
-# that fails its own linter is dishonest by definition and must not land. This is the
-# structural half of "Verification First"; the behavioural half (honest-test's
-# auto-generated suite) wires in here once honest-test exists.
+# Single honest-check invocation over all module sources: one interpreter startup, so the
+# gate stays ~constant-time regardless of module count.
 set -uo pipefail
 cd "$(dirname "$0")"            # -> python/
 
 shopt -s nullglob
-status=0
-found=0
-for srcdir in honest-*/src/*/ ; do
-    found=1
-    printf '== honest-check %s\n' "$srcdir"
-    if ! uv run --package honest-check python -m honest_check.cli "$srcdir"; then
-        status=1
-    fi
-done
-
-if [ "$found" -eq 0 ]; then
+srcdirs=(honest-*/src/*/)
+if [ ${#srcdirs[@]} -eq 0 ]; then
     echo "lint-all: no honest-* module sources found under $(pwd)" >&2
     exit 2
 fi
 
-if [ "$status" -eq 0 ]; then
+echo "lint-all: ${srcdirs[*]}"
+if uv run --package honest-check python -m honest_check.cli "${srcdirs[@]}"; then
     echo "lint-all: all modules pass honest-check."
 else
-    echo "lint-all: honest-check FAILED — dishonest code, commit blocked." >&2
+    echo "lint-all: honest-check FAILED — dishonest code." >&2
+    exit 1
 fi
-exit "$status"

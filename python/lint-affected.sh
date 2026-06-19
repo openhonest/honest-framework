@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# lint-affected.sh — the honesty gate, fast path.
+#
+# Lints ONLY the honest-* modules with staged Python changes. honest-check is a
+# structural, per-module linter: a module's honesty does not depend on another
+# module's source, so unchanged modules need not be re-checked. The affected modules
+# are linted in a single honest-check invocation (no per-module interpreter startup).
+# For a full sweep (CI), use lint-all.sh.
+set -uo pipefail
+cd "$(dirname "$0")"            # -> python/
+
+staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^python/honest-[^/]+/.*\.py$' || true)
+if [ -z "$staged" ]; then
+    echo "lint-affected: no honest-* Python staged; nothing to check."
+    exit 0
+fi
+
+srcdirs=$(printf '%s\n' "$staged" | sed -E 's#^python/(honest-[^/]+)/.*#\1/src#' | sort -u)
+echo "lint-affected: $(printf '%s ' $srcdirs)"
+# shellcheck disable=SC2086  -- intentional word-split; module paths contain no spaces
+uv run --package honest-check python -m honest_check.cli $srcdirs

@@ -9,4 +9,4 @@ staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^python/.*\.
 
 echo "honest-check gate (staged Python detected)…"
 root=$(git rev-parse --show-toplevel)
-exec "$root/python/lint-all.sh"
+exec "$root/python/lint-affected.sh"
