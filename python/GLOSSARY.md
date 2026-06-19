@@ -28,11 +28,16 @@ Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1),
 | **Manifest** | The flat `dict` that `classify()` returns (slot→value). The typed input every link receives. Carries `_rejections` only if present; never nested. |
 | **Ticket** | The result of classifying one token: `{type, value}`. An intermediate, not part of the manifest. |
 | **Rejection** | A token that could not be classified or bound — represented as data in the manifest, never an exception. |
-| **Fault** | A processing error inside a chain — data `{code, message, link, input}`, not an exception. Exceptions only at the HTTP boundary. |
+| **Fault** | A processing error — data `{code, message, category, detail}`, not an exception. `category` (`client`\|`server`) is required (a fault without one is itself a server error). Exceptions only at the boundary. |
 | **Maybe** | Optional binding. A slot declared `maybe()` is always present in the manifest, as a value or as `Nothing`. |
 | **classify()** | Runs recognizers over a token list → manifest. Two passes: base classification, then composition + binding resolution. |
 | **Link** | A function wrapped with `@link(accepts=, emits=, boundary=)` so it receives a typed manifest. Pure unless declared a boundary. |
-| **Chain** | An ordered list of links; the manifest flows from one to the next. A chain is itself a link (chains compose). |
+| **Chain** | An ordered list of links; the manifest flows from one to the next. A chain is itself a link (chains compose). `chain(*links)` builds one; `execute_chain(links, manifest)` runs it, short-circuiting on the first `err`. |
+| **Result** | The only two shapes a link may return: `ok(manifest)` → `{"ok": manifest}` or `err(fault)` → `{"err": fault}`. A link returning neither is a `non_result_return` server fault. |
+| **validate_all** | An accumulating combinator, itself a link: `validate_all(*links)` runs every link against the *same* manifest; any failure yields a `validation_failed` fault carrying every result, `ok` and `err` alike. |
+| **Vocabulary merge** | `merge(a, b)` combines two vocabularies, failing at construction on a name collision (a type in both) or a value collision (a Set member shared under different names). No `\|` operator — that would need a dict subclass (HC-P003). |
+| **catch_at_boundary** | The boundary wrapper (the one place that catches): renders `ok` as success, routes a fault through a `fault_to_output` table (category default as fallback), and turns an unhandled exception into an `unhandled_exception` server fault. Routing is lookup, never branching. |
+| **Rejection policy** | The table that decides, at the boundary, whether a manifest's rejections block (`fault`) or pass with a warning (`warn`). `check_rejections()` applies it; inside the chain there are no rejections. |
 | **Serializer link** | A link that produces HTTP output (a `Response`/`JSONResponse`/etc.) and declares an `emits` vocabulary covering the protocol surface (status, content-type, body shape). Inline serialization outside such a link escapes chain-contract testing (HC-P017). |
 | **State machine** | A lookup table `(state, event) → next_state`. States and events are vocabularies; `transition()` is pure. `state_machine(states=, events=, initial=, terminal=, transitions={(s,e): next})`. |
 | **Transition** | One `(state, event) → next_state` entry in a state machine's table. |
