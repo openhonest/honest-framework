@@ -18,6 +18,7 @@ from honest_test.enumeration import enumerate_sets
 from honest_test.length import enumerate_lengths, extract_length_bounds
 from honest_test.numeric import DEFAULT_LIMIT, fibonacci_sequence, numeric_values
 from honest_test.predicate import classify_predicate, classify_source
+from honest_test.supplied import load_config, supplied_for
 
 __all__ = [
     "enumerate_sets",
@@ -28,6 +29,8 @@ __all__ = [
     "DEFAULT_LIMIT",
     "enumerate_lengths",
     "extract_length_bounds",
+    "supplied_for",
+    "load_config",
     "adversarial_neighbors",
     "adversarial_neighbours",
     "edit_distance_1",

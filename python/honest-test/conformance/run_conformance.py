@@ -12,6 +12,7 @@ The runner builds the objects from the data and calls the generators; no per-cas
 
 import json
 import sys
+import tomllib
 from pathlib import Path
 
 from honest_type import binding, maybe, vocabulary
@@ -22,6 +23,7 @@ from honest_test import (
     enumerate_lengths,
     enumerate_sets,
     numeric_values,
+    supplied_for,
 )
 
 
@@ -83,16 +85,32 @@ def _check_length(case):
     return ok, f"got min={result['min']} max={result['max']} valid={valid_lengths} invalid={invalid_lengths}"
 
 
+def _check_supplied(case):
+    config = tomllib.loads(case["toml"]) if "toml" in case else case.get("config", {})
+    result = supplied_for(config, case["predicate"])
+    if case.get("expect_none"):
+        return result is None, f"got {result}"
+    ok = result is not None
+    for field in ("valid", "invalid", "strategy"):
+        key = f"expect_{field}"
+        if key in case:
+            ok = ok and result[field] == case[key]
+    return ok, f"got {result}"
+
+
 _CHECKERS = {
     "enumeration": _check_enumeration,
     "adversarial": _check_adversarial,
     "predicate": _check_predicate,
     "numeric": _check_numeric,
     "length": _check_length,
+    "supplied": _check_supplied,
 }
 
 
 def _kind(case):
+    if "predicate" in case:
+        return "supplied"
     if case.get("gen") in ("numeric", "length"):
         return case["gen"]
     if "expect_class" in case:

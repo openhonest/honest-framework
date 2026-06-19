@@ -154,6 +154,10 @@
     {"id": "length-lt", "gen": "length", "source": "lambda s: len(s) < 8", "expect_min": 1, "expect_max": 7, "expect_valid_lengths": [1, 2, 3, 4, 5, 6, 7], "expect_invalid_lengths": [8]},
     {"id": "length-range-tests-one-under", "gen": "length", "source": "def f(s):\n    return 3 <= len(s) <= 8\n", "expect_min": 3, "expect_max": 8, "expect_valid_lengths": [3, 4, 5, 6, 7, 8], "expect_invalid_lengths": [2, 9]},
     {"id": "length-ge-unbounded-falls-through", "gen": "length", "source": "lambda s: len(s) >= 3", "expect_min": 3, "expect_max": null, "expect_valid_lengths": [], "expect_invalid_lengths": []},
-    {"id": "length-beyond-charset", "gen": "length", "source": "lambda s: len(s) == 50", "expect_min": 50, "expect_max": 50, "expect_valid_lengths": [50], "expect_invalid_lengths": [49, 51]}
+    {"id": "length-beyond-charset", "gen": "length", "source": "lambda s: len(s) == 50", "expect_min": 50, "expect_max": 50, "expect_valid_lengths": [50], "expect_invalid_lengths": [49, 51]},
+    {"id": "supplied-from-toml", "toml": "[predicates.customer_id]\nvalid = [\"CUST-00001\", \"CUST-99999\"]\ninvalid = [\"CUST-0\", \"cust-00001\"]\nstrategy = \"supplied_only\"\n", "predicate": "customer_id", "expect_valid": ["CUST-00001", "CUST-99999"], "expect_invalid": ["CUST-0", "cust-00001"], "expect_strategy": "supplied_only"},
+    {"id": "supplied-toml-string-NO-stays-string", "toml": "[predicates.country]\nvalid = [\"NO\", \"SE\"]\ninvalid = [\"XX\"]\n", "predicate": "country", "expect_valid": ["NO", "SE"], "expect_invalid": ["XX"]},
+    {"id": "supplied-missing-predicate", "config": {"predicates": {}}, "predicate": "absent", "expect_none": true},
+    {"id": "supplied-defaults", "config": {"predicates": {"p": {}}}, "predicate": "p", "expect_valid": [], "expect_invalid": [], "expect_strategy": "supplied_only"}
   ]
 }
