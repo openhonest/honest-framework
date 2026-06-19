@@ -64,11 +64,11 @@ Before generating test cases, honest-test classifies each predicate by analyzing
 | **Numeric** | Contains `int(s)`, `float(s)`, numeric comparison | Fibonacci sequence |
 | **Length-bounded** | Contains `len(s) ==` or `len(s) <` fixed value | Enumerate valid lengths |
 | **Character-class** | Contains `s.isdigit()`, `s.isalpha()`, `s.isupper()` | Enumerate character classes |
-| **External lookup** | Calls function not in codebase | Programmer-supplied via `honest-test.yaml` |
+| **External lookup** | Calls function not in codebase | Programmer-supplied via `honest-test.toml` |
 | **Composite** | Calls function defined in codebase | Recurse into callee AST |
 | **Catch-all** | Accepts nearly all inputs | Rejected at vocabulary construction (HC011) |
 
-External library calls are the programmer's responsibility. honest-test emits a warning and skips generation for that predicate unless test values are supplied in `honest-test.yaml`. Using external library functions in recognizers is strongly discouraged.
+External library calls are the programmer's responsibility. honest-test emits a warning and skips generation for that predicate unless test values are supplied in `honest-test.toml`. Using external library functions in recognizers is strongly discouraged.
 
 Composite predicates that call codebase-defined functions are followed recursively. The AST walk descends into the callee at any depth within the codebase.
 
@@ -120,18 +120,18 @@ The Fibonacci sequence provides logarithmically distributed values with natural 
 
 For floats, divide each Fibonacci number by 100: `0.0, 0.01, 0.01, 0.02, 0.03, 0.05, 0.08...`
 
-**Configurable via `honest-test.yaml`:**
+**Configurable via `honest-test.toml`:**
 
-```yaml
-predicates:
-  order_amount:
-    strategy: fibonacci
-    limit: 1_000_000_000
-    negative: false
-  tax_rate:
-    strategy: fibonacci
-    float: true
-    limit: 1.0
+```toml
+[predicates.order_amount]
+strategy = "fibonacci"
+limit = 1_000_000_000
+negative = false
+
+[predicates.tax_rate]
+strategy = "fibonacci"
+float = true
+limit = 1.0
 ```
 
 ### 3.4 Length-Bounded Predicate Generation
@@ -324,22 +324,16 @@ FUNCTION encoding_variants(value):
 
 ### 3.6 Programmer-Supplied Test Values
 
-For predicates that cannot be analyzed (external lookups, context-dependent), programmers supply test values in `honest-test.yaml`:
+For predicates that cannot be analyzed (external lookups, context-dependent), programmers supply test values in `honest-test.toml`:
 
-```yaml
-predicates:
-  customer_id:
-    valid:
-      - "CUST-00001"
-      - "CUST-99999"
-    invalid:
-      - "CUST-0"
-      - "cust-00001"
-      - "CUST-AAAAA"
-    strategy: supplied_only
+```toml
+[predicates.customer_id]
+valid = ["CUST-00001", "CUST-99999"]
+invalid = ["CUST-0", "cust-00001", "CUST-AAAAA"]
+strategy = "supplied_only"
 ```
 
-honest-test runs supplied valid values and confirms they are accepted. Runs supplied invalid values and confirms they are rejected. Reports missing YAML for external-lookup predicates as a warning.
+honest-test runs supplied valid values and confirms they are accepted. Runs supplied invalid values and confirms they are rejected. Reports a missing entry for external-lookup predicates as a warning.
 
 ---
 
@@ -721,7 +715,7 @@ FUNCTION test_mock_coverage(table_config):
         IF len(matching_rows) = 0:
             EMIT failure("formatting_rule_never_fires",
                 f"Conditional formatting rule '{rule.name}' never fires in mock data. "
-                "Add an explicit coverage case to honest-test.yaml.")
+                "Add an explicit coverage case to honest-test.toml.")
 ```
 
 ---
@@ -985,34 +979,33 @@ honest-test writes `coverage.json` that honest-check reads for HC-P009 (chain mi
 
 ## 10. Configuration
 
-```yaml
-# honest-test.yaml
+```toml
+# honest-test.toml
 
-runner:
-  parallel: true
-  timeout_seconds: 30
+[runner]
+parallel = true
+timeout_seconds = 30
 
-predicates:
-  # Programmer-supplied values for external-lookup predicates
-  customer_id:
-    valid: ["CUST-00001", "CUST-99999"]
-    invalid: ["CUST-0", "cust-00001"]
-    strategy: supplied_only
+# Programmer-supplied values for external-lookup predicates
+[predicates.customer_id]
+valid = ["CUST-00001", "CUST-99999"]
+invalid = ["CUST-0", "cust-00001"]
+strategy = "supplied_only"
 
-  order_amount:
-    strategy: fibonacci
-    limit: 1_000_000_000
-    negative: false
+[predicates.order_amount]
+strategy = "fibonacci"
+limit = 1_000_000_000
+negative = false
 
-coverage:
-  minimum_vocabulary: 100    # fail if any Set member goes untested
-  minimum_chain: 80          # warn if fault paths < 80% exercised
-  minimum_honesty: 100       # fail if any link fails honesty test
+[coverage]
+minimum_vocabulary = 100   # fail if any Set member goes untested
+minimum_chain = 80         # warn if fault paths < 80% exercised
+minimum_honesty = 100      # fail if any link fails honesty test
 
-bdd:
-  features_dir: features/
-  scaffolding_dir: test_scaffolding/
-  auto_generate_scaffolding: true
+[bdd]
+features_dir = "features/"
+scaffolding_dir = "test_scaffolding/"
+auto_generate_scaffolding = true
 ```
 
 ---

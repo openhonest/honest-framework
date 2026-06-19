@@ -1952,11 +1952,11 @@ Before generating test cases, honest-test classifies each predicate by analyzing
 | **Numeric** | Contains `int(s)`, `float(s)`, numeric comparison | Fibonacci sequence |
 | **Length-bounded** | Contains `len(s) ==` or `len(s) <` fixed value | Enumerate valid lengths |
 | **Character-class** | Contains `s.isdigit()`, `s.isalpha()`, `s.isupper()` | Enumerate character classes |
-| **External lookup** | Calls function not in codebase (external library) | Programmer-supplied via YAML |
+| **External lookup** | Calls function not in codebase (external library) | Programmer-supplied via `honest-test.toml` |
 | **Composite** | Calls function defined in codebase | Recurse into callee AST |
 | **Catch-all** | Accepts nearly all inputs (HC011 violation) | Rejected at vocabulary construction |
 
-**External library calls are the programmer's responsibility.** honest-test emits a warning and skips generation for that predicate unless test values are supplied in `honest-test.yaml`. Using external library functions in recognizers is strongly discouraged — their behavior is unverifiable by the framework.
+**External library calls are the programmer's responsibility.** honest-test emits a warning and skips generation for that predicate unless test values are supplied in `honest-test.toml`. Using external library functions in recognizers is strongly discouraged — their behavior is unverifiable by the framework.
 
 **Composite predicates** that call codebase-defined functions are followed recursively — the AST walk descends into the callee. This works for any depth of call stack within the codebase.
 
@@ -2013,18 +2013,18 @@ DEFAULT_LIMIT = 1_000_000
 
 For floats, divide each Fibonacci number by 100 to produce representative real values: `0.0, 0.01, 0.01, 0.02, 0.03, 0.05, 0.08...`
 
-**Configurable via `honest-test.yaml`:**
+**Configurable via `honest-test.toml`:**
 
-```yaml
-predicates:
-  order_amount:
-    strategy: fibonacci
-    limit: 1_000_000_000    # override default
-    negative: false          # only positive values
-  tax_rate:
-    strategy: fibonacci
-    float: true
-    limit: 1.0              # rates are 0.0–1.0
+```toml
+[predicates.order_amount]
+strategy = "fibonacci"
+limit = 1_000_000_000   # override default
+negative = false        # only positive values
+
+[predicates.tax_rate]
+strategy = "fibonacci"
+float = true
+limit = 1.0             # rates are 0.0-1.0
 ```
 
 ### 13.6 Adversarial Input Generation
@@ -2177,22 +2177,16 @@ FUNCTION test_state_machine(machine):
 
 ### 13.12 Programmer-Supplied Test Values
 
-For predicates that cannot be analyzed (external lookups, context-dependent), programmers supply test values in `honest-test.yaml`:
+For predicates that cannot be analyzed (external lookups, context-dependent), programmers supply test values in `honest-test.toml`:
 
-```yaml
-predicates:
-  customer_id:
-    valid:
-      - "CUST-00001"
-      - "CUST-99999"
-    invalid:
-      - "CUST-0"          # too short
-      - "cust-00001"      # wrong case
-      - "CUST-AAAAA"      # non-numeric suffix
-    strategy: supplied_only    # don't attempt generation
+```toml
+[predicates.customer_id]
+valid = ["CUST-00001", "CUST-99999"]
+invalid = ["CUST-0", "cust-00001", "CUST-AAAAA"]   # too short / wrong case / non-numeric suffix
+strategy = "supplied_only"   # don't attempt generation
 ```
 
-honest-test runs supplied valid values and confirms they are accepted. Runs supplied invalid values and confirms they are rejected. Reports missing YAML for external-lookup predicates as a warning.
+honest-test runs supplied valid values and confirms they are accepted. Runs supplied invalid values and confirms they are rejected. Reports a missing entry for external-lookup predicates as a warning.
 
 ### 13.13 Output Format
 
