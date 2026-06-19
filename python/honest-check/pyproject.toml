@@ -19,5 +19,5 @@ build-backend = "hatchling.build"
 packages = ["src/honest_check"]
 
 [tool.honest-check]
-conformance = "partial"
-conformance-suite-version = "0"
+conformance = "python"
+conformance-suite-version = "1.0"
