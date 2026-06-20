@@ -10,3 +10,14 @@ members = ["honest-*"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
+
+# The dogfooding gate (coverage-all.sh). precision=2 makes --fail-under=100 exact: a single
+# unhit line out of thousands reads as 99.9x < 100 and blocks, rather than rounding up to a
+# false pass. No exclude_lines: the gate covers even the CLI __main__ shim by running it as a
+# module, so every source line is genuinely exercised.
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+precision = 2
+show_missing = true

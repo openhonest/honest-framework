@@ -1,0 +1,5 @@
+# Coverage artefacts from the dogfooding gate (coverage-all.sh).
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
