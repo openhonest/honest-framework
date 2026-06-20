@@ -11,7 +11,7 @@ import json
 import sys
 from pathlib import Path
 
-from honest_persist import apply, diff, to_sql
+from honest_persist import apply, diff, to_sql, validate_schema
 
 
 class _FakeConn:
@@ -39,8 +39,21 @@ def _check_apply(case):
     return ok, f"got {applied}"
 
 
+def _check_validate(case):
+    result = validate_schema(case["validate"])
+    if case["expect"] == "ok":
+        return "ok" in result, f"got {result}"
+    ok = "err" in result and result["err"]["code"] == "schema_invalid"
+    if "expect_error_contains" in case and "err" in result:
+        joined = " ".join(result["err"]["detail"]["errors"])
+        ok = ok and case["expect_error_contains"] in joined
+    return ok, f"got {result}"
+
+
 def _check_diff(case):
     result = diff(case["current"], case["target"], case.get("decisions"))
+    if "expect_fault" in case:
+        return "err" in result and result["err"]["code"] == case["expect_fault"], f"got {result.get('err')}"
     if "err" in result:
         return False, f"unexpected fault {result['err']['code']}"
     ok = True
@@ -60,10 +73,12 @@ def _check_diff(case):
     return ok, f"ops={[(o['op'], o['table']) for o in result['operations']]} ambiguities={result['ambiguities']}"
 
 
-_CHECKERS = {"diff": _check_diff, "to_sql": _check_to_sql, "apply": _check_apply}
+_CHECKERS = {"diff": _check_diff, "to_sql": _check_to_sql, "apply": _check_apply, "validate": _check_validate}
 
 
 def _kind(case):
+    if "validate" in case:
+        return "validate"
     if "to_sql" in case:
         return "to_sql"
     if "apply" in case:

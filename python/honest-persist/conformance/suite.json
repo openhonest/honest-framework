@@ -30,6 +30,13 @@
     {"id": "tosql-add-index-unique", "to_sql": {"op": "add_index", "table": "users", "details": {"index": "users_email", "definition": {"columns": ["email"], "unique": true}}}, "dialect": "postgresql", "expect_sql": "CREATE UNIQUE INDEX users_email ON users (email)"},
 
     {"id": "apply-success-executes-in-order", "apply": {"current": {}, "target": {"users": {"columns": {"id": {"type": "uuid"}}}}}, "dialect": "postgresql", "expect_success": true, "expect_applied": 1},
-    {"id": "apply-refuses-on-ambiguity", "apply": {"current": {"users": {"columns": {"email": {"type": "text"}}}}, "target": {"users": {"columns": {"contact_address": {"type": "text"}}}}}, "dialect": "postgresql", "expect_success": false}
+    {"id": "apply-refuses-on-ambiguity", "apply": {"current": {"users": {"columns": {"email": {"type": "text"}}}}, "target": {"users": {"columns": {"contact_address": {"type": "text"}}}}}, "dialect": "postgresql", "expect_success": false},
+
+    {"id": "validate-valid-fk", "validate": {"users": {"columns": {"id": {"type": "uuid"}}}, "tasks": {"columns": {"id": {"type": "uuid"}, "owner": {"type": "uuid", "references": "users.id"}}}}, "expect": "ok"},
+    {"id": "validate-fk-unknown-table", "validate": {"tasks": {"columns": {"owner": {"type": "uuid", "references": "ghosts.id"}}}}, "expect": "invalid", "expect_error_contains": "unknown table 'ghosts'"},
+    {"id": "validate-fk-unknown-column", "validate": {"users": {"columns": {"id": {"type": "uuid"}}}, "tasks": {"columns": {"owner": {"type": "uuid", "references": "users.nope"}}}}, "expect": "invalid", "expect_error_contains": "unknown column 'users.nope'"},
+    {"id": "validate-pk-missing-column", "validate": {"users": {"columns": {"id": {"type": "uuid"}}, "primary_key": ["ghost"]}}, "expect": "invalid", "expect_error_contains": "primary_key names missing column 'ghost'"},
+    {"id": "validate-index-missing-column", "validate": {"users": {"columns": {"id": {"type": "uuid"}}, "indexes": {"users_email": {"columns": ["email"]}}}}, "expect": "invalid", "expect_error_contains": "index names missing column 'email'"},
+    {"id": "diff-rejects-invalid-target", "current": {}, "target": {"tasks": {"columns": {"owner": {"type": "uuid", "references": "ghosts.id"}}}}, "expect_fault": "schema_invalid"}
   ]
 }

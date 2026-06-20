@@ -10,7 +10,7 @@ ordered (section 5.4); a cycle in the dependency graph is a schema design error 
 fault. Ambiguity detection (section 5.3) and apply() (section 5.2) are separate.
 """
 
-from honest_type import err, fault
+from honest_type import err, fault, ok
 
 from honest_persist.ambiguity import detect_ambiguities
 from honest_persist.deps import build_dependencies, topological_sort
@@ -122,10 +122,63 @@ def _diff_table(table, current_table, target_table):
     return ops
 
 
+def _reference_error(references, schema):
+    """None if the 'table.column' reference resolves in the schema, else an error string."""
+    parts = references.split(".")
+    if len(parts) != 2:
+        return f"malformed reference '{references}' (expected 'table.column')"
+    ref_table, ref_column = parts
+    if ref_table not in schema:
+        return f"references unknown table '{ref_table}'"
+    if ref_column not in schema[ref_table].get("columns", {}):
+        return f"references unknown column '{ref_table}.{ref_column}'"
+    return None
+
+
+def _table_errors(table_name, table, schema):
+    """Internal-consistency errors for one table (section 5.6): dangling foreign keys, and
+    primary-key / index / constraint references to columns that do not exist."""
+    columns = table.get("columns", {})
+    errors = []
+    for column_name, column in columns.items():
+        references = column.get("references")
+        if references:
+            problem = _reference_error(references, schema)
+            if problem:
+                errors.append(f"{table_name}.{column_name} {problem}")
+    for column_name in table.get("primary_key", []):
+        if column_name not in columns:
+            errors.append(f"{table_name}: primary_key names missing column '{column_name}'")
+    for index_name, index in table.get("indexes", {}).items():
+        for column_name in index.get("columns", []):
+            if column_name not in columns:
+                errors.append(f"{table_name}.{index_name}: index names missing column '{column_name}'")
+    for constraint_name, constraint in table.get("constraints", {}).items():
+        for column_name in constraint.get("columns", []) or []:
+            if column_name not in columns:
+                errors.append(f"{table_name}.{constraint_name}: constraint names missing column '{column_name}'")
+    return errors
+
+
+def validate_schema(schema):
+    """Check a schema for internal consistency before it is diffed or applied (section 5.6).
+    Returns ok(schema), or err(fault 'schema_invalid') listing every broken reference. Pure.
+    (View depends_on validation waits on the schema's view-storage representation.)"""
+    errors = []
+    for table_name, table in schema.items():
+        errors.extend(_table_errors(table_name, table, schema))
+    if errors:
+        return err(fault("schema_invalid", "Schema has broken references", "server", {"errors": errors}))
+    return ok(schema)
+
+
 def diff(current, target, decisions=None):
     """Operations to transform the `current` schema into the `target` schema (section 5.1),
-    dependency-ordered (section 5.4). Pure. Returns a DiffResult, or err(fault) when the
-    dependency graph has a cycle (a schema design error)."""
+    dependency-ordered (section 5.4). Pure. Returns a DiffResult, or err(fault) when the target
+    schema is invalid (section 5.6) or the dependency graph has a cycle (section 5.4)."""
+    invalid = validate_schema(target)
+    if "err" in invalid:
+        return invalid
     dropped = set(current) - set(target)
     added = set(target) - set(current)
     modified = set(current) & set(target)
