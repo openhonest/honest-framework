@@ -11,7 +11,32 @@ import json
 import sys
 from pathlib import Path
 
-from honest_persist import diff
+from honest_persist import apply, diff, to_sql
+
+
+class _FakeConn:
+    """Records the SQL apply() executes (the boundary's collaborator). Test fixture - the
+    runner is not linted."""
+
+    def __init__(self):
+        self.executed = []
+
+    def execute(self, sql):
+        self.executed.append(sql)
+
+
+def _check_to_sql(case):
+    sql = to_sql(case["to_sql"], case["dialect"])
+    return sql == case["expect_sql"], f"got {sql!r}"
+
+
+def _check_apply(case):
+    result = diff(case["apply"]["current"], case["apply"]["target"])
+    applied = apply(result, _FakeConn(), case["dialect"])
+    ok = applied["success"] == case["expect_success"]
+    if "expect_applied" in case:
+        ok = ok and applied["operations_applied"] == case["expect_applied"]
+    return ok, f"got {applied}"
 
 
 def _check_diff(case):
@@ -35,12 +60,23 @@ def _check_diff(case):
     return ok, f"ops={[(o['op'], o['table']) for o in result['operations']]} ambiguities={result['ambiguities']}"
 
 
+_CHECKERS = {"diff": _check_diff, "to_sql": _check_to_sql, "apply": _check_apply}
+
+
+def _kind(case):
+    if "to_sql" in case:
+        return "to_sql"
+    if "apply" in case:
+        return "apply"
+    return "diff"
+
+
 def run(suite_path):
     suite = json.loads(Path(suite_path).read_text(encoding="utf-8"))
     passed = 0
     failed = 0
     for case in suite["cases"]:
-        ok, detail = _check_diff(case)
+        ok, detail = _CHECKERS[_kind(case)](case)
         if ok:
             passed += 1
         else:

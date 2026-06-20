@@ -4,6 +4,7 @@ Schema as data, migrations as a diff, queries as data. Increment 1 (this release
 structures (section 4) and the pure schema diff (section 5.1).
 """
 
+from honest_persist.apply import apply, to_sql
 from honest_persist.schema import diff
 from honest_persist.types import (
     Ambiguity,
@@ -19,6 +20,8 @@ from honest_persist.types import (
 
 __all__ = [
     "diff",
+    "apply",
+    "to_sql",
     "operation",
     "diff_result",
     "Column",

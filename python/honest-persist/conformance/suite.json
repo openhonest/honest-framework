@@ -21,6 +21,15 @@
     {"id": "ambiguity-same-type-different-name", "current": {"users": {"columns": {"email": {"type": "text"}}}}, "target": {"users": {"columns": {"contact_address": {"type": "text"}}}}, "expect_ambiguities": 1, "expect_confidence": 0.7},
     {"id": "ambiguity-type-differs-not-reported", "current": {"users": {"columns": {"a": {"type": "text"}}}}, "target": {"users": {"columns": {"b": {"type": "integer"}}}}, "expect_ambiguities": 0},
     {"id": "ambiguity-resolved-by-renamed-from", "current": {"users": {"columns": {"old": {"type": "text"}}}}, "target": {"users": {"columns": {"new": {"renamed_from": "old", "type": "text"}}}}, "expect_ambiguities": 0},
-    {"id": "ambiguity-resolved-by-decisions", "current": {"users": {"columns": {"email": {"type": "text"}}}}, "target": {"users": {"columns": {"contact_address": {"type": "text"}}}}, "decisions": {"users.contact_address": {"decision": "drop_and_add"}}, "expect_ambiguities": 0}
+    {"id": "ambiguity-resolved-by-decisions", "current": {"users": {"columns": {"email": {"type": "text"}}}}, "target": {"users": {"columns": {"contact_address": {"type": "text"}}}}, "decisions": {"users.contact_address": {"decision": "drop_and_add"}}, "expect_ambiguities": 0},
+
+    {"id": "tosql-create-table", "to_sql": {"op": "create_table", "table": "users", "details": {"columns": {"id": {"type": "uuid", "primary_key": true}, "email": {"type": "text"}}}}, "dialect": "postgresql", "expect_sql": "CREATE TABLE users (id uuid PRIMARY KEY, email text)"},
+    {"id": "tosql-uuid-maps-to-text-on-sqlite", "to_sql": {"op": "create_table", "table": "t", "details": {"columns": {"id": {"type": "uuid"}}}}, "dialect": "sqlite", "expect_sql": "CREATE TABLE t (id text)"},
+    {"id": "tosql-rename-column", "to_sql": {"op": "rename_column", "table": "users", "details": {"from": "mail", "to": "email"}}, "dialect": "postgresql", "expect_sql": "ALTER TABLE users RENAME COLUMN mail TO email"},
+    {"id": "tosql-add-foreign-key", "to_sql": {"op": "add_foreign_key", "table": "tasks", "details": {"column": "owner", "references": "users.id"}}, "dialect": "postgresql", "expect_sql": "ALTER TABLE tasks ADD CONSTRAINT fk_tasks_owner FOREIGN KEY (owner) REFERENCES users (id)"},
+    {"id": "tosql-add-index-unique", "to_sql": {"op": "add_index", "table": "users", "details": {"index": "users_email", "definition": {"columns": ["email"], "unique": true}}}, "dialect": "postgresql", "expect_sql": "CREATE UNIQUE INDEX users_email ON users (email)"},
+
+    {"id": "apply-success-executes-in-order", "apply": {"current": {}, "target": {"users": {"columns": {"id": {"type": "uuid"}}}}}, "dialect": "postgresql", "expect_success": true, "expect_applied": 1},
+    {"id": "apply-refuses-on-ambiguity", "apply": {"current": {"users": {"columns": {"email": {"type": "text"}}}}, "target": {"users": {"columns": {"contact_address": {"type": "text"}}}}}, "dialect": "postgresql", "expect_success": false}
   ]
 }
