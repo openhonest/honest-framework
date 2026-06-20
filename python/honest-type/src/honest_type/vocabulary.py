@@ -78,6 +78,11 @@ def _check_composed(base_types: dict, composed_list: list) -> None:
 
 def vocabulary(base_declarations: dict, composed_types=None) -> dict:
     """Build a validated vocabulary from {type_name: declaration}. Raises VocabularyError."""
+    if not base_declarations:
+        raise VocabularyError(
+            "A vocabulary must declare at least one recognizer (Law HT-5): an empty "
+            "vocabulary recognizes nothing and is non-conformant."
+        )
     base_types = {name: normalize(declaration) for name, declaration in base_declarations.items()}
     for type_name, recognizer in base_types.items():
         _check_reserved(type_name, recognizer)
