@@ -165,5 +165,9 @@ def run(suite_path):
 
 
 if __name__ == "__main__":
+    import laws_hp
+
     default = str(Path(__file__).parent / "suite.json")
-    raise SystemExit(run(sys.argv[1] if len(sys.argv) > 1 else default))
+    suite_status = run(sys.argv[1] if len(sys.argv) > 1 else default)
+    laws_status = laws_hp.run()
+    raise SystemExit(suite_status or laws_status)
