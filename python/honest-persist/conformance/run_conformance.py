@@ -15,18 +15,24 @@ from honest_persist import diff
 
 
 def _check_diff(case):
-    result = diff(case["current"], case["target"])
+    result = diff(case["current"], case["target"], case.get("decisions"))
     if "err" in result:
         return False, f"unexpected fault {result['err']['code']}"
-    ops = result["operations"]
-    expected = case["expect_operations"]
-    ok = len(ops) == len(expected) and len(result["execution_order"]) == len(ops)
-    for got, want in zip(ops, expected):
-        ok = ok and got["op"] == want["op"] and got["table"] == want["table"]
-        for key, value in want.get("details", {}).items():
-            ok = ok and got["details"].get(key) == value
-    summary = [(o["op"], o["table"]) for o in ops]
-    return ok, f"got {summary}"
+    ok = True
+    if "expect_operations" in case:
+        ops = result["operations"]
+        expected = case["expect_operations"]
+        ok = ok and len(ops) == len(expected) and len(result["execution_order"]) == len(ops)
+        for got, want in zip(ops, expected):
+            ok = ok and got["op"] == want["op"] and got["table"] == want["table"]
+            for key, value in want.get("details", {}).items():
+                ok = ok and got["details"].get(key) == value
+    if "expect_ambiguities" in case:
+        ambiguities = result["ambiguities"]
+        ok = ok and len(ambiguities) == case["expect_ambiguities"]
+        if "expect_confidence" in case and ambiguities:
+            ok = ok and ambiguities[0]["confidence"] == case["expect_confidence"]
+    return ok, f"ops={[(o['op'], o['table']) for o in result['operations']]} ambiguities={result['ambiguities']}"
 
 
 def run(suite_path):

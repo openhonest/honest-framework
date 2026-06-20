@@ -12,6 +12,7 @@ fault. Ambiguity detection (section 5.3) and apply() (section 5.2) are separate.
 
 from honest_type import err, fault
 
+from honest_persist.ambiguity import detect_ambiguities
 from honest_persist.deps import build_dependencies, topological_sort
 from honest_persist.types import diff_result, operation
 
@@ -148,4 +149,5 @@ def diff(current, target, decisions=None):
         return err(fault(
             "schema_cycle", "Schema dependency graph contains a cycle", "server",
             {"operations": operations}))
-    return diff_result(operations, dependencies, execution_order, [])
+    ambiguities = detect_ambiguities(current, target, decisions or {})
+    return diff_result(operations, dependencies, execution_order, ambiguities)
