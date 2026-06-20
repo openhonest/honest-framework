@@ -13,12 +13,24 @@ from pathlib import Path
 
 from honest_persist import (
     apply,
+    check_holds,
     diff,
+    parse_check,
     reconstruction_sql,
     requires_reconstruction,
     to_sql,
     validate_schema,
 )
+
+
+def _check_check(case):
+    result = parse_check(case["check_expression"])
+    if case.get("expect_uncompilable"):
+        return "err" in result and result["err"]["code"] == "uncompilable_check", f"got {result}"
+    if "err" in result:
+        return False, f"unexpected fault {result['err']}"
+    holds = check_holds(result["ok"], case["row"])
+    return holds == case["expect_holds"], f"got holds={holds}"
 
 
 class _FakeConn:
@@ -117,10 +129,13 @@ _CHECKERS = {
     "validate": _check_validate,
     "reconstruct_op": _check_requires,
     "reconstruct_sql": _check_reconstruction_sql,
+    "check": _check_check,
 }
 
 
 def _kind(case):
+    if "check_expression" in case:
+        return "check"
     if "reconstruct_op" in case:
         return "reconstruct_op"
     if "reconstruct_sql" in case:

@@ -55,6 +55,19 @@
     {"id": "reconstruction-sql-plan", "reconstruct_sql": {"table": "users", "target_table": {"columns": {"id": {"type": "uuid"}, "email": {"type": "text"}}}, "common_columns": ["id"]}, "dialect": "sqlite", "expect_contains": ["CREATE TABLE _hp_tmp_users", "INSERT INTO _hp_tmp_users (id) SELECT id FROM users", "DROP TABLE users", "ALTER TABLE _hp_tmp_users RENAME TO users"]},
     {"id": "apply-reconstructs-on-sqlite-alter-column", "apply": {"current": {"tables": {"users": {"columns": {"id": {"type": "text"}}}}}, "target": {"tables": {"users": {"columns": {"id": {"type": "uuid"}}}}}}, "dialect": "sqlite", "expect_success": true, "expect_executed_contains": ["CREATE TABLE _hp_tmp_users", "INSERT INTO _hp_tmp_users (id) SELECT id FROM users", "DROP TABLE users", "ALTER TABLE _hp_tmp_users RENAME TO users"]},
     {"id": "apply-postgres-alters-in-place-no-reconstruction", "apply": {"current": {"tables": {"users": {"columns": {"id": {"type": "text"}}}}}, "target": {"tables": {"users": {"columns": {"id": {"type": "uuid"}}}}}}, "dialect": "postgresql", "expect_success": true, "expect_executed_contains": ["ALTER COLUMN id TYPE uuid"], "expect_executed_excludes": ["_hp_tmp"]},
-    {"id": "apply-turso-pauses-push-during-reconstruction", "apply": {"current": {"tables": {"users": {"columns": {"id": {"type": "text"}}}}}, "target": {"tables": {"users": {"columns": {"id": {"type": "uuid"}}}}}}, "dialect": "turso", "expect_success": true, "expect_push_paused": true, "expect_executed_contains": ["CREATE TABLE _hp_tmp_users"]}
+    {"id": "apply-turso-pauses-push-during-reconstruction", "apply": {"current": {"tables": {"users": {"columns": {"id": {"type": "text"}}}}}, "target": {"tables": {"users": {"columns": {"id": {"type": "uuid"}}}}}}, "dialect": "turso", "expect_success": true, "expect_push_paused": true, "expect_executed_contains": ["CREATE TABLE _hp_tmp_users"]},
+
+    {"id": "check-gt-holds", "check_expression": "age > 0", "row": {"age": 5}, "expect_holds": true},
+    {"id": "check-gt-fails", "check_expression": "age > 0", "row": {"age": -1}, "expect_holds": false},
+    {"id": "check-col-vs-col", "check_expression": "lower <= upper", "row": {"lower": 1, "upper": 3}, "expect_holds": true},
+    {"id": "check-col-vs-col-fails", "check_expression": "lower <= upper", "row": {"lower": 5, "upper": 3}, "expect_holds": false},
+    {"id": "check-and", "check_expression": "age > 0 AND age < 120", "row": {"age": 30}, "expect_holds": true},
+    {"id": "check-and-fails", "check_expression": "age > 0 AND age < 120", "row": {"age": 200}, "expect_holds": false},
+    {"id": "check-in", "check_expression": "status IN ('active', 'archived')", "row": {"status": "active"}, "expect_holds": true},
+    {"id": "check-in-fails", "check_expression": "status IN ('active', 'archived')", "row": {"status": "deleted"}, "expect_holds": false},
+    {"id": "check-not-paren", "check_expression": "NOT (age < 0)", "row": {"age": 5}, "expect_holds": true},
+    {"id": "check-or", "check_expression": "kind = 'a' OR kind = 'b'", "row": {"kind": "b"}, "expect_holds": true},
+    {"id": "check-uncompilable-between", "check_expression": "age BETWEEN 0 AND 100", "expect_uncompilable": true},
+    {"id": "check-uncompilable-arithmetic", "check_expression": "a + b > 0", "expect_uncompilable": true}
   ]
 }
