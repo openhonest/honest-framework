@@ -41,10 +41,9 @@ def resolve_aliases(root, source: bytes):
                 if child.type == "aliased_import":
                     name = child.child_by_field_name("name")
                     alias = child.child_by_field_name("alias")
-                    if name is not None and alias is not None:
-                        canonical = node_text(name, source)
-                        if canonical in _HONEST_TYPE_NAMES:
-                            names[node_text(alias, source)] = canonical
+                    canonical = node_text(name, source)
+                    if canonical in _HONEST_TYPE_NAMES:
+                        names[node_text(alias, source)] = canonical
                 if child.type == "dotted_name":
                     canonical = node_text(child, source)
                     if canonical in _HONEST_TYPE_NAMES:
@@ -69,15 +68,11 @@ def constructor_calls(root, source: bytes, aliases, canonical: str):
         if node.type != "call":
             continue
         fn = node.child_by_field_name("function")
-        if fn is None:
-            continue
         if fn.type == "identifier" and names.get(node_text(fn, source)) == canonical:
             out.append(node)
         if fn.type == "attribute":
             obj = fn.child_by_field_name("object")
             attr = fn.child_by_field_name("attribute")
-            if obj is None or attr is None:
-                continue
             if (
                 obj.type == "identifier"
                 and node_text(obj, source) in modules
@@ -143,8 +138,6 @@ def vocabulary_base_types(call_node, source: bytes) -> dict:
             continue
         key = pair.child_by_field_name("key")
         value = pair.child_by_field_name("value")
-        if key is None or value is None:
-            continue
         type_name = string_value(key, source)
         if type_name is None:
             continue
@@ -181,11 +174,10 @@ def _parse_composed(call_node, source: bytes) -> dict:
     if captures_node is not None:
         if captures_node.type == "call":  # maybe("integer") -> unwrap
             inner = captures_node.child_by_field_name("arguments")
-            if inner is not None:
-                for child in inner.named_children:
-                    if child.type == "string":
-                        captures = string_value(child, source)
-                        break
+            for child in inner.named_children:
+                if child.type == "string":
+                    captures = string_value(child, source)
+                    break
         else:
             captures = string_value(captures_node, source)
 
@@ -322,8 +314,6 @@ def _derivation_signature(deriv_node, source: bytes) -> str:
     if method != "lookup":
         return ""  # .literal(...) etc. — no derivation expression to reference
     args = deriv_node.child_by_field_name("arguments")
-    if args is None:
-        return ""
     for child in args.named_children:
         if child.type == "string":
             return string_value(child, source) or ""
@@ -344,8 +334,6 @@ def registered_provider_signature(root, source: bytes, aliases):
     provider_vars: set[str] = set()
     for call in registrations:
         args = call.child_by_field_name("arguments")
-        if args is None:
-            continue
         for child in args.named_children:
             if child.type == "identifier":
                 provider_vars.add(node_text(child, source))
@@ -464,9 +452,7 @@ def function_role(func_node, source: bytes):
     for child in parent.children:
         if child.type != "decorator":
             continue
-        expr = child.named_children[0] if child.named_children else None
-        if expr is None:
-            continue
+        expr = child.named_children[0]
         if expr.type == "identifier":
             name = node_text(expr, source)
         elif expr.type == "call":
@@ -541,10 +527,9 @@ def extract_chains(root, source: bytes, aliases) -> list[dict]:
     for call in constructor_calls(root, source, aliases, "chain"):
         args = call.child_by_field_name("arguments")
         link_names = []
-        if args is not None:
-            for child in args.named_children:
-                if child.type == "identifier":
-                    link_names.append(node_text(child, source))
+        for child in args.named_children:
+            if child.type == "identifier":
+                link_names.append(node_text(child, source))
         chains.append(
             {
                 "name": assigned_name(call, source),
@@ -566,8 +551,7 @@ def keyword_args(call_node, source: bytes) -> dict:
             continue
         name = child.child_by_field_name("name")
         value = child.child_by_field_name("value")
-        if name is not None and value is not None:
-            result[node_text(name, source)] = value
+        result[node_text(name, source)] = value
     return result
 
 

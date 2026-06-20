@@ -136,8 +136,6 @@ def _equality_target(condition, source: bytes) -> str | None:
     if not any(child.type == "==" for child in condition.children):
         return None
     operands = condition.named_children
-    if len(operands) < 2:
-        return None
     left = operands[0]
     if left.type != "identifier":
         return None
@@ -249,15 +247,11 @@ def _self_attr_writes(func_node, source: bytes) -> list[str]:
         if node.type not in ("assignment", "augmented_assignment"):
             continue
         left = node.child_by_field_name("left")
-        if left is None:
-            continue
         for sub in walk(left):
             if sub.type != "attribute":
                 continue
             obj = sub.child_by_field_name("object")
             attr = sub.child_by_field_name("attribute")
-            if obj is None or attr is None:
-                continue
             if node_text(obj, source) == "self":
                 writes.append(node_text(attr, source))
     return writes
@@ -309,8 +303,6 @@ def _rebinds_name(func_node, name: str, source: bytes) -> bool:
         if node.type not in ("assignment", "augmented_assignment"):
             continue
         left = node.child_by_field_name("left")
-        if left is None:
-            continue
         if left.type == "identifier" and node_text(left, source) == name:
             return True
         if left.type in ("pattern_list", "tuple_pattern", "tuple"):
@@ -487,10 +479,9 @@ def _local_names(func_node, source: bytes) -> set[str]:
                     names.add(node_text(left, source))
             if node.type == "for_statement":
                 left = node.child_by_field_name("left")
-                if left is not None:
-                    for sub in walk(left):
-                        if sub.type == "identifier":
-                            names.add(node_text(sub, source))
+                for sub in walk(left):
+                    if sub.type == "identifier":
+                        names.add(node_text(sub, source))
     return names
 
 
@@ -513,8 +504,6 @@ def _check_global_reads(root, source: bytes, path: str, mutable: set[str]) -> li
         if func.type != "function_definition" or _is_boundary_function(func, source):
             continue
         body = func.child_by_field_name("body")
-        if body is None:
-            continue
         local = _local_names(func, source)
         seen: set[str] = set()
         for node in walk(body):
@@ -903,13 +892,10 @@ def _guard_slot_names(guard_node, source: bytes) -> set[str]:
         if node.type != "call" or _call_name(node, source) != "slot":
             continue
         args = node.child_by_field_name("arguments")
-        if args is None:
-            continue
         for arg in args.named_children:
             if arg.type == "string":
                 value = string_value(arg, source)
-                if value is not None:
-                    names.add(value)
+                names.add(value)
                 break
     return names
 
@@ -1058,8 +1044,7 @@ def _produced_slot_keys(func_node, source: bytes) -> set[str]:
                 for child in left.named_children:
                     if child.type == "string":
                         value = string_value(child, source)
-                        if value is not None:
-                            keys.add(value)
+                        keys.add(value)
         if node.type == "dictionary":
             for pair in node.named_children:
                 if pair.type != "pair":
@@ -1300,8 +1285,6 @@ def check_hc008(root, source: bytes, path: str) -> list[Diagnostic]:
         if "boundary" in kw and node_text(kw["boundary"], source) == "True":
             continue
         body = node.child_by_field_name("body")
-        if body is None:
-            continue
         hits = sorted(
             {
                 name
@@ -1344,8 +1327,6 @@ def check_hc_p017(root, source: bytes, path: str) -> list[Diagnostic]:
         if node.type != "function_definition":
             continue
         body = node.child_by_field_name("body")
-        if body is None:
-            continue
         marker = None
         for sub in walk(body):
             if sub.type == "call" and _call_name(sub, source) in _HTTP_RESPONSE_MARKERS:
