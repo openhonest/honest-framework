@@ -509,6 +509,13 @@ failure, execution halts. The ApplyResult records what was executed before
 failure. An operation that cannot be applied in place on the dialect is routed
 through table reconstruction (section 5.5) rather than a single DDL statement.
 
+**DDL on a Turso embedded replica.** Turso's WAL sync replicates DML but not DDL, so DDL
+cannot reach the cloud by pushing it through the replica's sync connection — the sync engine
+would try to replay schema changes against tables the cloud does not yet have. On a
+cloud-synced Turso database, `apply()` uses a **migrate-remote flow**: open a clean replica,
+pull the current cloud state, apply the DDL locally, and push the result — so the schema
+change reaches the cloud without the sync engine attempting to replicate DDL.
+
 **Rule: apply() refuses to run if DiffResult.ambiguities is non-empty.**
 Ambiguities must be resolved before applying. This is enforced, not
 advisory.
@@ -595,6 +602,12 @@ on the next run.
 
 This makes the `apply()` contract — *after `apply()`, the database matches the target
 schema* — hold on every dialect, not just the ones with in-place alteration.
+
+**Turso cloud-synced databases.** A Turso embedded replica's sync loop replicates only DML,
+and it must never observe a reconstruction's intermediate state (a table dropped but not yet
+renamed). `apply()` therefore **pauses sync push for the duration of the reconstruction
+transaction** and resumes it afterward, so the cloud sees the completed table, never a
+half-migrated one.
 
 ### 5.6 Schema Validation
 
