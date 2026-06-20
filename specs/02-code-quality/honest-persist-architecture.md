@@ -251,8 +251,13 @@ OperationType =
     "add_index"       | "drop_index"
     "add_constraint"  | "drop_constraint"
     "add_foreign_key" | "drop_foreign_key"
-    "create_view"     | "drop_view"
+    "create_view"     | "drop_view"       | "alter_view"
+    "create_trigger"  | "drop_trigger"
+    "create_function" | "drop_function"   | "replace_function"
 ```
+
+The view, trigger, and function operations diff the schema objects in sections
+4.12-4.14; their generation rules are in section 5.7.
 
 ### 4.7 DiffResult
 
@@ -317,6 +322,58 @@ LatencyRecord = {
     error:       String?
 }
 ```
+
+### 4.12 View
+
+A view is a named query. A materialized view is a view whose result is stored and
+refreshed; on dialects without native materialized views it is emulated by a backing table
+plus refresh triggers (section 5.7).
+
+```
+View = {
+    query:        String           -- the SELECT defining the view
+    materialized: Bool             -- default: false
+    refresh:      RefreshStrategy? -- materialized only: "manual" | "trigger" | "on_commit"
+    depends_on:   [String]?        -- tables/views this view reads (dependency ordering)
+}
+```
+
+### 4.13 Trigger
+
+```
+Trigger = {
+    table:  String                          -- the table the trigger fires on
+    timing: "before" | "after" | "instead_of"
+    events: [String]                        -- "insert" | "update" | "delete"
+    body:   String                          -- trigger body (dialect SQL)
+    when:   String?                         -- optional condition
+}
+```
+
+### 4.14 Procedure
+
+A stored procedure or function. Functions are replaceable (`CREATE OR REPLACE`);
+procedures without replace semantics are dropped and recreated.
+
+```
+Procedure = {
+    kind:     "function" | "procedure"
+    params:   [Parameter]   -- ordered parameters
+    returns:  String?       -- return type (functions)
+    body:     String        -- the body (dialect SQL)
+    language: String?       -- e.g. "sql", "plpgsql"
+}
+
+Parameter = {
+    name: String
+    type: String
+    mode: "in" | "out" | "inout"   -- default: "in"
+}
+```
+
+The `query` and `body` fields carry dialect SQL: the spec is language-agnostic about the
+*structure* of these objects and how they *diff*, while the SQL inside them is dialect-
+specific (section 12).
 
 ---
 
@@ -449,7 +506,8 @@ I/O boundary function. It is not pure.
 
 Operations execute in `execution_order` (topologically sorted). On any
 failure, execution halts. The ApplyResult records what was executed before
-failure.
+failure. An operation that cannot be applied in place on the dialect is routed
+through table reconstruction (section 5.5) rather than a single DDL statement.
 
 **Rule: apply() refuses to run if DiffResult.ambiguities is non-empty.**
 Ambiguities must be resolved before applying. This is enforced, not
@@ -501,9 +559,93 @@ If the dependency graph contains a cycle, `diff()` returns a fault. A cycle
 is a design error in the schema (mutual FK references require a workaround
 such as deferred constraints).
 
+### 5.5 Table Reconstruction
+
+Not every operation can be expressed as a single DDL statement on every dialect.
+PostgreSQL alters columns and constraints in place; SQLite and Turso cannot change a
+column's type, drop its NOT NULL, or add/drop a foreign key in place. For those
+(operation, dialect) pairs, `apply()` must rebuild the table rather than issue one
+statement — otherwise the operation either errors or, worse, silently no-ops and `apply()`
+reports success while the schema drifts from its definition.
+
+**`requires_reconstruction(op, dialect)`** is a pure lookup returning true when an
+operation cannot be applied in place on a dialect. For SQLite and Turso it is
+`{ alter_column, add_foreign_key, drop_foreign_key, drop_constraint }`; for PostgreSQL it
+is empty.
+
+**The reconstruction strategy** is a single transaction. It is language-agnostic; the exact
+SQL is dialect-specific (section 12):
+
+```
+FUNCTION reconstruct_table(table, target_definition, conn, dialect):
+    WITHIN one transaction, with foreign-key checks disabled:
+        1. create a temporary table with the target column definitions
+        2. INSERT INTO temp SELECT <columns common to old and new> FROM table
+        3. drop the original table
+        4. rename the temporary table to the original name
+        5. recreate the table's indexes
+        6. re-enable foreign-key checks and verify referential integrity
+```
+
+`apply()` routes each operation to reconstruction or direct DDL by consulting
+`requires_reconstruction`. Reconstruction is atomic: a failure at any step rolls the whole
+transaction back, so a table is never left half-migrated. A temporary table left by a
+crashed reconstruction follows a naming convention (`_hp_tmp_{table}_{id}`) and is recovered
+on the next run.
+
+This makes the `apply()` contract — *after `apply()`, the database matches the target
+schema* — hold on every dialect, not just the ones with in-place alteration.
+
+### 5.6 Schema Validation
+
+A schema is validated for internal consistency before it is diffed or applied. This is a
+construction-time check, not a runtime surprise — the same discipline `vocabulary()` and
+`state_machine()` follow.
+
+**`validate_schema(schema)` checks:**
+
+- every foreign-key `references` (`"table.column"`) targets a table and column that exist
+  in the schema,
+- every composite `primary_key`, index, and constraint names only columns that exist on its
+  table,
+- every view's `depends_on` names objects that exist.
+
+A schema that fails validation returns a fault (`schema_invalid`) listing each broken
+reference. A schema with a dangling foreign key cannot be diffed or applied — the error
+surfaces at the schema, where it can be read, not at the database, where it cannot.
+
+### 5.7 Extended-Object Diff
+
+Views, triggers, and procedures (sections 4.12-4.14) diff by the same set theory as tables:
+present-in-target-only is created, present-in-current-only is dropped, present-in-both-but-
+changed is replaced.
+
+- **Views.** A changed `query` emits `drop_view` + `create_view` (or `alter_view` where the
+  dialect supports replacing a view). A view's `depends_on` participates in the dependency
+  graph (section 5.4): a view is created after the tables and views it reads and dropped
+  before them. A materialized view also creates its backing table and refresh triggers
+  (section 6).
+- **Triggers.** A changed trigger emits `drop_trigger` + `create_trigger`, ordered after the
+  table it fires on.
+- **Functions** are replaceable: a change emits `replace_function` (`CREATE OR REPLACE`), so
+  dependents are not invalidated. **Procedures** without replace semantics emit
+  `drop_function` + `create_function`.
+
+Because `query` and `body` are opaque dialect SQL, the diff compares them as strings: any
+difference is a change. Semantic equivalence across whitespace or dialect rewriting is not
+attempted — a normalized definition in, a normalized definition out.
+
 ---
 
-## 6. Enum Abstraction
+## 6. Abstractions
+
+honest-persist compiles high-level type declarations into relational structures that behave
+identically across dialects. The application declares intent — an enum, a hierarchy, an
+array, a range; honest-persist generates the tables, constraints, and operations that
+realize it. Every abstraction reduces to ordinary tables and guarded mutations, so nothing
+in the abstraction layer escapes the verification the rest of the library is subject to.
+
+### 6.1 Enums
 
 `Literal` type annotations on columns generate lookup tables with foreign key
 constraints. This is the honest-persist mechanism for enforcing enum values
@@ -537,6 +679,60 @@ cannot safely remove an enum value that data depends on.
 This mechanism is dialect-agnostic. SQLite, PostgreSQL, and Turso all
 support FK constraints. The lookup table approach works identically across all
 three.
+
+### 6.2 CHECK Constraint Enforcement
+
+A `check` declared on a column, or a CHECK `constraint`, must be **enforced** on every
+dialect — not merely declared. An engine that silently ignores a CHECK leaves the schema
+lying about what it guarantees: the constraint says the data is constrained; the database
+does not enforce it. A declared-but-unenforced constraint is exactly the dishonesty the
+framework refuses.
+
+Where the dialect enforces CHECK natively, honest-persist emits it as DDL. Where it does
+not (older engines, some Turso configurations), honest-persist **compiles the CHECK
+expression into a row validator** and enforces it at the write boundary, inside the guarded
+mutation (section 7.5):
+
+```
+FUNCTION compile_check(expression) -> RowValidator:
+    parse the CHECK expression into an expression tree
+    return a pure function (row -> Bool) that evaluates the tree against a row
+```
+
+The expression is parsed once (a pure function) into the same closed, finite expression
+vocabulary the guard DSL uses (section 7.5), so honest-test enumerates it and verifies each
+operator compiles on every dialect (section 11). A declared CHECK that can be neither
+natively enforced nor compiled is a construction-time fault — never a silently dropped
+guarantee.
+
+### 6.3 Hierarchy
+
+A column declared as a hierarchy (a self-referential parent relationship) compiles to a
+**closure table** — a relation storing every ancestor/descendant pair with its depth —
+alongside the base table. The closure table turns subtree, ancestor, and descendant queries
+into a single indexed read instead of a recursive walk, on every dialect.
+
+honest-persist generates the closure table, its indexes, and the maintenance logic (insert,
+move, or delete of a node updates the closure) as ordinary tables and guarded mutations. The
+application sees a hierarchy declaration; the relational expansion is honest-persist's.
+
+### 6.4 Arrays and Maps
+
+A column declared as an array or a map compiles to a **junction table** — one row per
+element (arrays: ordinal + value; maps: key + value) — keyed back to the owning row. This
+keeps the data in first normal form and queryable on every dialect, rather than relying on a
+dialect-specific array or JSON type.
+
+honest-persist generates the junction table and the element operations (append, set, remove,
+reindex) as guarded mutations. Dialects with native array or JSON support may specialize the
+generation, but the declared structure and its operations are identical across dialects.
+
+### 6.5 Ranges
+
+A column declared as a range compiles to a **pair of bound columns** (lower, upper) with a
+CHECK enforcing `lower <= upper`, plus overlap, contains, and adjacency predicates as
+generated query terms. This gives range semantics on dialects without a native range type,
+and reduces to the native type where one exists.
 
 ---
 
@@ -1180,6 +1376,26 @@ database state against the current schema definition. This means:
 - Rollback is computed by diffing in the opposite direction.
 - The schema definition and the database are always compared directly.
 
+### 9.1 Zero-Downtime Cutover
+
+The workflow above applies a diff in place. Moving a live database to a new home — a new
+engine, a new host, a major restructure — without downtime is a separate, staged operation,
+still expressed as data and pure-planned where possible:
+
+```
+1. Bulk transfer (I/O)    -- copy existing rows to the destination in foreign-key order,
+                             resumable from recorded progress.
+2. Mirror (I/O)           -- dual-write: every guarded mutation writes to both source and
+                             destination until they converge.
+3. Promote (pure + I/O)   -- switch reads to the destination once mirrored and verified.
+4. Detach (I/O)           -- stop writing to the source.
+```
+
+Each phase is explicit and reversible up to promotion. The mirror writes through the same
+guarded-mutation path as ordinary writes (section 7.5), so the destination is never written
+by a path that bypasses the guards. Cutover is an operational workflow, not a schema
+primitive: it composes the diff/apply and query layers, it does not replace them.
+
 ---
 
 ## 10. What honest-persist Forbids
@@ -1306,6 +1522,24 @@ A conformant honest-persist implementation must:
     `request_id`. This is the observability surface the boundary uses to
     map fault codes to HTTP responses.
 
+17. Implement table reconstruction (§5.5) for every (operation, dialect) pair
+    that cannot be applied in place. `requires_reconstruction` is a pure lookup;
+    reconstruction is a single atomic transaction; `apply()` must never silently
+    skip a non-in-place operation.
+
+18. Implement `validate_schema()` (§5.6). A schema with a dangling foreign-key
+    reference, an index/constraint/primary-key naming a missing column, or a view
+    depending on a missing object is rejected with a `schema_invalid` fault at
+    construction — before diff or apply.
+
+19. Enforce every declared CHECK on every supported dialect (§6.2): natively where
+    supported, via a compiled row validator inside the guarded mutation where not.
+    A declared CHECK that can be neither natively enforced nor compiled is a
+    construction-time fault, never a silently dropped guarantee.
+
+20. Diff views, triggers, and procedures by the set theory of §5.7. Functions use
+    replace semantics; a view's `depends_on` participates in dependency ordering.
+
 **HC-P013 — Unbounded database routing key**
 
 Severity: Error
@@ -1328,17 +1562,25 @@ FUNCTION check_HC_P013(vocabulary, binding):
                       '{type_name}' — use a bounded Set recognizer instead")
 ```
 
-Implementations may omit the write queue and multi-tenant manager. These are
-marked as optional extensions. Implementations must declare which optional
-extensions they support.
+Implementations may omit the write queue, the multi-tenant manager, the type
+abstractions of sections 6.3-6.5 (hierarchy, arrays and maps, ranges), and the
+zero-downtime cutover of section 9.1. These are optional extensions;
+implementations must declare which they support. Enum abstraction (section 6.1)
+and CHECK enforcement (section 6.2) are not optional — they are cross-dialect
+correctness guarantees.
 
 ---
 
 ## 12. What This Spec Does Not Cover
 
 - The exact SQL generation for each dialect (dialect-specific, not
-  language-agnostic)
+  language-agnostic) — including the exact SQL of table reconstruction (section
+  5.5) and of the abstraction expansions (section 6); their *strategies* are
+  language-agnostic and in-spec, only the SQL is dialect-specific
 - The Pydantic loader (Python-specific, not part of the core pattern)
 - The CLI (`declaro diff`, `declaro apply`) — tooling, not the library
 - The SQLAlchemy-style query API — compatibility shim, not core pattern
 - The inspector (reads live DB schema) — implementation-defined per dialect
+- Native dialect specializations (PostgreSQL native enums and array types,
+  PRAGMA emulation for engines lacking introspection) — optimizations behind the
+  dialect-agnostic abstractions of section 6
