@@ -215,7 +215,7 @@ All four languages make impurity *inconvenient* without making it *impossible*. 
 
 The Honest Framework operates in Tier 0 languages — Python, TypeScript, Java, C#, Ruby, PHP — where the compiler offers zero purity enforcement and mutable state is the path of least resistance. It achieves purity guarantees through three mechanisms that together match Tier 1's mathematical strength for bounded input spaces:
 
-**honest-check (pre-commit linter).** Rule HC008 flags functions that access global state. This runs before code enters the repository, catching impurity at a lifecycle stage equivalent to compilation. Unlike a compiler, it operates heuristically and may miss edge cases; unlike a compiler, it runs in languages that have no compilation step.
+**honest-check (pre-commit linter).** It runs before code enters the repository, at a lifecycle stage equivalent to compilation, and in languages that have no compilation step. Its *structural* rules — no hidden state, bounded vocabularies, dict-dispatch — are **complete**: they match the syntactic form and cannot be evaded. Its I/O and non-determinism *watch-lists* are heuristic and may miss a call not on the list — but that gap is on the purity axis, not the boundedness axis, and is backstopped by honest-test (see The Verification Model).
 
 **honest-test (exhaustive prover).** For every function operating on bounded vocabularies (Set-based recognizers), honest-test enumerates *every* valid input combination and runs the function on all of them. It calls each function twice with identical inputs and compares outputs (purity verification). It instruments for global reads, mutations, I/O, and network access. It snapshots inputs before and after dispatch (mutation detection). It runs every chain twice with the same manifest (idempotency proof). This is not sampling. This is exhaustive verification: every input, every output, every combination.
 
@@ -238,6 +238,37 @@ The practical consequence: Haskell proves your code is *well-typed*. The Honest 
 Because Haskell solves the problem for 3% of the developer population and 0% of the enterprise installed base. The Honest Framework solves it for the languages enterprises already use — Python, TypeScript, Java, C#, Ruby, PHP — at a cognitive cost that does not require sustained System 2 formal reasoning. The programmer writes familiar code in a familiar language with familiar libraries. The framework enforces purity behind the scenes through tooling, not through the type system. The programmer does not need to understand monads, functors, applicatives, or higher-kinded types. They need to write pure functions with dispatch tables — a pattern that most working programmers already recognize, even if they do not use it by default.
 
 The Honest Framework is not "Haskell for Python." It is the observation that Haskell's compiler-level enforcement is one mechanism for achieving a mathematical property (purity), and that exhaustive enumeration of bounded input spaces is another mechanism that achieves the same property — with a different tradeoff: narrower scope (bounded vocabularies only) but incomparably broader adoption surface (every mainstream language).
+
+---
+
+## The Verification Model
+
+Correctness is guaranteed in two stages, and the order is not negotiable.
+
+**Stage one — honest-check (structural, decidable).** Before any code lands, honest-check asks one question of it: *can the complete test suite be generated from this code's declarations?* If not, the code is rejected at commit. This is the gate. It runs at a lifecycle stage equivalent to compilation, but it asks a question a compiler does not — not "are the types consistent?" but "is the behaviour of this code derivable from what it declares?"
+
+**Stage two — honest-test (behavioural, generative).** For code that passes the gate, honest-test generates the suite from the declarations and runs it. *Defining is testing*; the developer writes no test code. Because stage one guaranteed the behaviour is derivable, stage two can derive it.
+
+The two stages are unidirectional: structural admissibility is the precondition for behavioural verification. honest-check is therefore the first module built — seeded minimally so it can lint its own source — and every subsequent module, honest-check included, lands only by passing it. **This is Verification First: no code that fails the framework's own gate enters the repository.**
+
+### What the gate actually guarantees
+
+The property that makes code verifiable is **bounded input**. Unverifiability comes from combinatorial explosion — an input domain too large or too open to enumerate. The framework forecloses that *structurally*: every value a function receives is a manifest typed by declared vocabularies; a Set is finite and fully enumerable; a predicate is boundary-sampled; a catch-all recognizer — the construct that would reopen an infinite domain — is rejected at construction. Bounded input → enumerable behaviour → exhaustive proof.
+
+This guarantee is **complete and fail-closed**, because it is enforced on the *structural form*: there is no unrecognised construct that smuggles an unbounded input past it, the same way there is no way to write a class that "no classes" does not see. A class is always a class node; an unbounded vocabulary cannot be declared.
+
+### Two classes of rule
+
+honest-check's rules divide by what they can guarantee:
+
+- **Structural rules** — no classes / no hidden state, dict-dispatch over value-discriminating if/elif, faults as data not exceptions, bounded vocabularies, role reachability — match universal syntactic forms. They are **complete and fail-closed**, and they carry the bounded-input guarantee above.
+- **Watch-list rules** — I/O and non-determinism, identified by called name against a normative list — address a *different axis*: not "is the input bounded?" but "does the same input yield the same output?" They are deny-lists: heuristic, and fail-open for a name not on the list (a novel library, a dynamic call). They are **not load-bearing for verifiability** — an undetected I/O call makes a function non-deterministic for an input that is still bounded — and their incompleteness is backstopped *behaviourally* by honest-test's double-invocation purity check, not by the linter being exhaustive.
+
+So honest-check is **complete on the dimension that governs verifiability** (input boundedness) and heuristic on the orthogonal purity dimension. "Any code that passes honest-check is honest" is exact for the former and qualified-but-backstopped for the latter.
+
+### One parser, fail closed
+
+Source is parsed with tree-sitter — the framework's sole AST mechanism, chosen because the framework is a language-agnostic standard and one grammar family lets the same rule shapes run across Python, Rust, C, and the rest. tree-sitter is error-recovering: input it cannot parse surfaces as ERROR and MISSING nodes rather than being dropped, and honest-check rejects on the first of them (HC-SYN). The gate never certifies code it cannot fully parse.
 
 ---
 
