@@ -308,6 +308,16 @@ Each module carries two complementary proofs, and a new implementation must prod
 
 The portable contract says *what every implementation must satisfy*; the generative proof is *how this implementation proves itself exhaustively*. Neither replaces the other.
 
+### What carries across languages
+
+A new implementation is not a from-scratch rebuild of the whole framework. Most of the verification machinery is already language-agnostic by construction, and recognising this up front changes the size of the job:
+
+- **The structural rules are shared shapes, not shared code-to-rewrite.** honest-check's structural rules match tree-sitter node forms — a class node, a value-discriminating if/elif, a catch-all recognizer — and tree-sitter is one grammar family across languages. So registering the new language's grammar in the parsing boundary lets the *existing* structural rules gate the new language's source. The structural stage is extended by a grammar, not reimplemented per language. (Watch-list rules are the exception: I/O and non-determinism are identified by called name, and those names are language-specific, so each language supplies its own normative watch-lists.)
+- **The portable contracts are shared data.** The `suite.json` files are language-agnostic; the new implementation runs the *same* files. It writes no new conformance data, only the host-language harness that loads them.
+- **The generators are shared algorithms.** Set enumeration, adversarial-neighbour generation, boundary sampling, K-step sequencing are pure data transforms specified once; a port reproduces the algorithm, not a new design.
+
+What is genuinely net-new per language is therefore narrow: the parsing-boundary grammar registration, the thin boundary wrappers (parser, I/O, persistence drivers), each language's watch-lists, and the host-language generative proof that drives declarations through the generators. The reusable core — rule shapes, contracts, generator algorithms — is the bulk, and it is reused, not rewritten.
+
 ### Completeness is measured, not asserted
 
 The generative proof is complete only when it exercises every line and branch of the module. **The bar is 100% line and branch coverage, enforced as a gate, and it is an oracle, not a vanity metric:** a line no law or example reaches is either dead code (delete it) or a behaviour no declaration entails (specify it). Both are defects the coverage gate surfaces. A new implementation wires this gate into its commit hook alongside honest-check: nothing lands unless the conformance suites pass *and* coverage is total. Entry-point shims that only run when a module is executed as a program are covered by executing them that way, not by exclusion — the gate carries no carve-outs.
