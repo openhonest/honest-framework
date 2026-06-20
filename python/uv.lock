@@ -42,6 +42,12 @@ requires-dist = [
 name = "honest-persist"
 version = "0.1.0"
 source = { editable = "honest-persist" }
+dependencies = [
+    { name = "honest-type" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "honest-type", editable = "honest-type" }]
 
 [[package]]
 name = "honest-test"

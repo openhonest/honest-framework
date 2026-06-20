@@ -16,9 +16,11 @@ from honest_persist import diff
 
 def _check_diff(case):
     result = diff(case["current"], case["target"])
+    if "err" in result:
+        return False, f"unexpected fault {result['err']['code']}"
     ops = result["operations"]
     expected = case["expect_operations"]
-    ok = len(ops) == len(expected)
+    ok = len(ops) == len(expected) and len(result["execution_order"]) == len(ops)
     for got, want in zip(ops, expected):
         ok = ok and got["op"] == want["op"] and got["table"] == want["table"]
         for key, value in want.get("details", {}).items():
