@@ -13,6 +13,8 @@ a table rebuild, which is a later concern.
 
 # honest: disable HC-P002
 
+from honest_persist.schema import _normalize
+
 _TYPE_MAP = {
     "postgresql": {"uuid": "uuid", "timestamptz": "timestamptz", "boolean": "boolean", "jsonb": "jsonb"},
     "sqlite": {"uuid": "text", "timestamptz": "text", "boolean": "integer", "jsonb": "text"},
@@ -152,18 +154,101 @@ def _apply_result(success, executed, error, error_operation):
     }
 
 
-def apply(diff_result, conn, dialect):
+# Operations that cannot be applied in place on a dialect and need a table rebuild (section 5.5).
+_RECONSTRUCTION_OPS = {
+    "postgresql": frozenset(),
+    "sqlite": frozenset({"alter_column", "add_foreign_key", "drop_foreign_key", "drop_constraint"}),
+    "turso": frozenset({"alter_column", "add_foreign_key", "drop_foreign_key", "drop_constraint"}),
+}
+
+
+def requires_reconstruction(operation, dialect):
+    """True if an operation cannot be applied in place on the dialect and needs a table rebuild
+    (section 5.5). Pure lookup."""
+    return operation["op"] in _RECONSTRUCTION_OPS.get(dialect, frozenset())
+
+
+def reconstruction_sql(table, target_table, common_columns, dialect, temp_name=None):
+    """The statement sequence that rebuilds `table` into `target_table` (section 5.5): create a
+    temp table with the target columns, copy the common columns, drop the old, rename the temp
+    into place, recreate the target indexes. Pure. The transaction wrapping and foreign-key
+    toggling are apply()'s boundary responsibility; `temp_name` carries the unique id apply()
+    mints, with a deterministic default so the plan is reproducible for testing."""
+    temp = temp_name or f"_hp_tmp_{table}"
+    columns = target_table.get("columns", {})
+    columns_ddl = ", ".join(_column_ddl(name, columns[name], dialect) for name in columns)
+    statements = [f"CREATE TABLE {temp} ({columns_ddl})"]
+    if common_columns:
+        copied = ", ".join(common_columns)
+        statements.append(f"INSERT INTO {temp} ({copied}) SELECT {copied} FROM {table}")
+    statements.append(f"DROP TABLE {table}")
+    statements.append(f"ALTER TABLE {temp} RENAME TO {table}")
+    for index_name, index in target_table.get("indexes", {}).items():
+        unique = "UNIQUE " if index.get("unique") else ""
+        index_columns = ", ".join(index.get("columns", []))
+        statements.append(f"CREATE {unique}INDEX {index_name} ON {table} ({index_columns})")
+    return statements
+
+
+def _columns_added(operations, table):
+    """The columns added to a table by this diff — they did not exist before reconstruction, so
+    they are not copied from the old table."""
+    return {op["details"]["column"] for op in operations if op["op"] == "add_column" and op["table"] == table}
+
+
+def _pause_push(conn):
+    if hasattr(conn, "pause_push"):
+        conn.pause_push()
+
+
+def _resume_push(conn):
+    if hasattr(conn, "resume_push"):
+        conn.resume_push()
+
+
+def _reconstruct(table, target_tables, operations, conn, dialect, executed):
+    """Rebuild one table to its target shape (section 5.5), pausing sync push for the duration
+    (Turso). Returns None on success, or an ApplyResult on failure."""
+    target_table = target_tables.get(table, {})
+    added = _columns_added(operations, table)
+    common = [name for name in target_table.get("columns", {}) if name not in added]
+    _pause_push(conn)
+    try:
+        for sql in reconstruction_sql(table, target_table, common, dialect):
+            conn.execute(sql)
+            executed.append(sql)
+    except Exception as exc:
+        _resume_push(conn)
+        return _apply_result(False, executed, str(exc), None)
+    _resume_push(conn)
+    return None
+
+
+def apply(diff_result, target, conn, dialect):
     """Execute a DiffResult against the connection in execution_order (section 5.2). The
-    boundary: refuses while ambiguities are unresolved, halts on the first failure, and returns
-    an ApplyResult recording what ran. Not pure — it performs I/O through conn."""
+    boundary: refuses while ambiguities are unresolved, reconstructs tables that cannot be
+    altered in place (section 5.5) — pausing sync push for the rebuild — halts on the first
+    failure, and returns an ApplyResult. Not pure: it performs I/O through conn."""
     if diff_result.get("ambiguities"):
         return _apply_result(False, [], "unresolved ambiguities; resolve before applying", None)
+    target_tables = _normalize(target)["tables"]
     operations = diff_result["operations"]
+    reconstruct_tables = {op["table"] for op in operations if requires_reconstruction(op, dialect)}
+    reconstructed = set()
     executed = []
     for index in diff_result["execution_order"]:
-        sql = to_sql(operations[index], dialect)
+        op = operations[index]
+        if op["table"] in reconstruct_tables:
+            if op["table"] in reconstructed:
+                continue
+            failure = _reconstruct(op["table"], target_tables, operations, conn, dialect, executed)
+            if failure is not None:
+                return failure
+            reconstructed.add(op["table"])
+            continue
+        sql = to_sql(op, dialect)
         if sql is None:
-            return _apply_result(False, executed, f"no renderer for '{operations[index]['op']}'", index)
+            return _apply_result(False, executed, f"no renderer for '{op['op']}'", index)
         try:
             conn.execute(sql)
         except Exception as exc:

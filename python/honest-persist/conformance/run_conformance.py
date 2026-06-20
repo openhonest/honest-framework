@@ -11,18 +11,33 @@ import json
 import sys
 from pathlib import Path
 
-from honest_persist import apply, diff, to_sql, validate_schema
+from honest_persist import (
+    apply,
+    diff,
+    reconstruction_sql,
+    requires_reconstruction,
+    to_sql,
+    validate_schema,
+)
 
 
 class _FakeConn:
-    """Records the SQL apply() executes (the boundary's collaborator). Test fixture - the
-    runner is not linted."""
+    """Records the SQL apply() executes and any sync push pause/resume (the boundary's
+    collaborators). Test fixture - the runner is not linted."""
 
     def __init__(self):
         self.executed = []
+        self.paused = 0
+        self.resumed = 0
 
     def execute(self, sql):
         self.executed.append(sql)
+
+    def pause_push(self):
+        self.paused += 1
+
+    def resume_push(self):
+        self.resumed += 1
 
 
 def _check_to_sql(case):
@@ -31,12 +46,34 @@ def _check_to_sql(case):
 
 
 def _check_apply(case):
-    result = diff(case["apply"]["current"], case["apply"]["target"])
-    applied = apply(result, _FakeConn(), case["dialect"])
+    spec = case["apply"]
+    result = diff(spec["current"], spec["target"])
+    conn = _FakeConn()
+    applied = apply(result, spec["target"], conn, case["dialect"])
     ok = applied["success"] == case["expect_success"]
     if "expect_applied" in case:
         ok = ok and applied["operations_applied"] == case["expect_applied"]
-    return ok, f"got {applied}"
+    joined = " ; ".join(conn.executed)
+    for needle in case.get("expect_executed_contains", []):
+        ok = ok and needle in joined
+    for needle in case.get("expect_executed_excludes", []):
+        ok = ok and needle not in joined
+    if case.get("expect_push_paused"):
+        ok = ok and conn.paused >= 1 and conn.resumed >= 1
+    return ok, f"got {applied} executed={conn.executed}"
+
+
+def _check_requires(case):
+    got = requires_reconstruction(case["reconstruct_op"], case["dialect"])
+    return got == case["expect"], f"got {got}"
+
+
+def _check_reconstruction_sql(case):
+    spec = case["reconstruct_sql"]
+    statements = reconstruction_sql(spec["table"], spec["target_table"], spec["common_columns"], case["dialect"])
+    joined = " ; ".join(statements)
+    ok = all(needle in joined for needle in case.get("expect_contains", []))
+    return ok, f"got {statements}"
 
 
 def _check_validate(case):
@@ -73,10 +110,21 @@ def _check_diff(case):
     return ok, f"ops={[(o['op'], o['table']) for o in result['operations']]} ambiguities={result['ambiguities']}"
 
 
-_CHECKERS = {"diff": _check_diff, "to_sql": _check_to_sql, "apply": _check_apply, "validate": _check_validate}
+_CHECKERS = {
+    "diff": _check_diff,
+    "to_sql": _check_to_sql,
+    "apply": _check_apply,
+    "validate": _check_validate,
+    "reconstruct_op": _check_requires,
+    "reconstruct_sql": _check_reconstruction_sql,
+}
 
 
 def _kind(case):
+    if "reconstruct_op" in case:
+        return "reconstruct_op"
+    if "reconstruct_sql" in case:
+        return "reconstruct_sql"
     if "validate" in case:
         return "validate"
     if "to_sql" in case:
