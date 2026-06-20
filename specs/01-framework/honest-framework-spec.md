@@ -249,7 +249,7 @@ Correctness is guaranteed in two stages, and the order is not negotiable.
 
 **Stage two — honest-test (behavioural, generative).** For code that passes the gate, honest-test generates the suite from the declarations and runs it. *Defining is testing*; the developer writes no test code. Because stage one guaranteed the behaviour is derivable, stage two can derive it.
 
-The two stages are unidirectional: structural admissibility is the precondition for behavioural verification. honest-check is therefore the first module built — seeded minimally so it can lint its own source — and every subsequent module, honest-check included, lands only by passing it. **This is Verification First: no code that fails the framework's own gate enters the repository.**
+The two stages are unidirectional: structural admissibility is the precondition for behavioural verification. The gate is therefore seeded before the modules it must govern — honest-check minimally, so it can lint its own source, atop the one component it depends on (the shared parsing boundary, hand-verified first) — and every subsequent module, honest-check included, lands only by passing it. **This is Verification First: no code that fails the framework's own gate enters the repository.** The concrete order this implies is set out in *Bootstrapping a New Language Implementation* below.
 
 ### What the gate actually guarantees
 
@@ -269,6 +269,48 @@ So honest-check is **complete on the dimension that governs verifiability** (inp
 ### One parser, fail closed
 
 Source is parsed with tree-sitter — the framework's sole AST mechanism, chosen because the framework is a language-agnostic standard and one grammar family lets the same rule shapes run across Python, Rust, C, and the rest. tree-sitter is error-recovering: input it cannot parse surfaces as ERROR and MISSING nodes rather than being dropped, and honest-check rejects on the first of them (HC-SYN). The gate never certifies code it cannot fully parse.
+
+---
+
+## Bootstrapping a New Language Implementation
+
+A new language implementation (after the Python reference) is not built module-first and tested afterwards. It is built **gate-first**, in dependency order, with the verifier standing up before the modules it must certify. This section is the normative path; it makes the Verification Model above concrete.
+
+### The dependency order
+
+The modules form a directed acyclic graph. Build them in an order that respects it. In the Python reference the graph is:
+
+```
+parse                       (the shared parsing boundary — wraps tree-sitter; no framework deps)
+type                        (the pure-function type system — no framework deps)
+check      → parse          (the structural gate)
+test       → parse, type    (the generative verifier)
+persist    → type
+```
+
+**`parse` is the true base, not `check`.** The gate depends on the parsing boundary, so the boundary is seeded and hand-verified first. A language whose grammar tree-sitter does not yet cover must add that grammar to the parsing boundary before anything else; the rest of the framework touches the parser only through this one module, never tree-sitter directly.
+
+### The seed-then-gate phases
+
+Two modules cannot be gated by the mechanism they implement until that mechanism exists. They are **seeded**: written, then verified by hand or by a minimal harness, once.
+
+1. **Seed `parse`.** Hand-verify it against the parser-boundary laws (node-text round-trip, walk completeness and order, 1-based line/col, error detection as a biconditional, determinism, a closed language vocabulary, correct text decoding).
+2. **Seed `check`.** Write the structural rules, then run honest-check on its own source until it is clean. From this point the gate exists.
+3. **Seed `test`.** Write the generators, then have them verify their own laws (a generator that fails to exhaust a declared Set is non-conformant). From this point behavioural generation exists.
+4. **Gate everything else.** Every remaining module — and re-verification of the seeded three — lands only by passing honest-check (structural) and its conformance (behavioural). No code that fails the framework's own gate enters the repository.
+
+### Two conformance artefacts per module
+
+Each module carries two complementary proofs, and a new implementation must produce both:
+
+- **The portable contract — `suite.json`.** A language-agnostic collection of declarative input/output cases (the laws of the conformance suite, expressed as data). It is the cross-language test-of-record: the *same* file proves any implementation conformant, with no host language in the loop. It stays JSON for exactly this reason; it cannot express predicates, functions, or injected dependencies, and it is not converted to a host-language or config format.
+- **The implementation's generative proof.** A host-language harness that drives the module's own declarations through the generators and asserts the module's laws across the generated space — exhausting the behaviour the data format cannot reach (predicates, throwing functions, composed types, fake I/O boundaries, malformed input). This is implementation-specific by necessity; it is where "defining is testing" is actually realised for that language.
+
+The portable contract says *what every implementation must satisfy*; the generative proof is *how this implementation proves itself exhaustively*. Neither replaces the other.
+
+### Completeness is measured, not asserted
+
+The generative proof is complete only when it exercises every line and branch of the module. **The bar is 100% line and branch coverage, enforced as a gate, and it is an oracle, not a vanity metric:** a line no law or example reaches is either dead code (delete it) or a behaviour no declaration entails (specify it). Both are defects the coverage gate surfaces. A new implementation wires this gate into its commit hook alongside honest-check: nothing lands unless the conformance suites pass *and* coverage is total. Entry-point shims that only run when a module is executed as a program are covered by executing them that way, not by exclusion — the gate carries no carve-outs.
 
 ---
 
