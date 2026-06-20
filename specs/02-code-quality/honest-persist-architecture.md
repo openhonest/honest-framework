@@ -529,7 +529,7 @@ FUNCTION compute_column_alterations(current_col, target_col):
 ### 5.2 apply() — I/O Boundary
 
 ```
-apply(result: DiffResult, conn: Connection, dialect: Dialect) → ApplyResult
+apply(result: DiffResult, target: SchemaDefinition, conn: Connection, dialect: Dialect) → ApplyResult
 ```
 
 Executes the operations from a DiffResult against the database. This is an
@@ -539,6 +539,8 @@ Operations execute in `execution_order` (topologically sorted). On any
 failure, execution halts. The ApplyResult records what was executed before
 failure. An operation that cannot be applied in place on the dialect is routed
 through table reconstruction (section 5.5) rather than a single DDL statement.
+`apply()` takes the target SchemaDefinition because reconstructing a table requires
+its full target column definitions, which the operation deltas alone do not carry.
 
 **DDL on a Turso embedded replica.** Turso's WAL sync replicates DML but not DDL, so DDL
 cannot reach the cloud by pushing it through the replica's sync connection — the sync engine
@@ -1408,7 +1410,7 @@ The complete migration workflow, showing which steps are pure and which are I/O:
        // Present to human. Collect decisions. Resolve and re-diff.
 
 5. Apply (I/O)
-   apply_result = await apply(result, conn, dialect)
+   apply_result = await apply(result, schema, conn, dialect)
 ```
 
 Steps 1 and 3 are pure functions. Steps 2 and 5 are I/O boundaries.
