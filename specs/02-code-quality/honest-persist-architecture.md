@@ -138,6 +138,11 @@ a migration script. It is not a diff. It is the destination. Two schemas
 can be compared with `diff()` to produce the operations that transform one
 into the other.
 
+Views, triggers, and procedures are not tables; they live alongside the tables in a
+`SchemaDefinition` (section 4.15), which is the complete unit `diff()` and `apply()` operate
+on. A bare `Schema` (tables only) is the common case and is accepted as a tables-only
+definition.
+
 ### 3.2 Dialect
 
 honest-persist is polymorphic across SQL dialects. The supported dialects are:
@@ -375,6 +380,29 @@ The `query` and `body` fields carry dialect SQL: the spec is language-agnostic a
 *structure* of these objects and how they *diff*, while the SQL inside them is dialect-
 specific (section 12).
 
+### 4.15 SchemaDefinition
+
+`Schema` (section 4.5) is the tables. The complete declared state a migration targets — the
+tables plus the extended objects of sections 4.12-4.14 — is a SchemaDefinition:
+
+```
+SchemaDefinition = {
+    tables:     Schema                  -- dict[String, Table]   (required)
+    views:      dict[String, View]?
+    triggers:   dict[String, Trigger]?
+    procedures: dict[String, Procedure]?
+}
+```
+
+`diff()`, `apply()`, and `validate_schema()` operate on a SchemaDefinition: the table set-
+theory (section 5.1) runs over its `tables`, the extended-object diff (section 5.7) over its
+`views`/`triggers`/`procedures`, and schema validation (section 5.6) over both.
+
+As a convenience, a bare `Schema` — a `dict[String, Table]` with no extended objects — is
+accepted anywhere a SchemaDefinition is expected and is read as `{ tables: <that> }`. So a
+tables-only definition needs no wrapper, every tables-only example in this spec remains valid,
+and an implementation may support tables only until it adds extended objects.
+
 ---
 
 ## 5. Schema Layer
@@ -382,11 +410,14 @@ specific (section 12).
 ### 5.1 diff() — Pure Function
 
 ```
-diff(current: Schema, target: Schema, decisions?: dict) → DiffResult
+diff(current: SchemaDefinition, target: SchemaDefinition, decisions?: dict) → DiffResult
 ```
 
 Computes the operations needed to transform `current` into `target`. This
 is a pure function: no I/O, no side effects, same inputs produce same output.
+`current` and `target` are SchemaDefinitions (section 4.15); a bare `dict[String, Table]` is
+accepted as a tables-only definition. The algorithm below operates on the `tables`; the
+extended objects (views, triggers, procedures) diff on the same pass (section 5.7).
 
 **Algorithm:**
 
@@ -629,7 +660,8 @@ surfaces at the schema, where it can be read, not at the database, where it cann
 
 ### 5.7 Extended-Object Diff
 
-Views, triggers, and procedures (sections 4.12-4.14) diff by the same set theory as tables:
+Views, triggers, and procedures (sections 4.12-4.14) are carried in the SchemaDefinition's
+`views`/`triggers`/`procedures` maps (section 4.15) and diff by the same set theory as tables:
 present-in-target-only is created, present-in-current-only is dropped, present-in-both-but-
 changed is replaced.
 
