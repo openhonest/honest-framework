@@ -499,9 +499,9 @@ def _is_value_load(node) -> bool:
     parent = node.parent
     if parent is None:
         return True
-    if parent.type == "attribute" and parent.child_by_field_name("attribute") is node:
+    if parent.type == "attribute" and parent.child_by_field_name("attribute") == node:
         return False
-    if parent.type == "keyword_argument" and parent.child_by_field_name("name") is node:
+    if parent.type == "keyword_argument" and parent.child_by_field_name("name") == node:
         return False
     return True
 

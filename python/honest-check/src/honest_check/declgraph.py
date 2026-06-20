@@ -36,7 +36,7 @@ def resolve_aliases(root, source: bytes):
             if module is None or "honest_type" not in node_text(module, source):
                 continue
             for child in node.named_children:
-                if child is module:
+                if child == module:
                     continue
                 if child.type == "aliased_import":
                     name = child.child_by_field_name("name")
