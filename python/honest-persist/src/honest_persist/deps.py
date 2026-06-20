@@ -13,6 +13,8 @@ _DEPENDS_ON = {
     "add_column": ("create_table",),
     "add_index": ("create_table", "add_column"),
     "add_constraint": ("create_table", "add_column"),
+    "create_view": ("create_table", "create_view"),
+    "create_trigger": ("create_table",),
 }
 
 # An operation of this type must precede (run before) operations of the listed types on a
@@ -22,16 +24,27 @@ _MUST_PRECEDE = {
     "drop_index": ("drop_table", "drop_column"),
     "drop_constraint": ("drop_table", "drop_column"),
     "drop_column": ("drop_table",),
+    "drop_view": ("drop_table",),
+    "drop_trigger": ("drop_table",),
 }
 
 
+def _subject(op):
+    """The object an operation acts on: a view/trigger/function name, else the table."""
+    details = op["details"]
+    return details.get("view") or details.get("trigger") or details.get("function") or op["table"]
+
+
 def _related(op_a, op_b):
-    """Two operations are related when they touch the same table, or when op_a's foreign key
-    references op_b's table."""
-    if op_a["table"] == op_b["table"]:
+    """Two operations are related when op_a touches the same table op_b does, op_a's foreign key
+    references op_b's subject, or op_a declares op_b's subject in its depends_on."""
+    subject_b = _subject(op_b)
+    if op_a["table"] and op_a["table"] == op_b["table"]:
         return True
     references = op_a["details"].get("references", "")
-    return bool(references) and references.split(".")[0] == op_b["table"]
+    if references and references.split(".")[0] == subject_b:
+        return True
+    return subject_b in op_a["details"].get("depends_on", [])
 
 
 def _runs_before(op_a, op_b):

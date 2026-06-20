@@ -122,6 +122,76 @@ def _diff_table(table, current_table, target_table):
     return ops
 
 
+def _normalize(schema):
+    """Coerce a bare Schema (dict[str, Table]) or a SchemaDefinition into a full definition
+    (section 4.15). A dict whose keys are a subset of the reserved names and that carries
+    `tables` is a definition; anything else is a tables-only schema."""
+    if "tables" in schema and set(schema) <= {"tables", "views", "triggers", "procedures"}:
+        return {
+            "tables": schema.get("tables", {}),
+            "views": schema.get("views", {}),
+            "triggers": schema.get("triggers", {}),
+            "procedures": schema.get("procedures", {}),
+        }
+    return {"tables": schema, "views": {}, "triggers": {}, "procedures": {}}
+
+
+def _diff_views(current_views, target_views):
+    """View add/drop/replace (section 5.7). A changed query is a drop + create; depends_on
+    travels in the op for dependency ordering (section 5.4)."""
+    ops = []
+    for name in sorted(set(current_views) - set(target_views)):
+        ops.append(operation("drop_view", "", {"view": name, "depends_on": list(current_views[name].get("depends_on", []))}))
+    for name in sorted(set(target_views) - set(current_views)):
+        view = target_views[name]
+        ops.append(operation("create_view", "", {"view": name, "definition": dict(view), "depends_on": list(view.get("depends_on", []))}))
+    for name in sorted(set(current_views) & set(target_views)):
+        if current_views[name] == target_views[name]:
+            continue
+        view = target_views[name]
+        ops.append(operation("drop_view", "", {"view": name, "depends_on": list(current_views[name].get("depends_on", []))}))
+        ops.append(operation("create_view", "", {"view": name, "definition": dict(view), "depends_on": list(view.get("depends_on", []))}))
+    return ops
+
+
+def _diff_triggers(current_triggers, target_triggers):
+    """Trigger add/drop/replace (section 5.7). The op's table is the table the trigger fires
+    on, so it orders after that table (section 5.4)."""
+    ops = []
+    for name in sorted(set(current_triggers) - set(target_triggers)):
+        ops.append(operation("drop_trigger", current_triggers[name].get("table", ""), {"trigger": name}))
+    for name in sorted(set(target_triggers) - set(current_triggers)):
+        trigger = target_triggers[name]
+        ops.append(operation("create_trigger", trigger.get("table", ""), {"trigger": name, "definition": dict(trigger)}))
+    for name in sorted(set(current_triggers) & set(target_triggers)):
+        if current_triggers[name] == target_triggers[name]:
+            continue
+        trigger = target_triggers[name]
+        ops.append(operation("drop_trigger", current_triggers[name].get("table", ""), {"trigger": name}))
+        ops.append(operation("create_trigger", trigger.get("table", ""), {"trigger": name, "definition": dict(trigger)}))
+    return ops
+
+
+def _diff_procedures(current_procs, target_procs):
+    """Procedure/function add/drop/replace (section 5.7). Functions use replace semantics
+    (CREATE OR REPLACE); procedures without replace are drop + create."""
+    ops = []
+    for name in sorted(set(current_procs) - set(target_procs)):
+        ops.append(operation("drop_function", "", {"function": name}))
+    for name in sorted(set(target_procs) - set(current_procs)):
+        ops.append(operation("create_function", "", {"function": name, "definition": dict(target_procs[name])}))
+    for name in sorted(set(current_procs) & set(target_procs)):
+        if current_procs[name] == target_procs[name]:
+            continue
+        proc = target_procs[name]
+        if proc.get("kind", "function") == "function":
+            ops.append(operation("replace_function", "", {"function": name, "definition": dict(proc)}))
+            continue
+        ops.append(operation("drop_function", "", {"function": name}))
+        ops.append(operation("create_function", "", {"function": name, "definition": dict(proc)}))
+    return ops
+
+
 def _reference_error(references, schema):
     """None if the 'table.column' reference resolves in the schema, else an error string."""
     parts = references.split(".")
@@ -162,11 +232,18 @@ def _table_errors(table_name, table, schema):
 
 def validate_schema(schema):
     """Check a schema for internal consistency before it is diffed or applied (section 5.6).
-    Returns ok(schema), or err(fault 'schema_invalid') listing every broken reference. Pure.
-    (View depends_on validation waits on the schema's view-storage representation.)"""
+    Accepts a bare Schema or a SchemaDefinition (section 4.15). Returns ok(schema), or
+    err(fault 'schema_invalid') listing every broken reference. Pure."""
+    definition = _normalize(schema)
+    tables = definition["tables"]
     errors = []
-    for table_name, table in schema.items():
-        errors.extend(_table_errors(table_name, table, schema))
+    for table_name, table in tables.items():
+        errors.extend(_table_errors(table_name, table, tables))
+    known = set(tables) | set(definition["views"])
+    for view_name, view in definition["views"].items():
+        for dependency in view.get("depends_on", []):
+            if dependency not in known:
+                errors.append(f"view '{view_name}' depends_on unknown object '{dependency}'")
     if errors:
         return err(fault("schema_invalid", "Schema has broken references", "server", {"errors": errors}))
     return ok(schema)
@@ -176,13 +253,17 @@ def diff(current, target, decisions=None):
     """Operations to transform the `current` schema into the `target` schema (section 5.1),
     dependency-ordered (section 5.4). Pure. Returns a DiffResult, or err(fault) when the target
     schema is invalid (section 5.6) or the dependency graph has a cycle (section 5.4)."""
-    invalid = validate_schema(target)
+    current_def = _normalize(current)
+    target_def = _normalize(target)
+    invalid = validate_schema(target_def)
     if "err" in invalid:
         return invalid
-    dropped = set(current) - set(target)
-    added = set(target) - set(current)
-    modified = set(current) & set(target)
-    renames, actual_adds = _resolve_renames(added, dropped, target)
+    current_tables = current_def["tables"]
+    target_tables = target_def["tables"]
+    dropped = set(current_tables) - set(target_tables)
+    added = set(target_tables) - set(current_tables)
+    modified = set(current_tables) & set(target_tables)
+    renames, actual_adds = _resolve_renames(added, dropped, target_tables)
     rename_sources = {source for source, _ in renames}
 
     operations = []
@@ -192,9 +273,12 @@ def diff(current, target, decisions=None):
     for source, target_name in renames:
         operations.append(operation("rename_table", source, {"new_name": target_name}))
     for table in actual_adds:
-        operations.append(operation("create_table", table, dict(target[table])))
+        operations.append(operation("create_table", table, dict(target_tables[table])))
     for table in sorted(modified):
-        operations.extend(_diff_table(table, current[table], target[table]))
+        operations.extend(_diff_table(table, current_tables[table], target_tables[table]))
+    operations.extend(_diff_views(current_def["views"], target_def["views"]))
+    operations.extend(_diff_triggers(current_def["triggers"], target_def["triggers"]))
+    operations.extend(_diff_procedures(current_def["procedures"], target_def["procedures"]))
 
     dependencies = build_dependencies(operations)
     execution_order = topological_sort(operations, dependencies)
@@ -202,5 +286,5 @@ def diff(current, target, decisions=None):
         return err(fault(
             "schema_cycle", "Schema dependency graph contains a cycle", "server",
             {"operations": operations}))
-    ambiguities = detect_ambiguities(current, target, decisions or {})
+    ambiguities = detect_ambiguities(current_tables, target_tables, decisions or {})
     return diff_result(operations, dependencies, execution_order, ambiguities)
