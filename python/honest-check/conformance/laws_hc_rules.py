@@ -64,7 +64,6 @@ from honest_check.rules import (
     _is_value_load,
     _local_names,
     _orchestrator_call_sequence,
-    _persist_tainted_slots,
     _produced_slot_keys,
     _self_attr_writes,
 )
@@ -733,71 +732,6 @@ _case(
 )
 
 
-# ----------------------------------------------------------------- HC-P015 cross-chain TOCTOU
-
-_case(
-    "p015_stale_guard_slot_direct",
-    "def f(manifest):\n"
-    "    manifest['balance'] = persist.read('balance')\n"
-    "    guarded_mutation(guard=eq(slot('balance'), 0))\n",
-    must_fire=("HC-P015",),
-)
-_case(
-    "p015_stale_guard_slot_via_var",
-    "def f(manifest):\n"
-    "    note = compute()\n"  # identifier-left assignment, right is a non-persist call
-    "    bal = persist.read('balance')\n"
-    "    manifest['balance'] = bal\n"
-    "    guarded_mutation(guard=eq(slot('balance'), 0))\n",
-    must_fire=("HC-P015",),
-)
-_case(
-    "p015_fresh_guard_clean",
-    "def f(manifest):\n"
-    "    manifest['balance'] = compute()\n"
-    "    guarded_mutation(guard=eq(slot('balance'), 0))\n",
-    must_not_fire=("HC-P015",),
-)
-_case(
-    "p015_no_guard_kw_clean",
-    "def f(manifest):\n"
-    "    manifest['balance'] = persist.read('balance')\n"
-    "    guarded_mutation()\n",
-    must_not_fire=("HC-P015",),
-)
-_case(
-    "p015_guard_no_slot_clean",
-    "def f(manifest):\n"
-    "    manifest['balance'] = persist.read('balance')\n"
-    "    guarded_mutation(guard=eq(literal(1), 0))\n",
-    must_not_fire=("HC-P015",),
-)
-_case(
-    "p015_module_level_no_enclosing_clean",
-    "guarded_mutation(guard=eq(slot('balance'), 0))\n",
-    must_not_fire=("HC-P015",),
-)
-# slot() with a non-string argument (and a mixed arg list) exercises the arg loop's
-# non-string-continue path in _guard_slot_names; no concrete slot name -> no fire.
-_case(
-    "p015_slot_nonstring_arg_clean",
-    "def f(manifest):\n"
-    "    manifest['balance'] = persist.read('balance')\n"
-    "    guarded_mutation(guard=eq(slot(dynamic_key), 0))\n",
-    must_not_fire=("HC-P015",),
-)
-# A manifest subscript-assign with a non-string (variable) key in the taint scan
-# exercises _subscript_string_key's None return and the key-is-None continue, while a
-# separate string-keyed read keeps the rule otherwise live.
-_case(
-    "p015_nonstring_key_assign_clean",
-    "def f(manifest, k):\n"
-    "    manifest[k] = persist.read('other')\n"
-    "    guarded_mutation(guard=eq(slot('balance'), 0))\n",
-    must_not_fire=("HC-P015",),
-)
-
-
 # ----------------------------------------------------------------- HC-OR001 / HC-OR003
 
 _case(
@@ -1384,8 +1318,6 @@ def _probe_internal_helpers() -> list[str]:
     psk_fn = next(n for n in _w(psk_root) if n.type == "function_definition")
     if _produced_slot_keys(psk_fn, psk_b) != {"slot_a"}:
         bad.append("_produced_slot_keys(subscript-string body) should be {'slot_a'}")
-    if _persist_tainted_slots(integer, src_b) != set():
-        bad.append("_persist_tainted_slots(non-func) should be set()")
     if _orchestrator_call_sequence(integer, src_b) != []:
         bad.append("_orchestrator_call_sequence(non-func) should be []")
     if _self_attr_writes(integer, src_b) != []:

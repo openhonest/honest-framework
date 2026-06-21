@@ -5,10 +5,6 @@ and perform no I/O. There is no method chaining that hides execution: the query 
 inspectable, loggable, and serializable before it runs. Parameters are always named
 (`:name`), never positional, and `params` is the complete set, so no escaping is needed at
 the call site. Executing a Query is section 7.4's boundary concern, not this module's.
-
-Mutating persisted state is not done with a bare `update`/`delete` here — that is section
-7.5's guarded primitive. These builders produce the parameterized SQL the rest of the layer
-(and guarded mutation) compiles around.
 """
 
 from honest_persist.types import Query

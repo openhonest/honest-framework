@@ -614,23 +614,6 @@
       }
     },
     {
-      "id": "HC-P015-001",
-      "category": "HC-P015",
-      "input": {
-        "language": "python",
-        "source": "def grant(m):\n    m['role'] = persist.read('SELECT role')\n    return guarded_mutation(target=t, guard=compare(slot('role'), '=', literal('owner')), update=u, op='update')"
-      },
-      "expected": {
-        "diagnostics": [
-          {
-            "rule": "HC-P015",
-            "severity": "error",
-            "line": 3
-          }
-        ]
-      }
-    },
-    {
       "id": "clean-pure",
       "category": "clean",
       "input": {

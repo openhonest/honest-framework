@@ -4,12 +4,9 @@ Auto-generated from a state machine's declaration. test_valid checks the declare
 test_invalid checks that undeclared (state, event) pairs fault with no_transition; test_
 adversarial checks that near-miss state/event tokens are rejected - a neighbour that is
 accepted is an overlap (two states or events too similar). Each returns findings (data).
-
-Deferred: section 5.4 (state invariants) and 5.6 (K-step sequences) need a field-rich state
-model the name-based primitive does not carry; section 5.5 (TOCTOU) needs honest-persist.
 """
 
-from honest_type import ok, target_next, transition
+from honest_type import ok, transition
 
 from honest_test.adversarial import adversarial_neighbours
 
@@ -32,7 +29,7 @@ def test_valid_transitions(machine):
     """Every declared (state, event) -> next must produce ok({state: next}) (section 5.1)."""
     findings = []
     for (state, event), target in machine["transitions"].items():
-        if transition(machine, state, event) != ok({"state": target_next(target)}):
+        if transition(machine, state, event) != ok({"state": target}):
             findings.append(_finding("transition_incorrect", {"state": state, "event": event}))
     return findings
 
