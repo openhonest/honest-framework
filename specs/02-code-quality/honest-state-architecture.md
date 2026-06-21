@@ -392,7 +392,8 @@ state_machine = {
     states:      vocabulary       — all valid state names (Set recognizer)
     events:      vocabulary       — all valid event names (Set recognizer)
     transitions: {
-        (state, event): next_state
+        (state, event): target    — a next-state name, OR a record that also carries
+                                     an action (see "Transitions that carry an action")
     }                             — the complete transition table
     initial:     String           — the starting state
     terminal:    [String]?        — optional terminal states
@@ -400,6 +401,15 @@ state_machine = {
 ```
 
 States and events are honest-type vocabularies. This means all honest-check HC-SM rules, honest-test exhaustive testing, and honest-type's reserved word validation apply automatically. State and event names cannot collide with framework reserved words. The transition table can only contain states and events declared in the vocabularies.
+
+#### Transitions that carry an action
+
+A transition may carry an action. In the full discrete model a row is *(condition, event) → (next condition, an action to perform, the values it works on)*. The target of a transition is therefore one of two things:
+
+- a **next-state name** — plain routing, no action; or
+- a **record** `{ next, action, values }` — the next state plus an action to perform and the values it works on.
+
+The action is usually a guarded mutation (honest-persist §7.5), and the values come from the only three places a value can: user input, stored data, or a calculation over those. **The machine treats the action and the values as opaque** — it stores and routes them but never looks inside them. That is deliberate: it keeps the state machine free of any dependency on what the action actually does, so the same machine works whether the action is a database write, a DOM update, or anything else. honest-test (§5.4/§5.6) reads the action and values off each transition to run the action and check that its guard still holds. `transition()` itself only routes — it returns the next state; the action is read off the table by whoever needs it.
 
 #### transition_result
 
