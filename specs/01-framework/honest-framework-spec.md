@@ -284,10 +284,10 @@ The modules depend on each other in one direction, with no cycles. Build them in
 # Leaves — depend on nothing. Built and hand-checked first.
 parse                                              the shared parser (wraps tree-sitter)
 type                                               the type system
-errors                                             the error-policy leaf: normalizers,
-                                                   behavior table, rate-limiter; no I/O
 
 # Code-quality tier
+errors     → type                                  the error-policy leaf: normalizers,
+                                                   behavior table, rate-limiter; no I/O
 check      → parse                                 the structural gate
 test       → parse, type                           builds and runs the tests
 observe    → type, errors                          the event log and projections;
@@ -308,7 +308,7 @@ alerts     → errors, observe, persist, state, auth  server-push notifications
 
 Three rules fix this order:
 
-- **Leaves first.** `parse`, `type`, and `errors` depend on nothing. `errors` is a true leaf — it normalizes failures into one report, decides behavior as a pure function of the environment, and throttles repeats, all with no I/O — and it is *composed* by `observe` (the normalizers) and `alerts` (the behavior table and rate-limiter), so it must precede both.
+- **Leaves first, then `errors`.** `parse` and `type` depend on nothing. `errors` depends only on `type` (it returns faults as data in the shared `Result` shape) and is otherwise a pure leaf — it normalizes failures into one report, decides behavior as a pure function of the environment, and throttles repeats, all with no I/O. It is *composed* by `observe` (the normalizers) and `alerts` (the behavior table and rate-limiter), so it must precede both.
 - **`observe` before `persist`.** Every persistence boundary (execute, apply, transactions) emits to the event log: persist instruments *through* observe. (observe's own emit stores via persist, but it receives that writer at the boundary rather than importing persist, so the dependency runs one way: persist → observe.)
 - **Application tier last.** `page`, `DOM`, `components`, and `alerts` build on the code-quality tier; `components` and `alerts` mount into `page`.
 
@@ -356,10 +356,10 @@ The generated proof is complete only when it reaches every line and branch of th
        ┌─────────────────────────────────────────────────────────┐
  │       The Patterns (language-agnostic spec)             |
  │                          │                              │
- │ leaves:  honest-parse  honest-type  honest-errors       │
- │ quality: honest-check  honest-test  honest-observe       │
- │          honest-persist  honest-gherkin  honest-auth     │
- │          honest-state  honest-features                   │
+ │ leaves:  honest-parse  honest-type                      │
+ │ quality: honest-errors  honest-check  honest-test        │
+ │          honest-observe  honest-persist  honest-gherkin  │
+ │          honest-auth  honest-state  honest-features      │
  │ app:     honest-page  honest-DOM  honest-components       │
  │          honest-alerts                                   │
  └──────────────────────────┬──────────────────────────────┘
