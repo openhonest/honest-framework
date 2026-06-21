@@ -68,6 +68,14 @@
     {"id": "check-not-paren", "check_expression": "NOT (age < 0)", "row": {"age": 5}, "expect_holds": true},
     {"id": "check-or", "check_expression": "kind = 'a' OR kind = 'b'", "row": {"kind": "b"}, "expect_holds": true},
     {"id": "check-uncompilable-between", "check_expression": "age BETWEEN 0 AND 100", "expect_uncompilable": true},
-    {"id": "check-uncompilable-arithmetic", "check_expression": "a + b > 0", "expect_uncompilable": true}
+    {"id": "check-uncompilable-arithmetic", "check_expression": "a + b > 0", "expect_uncompilable": true},
+    {"id": "q-select-star", "query": {"builder": "select", "args": {"table": "users"}}, "expect_sql": "SELECT * FROM users", "expect_params": {}},
+    {"id": "q-select-cols-where", "query": {"builder": "select", "args": {"table": "users", "columns": ["id", "email"], "where": {"status": "active"}}}, "expect_sql": "SELECT id, email FROM users WHERE status = :status", "expect_params": {"status": "active"}},
+    {"id": "q-select-full", "query": {"builder": "select", "args": {"table": "users", "columns": ["id"], "where": {"status": "active", "age": 21}, "order_by": ["name", "-created"], "limit": 10, "offset": 5, "joins": [{"table": "orders", "on": "orders.user_id = users.id"}]}}, "expect_sql": "SELECT id FROM users JOIN orders ON orders.user_id = users.id WHERE status = :status AND age = :age ORDER BY name ASC, created DESC LIMIT :limit OFFSET :offset", "expect_params": {"status": "active", "age": 21, "limit": 10, "offset": 5}},
+    {"id": "q-insert", "query": {"builder": "insert", "args": {"table": "users", "values": {"id": 1, "email": "a@b.co"}}}, "expect_sql": "INSERT INTO users (id, email) VALUES (:id, :email)", "expect_params": {"id": 1, "email": "a@b.co"}},
+    {"id": "q-update", "query": {"builder": "update", "args": {"table": "users", "values": {"status": "active"}, "where": {"id": 1}}}, "expect_sql": "UPDATE users SET status = :set_status WHERE id = :id", "expect_params": {"set_status": "active", "id": 1}},
+    {"id": "q-delete", "query": {"builder": "delete", "args": {"table": "users", "where": {"id": 1}}}, "expect_sql": "DELETE FROM users WHERE id = :id", "expect_params": {"id": 1}},
+    {"id": "q-raw-params", "query": {"builder": "raw", "args": {"sql": "SELECT 1 WHERE x = :x", "params": {"x": 1}}}, "expect_sql": "SELECT 1 WHERE x = :x", "expect_params": {"x": 1}},
+    {"id": "q-raw-noparams", "query": {"builder": "raw", "args": {"sql": "SELECT 1"}}, "expect_sql": "SELECT 1", "expect_params": {}}
   ]
 }

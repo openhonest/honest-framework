@@ -67,6 +67,14 @@ class DiffResult(TypedDict):
     ambiguities: list[Ambiguity]
 
 
+class Query(TypedDict):
+    """A built query (section 7.2): parameterized SQL plus its complete named-parameter set.
+    Data, not behaviour — inspectable, loggable, and serializable before it is executed."""
+
+    sql: str
+    params: dict[str, Any]
+
+
 def operation(op: str, table: str, details=None) -> Operation:
     """A single DDL operation (section 4.6). `op` is the discriminator; `details` carries
     op-specific data."""

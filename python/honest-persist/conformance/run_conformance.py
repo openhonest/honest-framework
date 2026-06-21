@@ -14,13 +14,27 @@ from pathlib import Path
 from honest_persist import (
     apply,
     check_holds,
+    delete,
     diff,
+    insert,
     parse_check,
+    raw,
     reconstruction_sql,
     requires_reconstruction,
+    select,
     to_sql,
+    update,
     validate_schema,
 )
+
+_BUILDERS = {"select": select, "insert": insert, "update": update, "delete": delete, "raw": raw}
+
+
+def _check_query(case):
+    spec = case["query"]
+    result = _BUILDERS[spec["builder"]](**spec["args"])
+    ok = result["sql"] == case["expect_sql"] and result["params"] == case["expect_params"]
+    return ok, f"got {result}"
 
 
 def _check_check(case):
@@ -130,10 +144,13 @@ _CHECKERS = {
     "reconstruct_op": _check_requires,
     "reconstruct_sql": _check_reconstruction_sql,
     "check": _check_check,
+    "query": _check_query,
 }
 
 
 def _kind(case):
+    if "query" in case:
+        return "query"
     if "check_expression" in case:
         return "check"
     if "reconstruct_op" in case:

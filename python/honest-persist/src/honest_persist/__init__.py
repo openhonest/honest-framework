@@ -6,6 +6,7 @@ structures (section 4) and the pure schema diff (section 5.1).
 
 from honest_persist.apply import apply, reconstruction_sql, requires_reconstruction, to_sql
 from honest_persist.check import check_holds, parse_check
+from honest_persist.query import delete, insert, raw, select, update
 from honest_persist.schema import diff, validate_schema
 from honest_persist.types import (
     Ambiguity,
@@ -14,6 +15,7 @@ from honest_persist.types import (
     DiffResult,
     Index,
     Operation,
+    Query,
     Table,
     diff_result,
     operation,
@@ -28,6 +30,11 @@ __all__ = [
     "reconstruction_sql",
     "parse_check",
     "check_holds",
+    "select",
+    "insert",
+    "update",
+    "delete",
+    "raw",
     "operation",
     "diff_result",
     "Column",
@@ -35,6 +42,7 @@ __all__ = [
     "Constraint",
     "Table",
     "Operation",
+    "Query",
     "Ambiguity",
     "DiffResult",
 ]
