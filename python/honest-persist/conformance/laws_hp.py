@@ -525,6 +525,76 @@ def _probe_execute():
     return asyncio.run(_run())
 
 
+class _TxConn:
+    """A stand-in async transactional connection (§7.5): records begin/commit/rollback and each
+    write, raising on the write at `fail_at`. Conformance is not linted, so a fixture is fine."""
+
+    def __init__(self, fail_at):
+        self.fail_at = fail_at
+        self.log = []
+        self._i = 0
+
+    async def begin(self):
+        self.log.append("begin")
+
+    async def commit(self):
+        self.log.append("commit")
+
+    async def rollback(self):
+        self.log.append("rollback")
+
+    async def execute(self, sql, params):
+        index = self._i
+        self._i += 1
+        self.log.append(("execute", sql))
+        if self.fail_at is not None and index == self.fail_at:
+            raise RuntimeError("simulated write failure")
+        return {"rows": [], "rowcount": 1}
+
+
+def _probe_transaction():
+    """Transactions (§7.5): all-or-nothing over a stand-in connection. Commit on success,
+    rollback on the first failing write, and the begin/commit/rollback sequence is exact."""
+    from honest_persist import transaction
+
+    async def _run():
+        bad = []
+        w1 = {"sql": "INSERT INTO t (id) VALUES (:id)", "params": {"id": 1}}
+        w2 = {"sql": "UPDATE t SET n = :n WHERE id = :id", "params": {"n": 9, "id": 1}}
+
+        # success: every write runs, then commit; results are the per-write rows-affected.
+        commit = _TxConn(None)
+        r = await transaction([w1, w2], commit)
+        if r != {"ok": {"results": [1, 1]}}:
+            bad.append(f"committed transaction should return both rows-affected: {r}")
+        if commit.log != ["begin", ("execute", w1["sql"]), ("execute", w2["sql"]), "commit"]:
+            bad.append(f"commit path sequence wrong: {commit.log}")
+
+        # empty: begin then commit, no writes, empty results.
+        empty = _TxConn(None)
+        if await transaction([], empty) != {"ok": {"results": []}}:
+            bad.append("empty transaction should commit with no results")
+        if empty.log != ["begin", "commit"]:
+            bad.append(f"empty path sequence wrong: {empty.log}")
+
+        # failure on the first write: rollback, no commit, no second write, failed_at = 0.
+        first = _TxConn(0)
+        r = await transaction([w1, w2], first)
+        if r.get("err", {}).get("code") != "write_failed" or r["err"]["detail"]["failed_at"] != 0:
+            bad.append(f"failure should be write_failed at index 0: {r}")
+        if first.log != ["begin", ("execute", w1["sql"]), "rollback"]:
+            bad.append(f"rollback path should stop at the failing write: {first.log}")
+
+        # failure on a later write: the earlier write ran, then rollback; failed_at points at it.
+        middle = _TxConn(1)
+        r = await transaction([w1, w2], middle)
+        if r["err"]["detail"]["failed_at"] != 1 or middle.log[-1] != "rollback" or "commit" in middle.log:
+            bad.append(f"mid-transaction failure should roll back at index 1: {r} log={middle.log}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -538,6 +608,7 @@ def run():
         "extended": _probe_extended(),
         "checked": _probe_checked(),
         "execute": _probe_execute(),
+        "transaction": _probe_transaction(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():

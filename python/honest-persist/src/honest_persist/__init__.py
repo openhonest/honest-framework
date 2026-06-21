@@ -17,6 +17,7 @@ from honest_persist.query import (
     select,
     update,
 )
+from honest_persist.transaction import transaction
 from honest_persist.schema import diff, validate_schema
 from honest_persist.types import (
     Ambiguity,
@@ -53,6 +54,7 @@ __all__ = [
     "execute_one",
     "execute_scalar",
     "execute_many",
+    "transaction",
     "operation",
     "diff_result",
     "Column",

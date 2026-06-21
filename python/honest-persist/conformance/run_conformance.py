@@ -32,6 +32,7 @@ from honest_persist import (
     requires_reconstruction,
     select,
     to_sql,
+    transaction,
     update,
     validate_schema,
 )
@@ -84,6 +85,49 @@ def _check_execute(case):
     conn = _RowsConn(spec.get("rows", []), spec.get("rowcount", 0))
     result = asyncio.run(_EXEC_FNS[spec["fn"]](spec["query"], conn))
     return result == case["expect"], f"got {result}"
+
+
+class _TxConn:
+    """A stand-in async transactional connection (section 7.5): records begin/commit/rollback
+    and each write, raising on the write at `fail_at`. Fixture - conformance is not linted."""
+
+    def __init__(self, fail_at):
+        self.fail_at = fail_at
+        self.log = []
+        self._i = 0
+
+    async def begin(self):
+        self.log.append("begin")
+
+    async def commit(self):
+        self.log.append("commit")
+
+    async def rollback(self):
+        self.log.append("rollback")
+
+    async def execute(self, sql, params):
+        index = self._i
+        self._i += 1
+        self.log.append(("execute", sql))
+        if self.fail_at is not None and index == self.fail_at:
+            raise RuntimeError("simulated write failure")
+        return {"rows": [], "rowcount": 1}
+
+
+def _check_transaction(case):
+    spec = case["transaction"]
+    conn = _TxConn(spec.get("fail_at"))
+    result = asyncio.run(transaction(spec["writes"], conn))
+    if case["expect"] == "ok":
+        ok = "ok" in result and result["ok"]["results"] == case["expect_results"] and conn.log[-1] == "commit"
+        return ok, f"got {result} log={conn.log}"
+    ok = (
+        "err" in result
+        and result["err"]["code"] == case["expect_code"]
+        and result["err"]["detail"]["failed_at"] == case["expect_failed_at"]
+        and conn.log[-1] == "rollback"
+    )
+    return ok, f"got {result} log={conn.log}"
 
 
 def _check_check(case):
@@ -196,6 +240,7 @@ _CHECKERS = {
     "query": _check_query,
     "checked_query": _check_checked_query,
     "execute": _check_execute,
+    "transaction": _check_transaction,
 }
 
 
@@ -204,6 +249,8 @@ def _kind(case):
         return "checked_query"
     if "execute" in case:
         return "execute"
+    if "transaction" in case:
+        return "transaction"
     if "query" in case:
         return "query"
     if "check_expression" in case:

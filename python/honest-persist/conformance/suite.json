@@ -90,6 +90,10 @@
     {"id": "x-execute-one-empty", "execute": {"fn": "execute_one", "query": {"sql": "SELECT id FROM users WHERE id = :id", "params": {"id": 99}}, "rows": [], "rowcount": 0}, "expect": null},
     {"id": "x-execute-scalar", "execute": {"fn": "execute_scalar", "query": {"sql": "SELECT count(*) FROM users", "params": {}}, "rows": [{"count": 5}], "rowcount": 0}, "expect": 5},
     {"id": "x-execute-scalar-empty", "execute": {"fn": "execute_scalar", "query": {"sql": "SELECT count(*) FROM users WHERE id = :id", "params": {"id": 99}}, "rows": [], "rowcount": 0}, "expect": null},
-    {"id": "x-execute-many", "execute": {"fn": "execute_many", "query": {"sql": "UPDATE users SET status = :set_status", "params": {"set_status": "active"}}, "rows": [], "rowcount": 3}, "expect": 3}
+    {"id": "x-execute-many", "execute": {"fn": "execute_many", "query": {"sql": "UPDATE users SET status = :set_status", "params": {"set_status": "active"}}, "rows": [], "rowcount": 3}, "expect": 3},
+    {"id": "tx-commit", "transaction": {"writes": [{"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 1}}, {"sql": "UPDATE users SET status = :set_status WHERE id = :id", "params": {"set_status": "active", "id": 1}}], "fail_at": null}, "expect": "ok", "expect_results": [1, 1]},
+    {"id": "tx-empty", "transaction": {"writes": [], "fail_at": null}, "expect": "ok", "expect_results": []},
+    {"id": "tx-rollback-first", "transaction": {"writes": [{"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 1}}, {"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 1}}], "fail_at": 0}, "expect": "err", "expect_code": "write_failed", "expect_failed_at": 0},
+    {"id": "tx-rollback-middle", "transaction": {"writes": [{"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 1}}, {"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 2}}, {"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 3}}], "fail_at": 1}, "expect": "err", "expect_code": "write_failed", "expect_failed_at": 1}
   ]
 }
