@@ -174,17 +174,17 @@ binding = {
 
 **No-ambiguity rule:** a token can be captured by at most one composed type. If two composed types would both capture the same token (i.e., their requirements are both satisfied), that is a vocabulary design error — caught at construction time when possible, by honest-test otherwise.
 
-### 4.4 Bounded Enumeration
+### 4.4 Staying fully listable
 
-Composed types preserve bounded enumeration:
+Composed types stay fully listable:
 
-- **Set & Set** → bounded. The composed type's cardinality is the product of its parts. `currency_precision` with `requires = {"format_name": "currency"}` and `captures = "integer"` over a bounded integer Set of 4 values = 1 × 4 = 4 test cases.
-- **Set & Predicate** → unbounded. Same as having an unbounded predicate in the vocabulary — composition doesn't create unboundedness, it inherits it.
-- **Predicate & Predicate** → unbounded. Same as above.
+- **Set & Set** → finite. The composed type's count is the product of its parts. `currency_precision` with `requires = {"format_name": "currency"}` and `captures = "integer"` over a finite integer Set of 4 values = 1 × 4 = 4 test cases.
+- **Set & Predicate** → open-ended. Same as having an open-ended predicate in the vocabulary — composition doesn't create open-endedness, it inherits it.
+- **Predicate & Predicate** → open-ended. Same as above.
 
-**Rule: a composed type is bounded if and only if all its constituent parts are bounded.**
+**Rule: a composed type is finite exactly when all its parts are finite.**
 
-honest-test enumerates composed types the same way it would enumerate any other type — the composition just partitions the cartesian product into named types rather than leaving it implicit.
+honest-test lists out composed types the same way it would any other type — the composition just splits the space of combinations into named types rather than leaving it implicit.
 
 ---
 
@@ -244,9 +244,9 @@ When `format_name` is `"currency"` but no `integer` is present: `decimals: Nothi
 When `format_name` is `"currency"` and `integer` is `"2"`: `decimals: "2"`.
 When `format_name` is not `"currency"`: the composed type doesn't match at all.
 
-### 5.5 Bounded Enumeration with Maybe
+### 5.5 Staying fully listable, with Maybe
 
-Maybe adds exactly one case to the enumeration space: `Nothing`.
+Maybe adds exactly one more case to the list: `Nothing`.
 
 For a bounded Set of 4 integers: `maybe("integer")` has 5 test cases (4 values + Nothing).
 For an unbounded predicate: still unbounded, plus Nothing.

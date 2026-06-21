@@ -55,6 +55,7 @@ plain language in the text itself.
 | **fold** | The pure function at the heart of a projection: it takes the running result and one event and returns the new running result (also the name of that field). |
 | **monotonic** | Only ever increases, never goes back down. |
 | **heuristic** | Best-effort, a rule of thumb — catches the common cases but is not guaranteed to catch every one. |
+| **bounded / unbounded** | Bounded = limited to a known, finite set of values, so every value can be listed and tested; unbounded (open-ended) = not. |
 | **enumerate** | List out every case, one by one (used when a set of values is finite, so the full list is possible). |
 | **exhaustive** | Covering every case, not a sample. |
 | **adversarial neighbours** | The near-miss inputs around a valid value (one character changed, a look-alike letter, an added control character) that a correct recognizer must reject. |
