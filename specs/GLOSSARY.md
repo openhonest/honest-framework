@@ -49,3 +49,6 @@ plain language in the text itself.
 | **enumerate** | List out every case, one by one (used when a set of values is finite, so the full list is possible). |
 | **exhaustive** | Covering every case, not a sample. |
 | **adversarial neighbours** | The near-miss inputs around a valid value (one character changed, a look-alike letter, an added control character) that a correct recognizer must reject. |
+| **atomic / all-or-nothing** | A step that either happens completely or not at all; no other transaction ever sees it half-done. |
+| **provenance** | Where a value in a guard comes from — read inside the same all-or-nothing write, or earlier. The guard model uses this to rule out a stale-read class of bug (a value true when checked but false when used). |
+| **write-skew** | Two transactions each read the same data and each make a change that is fine on its own, but together break a rule. Possible under weak isolation; prevented by serializable isolation. |

@@ -624,7 +624,7 @@ FUNCTION reconstruct_table(table, target_definition, conn, dialect):
         3. drop the original table
         4. rename the temporary table to the original name
         5. recreate the table's indexes
-        6. re-enable foreign-key checks and verify referential integrity
+        6. re-enable foreign-key checks and verify every foreign key still points at a real row
 ```
 
 `apply()` routes each operation to reconstruction or direct DDL by consulting
@@ -854,7 +854,7 @@ What comes back from the database is what you get.
 
 ### 7.5 Guarded Mutation
 
-A `guarded_mutation` is the atomic primitive that fuses precondition check and state change into a single operation. It is the only sanctioned mechanism for mutating persisted state. Direct `UPDATE`/`INSERT`/`DELETE` queries outside this primitive bypass invariant guarantees and are flagged by honest-check as dishonest (see HC-P015).
+A `guarded_mutation` is the all-or-nothing operation that fuses the precondition check and the change into one step. It is the only sanctioned way to change stored data. Direct `UPDATE`/`INSERT`/`DELETE` queries outside this operation skip the guard's guarantees and are flagged by honest-check as dishonest (see HC-P015).
 
 **Data structure:**
 
@@ -921,7 +921,7 @@ Result =
   | err({code: "constraint_violation",   detail: String})    // FK, unique, check
 ```
 
-`WhichClause` identifies which sub-expression of the guard failed, enabling the boundary to map `guard_failed` to the correct HTTP response — unauthenticated (401), forbidden (403), invariant-violation (422), or stale-precondition (409).
+`WhichClause` identifies which part of the guard failed, so the boundary can map `guard_failed` to the right HTTP response — not signed in (401), not allowed (403), broke a data rule (422), or precondition went stale (409).
 
 **Execution algorithm:**
 
@@ -1540,11 +1540,11 @@ A conformant honest-persist implementation must:
     `honest/honest-persist-conformance/ssi/`. Every implementation must pass
     every test. The suite includes:
 
-    **Write-skew probe.** Two concurrent transactions each read a predicate
-    (`SELECT COUNT WHERE role = 'owner'` → 2), each demote themselves. Under
+    **Write-skew probe.** Two concurrent transactions each read the same count
+    (`SELECT COUNT WHERE role = 'required'` → 2), each demote themselves. Under
     true SSI, one commits and the other aborts. Under weaker isolation, both
-    commit — violating the "≥1 owner" invariant. Conformant implementations
-    must abort one of the two transactions.
+    commit — breaking the "at least one required member" rule. Conformant
+    implementations must abort one of the two transactions.
 
     **Phantom probe.** Transaction T1 reads a set of rows matching a
     predicate; transaction T2 inserts a new row matching that predicate
