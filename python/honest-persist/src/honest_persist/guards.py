@@ -219,3 +219,81 @@ def instantiate(template, bindings):
     if errors:
         return err(fault("unbound_param", "Template has unbound params", "server", {"errors": errors}))
     return ok(result)
+
+
+# --------------------------------------------------------------------------- compilation
+
+# Guard compare ops -> SQL operators (HCD; `<>` is the portable not-equal).
+_COMPARE_SQL = {
+    "=": "=", "!=": "<>", "<": "<", "<=": "<=", ">": ">", ">=": ">=",
+    "in": "IN", "not_in": "NOT IN",
+}
+
+
+def _bind(value, params, state) -> str:
+    """Record a value as a fresh named parameter and return its `:placeholder`."""
+    name = f"g{state['n']}"
+    state["n"] += 1
+    params[name] = value
+    return f":{name}"
+
+
+def _compile_term(term, params, state, registry, bindings) -> str:
+    """A GuardTerm -> a SQL value expression, accumulating params. Pure given its inputs."""
+    kind = term["kind"]
+    if kind == "literal":
+        return _bind(term["value"], params, state)
+    if kind == "column":
+        return term["name"]
+    if kind == "slot":
+        if term["name"] not in bindings:
+            raise GuardError(f"slot '{term['name']}' is not bound at compile time")
+        return _bind(bindings[term["name"]], params, state)
+    if kind in ("derive", "lookup"):
+        sql_template = registry[kind][term["name"]]["sql"]
+        args = [_compile_term(arg, params, state, registry, bindings) for arg in term["args"]]
+        return sql_template.format(*args)
+    if kind == "count":
+        return f"(SELECT COUNT(*) FROM {term['source']['table']}{_matches_sql(term['where'], params, state, registry, bindings)})"
+    raise GuardError(f"term kind {kind!r} is not compilable (param leaves must be instantiated first)")
+
+
+def _matches_sql(matches, params, state, registry, bindings) -> str:
+    """A WHERE clause for an exists/count subquery from its [{column, term}] matches."""
+    if not matches:
+        return ""
+    conditions = [f"{m['column']} = {_compile_term(m['term'], params, state, registry, bindings)}" for m in matches]
+    return " WHERE " + " AND ".join(conditions)
+
+
+def _compile_predicate(guard, params, state, registry, bindings) -> str:
+    """A GuardExpression -> a SQL boolean expression, accumulating params. Pure."""
+    kind = guard["kind"]
+    if kind == "and":
+        return "(" + " AND ".join(_compile_predicate(o, params, state, registry, bindings) for o in guard["operands"]) + ")"
+    if kind == "or":
+        return "(" + " OR ".join(_compile_predicate(o, params, state, registry, bindings) for o in guard["operands"]) + ")"
+    if kind == "not":
+        return "(NOT " + _compile_predicate(guard["operand"], params, state, registry, bindings) + ")"
+    if kind == "compare":
+        left = _compile_term(guard["left"], params, state, registry, bindings)
+        right = _compile_term(guard["right"], params, state, registry, bindings)
+        return f"{left} {_COMPARE_SQL[guard['op']]} {right}"
+    if kind == "exists":
+        return f"EXISTS (SELECT 1 FROM {guard['source']['table']}{_matches_sql(guard['where'], params, state, registry, bindings)})"
+    return "1 = 1"  # the trivial `true` guard
+
+
+def compile_guard(guard, registry=None, bindings=None) -> tuple[str, dict]:
+    """Compile a guard tree to a SQL boolean expression and its named parameters (section 7.5).
+    Pure: same (guard, registry, bindings) -> same (sql, params). Literals and bound slots
+    become named params; columns are bare (the target row, read atomically with the write);
+    derive/lookup expand to their registered snapshot subqueries; count/exists become
+    aggregate/EXISTS subqueries. `registry` is {'derive': {name: {sql}}, 'lookup': {...}} whose
+    sql templates use `{0}`, `{1}` for compiled args; `bindings` supplies slot values."""
+    registry = registry or {"derive": {}, "lookup": {}}
+    bindings = bindings or {}
+    params: dict = {}
+    state = {"n": 0}
+    sql = _compile_predicate(guard, params, state, registry, bindings)
+    return sql, params

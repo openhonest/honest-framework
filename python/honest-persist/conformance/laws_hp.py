@@ -520,6 +520,105 @@ def _probe_guards():
     return bad
 
 
+def _probe_guard_compile():
+    """Guard + guarded-mutation compilation (§7.5): the guard tree -> a SQL boolean, and the
+    mutation -> a single atomic statement fusing target and guard."""
+    from honest_persist import compile_guarded_mutation
+    from honest_persist.guards import (
+        GuardError,
+        and_,
+        column,
+        compare,
+        compile_guard,
+        count,
+        derive,
+        exists,
+        literal,
+        lookup,
+        match,
+        not_,
+        or_,
+        param,
+        slot,
+        truthy,
+    )
+
+    bad = []
+    registry = {
+        "derive": {"session_actor": {"sql": "(SELECT user_id FROM sessions WHERE token = {0})"}},
+        "lookup": {"role_of": {"sql": "(SELECT role FROM perm WHERE uid = {0} AND tid = {1})"}},
+    }
+
+    # literal + column compare, with the param namespace.
+    sql, params = compile_guard(compare(column("status"), "=", literal("active")))
+    if sql != "status = :g0" or params != {"g0": "active"}:
+        bad.append(f"literal/column compare wrong: {sql} {params}")
+
+    # every compare op maps to its SQL operator.
+    op_sql = {"=": "=", "!=": "<>", "<": "<", "<=": "<=", ">": ">", ">=": ">=", "in": "IN", "not_in": "NOT IN"}
+    for op, rendered in op_sql.items():
+        fragment, _ = compile_guard(compare(column("a"), op, literal(1)))
+        if f" {rendered} " not in fragment:
+            bad.append(f"compare op {op!r} should render {rendered!r}: {fragment}")
+
+    # and / or / not / true composition.
+    composed, _ = compile_guard(and_(compare(column("a"), "=", literal(1)), or_(compare(column("b"), "=", literal(2)), not_(truthy()))))
+    if not all(token in composed for token in ("AND", "OR", "NOT", "1 = 1")):
+        bad.append(f"boolean composition wrong: {composed}")
+
+    # slot bound vs unbound.
+    _, slot_params = compile_guard(compare(column("uid"), "=", slot("actor")), bindings={"actor": 7})
+    if slot_params.get("g0") != 7:
+        bad.append(f"bound slot wrong: {slot_params}")
+    for label, term in [("unbound slot", slot("missing")), ("param leaf", param("p"))]:
+        try:
+            compile_guard(compare(column("uid"), "=", term))
+            bad.append(f"{label} should raise GuardError")
+        except GuardError:
+            pass
+
+    # derive + lookup expand to their registered subqueries.
+    expanded, _ = compile_guard(
+        compare(lookup("role_of", [derive("session_actor", [slot("tok")]), column("tid")]), "=", literal("owner")),
+        registry, {"tok": "abc"},
+    )
+    if "SELECT role FROM perm" not in expanded or "SELECT user_id FROM sessions" not in expanded:
+        bad.append(f"derive/lookup expansion wrong: {expanded}")
+
+    # count + exists, with and without a where-clause (the _matches_sql branches).
+    counted, _ = compile_guard(compare(count("perm", [match("tid", literal("x"))]), ">", literal(1)))
+    if "(SELECT COUNT(*) FROM perm WHERE tid = " not in counted:
+        bad.append(f"count subquery wrong: {counted}")
+    bare_count, _ = compile_guard(compare(count("perm"), ">", literal(0)))
+    if "(SELECT COUNT(*) FROM perm)" not in bare_count:
+        bad.append(f"count empty-where wrong: {bare_count}")
+    if compile_guard(exists("perm"))[0] != "EXISTS (SELECT 1 FROM perm)":
+        bad.append("exists empty-where wrong")
+    if compile_guard(exists("perm", [match("uid", literal(1))]))[0] != "EXISTS (SELECT 1 FROM perm WHERE uid = :g0)":
+        bad.append("exists with-where wrong")
+
+    # guarded mutation: update / delete / insert.
+    guard = compare(column("role"), "=", literal("owner"))
+    update_sql, update_params = compile_guarded_mutation(
+        {"target": {"table": "perm", "key": {"uid": 1, "tid": 2}}, "guard": guard, "update": {"kind": "set", "values": {"role": "ro"}}, "op": "update"}
+    )
+    if not update_sql.startswith("UPDATE perm SET role = :u_role WHERE") or "uid = :k_uid" not in update_sql or "(role = :g0)" not in update_sql:
+        bad.append(f"update mutation wrong: {update_sql}")
+    if update_params != {"g0": "owner", "u_role": "ro", "k_uid": 1, "k_tid": 2}:
+        bad.append(f"update params wrong: {update_params}")
+    delete_sql, _ = compile_guarded_mutation(
+        {"target": {"table": "perm", "key": {"uid": 1}}, "guard": guard, "update": {"kind": "delete_row"}, "op": "delete"}
+    )
+    if not delete_sql.startswith("DELETE FROM perm WHERE uid = :k_uid AND (role"):
+        bad.append(f"delete mutation wrong: {delete_sql}")
+    insert_sql, _ = compile_guarded_mutation(
+        {"target": {"table": "perm"}, "guard": guard, "update": {"kind": "insert_row", "values": {"uid": 1, "role": "owner"}}, "op": "insert"}
+    )
+    if not insert_sql.startswith("INSERT INTO perm (uid, role) SELECT :u_uid, :u_role WHERE (role"):
+        bad.append(f"insert mutation wrong: {insert_sql}")
+    return bad
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -532,6 +631,7 @@ def run():
         "validate": _probe_validate(),
         "extended": _probe_extended(),
         "guards": _probe_guards(),
+        "guard_compile": _probe_guard_compile(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():
