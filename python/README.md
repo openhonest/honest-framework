@@ -31,6 +31,7 @@ author works against. Read the path that fits you:
 | [`honest-test`](honest-test/) | The auto-generated verification layer — test cases derived from declarations (Set enumeration, adversarial neighbours). The behavioural half of the gate. | No — plumbing. You declare; it generates. |
 | [`honest-parse`](honest-parse/) | The shared tree-sitter parsing boundary — the single place source is parsed. honest-check and honest-test both depend on it. | No — plumbing. |
 | [`honest-persist`](honest-persist/) | Schema-first persistence — schema as data, migrations as a pure diff, queries and transactions as data. Pure functions on top, I/O only at the boundary. Transactions are atomic (all-or-nothing); making overlapping writes race-safe is the application's job, not the framework's. | Partly — adopters declare schemas; the diff/query engines are plumbing. |
+| [`honest-observe`](honest-observe/) | Event-sourced observability — one append-only event log; projections are pure folds over it. This release: the pure foundation (event envelope, projections); the emit boundary and its storage are a later increment. The persistence boundaries instrument through it. | No — plumbing. The boundaries emit for you. |
 
 The package inventory and per-module status are the authoritative checkpoint; this
 table is the short form.
@@ -69,7 +70,7 @@ behaviourally, two complementary ways, and both must pass:
 
 Completeness is **measured, not asserted**: the gate (`coverage-all.sh`) fails below
 **100% line and branch coverage**. An unhit line is dead code or an unspecified
-behaviour — both are defects the gate surfaces. All five packages are at 100%, and each
+behaviour — both are defects the gate surfaces. All six packages are at 100%, and each
 is self-verifying in isolation. The full path — build order, seeding, and what carries
 across languages — is in
 [`../specs/01-framework/honest-framework-spec.md`](../specs/01-framework/honest-framework-spec.md)

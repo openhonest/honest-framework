@@ -1,0 +1,20 @@
+[project]
+name = "honest-observe"
+version = "0.1.0"
+description = "Event-sourced observability: one append-only event log, projections as pure folds."
+requires-python = ">=3.11"
+dependencies = ["honest-type"]
+
+[tool.uv.sources]
+honest-type = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honest_observe"]
+
+[tool.honest-check]
+conformance = "python"
+conformance-suite-version = "0"

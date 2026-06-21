@@ -1,0 +1,15 @@
+{
+  "version": "0.1",
+  "module": "honest-observe",
+  "cases": [
+    {"id": "ho-build-ok", "build_event": {"args": {"event_type": "hf.chain.completed", "event_version": "1.0", "aggregate_type": "chain", "aggregate_id": "create_user", "payload": {"result": "ok"}, "event_id": "019x2k", "timestamp": "2026-03-15T14:23:07.441832Z", "sequence": 0}}, "expect": "ok", "expect_event": {"event_id": "019x2k", "event_type": "hf.chain.completed", "event_version": "1.0", "timestamp": "2026-03-15T14:23:07.441832Z", "sequence": 0, "aggregate_type": "chain", "aggregate_id": "create_user", "payload": {"result": "ok"}}},
+    {"id": "ho-build-auth-meta", "build_event": {"args": {"event_type": "order.placed", "event_version": "1.0", "aggregate_type": "order", "aggregate_id": "o1", "payload": {"total": 50}, "event_id": "019aaa", "timestamp": "2026-03-15T14:23:07.000001Z", "sequence": 7, "auth": {"caller_id": "u1"}, "meta": {"release": "r1"}}}, "expect": "ok", "expect_event": {"event_id": "019aaa", "event_type": "order.placed", "event_version": "1.0", "timestamp": "2026-03-15T14:23:07.000001Z", "sequence": 7, "aggregate_type": "order", "aggregate_id": "o1", "payload": {"total": 50}, "auth": {"caller_id": "u1"}, "meta": {"release": "r1"}}},
+    {"id": "ho-build-missing-type", "build_event": {"args": {"event_type": "", "event_version": "1.0", "aggregate_type": "order", "aggregate_id": "o1", "payload": {}, "event_id": "019bbb", "timestamp": "2026-03-15T14:23:07.000002Z", "sequence": 1}}, "expect": "err", "expect_code": "invalid_event"},
+    {"id": "ho-build-missing-aggregate-id", "build_event": {"args": {"event_type": "order.placed", "event_version": "1.0", "aggregate_type": "order", "aggregate_id": "", "payload": {}, "event_id": "019ccc", "timestamp": "2026-03-15T14:23:07.000003Z", "sequence": 1}}, "expect": "err", "expect_code": "invalid_event"},
+    {"id": "ho-match-none", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}}, "expect": true},
+    {"id": "ho-match-type-hit", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"event_types": ["a.b", "c.d"]}}, "expect": true},
+    {"id": "ho-match-type-miss", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"event_types": ["x.y"]}}, "expect": false},
+    {"id": "ho-match-window-in", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"from_ts": "2026-03-15T00:00:00Z", "to_ts": "2026-03-16T00:00:00Z"}}, "expect": true},
+    {"id": "ho-match-window-before", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"from_ts": "2026-03-16T00:00:00Z"}}, "expect": false}
+  ]
+}
