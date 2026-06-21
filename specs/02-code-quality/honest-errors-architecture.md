@@ -11,7 +11,7 @@
 
 honest-errors is the **error-policy leaf** of the Honest Framework. It normalizes raw failure payloads (browser-JavaScript errors, server-side exceptions) into one canonical `ExceptionReport`, decides what should *happen* to a report as a function of the environment, and throttles repeat notifications. It performs no I/O. It is composed by two modules that do: honest-observe (which records the report as an event) and honest-alerts (whose supervisor delivers any notification the policy calls for).
 
-honest-errors exists as its own module, rather than being folded into observe or alerts, for one reason: error handling is **common to both**. observe needs the capture-and-normalize half; alerts needs the decide-and-throttle half; both share the `ExceptionReport` type and the rate-limiter. Splitting the capability across the two consumers would either duplicate that shared core or force one consumer to depend on the other. A shared leaf composed by both is the DRY, composition-first answer — the module-level form of `pipe(...)`.
+honest-errors exists as its own module, rather than being merged into observe or alerts, for one reason: error handling is **common to both**. observe needs the capture-and-normalize half; alerts needs the decide-and-throttle half; both share the `ExceptionReport` type and the rate-limiter. Splitting the capability across the two consumers would either duplicate that shared core or force one consumer to depend on the other. A shared leaf composed by both is the DRY, composition-first answer — the module-level form of `pipe(...)`.
 
 ### 1.1 The abstract requirement
 
@@ -26,7 +26,7 @@ honest-errors turns the question "what do we do when something breaks?" into dat
 | One `ExceptionReport`, two normalizers | Divergent error shapes between the JS and server paths; downstream code branching on source |
 | Environment → behaviors as a dispatch table | `if env == "production"` ladders drifting out of sync; an environment silently getting no policy |
 | Throttle decision is data (`RateLimitDecision`), never an exception | Notification storms, or a throttle that swallows errors as a side effect instead of reporting suppression |
-| Bounded vocabularies (severity, environment, behavior, reason) as frozensets | Stringly-typed states that cannot be enumerated, and therefore cannot be exhaustively tested or statically checked |
+| Finite vocabularies (severity, environment, behavior, reason) as frozensets | Free-string states that cannot be listed, and so cannot be tested in full or checked ahead of time |
 | No I/O in the module | Hidden environment reads / clock reads / sends buried inside "pure" policy functions — the thing that makes error handling untestable |
 
 ### 1.3 Relationship to honest-observe and honest-alerts
@@ -161,7 +161,7 @@ new_state() -> State                                         # { dedup_cache: {}
 check_rate_limit(key, config, state, now) -> (RateLimitDecision, State')
 ```
 
-`check_rate_limit` is a pure fold over the prior state:
+`check_rate_limit` is a pure function of the prior state:
 
 1. Prune `hourly_sends` older than one hour (relative to `now`).
 2. If the hourly count is at `max_per_hour`, return `should_send=False, reason=rate_limit_hourly`.
