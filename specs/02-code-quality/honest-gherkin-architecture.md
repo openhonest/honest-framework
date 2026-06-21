@@ -29,11 +29,11 @@ Every property in this spec follows from that one sentence. A step handler recei
 
 | Decision | Bug category made impossible |
 |---|---|
-| Fold over immutable context | State leaking between steps or scenarios; order-dependent flakiness from a shared mutable `context` |
-| Registry as a threaded value | Import-order and import-side-effect bugs from global `@given` registration; a step silently registered (or not) by an import |
-| Matching returns a Result | Unmatched/ambiguous steps swallowed or surfaced as raw stack traces instead of categorized failures |
-| Bounded fault vocabulary | Error surface that cannot be enumerated, and therefore cannot be exhaustively tested by honest-test or asserted on by honest-check |
-| Reports as TypedDict data | A pass/fail summary that can only be printed, never folded, asserted, or consumed by another tool |
+| Build up an unchanging context | State leaking between steps or scenarios; flaky, order-dependent runs from a shared, changeable `context` |
+| Pass the registry through as a value | Import-order and import-side-effect bugs from global `@given` registration; a step silently registered (or not) by an import |
+| Matching returns a Result | Unmatched or ambiguous steps swallowed, or shown as raw stack traces instead of sorted failures |
+| A finite set of fault kinds | An error surface that cannot be listed, and so cannot be tested in full by honest-test or asserted on by honest-check |
+| Reports as plain data (TypedDict) | A pass/fail summary that can only be printed, never re-used, asserted on, or read by another tool |
 
 ### 1.3 Relationship to honest-test and honest-check
 
@@ -128,7 +128,7 @@ Result[Feature] = { "ok": Feature } | { "err": StepFault }
 
 ### 3.1 Parser construction
 
-The parser is a fold over lines. Each line is classified into exactly one **line kind** by an ordered predicate table (first match wins); a handler table maps line kind → pure state-transition function. There is no `if/elif` ladder on keywords; classification and handling are both dict/table dispatch.
+The parser reads the lines one at a time, building up its result as it goes. Each line is sorted into exactly one **line kind** by an ordered table of checks (first match wins); a second table maps line kind → a pure function that updates the running state. There is no `if/elif` ladder on keywords; both the sorting and the handling are table lookups.
 
 Line kinds: `blank`, `comment`, `tag`, `feature`, `scenario`, `step`, `description`. Classification order is significant (a `#` line is a comment even if it begins with the word "Feature"); the table encodes that order.
 
@@ -227,13 +227,13 @@ ScenarioReport = {
 }
 ```
 
-`duration_ms` is wall-clock for the fold. It is the one impure observation inside `run_scenario` (a clock read); a spoke may treat it as 0 in a deterministic-test mode.
+`duration_ms` is wall-clock time for the run. It is the one impure read inside `run_scenario` (reading the clock); a spoke may treat it as 0 in a repeatable-test mode.
 
-### 6.3 Folding the feature report
+### 6.3 Combining scenario reports into a feature report
 
 `fold_feature_report(feature, scenario_reports) -> FeatureReport`
 
-Pure aggregation. `total_passed` counts `ok` scenarios; `total_failed` is the remainder.
+A pure combine. `total_passed` counts `ok` scenarios; `total_failed` is the rest.
 
 ```
 FeatureReport = {
@@ -249,7 +249,7 @@ FeatureReport = {
 
 ## 7. The Fault Vocabulary
 
-Bounded and closed. honest-test enumerates it; honest-check treats it as a discriminant set.
+Finite and closed. honest-test lists it out; honest-check treats it as a fixed set of values to dispatch on.
 
 ```
 FAULT_STEP_UNMATCHED     = "step_unmatched"
@@ -338,13 +338,13 @@ Because coverage is universal and one-to-one, **the count of gherkins is a direc
 The gherkin and honest-test's auto-generated property suite are not redundant; they are the two halves of "defining is testing":
 
 - The **gherkin defines and counts** the behavior: the human-meaningful statement of what the function does, and therefore the function-point unit.
-- **Auto-generation proves** it: running the function across every point of its bounded input space (purity, mutation, idempotency, classification per honest-test §§3-7).
+- **Auto-generation proves** it: running the function over every point of its finite input space (purity, mutation, repeat-run safety, classification per honest-test §§3-7).
 
-Requiring a gherkin per function does not replace auto-generation. It is the countable specification layer that sits above the exhaustive proof. A pure function still earns its exhaustive property run; the gherkin names the one behavior that run proves.
+Requiring a gherkin per function does not replace auto-generation. It is the spec layer you can count, sitting above the run-every-case proof. A pure function still earns its run over every case; the gherkin names the one behavior that run proves.
 
-### 9.4 Real FP is triangulated, not read off one method
+### 9.4 Real FP is cross-checked, not read off one measure
 
-A single counting method is a single point of failure, exactly as a single correctness check would be. The framework triangulates correctness across three mutually-confirming lenses: static (honest-check), exhaustive (honest-test auto-generation), and behavioral (the gherkin). It triangulates **function points** the same way, across independent measures that must track each other:
+A single counting method is a single point of failure, exactly as a single correctness check would be. The framework cross-checks correctness three independent ways that must agree: static (honest-check), run-every-case (honest-test auto-generation), and behavioral (the gherkin). It cross-checks **function points** the same way, across independent measures that must track each other:
 
 1. the per-function gherkin count (§9.2, finest granularity);
 2. the conformance-law → IFPUG elementary-process mapping (`research-protocol.md` §3.4 / Appendix A);
