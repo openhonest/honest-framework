@@ -1985,7 +1985,7 @@ FUNCTION enumerate_sets(vocabulary):
                   FOR (name, recog) IN vocabulary.base_types
                   IF recog is a Set }
 
-    // Cartesian product of all Set members
+    // every combination of all Set members
     RETURN product(set_types.values())
 ```
 

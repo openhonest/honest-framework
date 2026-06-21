@@ -122,7 +122,7 @@ A lookup table that translates guard-failure categories to HTTP response status 
 fault_mapping = {
     "unauthenticated":    401,   # actor derivation failed (revoked, expired, missing, forged)
     "forbidden":          403,   # actor valid but not authorized for target
-    "invariant_violated": 422,   # business invariant violated; not a caller error
+    "invariant_violated": 422,   # a data rule was broken; not the caller's fault
     "conflict":           409,   # serialization conflict or stale precondition
 }
 ```

@@ -33,6 +33,7 @@ plain language in the text itself.
 | **event log** | The append-only record of everything that happened — the single source of truth that projections are built from. |
 | **projection** | A derived view computed from the event log by a pure function (a dashboard, a count, a timeline). Recomputed from events, never stored as primary data. |
 | **aggregate** | The single thing a stream of events is grouped under (one order, one account); events for the same aggregate are numbered in order. |
+| **orphan** | A function with no declared role that nothing with a role can reach — so the test generator cannot reach it either (flagged HC-R001). |
 | **poka-yoke** | The guiding rule: every framework decision must make some named kind of bug impossible to even write, or it does not earn its place. |
 | **Set** | A finite, written-out list of allowed values for a kind — so every value can be listed and tested in full. (Capitalized to mark the framework concept, distinct from a general set.) |
 | **state machine** | A lookup table that says, for each current condition and each event, what the next condition is. Plain data; looking up the next condition is a pure step. |
@@ -53,6 +54,7 @@ plain language in the text itself.
 | **deterministic** | Always gives the same result for the same inputs — no randomness, no dependence on the time or outside state. |
 | **fold** | The pure function at the heart of a projection: it takes the running result and one event and returns the new running result (also the name of that field). |
 | **monotonic** | Only ever increases, never goes back down. |
+| **heuristic** | Best-effort, a rule of thumb — catches the common cases but is not guaranteed to catch every one. |
 | **enumerate** | List out every case, one by one (used when a set of values is finite, so the full list is possible). |
 | **exhaustive** | Covering every case, not a sample. |
 | **adversarial neighbours** | The near-miss inputs around a valid value (one character changed, a look-alike letter, an added control character) that a correct recognizer must reject. |

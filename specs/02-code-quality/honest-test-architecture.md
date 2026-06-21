@@ -11,7 +11,7 @@
 
 honest-test is the **auto-generated verification layer** of the Honest Framework. It runs the complete test suite that honest-check has confirmed is generatable from the code's declarations.
 
-The pipeline is two-stage and unidirectional:
+The pipeline is two stages and runs one way only:
 
 1. **honest-check** asks *can the complete auto-generated test suite be generated from this code?* If no, the code is dishonest and rejected at pre-commit. No suite exists to run.
 2. **honest-test** runs the auto-generated suite. If any test fails, the code is buggy and rejected.
