@@ -20,6 +20,10 @@ from honest_persist import (
     checked_update,
     delete,
     diff,
+    execute,
+    execute_many,
+    execute_one,
+    execute_scalar,
     insert,
     parse_check,
     raw,
@@ -55,6 +59,30 @@ def _check_checked_query(case):
         return ok, f"got {result}"
     ok = "err" in result and result["err"]["code"] == case["expect_code"]
     return ok, f"got {result}"
+
+
+_EXEC_FNS = {"execute": execute, "execute_one": execute_one, "execute_scalar": execute_scalar, "execute_many": execute_many}
+
+
+class _RowsConn:
+    """A stand-in connection (section 7.4): returns canned rows/rowcount for any query and
+    records the (sql, params) it was given. Test fixture - conformance is not linted."""
+
+    def __init__(self, rows, rowcount):
+        self.rows = rows
+        self.rowcount = rowcount
+        self.calls = []
+
+    def execute(self, sql, params):
+        self.calls.append((sql, params))
+        return {"rows": self.rows, "rowcount": self.rowcount}
+
+
+def _check_execute(case):
+    spec = case["execute"]
+    conn = _RowsConn(spec.get("rows", []), spec.get("rowcount", 0))
+    result = _EXEC_FNS[spec["fn"]](spec["query"], conn)
+    return result == case["expect"], f"got {result}"
 
 
 def _check_check(case):
@@ -166,12 +194,15 @@ _CHECKERS = {
     "check": _check_check,
     "query": _check_query,
     "checked_query": _check_checked_query,
+    "execute": _check_execute,
 }
 
 
 def _kind(case):
     if "checked_query" in case:
         return "checked_query"
+    if "execute" in case:
+        return "execute"
     if "query" in case:
         return "query"
     if "check_expression" in case:

@@ -476,6 +476,50 @@ def _probe_checked():
     return bad
 
 
+class _RowsConn:
+    """A stand-in connection (§7.4): returns canned rows/rowcount and records the (sql, params)
+    it was handed. Conformance is not linted, so a fixture class is fine here."""
+
+    def __init__(self, rows, rowcount):
+        self.rows = rows
+        self.rowcount = rowcount
+        self.calls = []
+
+    def execute(self, sql, params):
+        self.calls.append((sql, params))
+        return {"rows": self.rows, "rowcount": self.rowcount}
+
+
+def _probe_execute():
+    """Execute (§7.4): the I/O boundary, exercised with a stand-in connection. Plain data out,
+    empty-result branches return None, and the connection is handed the Query's sql + params."""
+    from honest_persist import execute, execute_many, execute_one, execute_scalar
+
+    bad = []
+    q = {"sql": "SELECT id, name FROM t WHERE id = :id", "params": {"id": 1}}
+    full = _RowsConn([{"id": 1, "name": "a"}, {"id": 2, "name": "b"}], 2)
+    empty = _RowsConn([], 0)
+
+    if execute(q, full) != [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]:
+        bad.append("execute should return every row")
+    if execute(q, empty) != []:
+        bad.append("execute on no rows should be []")
+    if execute_one(q, full) != {"id": 1, "name": "a"}:
+        bad.append("execute_one should return the first row")
+    if execute_one(q, empty) is not None:
+        bad.append("execute_one on no rows should be None")
+    if execute_scalar(q, full) != 1:
+        bad.append("execute_scalar should return the first column of the first row")
+    if execute_scalar(q, empty) is not None:
+        bad.append("execute_scalar on no rows should be None")
+    if execute_many(q, full) != 2:
+        bad.append("execute_many should return the rowcount")
+    # the boundary hands the connection exactly the Query's sql and params, nothing rebuilt.
+    if full.calls[-1] != ("SELECT id, name FROM t WHERE id = :id", {"id": 1}):
+        bad.append(f"execute should pass the Query's sql and params to the connection: {full.calls[-1]}")
+    return bad
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -488,6 +532,7 @@ def run():
         "validate": _probe_validate(),
         "extended": _probe_extended(),
         "checked": _probe_checked(),
+        "execute": _probe_execute(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():

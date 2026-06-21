@@ -83,6 +83,13 @@
     {"id": "cq-select-join-unknown-table", "checked_query": {"builder": "checked_select", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}}}}, "table": "users", "columns": ["id"], "joins": [{"table": "ghost", "on": "ghost.user_id = users.id"}]}}, "expect": "err", "expect_code": "unknown_table"},
     {"id": "cq-insert-unknown-column", "checked_query": {"builder": "checked_insert", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}}}}, "table": "users", "values": {"nope": 1}}}, "expect": "err", "expect_code": "unknown_column"},
     {"id": "cq-update-unknown-column", "checked_query": {"builder": "checked_update", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}, "status": {"type": "text"}}}}, "table": "users", "values": {"status": "active"}, "where": {"nope": 1}}}, "expect": "err", "expect_code": "unknown_column"},
-    {"id": "cq-delete-ok", "checked_query": {"builder": "checked_delete", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}}}}, "table": "users", "where": {"id": 1}}}, "expect": "ok", "expect_sql": "DELETE FROM users WHERE id = :id", "expect_params": {"id": 1}}
+    {"id": "cq-delete-ok", "checked_query": {"builder": "checked_delete", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}}}}, "table": "users", "where": {"id": 1}}}, "expect": "ok", "expect_sql": "DELETE FROM users WHERE id = :id", "expect_params": {"id": 1}},
+    {"id": "x-execute-rows", "execute": {"fn": "execute", "query": {"sql": "SELECT id FROM users", "params": {}}, "rows": [{"id": 1}, {"id": 2}], "rowcount": 0}, "expect": [{"id": 1}, {"id": 2}]},
+    {"id": "x-execute-empty", "execute": {"fn": "execute", "query": {"sql": "SELECT id FROM users WHERE id = :id", "params": {"id": 99}}, "rows": [], "rowcount": 0}, "expect": []},
+    {"id": "x-execute-one", "execute": {"fn": "execute_one", "query": {"sql": "SELECT id, name FROM users WHERE id = :id", "params": {"id": 1}}, "rows": [{"id": 1, "name": "a"}], "rowcount": 0}, "expect": {"id": 1, "name": "a"}},
+    {"id": "x-execute-one-empty", "execute": {"fn": "execute_one", "query": {"sql": "SELECT id FROM users WHERE id = :id", "params": {"id": 99}}, "rows": [], "rowcount": 0}, "expect": null},
+    {"id": "x-execute-scalar", "execute": {"fn": "execute_scalar", "query": {"sql": "SELECT count(*) FROM users", "params": {}}, "rows": [{"count": 5}], "rowcount": 0}, "expect": 5},
+    {"id": "x-execute-scalar-empty", "execute": {"fn": "execute_scalar", "query": {"sql": "SELECT count(*) FROM users WHERE id = :id", "params": {"id": 99}}, "rows": [], "rowcount": 0}, "expect": null},
+    {"id": "x-execute-many", "execute": {"fn": "execute_many", "query": {"sql": "UPDATE users SET status = :set_status", "params": {"set_status": "active"}}, "rows": [], "rowcount": 3}, "expect": 3}
   ]
 }
