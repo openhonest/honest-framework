@@ -864,9 +864,18 @@ execute_scalar(query: Query, conn: Connection)   → Any?
 execute_many(query: Query, conn: Connection)     → Int  // rows affected
 ```
 
-All execute functions are async. They accept a connection (not a pool — the
-caller manages connection acquisition). They return plain data: lists of
-dicts, single dicts, or scalars.
+They accept a connection (not a pool — the caller manages connection
+acquisition). They return plain data: lists of dicts, single dicts, or scalars. `execute_one`
+and `execute_scalar` return nothing (the host language's null) when there are no rows.
+
+The connection is the boundary's one collaborator, duck-typed the same way `apply` (section
+5.2) takes one: `conn.execute(sql, params)` returns `{rows: [row, ...], rowcount: Int}`, where
+each row is a plain dict. `execute` returns `rows`; `execute_one` the first row or null;
+`execute_scalar` the first column of the first row or null; `execute_many` the `rowcount`.
+These functions do not catch — a driver error propagates to the outer boundary (honest-type's
+`catch_at_boundary`), the single place a fault is turned back into output. The signatures are
+written async because a host language with an async driver will make them so; the reference
+implementation realizes them synchronously, as `apply` is.
 
 **No ORM magic:** rows are returned as plain dicts (or language-equivalent
 plain data structures). No model instances. No lazy loading. No identity map.
