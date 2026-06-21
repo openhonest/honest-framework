@@ -14,6 +14,10 @@ from pathlib import Path
 from honest_persist import (
     apply,
     check_holds,
+    checked_delete,
+    checked_insert,
+    checked_select,
+    checked_update,
     delete,
     diff,
     insert,
@@ -28,12 +32,28 @@ from honest_persist import (
 )
 
 _BUILDERS = {"select": select, "insert": insert, "update": update, "delete": delete, "raw": raw}
+_CHECKED_BUILDERS = {
+    "checked_select": checked_select,
+    "checked_insert": checked_insert,
+    "checked_update": checked_update,
+    "checked_delete": checked_delete,
+}
 
 
 def _check_query(case):
     spec = case["query"]
     result = _BUILDERS[spec["builder"]](**spec["args"])
     ok = result["sql"] == case["expect_sql"] and result["params"] == case["expect_params"]
+    return ok, f"got {result}"
+
+
+def _check_checked_query(case):
+    spec = case["checked_query"]
+    result = _CHECKED_BUILDERS[spec["builder"]](**spec["args"])
+    if case["expect"] == "ok":
+        ok = "ok" in result and result["ok"]["sql"] == case["expect_sql"] and result["ok"]["params"] == case["expect_params"]
+        return ok, f"got {result}"
+    ok = "err" in result and result["err"]["code"] == case["expect_code"]
     return ok, f"got {result}"
 
 
@@ -145,10 +165,13 @@ _CHECKERS = {
     "reconstruct_sql": _check_reconstruction_sql,
     "check": _check_check,
     "query": _check_query,
+    "checked_query": _check_checked_query,
 }
 
 
 def _kind(case):
+    if "checked_query" in case:
+        return "checked_query"
     if "query" in case:
         return "query"
     if "check_expression" in case:

@@ -5,7 +5,17 @@ Schema as data, migrations as a pure diff, queries as data. I/O only at the boun
 
 from honest_persist.apply import apply, reconstruction_sql, requires_reconstruction, to_sql
 from honest_persist.check import check_holds, parse_check
-from honest_persist.query import delete, insert, raw, select, update
+from honest_persist.query import (
+    checked_delete,
+    checked_insert,
+    checked_select,
+    checked_update,
+    delete,
+    insert,
+    raw,
+    select,
+    update,
+)
 from honest_persist.schema import diff, validate_schema
 from honest_persist.types import (
     Ambiguity,
@@ -34,6 +44,10 @@ __all__ = [
     "update",
     "delete",
     "raw",
+    "checked_select",
+    "checked_insert",
+    "checked_update",
+    "checked_delete",
     "operation",
     "diff_result",
     "Column",

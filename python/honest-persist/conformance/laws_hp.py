@@ -413,6 +413,69 @@ def _probe_extended():
     return bad
 
 
+def _probe_checked():
+    """Schema-checked builders (§7.3): every table and column a query names is validated
+    against the declared schema, returning ok(Query) or a typed fault. Pure. Exercises every
+    branch."""
+    from honest_persist import checked_delete, checked_insert, checked_select, checked_update, select
+
+    bad = []
+    schema = {
+        "users": {"columns": {"id": {"type": "int"}, "email": {"type": "text"}, "status": {"type": "text"}, "name": {"type": "text"}, "created": {"type": "int"}}},
+        "orders": {"columns": {"user_id": {"type": "int"}}},
+    }
+
+    # select: ok with wildcard, where, ORDER BY (a '-' descending term), and a known join.
+    args = {"columns": ["*"], "where": {"status": "active"}, "order_by": ["name", "-created"], "joins": [{"table": "orders", "on": "orders.user_id = users.id"}]}
+    r = checked_select(schema, "users", **args)
+    if "ok" not in r:
+        bad.append(f"checked_select valid should be ok: {r}")
+    elif r["ok"] != select("users", **args):
+        bad.append("checked_select ok must wrap exactly the raw select Query")
+    # select: ok with no columns/where/order_by/joins (the `or []` empty branches).
+    if "ok" not in checked_select(schema, "users"):
+        bad.append("checked_select with no optional args should be ok")
+    # select: unknown column in each of the three positions, plus unknown table and join table.
+    if checked_select(schema, "users", columns=["emial"]).get("err", {}).get("code") != "unknown_column":
+        bad.append("misspelled select column should fault unknown_column")
+    if checked_select(schema, "users", where={"ghost": 1}).get("err", {}).get("code") != "unknown_column":
+        bad.append("unknown where column should fault unknown_column")
+    if checked_select(schema, "users", order_by=["-ghost"]).get("err", {}).get("code") != "unknown_column":
+        bad.append("unknown order_by column should fault unknown_column")
+    if checked_select(schema, "ghost").get("err", {}).get("code") != "unknown_table":
+        bad.append("unknown table should fault unknown_table")
+    if checked_select(schema, "users", joins=[{"table": "ghost", "on": "x"}]).get("err", {}).get("code") != "unknown_table":
+        bad.append("unknown join table should fault unknown_table")
+    # the unknown_column fault names the offending column(s) and the declared set.
+    detail = checked_select(schema, "users", columns=["emial", "id"]).get("err", {}).get("detail", {})
+    if detail.get("columns") != ["emial"] or "email" not in detail.get("declared", []):
+        bad.append(f"unknown_column detail should name the bad column and the declared set: {detail}")
+
+    # insert / update / delete: ok and unknown-column paths; the where=None branch on update and delete.
+    if "ok" not in checked_insert(schema, "users", {"id": 1, "email": "a@b.co"}):
+        bad.append("valid checked_insert should be ok")
+    if checked_insert(schema, "users", {"nope": 1}).get("err", {}).get("code") != "unknown_column":
+        bad.append("unknown insert column should fault")
+    if "ok" not in checked_update(schema, "users", {"status": "active"}, {"id": 1}):
+        bad.append("valid checked_update should be ok")
+    if "ok" not in checked_update(schema, "users", {"status": "active"}, None):
+        bad.append("checked_update with where=None should be ok")
+    if checked_update(schema, "users", {"nope": 1}, {"id": 1}).get("err", {}).get("code") != "unknown_column":
+        bad.append("unknown update value column should fault")
+    if checked_update(schema, "users", {"status": "x"}, {"ghost": 1}).get("err", {}).get("code") != "unknown_column":
+        bad.append("unknown update where column should fault")
+    if "ok" not in checked_delete(schema, "users", {"id": 1}):
+        bad.append("valid checked_delete should be ok")
+    if "ok" not in checked_delete(schema, "users", None):
+        bad.append("checked_delete with where=None should be ok")
+    if checked_delete(schema, "users", {"ghost": 1}).get("err", {}).get("code") != "unknown_column":
+        bad.append("unknown delete where column should fault")
+    # a table declared with no columns -> declared set empty -> any column is unknown.
+    if checked_insert({"t": {}}, "t", {"a": 1}).get("err", {}).get("code") != "unknown_column":
+        bad.append("a table with no declared columns should reject any column")
+    return bad
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -424,6 +487,7 @@ def run():
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),
         "extended": _probe_extended(),
+        "checked": _probe_checked(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():

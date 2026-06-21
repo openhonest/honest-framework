@@ -76,6 +76,13 @@
     {"id": "q-update", "query": {"builder": "update", "args": {"table": "users", "values": {"status": "active"}, "where": {"id": 1}}}, "expect_sql": "UPDATE users SET status = :set_status WHERE id = :id", "expect_params": {"set_status": "active", "id": 1}},
     {"id": "q-delete", "query": {"builder": "delete", "args": {"table": "users", "where": {"id": 1}}}, "expect_sql": "DELETE FROM users WHERE id = :id", "expect_params": {"id": 1}},
     {"id": "q-raw-params", "query": {"builder": "raw", "args": {"sql": "SELECT 1 WHERE x = :x", "params": {"x": 1}}}, "expect_sql": "SELECT 1 WHERE x = :x", "expect_params": {"x": 1}},
-    {"id": "q-raw-noparams", "query": {"builder": "raw", "args": {"sql": "SELECT 1"}}, "expect_sql": "SELECT 1", "expect_params": {}}
+    {"id": "q-raw-noparams", "query": {"builder": "raw", "args": {"sql": "SELECT 1"}}, "expect_sql": "SELECT 1", "expect_params": {}},
+    {"id": "cq-select-ok", "checked_query": {"builder": "checked_select", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}, "email": {"type": "text"}, "status": {"type": "text"}}}}, "table": "users", "columns": ["id", "email"], "where": {"status": "active"}}}, "expect": "ok", "expect_sql": "SELECT id, email FROM users WHERE status = :status", "expect_params": {"status": "active"}},
+    {"id": "cq-select-unknown-column", "checked_query": {"builder": "checked_select", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}, "email": {"type": "text"}}}}, "table": "users", "columns": ["emial"]}}, "expect": "err", "expect_code": "unknown_column"},
+    {"id": "cq-select-unknown-table", "checked_query": {"builder": "checked_select", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}}}}, "table": "ghost", "columns": ["id"]}}, "expect": "err", "expect_code": "unknown_table"},
+    {"id": "cq-select-join-unknown-table", "checked_query": {"builder": "checked_select", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}}}}, "table": "users", "columns": ["id"], "joins": [{"table": "ghost", "on": "ghost.user_id = users.id"}]}}, "expect": "err", "expect_code": "unknown_table"},
+    {"id": "cq-insert-unknown-column", "checked_query": {"builder": "checked_insert", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}}}}, "table": "users", "values": {"nope": 1}}}, "expect": "err", "expect_code": "unknown_column"},
+    {"id": "cq-update-unknown-column", "checked_query": {"builder": "checked_update", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}, "status": {"type": "text"}}}}, "table": "users", "values": {"status": "active"}, "where": {"nope": 1}}}, "expect": "err", "expect_code": "unknown_column"},
+    {"id": "cq-delete-ok", "checked_query": {"builder": "checked_delete", "args": {"schema": {"users": {"columns": {"id": {"type": "int"}}}}, "table": "users", "where": {"id": 1}}}, "expect": "ok", "expect_sql": "DELETE FROM users WHERE id = :id", "expect_params": {"id": 1}}
   ]
 }

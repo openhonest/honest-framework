@@ -1,11 +1,18 @@
-"""Query builders (section 7.2): a query is data, building it is a pure function.
+"""Query builders (section 7.2) and schema-checked building (section 7.3).
 
 `select` / `insert` / `update` / `delete` / `raw` each return a Query — `{sql, params}` —
 and perform no I/O. There is no method chaining that hides execution: the query is
 inspectable, loggable, and serializable before it runs. Parameters are always named
 (`:name`), never positional, and `params` is the complete set, so no escaping is needed at
 the call site. Executing a Query is section 7.4's boundary concern, not this module's.
+
+The `checked_*` builders (section 7.3) take a Schema first and return a Result: `ok(Query)`
+when every table and column the query names is declared, or `err(fault)` listing what was
+not found. Pure: validation is against the declared schema, not the live database, so a
+misspelled column is caught at build time rather than reaching the database in production.
 """
+
+from honest_type import err, fault, ok
 
 from honest_persist.types import Query
 
@@ -78,3 +85,73 @@ def delete(table, where) -> Query:
 def raw(sql, params=None) -> Query:
     """A raw SQL Query carrying named params (section 7.2). The escape hatch — still data."""
     return _query(sql, dict(params or {}))
+
+
+def _declared_columns(schema, table):
+    """The set of column names declared for `table`, or None when the table is undeclared."""
+    if table not in schema:
+        return None
+    return set(schema[table].get("columns", {}))
+
+
+def _unknown_columns(declared, names) -> list:
+    """The referenced names not in `declared`, ignoring the `*` wildcard and an ORDER BY
+    `-` (descending) prefix. Sorted, so the fault is deterministic."""
+    referenced = {name[1:] if name.startswith("-") else name for name in names if name != "*"}
+    return sorted(referenced - declared)
+
+
+def _check_columns(schema, table, names):
+    """ok(table) when `table` and every referenced column is declared; else err(fault)
+    (section 7.3). Pure."""
+    declared = _declared_columns(schema, table)
+    if declared is None:
+        return err(fault("unknown_table", f"Table '{table}' is not declared in the schema", "server", {"table": table}))
+    unknown = _unknown_columns(declared, names)
+    if unknown:
+        return err(
+            fault(
+                "unknown_column",
+                f"Column(s) {unknown} not declared on table '{table}'",
+                "server",
+                {"table": table, "columns": unknown, "declared": sorted(declared)},
+            )
+        )
+    return ok(table)
+
+
+def checked_select(schema, table, columns=None, where=None, order_by=None, joins=None, limit=None, offset=None):
+    """A schema-checked SELECT (section 7.3): ok(Query) or err(fault). Pure."""
+    checked = _check_columns(schema, table, list(columns or []) + list(where or []) + list(order_by or []))
+    if "err" in checked:
+        return checked
+    for spec in joins or []:
+        if spec["table"] not in schema:
+            return err(
+                fault("unknown_table", f"Join table '{spec['table']}' is not declared in the schema", "server", {"table": spec["table"]})
+            )
+    return ok(select(table, columns=columns, where=where, order_by=order_by, joins=joins, limit=limit, offset=offset))
+
+
+def checked_insert(schema, table, values):
+    """A schema-checked INSERT (section 7.3): ok(Query) or err(fault). Pure."""
+    checked = _check_columns(schema, table, list(values))
+    if "err" in checked:
+        return checked
+    return ok(insert(table, values))
+
+
+def checked_update(schema, table, values, where):
+    """A schema-checked UPDATE (section 7.3): ok(Query) or err(fault). Pure."""
+    checked = _check_columns(schema, table, list(values) + list(where or []))
+    if "err" in checked:
+        return checked
+    return ok(update(table, values, where))
+
+
+def checked_delete(schema, table, where):
+    """A schema-checked DELETE (section 7.3): ok(Query) or err(fault). Pure."""
+    checked = _check_columns(schema, table, list(where or []))
+    if "err" in checked:
+        return checked
+    return ok(delete(table, where))
