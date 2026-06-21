@@ -746,7 +746,7 @@ FUNCTION check_HC_P003(ast):
                     "Use composition over inheritance.")
 ```
 
-**Why this matters for the challenge:** a bare `class Foo:` is the primary smuggling vector for non-honest code. It can carry hidden state (class attributes and mutable instance state) and serve as a dispatch-via-method-resolution substitute for if/elif/else. Without the empty-bases check, a challenger could introduce a class that escapes HC-P003, hide state in it, and defeat purity/idempotency guarantees. With the check, every class that is not a data-shape declaration (TypedDict) or a typed-exception (Exception subclass) fails auto-generation and the code is rejected as dishonest.
+**Why this matters.** A bare `class Foo:` is the main way non-honest code sneaks in. It can hold hidden state (class attributes and changeable instance state) and stand in for if/elif/else by dispatching through method lookup. Without the empty-bases check, someone could add a class that slips past HC-P003, hide state in it, and defeat the purity and repeat-run guarantees. With the check, every class that is not a data-shape declaration (TypedDict) or a typed error (Exception subclass) fails test generation and the code is turned away as dishonest.
 
 #### HC-P004 — I/O inside non-boundary function
 
@@ -848,7 +848,7 @@ FUNCTION check_HC_P014(bindings):
                     f"contract cannot catch a swap between these slots.")
 ```
 
-**Rationale for the challenge:** a challenger who swaps two arguments of the same generic type (e.g., `grant_access(from_user, to_user)` → `grant_access(to_user, from_user)`) produces a manifest that passes every recognizer check, passes chain contracts, passes purity — but behaves wrong. An integration test catches the swap by asserting on observable aggregate behavior; the auto-generated suite cannot, because the type system has collapsed both slots into one equivalence class. HC-P014 forces the developer to either use distinct recognizers per slot or accept that auto-generation must be supplemented by BDD at the requirement level. When HC-P014 fires, auto-generation fails and the code is rejected as dishonest.
+**Why this matters.** Swapping two arguments of the same kind (e.g. `transfer(from_id, to_id)` → `transfer(to_id, from_id)`) produces a manifest that passes every recognizer check, passes chain contracts, and passes purity — but behaves wrong. An end-to-end test catches the swap by checking observable behaviour; the generated suite cannot, because the type system has folded both slots into one kind. HC-P014 forces the developer either to use a distinct recognizer per slot or to accept that test generation must be backed up by a BDD scenario at the requirement level. When HC-P014 fires, test generation fails and the code is turned away as dishonest.
 
 **Resolution patterns:**
 

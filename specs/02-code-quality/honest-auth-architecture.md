@@ -176,7 +176,7 @@ Given a fixed persist snapshot and a fixed token, the expression must produce th
 
 ### 4.5 Black-box testability
 
-The provider need not expose its internal implementation. Challengers and conformance auditors must be able to probe the provider's behavior using only the `test_token_generator` classes and the `fault_mapping` outputs. A provider whose behavior cannot be predicted from the public contract fails conformance regardless of how secure its internals are.
+The provider need not expose its internal implementation. Conformance auditors must be able to probe the provider's behaviour using only the `test_token_generator` classes and the `fault_mapping` outputs. A provider whose behaviour cannot be predicted from the public contract fails conformance regardless of how secure its internals are.
 
 ---
 
