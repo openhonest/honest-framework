@@ -122,7 +122,7 @@ A token that matches no recognizer produces a Rejection, not a silent default or
 *Mandatory. Silent defaults are non-conformant.*
 
 **Law HT-7: Set recognizer totality**
-For a vocabulary declared as a Set (finite enumeration), every declared member must be recognizable.
+For a vocabulary declared as a Set (a finite, listable set of values), every declared member must be recognizable.
 
 ```
 ∀ vocab : SetVocabulary, name : TypeName
@@ -137,7 +137,7 @@ Custom predicate recognizers must be pure functions. Same token, same result, al
 
 ```
 ∀ pred : Recognizer, token : Token
-  pred(token) = pred(token)   -- referential transparency
+  pred(token) = pred(token)   -- same input, same result
 ```
 
 *Mandatory. The implementation cannot enforce this at construction time for arbitrary predicates, but conformance tests must document that impure predicates produce undefined behavior.*
@@ -368,7 +368,7 @@ Projections are pure functions. The same log produces the same read model.
 
 ```
 ∀ proj : Projection, log : EventLog
-  proj(log) = proj(log)   -- referential transparency
+  proj(log) = proj(log)   -- same input, same result
 ```
 
 *Mandatory. A projection that reads external state (database, clock, random) is non-conformant. Time-windowed projections must receive the window bounds as parameters.*
@@ -430,7 +430,7 @@ otel_export : EventLog → OTelPayload
 
 ### Background
 
-honest-test generates test cases from type declarations rather than requiring developers to enumerate them. For finite Sets (vocabularies), it generates exhaustive test cases covering every member. For predicates, it generates boundary and edge cases. The result is a test suite that is complete by construction for all finite type domains.
+honest-test generates test cases from type declarations rather than making developers list them out by hand. For finite Sets (vocabularies), it generates a test case for every member. For predicates, it generates boundary and edge cases. The result is a test suite that is complete by construction for all finite type domains.
 
 ### Core Types
 
