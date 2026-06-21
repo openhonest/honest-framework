@@ -817,22 +817,43 @@ Each builder produces parameterized SQL. Parameters are always named, never
 positional. The `params` dict in the Query is the complete parameter set —
 no escaping needed at the caller site.
 
-### 7.3 Schema-Validated Access
+### 7.3 Schema-Checked Building
 
-When a schema is provided, column access is validated at reference time, not
-at execution time.
+A query builder takes only names, and a misspelled or undeclared column — `emial` for
+`email` — is a typo that, with a raw builder, reaches the database as a runtime error in
+production. When the application's schema is available, honest-persist catches it earlier,
+at build time, with a pure check. This is validation against the *declared schema*, not the
+live database: it needs no connection and runs as a pure function, so honest-test enumerates
+it.
+
+The schema-checked builders take the Schema as their first argument and return a Result —
+`ok(Query)` when every table and column the query names is declared, or a fault that lists
+exactly what was not found:
 
 ```
-users = table("users", schema, pool)
-users.emial   // AttributeError at this line — before any query is built
+checked_select(schema, table, columns?, where?, order_by?, joins?, limit?, offset?) → Result
+checked_insert(schema, table, values)                                              → Result
+checked_update(schema, table, values, where)                                       → Result
+checked_delete(schema, table, where)                                               → Result
+
+Result =
+    ok(Query)
+  | err({code: "unknown_table",  detail: {table}})
+  | err({code: "unknown_column", detail: {table, columns, declared}})
 ```
 
-This is not runtime validation against the database. It is validation against
-the declared schema. Typos are caught at development time, not in production.
+Every column the query names is checked: the selected columns, the WHERE keys, the ORDER BY
+keys, and the INSERT/UPDATE value keys. The `*` wildcard and an ORDER BY `-` prefix are
+recognised and skipped. A join's named table is checked for existence; its `ON` expression is
+raw SQL and is not column-checked, the same boundary `raw()` draws. `select` with no columns
+(all columns) and `raw()` carry no column names to check and so have no checked variant. On
+success the Result wraps exactly the Query the matching raw builder (section 7.2) produces, so
+the checked and raw layers never diverge.
 
-`table()` returns a TableProxy. Column references on a TableProxy return
-ColumnProxy objects. ColumnProxy objects compose into Condition objects
-for the `where` clause.
+There is **no proxy object, no attribute access, no method chaining**: the check is a pure
+function from `(schema, names)` to a Result, the same shape every other honest-persist
+validator returns. The bug it makes structurally catchable is an undeclared column reaching
+the database.
 
 ### 7.4 Execute (I/O Boundary)
 
