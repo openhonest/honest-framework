@@ -689,7 +689,7 @@ attempted — a normalized definition in, a normalized definition out.
 honest-persist compiles high-level type declarations into relational structures that behave
 identically across dialects. The application declares intent — an enum, a hierarchy, an
 array, a range; honest-persist generates the tables, constraints, and operations that
-realize it. Every abstraction reduces to ordinary tables and guarded mutations, so nothing
+realize it. Every abstraction reduces to ordinary tables and queries, so nothing
 in the abstraction layer escapes the verification the rest of the library is subject to.
 
 ### 6.1 Enums
@@ -737,8 +737,7 @@ framework refuses.
 
 Where the dialect enforces CHECK natively, honest-persist emits it as DDL. Where it does
 not (older engines, some Turso configurations), honest-persist **compiles the CHECK
-expression into a row validator** and enforces it at the write boundary, inside the guarded
-mutation (section 7.5):
+expression into a row validator** and enforces it at the write boundary:
 
 ```
 FUNCTION compile_check(expression) -> RowValidator:
@@ -746,8 +745,8 @@ FUNCTION compile_check(expression) -> RowValidator:
     return a pure function (row -> Bool) that evaluates the tree against a row
 ```
 
-The expression is parsed once (a pure function) into the same closed, finite expression
-vocabulary the guard DSL uses (section 7.5), so honest-test enumerates it and verifies each
+The expression is parsed once (a pure function) into honest-persist's own closed, finite
+CHECK-expression vocabulary, so honest-test enumerates it and verifies each
 operator compiles on every dialect (section 11). A declared CHECK that can be neither
 natively enforced nor compiled is a construction-time fault — never a silently dropped
 guarantee.
@@ -760,7 +759,7 @@ alongside the base table. The closure table turns subtree, ancestor, and descend
 into a single indexed read instead of a recursive walk, on every dialect.
 
 honest-persist generates the closure table, its indexes, and the maintenance logic (insert,
-move, or delete of a node updates the closure) as ordinary tables and guarded mutations. The
+move, or delete of a node updates the closure) as ordinary tables and queries. The
 application sees a hierarchy declaration; the relational expansion is honest-persist's.
 
 ### 6.4 Arrays and Maps
@@ -771,7 +770,7 @@ keeps the data in first normal form and queryable on every dialect, rather than 
 dialect-specific array or JSON type.
 
 honest-persist generates the junction table and the element operations (append, set, remove,
-reindex) as guarded mutations. Dialects with native array or JSON support may specialize the
+reindex) as ordinary queries. Dialects with native array or JSON support may specialize the
 generation, but the declared structure and its operations are identical across dialects.
 
 ### 6.5 Ranges
@@ -852,269 +851,48 @@ dicts, single dicts, or scalars.
 plain data structures). No model instances. No lazy loading. No identity map.
 What comes back from the database is what you get.
 
-### 7.5 Guarded Mutation
+### 7.5 Transactions
 
-A `guarded_mutation` is the all-or-nothing operation that fuses the precondition check and the change into one step. It is the only sanctioned way to change stored data. Direct `UPDATE`/`INSERT`/`DELETE` queries outside this operation skip the guard's guarantees and are flagged by honest-check as dishonest (see HC-P015).
-
-**Data structure:**
-
-```
-GuardedMutation = {
-    target:  TableTarget,        -- which row(s) to address
-    guard:   GuardExpression,    -- predicate over current state; evaluated atomically with update
-    update:  UpdateExpression,   -- new values to apply IF guard holds
-    op:      "insert" | "update" | "delete"
-}
-
-TableTarget = {
-    table:  String,
-    key:    dict[String, Any]?   -- primary-key values for update/delete; null for insert
-}
-
-GuardExpression =                  -- a boolean-valued predicate (the full grammar is normative; see "Guard Expression DSL" below)
-    { kind: "and",     operands: [GuardExpression] }
-  | { kind: "or",      operands: [GuardExpression] }
-  | { kind: "not",     operand:  GuardExpression }
-  | { kind: "compare", left: GuardTerm, op: CompareOp, right: GuardTerm }
-  | { kind: "exists",  source: { table: String }, where: [Match] }
-  | { kind: "true" }               -- the trivial guard; structurally useless, flagged by HC-P018
-
-CompareOp = "=" | "!=" | "<" | "<=" | ">" | ">=" | "in" | "not_in"
-
-GuardTerm =                        -- a value-valued operand; its `kind` fixes its provenance class (see table below)
-    { kind: "literal", value: Scalar }                                -- provenance: constant
-  | { kind: "column",  name: String }                                 -- provenance: target_snapshot
-  | { kind: "slot",    name: String }                                 -- provenance: chain-traced (the only non-fixed class)
-  | { kind: "derive",  name: String, args: [GuardTerm] }              -- provenance: in_transaction_derivation
-  | { kind: "lookup",  name: String, args: [GuardTerm] }              -- provenance: transaction_snapshot
-  | { kind: "count",   source: { table: String }, where: [Match] }    -- provenance: transaction_snapshot
-  | { kind: "param",   name: String }                                 -- a placeholder, only inside a GuardExpressionTemplate
-
-Match  = { column: String, term: GuardTerm }
-Scalar = String | Number | Boolean | Null
-
-UpdateExpression = {
-    kind:   "set"      | "insert_row" | "delete_row" | "increment" | "upsert",
-    values: dict[String, Any]?,
-    ...
-}
-```
-
-**Compilation (HCD — highest common denominator):**
-
-| Backend | Compilation |
-|---|---|
-| PostgreSQL, MySQL, SQLite | Single `UPDATE ... WHERE <target> AND <guard>` (or `DELETE`/`INSERT ... WHERE NOT EXISTS`). Zero rows affected → `guard_failed`. |
-| MongoDB | `findOneAndUpdate(filter=target AND guard, update=update)` with `returnDocument: "after"`. No match → `guard_failed`. |
-| DynamoDB | `UpdateItem` with `ConditionExpression` derived from guard. `ConditionalCheckFailedException` → `guard_failed`. |
-| Backends without native conditional update | Implemented via `SELECT FOR UPDATE` + version-stamp check + retry on conflict. Conformance suite verifies SSI semantics (§11). |
-
-**Result:**
-
-```
-guarded_mutation(target, guard, update, conn) -> Result
-
-Result =
-    ok({rows_affected: Integer, returned: dict?})
-  | err({code: "guard_failed",           detail: WhichClause})
-  | err({code: "serialization_conflict", detail: String})
-  | err({code: "constraint_violation",   detail: String})    // FK, unique, check
-```
-
-`WhichClause` identifies which part of the guard failed, so the boundary can map `guard_failed` to the right HTTP response — not signed in (401), not allowed (403), broke a data rule (422), or precondition went stale (409).
-
-**Execution algorithm:**
-
-```
-FUNCTION guarded_mutation(mutation, conn):
-    start ← now_ns()
-
-    sql, params ← compile_guarded_mutation(mutation, conn.dialect)
-
-    TRY:
-        result ← execute(sql, params, conn)
-        duration ← now_ns() - start
-
-        IF result.rows_affected = 0:
-            // Determine which clause failed by re-querying the row
-            failed_clause ← diagnose_guard_failure(mutation, conn)
-
-            emit_internal("hf.persist.guarded_mutation", {
-                target:       mutation.target,
-                op:           mutation.op,
-                outcome:      "guard_failed",
-                failed_clause: failed_clause.name,
-                duration_ns:  duration,
-            })
-
-            RETURN err({code: "guard_failed", detail: failed_clause})
-
-        emit_internal("hf.persist.guarded_mutation", {
-            target:      mutation.target,
-            op:          mutation.op,
-            outcome:     "ok",
-            rows_affected: result.rows_affected,
-            duration_ns: duration,
-        })
-        RETURN ok({rows_affected: result.rows_affected, returned: result.returned})
-
-    CATCH serialization_failure:
-        // SSI detected a write-skew or dangerous-read conflict
-        RETURN err({code: "serialization_conflict", detail: ...})
-
-    CATCH constraint_violation as e:
-        RETURN err({code: "constraint_violation", detail: e.message})
-```
-
-**Example — a rule kept true by construction.** Consider a `membership` table where each
-`set_id` must always keep at least one row whose `role` is `required`; demoting the last such
-row would leave the set with none:
-
-```
-guarded_mutation(
-    target = {
-        table: "membership",
-        key:   {member_id: actor_id, set_id: set_id}
-    },
-    guard = and(
-        compare(lookup("role_of", session_actor(token), set_id), "=", "required"),
-        compare(lookup("required_count", set_id), ">", 1)
-    ),
-    update = {kind: "set", values: {role: "plain"}},
-    op = "update"
-)
-```
-
-Compiles to (Postgres):
-
-```sql
-UPDATE membership
-SET role = $1
-WHERE member_id = $2
-  AND set_id  = $3
-  AND (SELECT role FROM membership
-       WHERE member_id = (SELECT member_id FROM sessions WHERE token = $4
-                          AND expires_at > NOW() AND revoked_at IS NULL)
-         AND set_id = $3) = 'required'
-  AND (SELECT COUNT(*) FROM membership
-       WHERE set_id = $3 AND role = 'required') > 1
-```
-
-Demoting the sole required member → required_count is 1 → the guard fails → `guard_failed`
-is returned. The rule cannot be broken no matter how transactions overlap, because the check
-and the write happen together, all-or-nothing (serializable isolation).
-
-#### The Guard Expression DSL
-
-The guard is **data, not code** — a tagged-union value tree, identical in meaning across every language target. This is the same discipline as honest-type vocabularies: a closed set of node kinds, built by pure constructor functions, statically analysable by honest-check, exhaustively enumerable by honest-test, and compiled to a backend-specific atomic operation by the dialect. No language's exception, lambda, or object syntax appears in a guard; a guard is a value that can be serialised, compared, and inspected.
-
-A guard expression separates two layers: **predicates** (the `GuardExpression` kinds — boolean-valued: `and`/`or`/`not`/`compare`/`exists`/`true`) and **terms** (the `GuardTerm` kinds — value-valued operands of `compare`/`exists`/`count`). The kind sets are closed; an implementation that introduces a new kind is non-conformant.
-
-**Provenance — the property that makes the guard safe.** Every term carries a *provenance class* that says where its value comes from relative to the mutation's atomic scope. Provenance is the whole point: a guard is only sound if every value it tests is evaluated *inside* the same transaction that performs the write (serializable isolation, §11). A value derived *before* the transaction may be stale at commit, which is the cross-chain TOCTOU honest-check rejects (HC-P015).
-
-| Term kind | Provenance class | Evaluated where | Permitted in a guard? |
-|---|---|---|---|
-| `literal` | `constant` | n/a | Always. |
-| `column` | `target_snapshot` | the row(s) under mutation, read atomically with the write | Always. |
-| `derive` | `in_transaction_derivation` | inside the transaction (e.g. the AuthProvider's actor derivation from a token) | Always. |
-| `lookup` | `transaction_snapshot` | a registered scalar (`role_of`, `owner_count`) over the current snapshot, inside the transaction | Always. |
-| `count` | `transaction_snapshot` | an aggregate over the current snapshot, inside the transaction | Always. |
-| `slot` | **chain-traced** | a manifest slot value carried into the link | **Only if** the slot was classified at the HTTP boundary. **Forbidden** if its value is the result of a prior `persist.read()`/`persist.execute()` in the same chain. |
-
-Six of the seven term kinds have a *statically fixed* provenance that is always inside the transaction — so they are always sound. The **only** term whose safety depends on context is `slot`, and where it comes from can always be worked out by tracing where the slot was last written in the enclosing chain. This is exactly the boundary that makes HC-P015 a pure static check rather than a runtime one.
-
-**Static-analysis contract (what honest-check consumes).** honest-check operates only on the guard value tree, never by executing it:
-
-- **HC-P015 (cross-chain TOCTOU).** Collect every `{kind: "slot"}` term reachable in the guard. For each, trace the slot's provenance in the enclosing chain. If any slot's value originates from a prior `persist.read()`/`persist.execute()` rather than from boundary classification, emit `HC-P015`. Every other term kind is statically `transaction_snapshot` / `target_snapshot` / `in_transaction_derivation` / `constant`, so it can never trip the rule. The check is therefore complete and always answerable.
-- **HC-A002 (authorizing link references the provider's derivation).** An `@link` declared `authorizes=True` must contain a `{kind: "derive", name: <D>}` term in its guard where `<D>` equals the registered AuthProvider's `derivation_expression` name (e.g. `"session_actor"`). Absence is `HC-A002`: actor identity is being trusted from input rather than derived in-transaction.
-- **HC-P018 (non-trivial guard, forthcoming).** A guard whose top-level predicate is `{kind: "true"}`, or an `exists`/`compare` solely over the target's own primary key with no further constraint, is structurally useless and is flagged so a developer cannot write a guarded mutation that guards nothing.
-
-**Composition with honest-auth.** An AuthProvider's `derivation_expression` is a **`GuardExpressionTemplate`**: a `GuardExpression`/`GuardTerm` tree in which some leaves are `{kind: "param", name}` placeholders. `instantiate(template, bindings)` replaces each `param` with the supplied term, yielding a concrete `GuardExpression`. The honest-auth example `GuardExpressionTemplate.lookup("session_actor", args=[Slot("token")])` denotes the template `derive("session_actor", [param("token")])`; an authorizing link composes it by binding `token → slot("token")` (the boundary-classified token slot) and `and`-ing the result into its guard. `GuardExpressionTemplate.literal(True)` denotes `{kind: "true"}` — the no-auth provider, which requires no derivation reference (HC-A002 is satisfied vacuously, HC-P018 will warn).
-
-**Language-agnostic representation.** Each language ships pure constructor functions that build the *same* value tree; only the surface idiom differs. A reference naming (any language maps these to its idiom): `and(...)`, `or(...)`, `not(g)`, `compare(left, op, right)`, `exists(table, matches)`, `truthy()`; and for terms `literal(v)`, `column(name)`, `slot(name)`, `derive(name, args)`, `lookup(name, args)`, `count(table, matches)`, `param(name)`. The constructors are total and side-effect-free; they validate kind and arity at construction (a malformed guard is a construction-time error, never a runtime surprise). Because the kind set is closed and finite, honest-test enumerates it to verify that every kind compiles correctly on every supported dialect (§11), and honest-check recognises the constructor calls the same way it recognises `vocabulary()`/`binding()`/`link()` — by alias-resolved call-site analysis, with no need to execute the guard.
-
-**Registered term names.** `derive` and `lookup` names are not free strings: they are drawn from a registry the application declares (the AuthProvider contributes its derivation name; persist-side scalars like `role_of`, `owner_count` are declared with their snapshot query and result type). A `derive`/`lookup` term naming an unregistered function is a construction-time error, which keeps the guard vocabulary closed and the provenance table exhaustive.
-
-### 7.6 Transaction Composition
-
-A `transaction` composes multiple `guarded_mutation`s with all-or-nothing semantics. Transactions are the only sanctioned way to perform multi-write operations. honest-check enforces that every write inside every transaction is a `guarded_mutation` (no bare `INSERT`/`UPDATE` inside a transaction), making the vulnerable pattern structurally unexpressible.
+A transaction groups several writes into one all-or-nothing step: either every write commits, or none does. It is the sanctioned way to perform a multi-write operation, so a half-applied change is never left behind for another reader to see.
 
 **Signature:**
 
 ```
-transaction(
-    mutations: [GuardedMutation],
-    conn:      Connection,
-) -> Result
+transaction(writes: [Query], conn: Connection) -> Result
 
 Result =
-    ok({results: [MutationResult]})            -- all guards held; all updates applied
-  | err({code: "guard_failed",          detail: {failed_at: Integer, clause: WhichClause}})
-  | err({code: "serialization_conflict", detail: String})
-  | err({code: "constraint_violation",   detail: {failed_at: Integer, message: String}})
+    ok({results: [WriteResult]})                                       -- all writes applied and committed
+  | err({code: "constraint_violation", detail: {failed_at: Integer, message: String}})
 ```
+
+Each write is an ordinary `insert`/`update`/`delete` Query (section 7.2): data, built by a pure function, inspectable before it runs.
 
 **Semantics:**
 
-1. All mutations execute within a single database transaction at **serializable** isolation (native SSI on Postgres; backfilled on other backends, §11).
-2. If any `guard_failed`, `serialization_conflict`, or `constraint_violation` occurs, the transaction rolls back and the corresponding `err` is returned with `failed_at` = index of the failing mutation.
-3. On success, all mutations are committed atomically. Observers see all changes or none.
+1. All writes run inside a single database transaction.
+2. If any write fails — a foreign-key, unique, or CHECK violation, for example — the transaction rolls back and the matching `err` is returned with `failed_at` set to the index of the failing write.
+3. On success, all writes commit together. Another reader sees all of the changes or none of them.
 
 **Execution algorithm:**
 
 ```
-FUNCTION transaction(mutations, conn):
-    BEGIN SERIALIZABLE
-
+FUNCTION transaction(writes, conn):
+    BEGIN
     results ← []
-    FOR i, mutation IN enumerate(mutations):
-        r ← guarded_mutation(mutation, conn)
-        IF r is err:
+    FOR i, write IN enumerate(writes):
+        TRY:
+            r ← execute(write, conn)
+        CATCH constraint_violation as e:
             ROLLBACK
-            RETURN err({...r.err, failed_at: i})
-        APPEND r.ok TO results
-
-    TRY:
-        COMMIT
-    CATCH serialization_failure:
-        RETURN err({code: "serialization_conflict", ...})
-
+            RETURN err({code: "constraint_violation", detail: {failed_at: i, message: e.message}})
+        APPEND r TO results
+    COMMIT
     RETURN ok({results: results})
 ```
 
-**Retry on serialization conflict.** Callers retry with exponential backoff. The caller's view is: compose the transaction, submit, receive ok or a typed fault; serialization conflicts are transient and retryable, guard failures are not.
+**Preconditions are ordinary code.** Where a write should happen only under some condition — a balance stays non-negative, a set keeps at least one required member — the developer writes that check as an ordinary early-return guard in the link before the write, the same as any other business rule, and honest-test reaches it through the pure-function strategy (honest-test section 5). The framework provides no special check-and-write primitive and does not promise to make overlapping transactions safe for you: choosing an isolation level and handling concurrent writes is the application's responsibility, not honest-persist's.
 
-**Example — transfer_ownership as a transaction:**
-
-```
-transaction(
-    mutations = [
-        // Promote target to the required role
-        guarded_mutation(
-            target = {table: "membership",
-                      key: {member_id: target_id, set_id: set_id}},
-            guard  = compare(lookup("role_of", session_actor(token), set_id), "=", "required"),
-            update = {kind: "set", values: {role: "required"}},
-            op     = "update"
-        ),
-        // Demote current actor to plain
-        guarded_mutation(
-            target = {table: "membership",
-                      key: {member_id: actor_id, set_id: set_id}},
-            guard  = compare(lookup("role_of", session_actor(token), set_id), "=", "required"),
-            update = {kind: "set", values: {role: "plain"}},
-            op     = "update"
-        ),
-    ],
-    conn = conn,
-)
-```
-
-Under SSI, this is equivalent to some serial execution of the two mutations. Intermediate states ("two required members", "zero required members") are never observable to any other transaction. Either both commit together or both roll back.
-
-**Prohibition of direct SQL inside transactions.** honest-persist's transaction API accepts only `GuardedMutation` values. Raw SQL or unguarded query builders cannot be composed into a transaction through the sanctioned API. This is not advisory — implementations must refuse to execute a transaction containing non-guarded operations.
-
-### 7.7 Multiple Query Style APIs
+### 7.6 Multiple Query Style APIs
 
 honest-persist provides three query style APIs over the same Query/execute
 foundation. All three compile to the same Query dict. All three execute via
@@ -1386,33 +1164,6 @@ payload: {
 for unrecoverable pool failures. All of these were previously silent or
 logged to stderr with no structured record. They are now first-class events.
 
-### 8.9 Mock Data
-
-honest-persist owns the data boundary — the place real rows are read from. So it is also the
-place made-up rows come from. Fake data is a stand-in for that boundary, so it belongs in the
-same module, not scattered into whatever happens to need it. This is the I/O-at-the-boundary
-rule applied to test data.
-
-`mock_data_states(schema, max_rows)` is a pure function: a schema in, a list of small
-made-up datasets out. Each dataset is `{table: [row, ...]}` — the same shape `run_action` and
-`evaluate_guard` (§7.5) already take. For each table in the schema it produces every
-population from zero up to `max_rows` rows, where each row's column values are drawn from that
-column's declared set of allowed values; a column with no finite set (an id, an actor) draws
-from a small fixed pool the caller supplies. The result is every small dataset the columns can
-form, nothing larger.
-
-The datasets are deliberately tiny. `max_rows` defaults to 2; two or three rows is enough by
-the small-scope hypothesis — almost every whole-collection bug (a set left with no required
-member, the same member counted twice) already shows up at that size, so there is no need for
-realistic data. Because every column's values come from a finite set and the row count is
-capped, the list of datasets is itself finite and the caller can run over all of it.
-
-This is what honest-test §5.4/§5.6 consume: ask honest-persist for the small datasets, run
-each action over each with `run_action`, and check the guard held with `evaluate_guard`. A
-richer, coverage-driven version — making rows so that every declared display rule fires at
-least once — is a separate, later concern (honest-test §6.2) and is not required for guard
-testing.
-
 ---
 
 ## 9. Migration Workflow
@@ -1463,15 +1214,15 @@ still expressed as data and pure-planned where possible:
 ```
 1. Bulk transfer (I/O)    -- copy existing rows to the destination in foreign-key order,
                              resumable from recorded progress.
-2. Mirror (I/O)           -- dual-write: every guarded mutation writes to both source and
+2. Mirror (I/O)           -- dual-write: every write goes to both source and
                              destination until they converge.
 3. Promote (pure + I/O)   -- switch reads to the destination once mirrored and verified.
 4. Detach (I/O)           -- stop writing to the source.
 ```
 
 Each phase is explicit and reversible up to promotion. The mirror writes through the same
-guarded-mutation path as ordinary writes (section 7.5), so the destination is never written
-by a path that bypasses the guards. Cutover is an operational workflow, not a schema
+query and transaction layer as ordinary writes (section 7), so the destination is never
+written by a path that bypasses the library. Cutover is an operational workflow, not a schema
 primitive: it composes the diff/apply and query layers, it does not replace them.
 
 ---
@@ -1535,87 +1286,34 @@ A conformant honest-persist implementation must:
 12. Declare `db_id`, `tenant_id`, and `credential` as bounded Set recognizers
    in the application vocabulary. honest-check enforces this via HC-P013.
 
-13. Implement `guarded_mutation()` as specified in §7.5. The guard expression
-    and the update must be evaluated atomically — compiled to a single
-    `UPDATE ... WHERE guard`, `findOneAndUpdate(filter=guard, update=...)`,
-    `UpdateItem + ConditionExpression`, or equivalent. Compilation into two
-    round-trips (SELECT then UPDATE) is explicitly non-conformant.
+13. Implement `transaction()` as specified in §7.5: several writes grouped into
+    one all-or-nothing step. If any write fails, the transaction rolls back and a
+    typed fault is returned with `failed_at` set to the failing write's index; on
+    success all writes commit together. The framework does not mandate an isolation
+    level or promise to make overlapping transactions safe — choosing isolation and
+    handling concurrent writes is the application's concern.
 
-14. Implement `transaction()` as specified in §7.6 at **serializable**
-    isolation. Every mutation inside a transaction must be a `GuardedMutation`.
-    Raw SQL or non-guarded query-builder values submitted to `transaction()`
-    must be rejected at the API boundary with a typed fault; implementations
-    must not "pass through" raw mutations.
+14. Emit `hf.persist.transaction` for every transaction. Payload includes the write
+    count, `outcome` (`ok | constraint_violation`), `failed_at` (when a write fails),
+    `duration_ns`, and `request_id`. This is the observability surface the boundary
+    uses to map fault codes to HTTP responses.
 
-15. Provide **Serializable Snapshot Isolation (SSI) semantics** for every
-    transaction. Native SSI support is preferred where the backend provides
-    it (PostgreSQL's SERIALIZABLE with the SSI anomaly detector). For
-    backends that do not provide true SSI, the implementation must backfill
-    SSI semantics via the application layer:
-
-    - Write operations acquire row-level locks (`SELECT ... FOR UPDATE` or
-      equivalent) covering both the target rows and any rows referenced by
-      the guard expression's lookup subqueries.
-    - Every row carries an implicit or explicit version stamp; the version
-      is part of the guard check. Concurrent mutations that modify the same
-      version fail with `serialization_conflict`.
-    - On conflict detection, the transaction rolls back and the caller
-      receives `err({code: "serialization_conflict", ...})`. The caller is
-      responsible for retry with exponential backoff.
-
-    **SSI conformance test suite** lives in the hub at
-    `honest/honest-persist-conformance/ssi/`. Every implementation must pass
-    every test. The suite includes:
-
-    **Write-skew probe.** Two concurrent transactions each read the same count
-    (`SELECT COUNT WHERE role = 'required'` → 2), each demote themselves. Under
-    true SSI, one commits and the other aborts. Under weaker isolation, both
-    commit — breaking the "at least one required member" rule. Conformant
-    implementations must abort one of the two transactions.
-
-    **Phantom probe.** Transaction T1 reads a set of rows matching a
-    predicate; transaction T2 inserts a new row matching that predicate
-    and commits; T1 then performs an update whose guard depends on the
-    predicate. True SSI aborts T1; weaker isolation allows the stale read.
-    Conformant implementations must abort T1.
-
-    **Linearizability probe.** A sequence of transactions
-    (t1:write, t2:read, t3:write) executed concurrently must produce a
-    serial equivalent — either the order t1→t2→t3 or t3→t2→t1, but never
-    t2 reading after t3 wrote if t2 reported committing before t3.
-
-    **Dangerous-read probe.** Postgres SSI's RW-dependency cycle detection.
-    Conformant backfills must detect and abort at least one transaction in
-    every RW-cycle of size ≤ 3.
-
-    **Retry-exhaustion probe.** Under sustained contention, the backfill
-    must not deadlock. If all retries are exhausted, the implementation must
-    emit `serialization_conflict` to the caller rather than hanging
-    indefinitely or violating isolation.
-
-16. Emit `hf.persist.guarded_mutation` for every invocation of
-    `guarded_mutation()`. Payload includes `target`, `op`, `outcome`
-    (`ok | guard_failed | serialization_conflict | constraint_violation`),
-    `failed_clause` (when outcome is `guard_failed`), `duration_ns`,
-    `request_id`. This is the observability surface the boundary uses to
-    map fault codes to HTTP responses.
-
-17. Implement table reconstruction (§5.5) for every (operation, dialect) pair
+15. Implement table reconstruction (§5.5) for every (operation, dialect) pair
     that cannot be applied in place. `requires_reconstruction` is a pure lookup;
     reconstruction is a single atomic transaction; `apply()` must never silently
     skip a non-in-place operation.
 
-18. Implement `validate_schema()` (§5.6). A schema with a dangling foreign-key
+16. Implement `validate_schema()` (§5.6). A schema with a dangling foreign-key
     reference, an index/constraint/primary-key naming a missing column, or a view
     depending on a missing object is rejected with a `schema_invalid` fault at
     construction — before diff or apply.
 
-19. Enforce every declared CHECK on every supported dialect (§6.2): natively where
-    supported, via a compiled row validator inside the guarded mutation where not.
+17. Enforce every declared CHECK on every supported dialect (§6.2): natively where
+    supported, via a compiled row validator at the write boundary where not.
     A declared CHECK that can be neither natively enforced nor compiled is a
     construction-time fault, never a silently dropped guarantee.
 
-20. Diff views, triggers, and procedures by the set theory of §5.7. Functions use
+18. Diff views, triggers, and procedures by the set theory of §5.7. Functions use
     replace semantics; a view's `depends_on` participates in dependency ordering.
 
 **HC-P013 — Unbounded database routing key**

@@ -21,10 +21,7 @@ plain language in the text itself.
 | **vocabulary** | The named set of kinds an application declares — its list of recognizers. The application's set of allowed shapes. |
 | **link** | One step in handling a request: a function that takes the manifest and returns it changed, or returns a fault. Marked as a boundary step when it is allowed to touch the outside world. |
 | **chain** | An ordered list of steps the manifest flows through, stopping at the first fault. A chain is itself a step, so chains nest. |
-| **guard** | A yes/no condition checked at the moment of a write, written as data (not code), that must hold for the write to happen. |
-| **guarded mutation** | A write that checks its guard and changes the data in one all-or-nothing step, so the condition cannot become false between the check and the write. The only sanctioned way to change stored data. |
-| **data state** | A snapshot of stored data as plain data — `{table: [row, ...]}` — that a guard is checked against and an action is applied to. |
-| **mock data** | Small made-up datasets that stand in for real database reads, so guards and actions can be tested without a database. Lives in honest-persist because that is where real data is read. |
+| **guard** | An ordinary early-return precondition a developer writes in a link before a write — plain code, the same as any other business rule. (In honest-auth, still pending revision, a guard is written as a data expression; see that spec.) |
 | **fault** | A reported problem, carried as plain data `{code, message, who-is-at-fault, detail}` — never thrown as an exception except at the outer edge. |
 | **rejection** | An input that could not be recognized or placed, carried as data in the manifest — not an error that stops the program. |
 | **slot** | The name a recognized value is stored under in the manifest. |
@@ -34,7 +31,6 @@ plain language in the text itself.
 | **mutator** | The one piece of code allowed to change a given piece of state. The rule: every declared piece of state has exactly one. |
 | **role** | The kind a function is declared as — recognizer, helper, link, orchestrator, or boundary. honest-check assigns it; honest-test picks a testing strategy from it. |
 | **supervisory function** | A function that wires pieces together and passes data along (an orchestrator, or a chain) rather than computing anything itself — tested by checking its joins, not by listing its inputs. |
-| **health rule** | A statement of what valid data looks like — e.g. "every task keeps at least one owner." Checked after a boundary write to confirm the change left the data legal. The cross-row cousin of a column check. |
 | **event log** | The append-only record of everything that happened — the single source of truth that projections are built from. |
 | **projection** | A derived view computed from the event log by a pure function (a dashboard, a count, a timeline). Recomputed from events, never stored as primary data. |
 | **aggregate** | The single thing a stream of events is grouped under (one order, one account); events for the same aggregate are numbered in order. |
@@ -56,18 +52,12 @@ plain language in the text itself.
 | Term | Plain meaning |
 |---|---|
 | **idempotent** | Doing it a second time changes nothing more than doing it once. |
-| **serializable isolation** | The database runs overlapping transactions as if they had happened one at a time, in some order — no half-mixed results. |
-| **TOCTOU** | "Time of check to time of use" — the gap between checking a condition and acting on it, during which the condition can change and the action become wrong. |
-| **small-scope hypothesis** | Almost every bug of this kind already shows up in very small cases, so testing small cases finds it. |
 | **deterministic** | Always gives the same result for the same inputs — no randomness, no dependence on the time or outside state. |
 | **fold** | The pure function at the heart of a projection: it takes the running result and one event and returns the new running result (also the name of that field). |
 | **monotonic** | Only ever increases, never goes back down. |
 | **heuristic** | Best-effort, a rule of thumb — catches the common cases but is not guaranteed to catch every one. |
 | **bounded / unbounded** | Bounded = limited to a known, finite set of values, so every value can be listed and tested; unbounded (open-ended) = not. |
-| **bounded / unbounded** | Bounded = limited to a known, finite set of values, so every value can be listed and tested; unbounded (open-ended) = not. |
 | **enumerate** | List out every case, one by one (used when a set of values is finite, so the full list is possible). |
 | **exhaustive** | Covering every case, not a sample. |
 | **adversarial neighbours** | The near-miss inputs around a valid value (one character changed, a look-alike letter, an added control character) that a correct recognizer must reject. |
 | **atomic / all-or-nothing** | A step that either happens completely or not at all; no other transaction ever sees it half-done. |
-| **provenance** | Where a value in a guard comes from — read inside the same all-or-nothing write, or earlier. The guard model uses this to rule out a stale-read class of bug (a value true when checked but false when used). |
-| **write-skew** | Two transactions each read the same data and each make a change that is fine on its own, but together break a rule. Possible under weak isolation; prevented by serializable isolation. |

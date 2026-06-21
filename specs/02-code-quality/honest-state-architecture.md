@@ -17,7 +17,7 @@ Two ground truths govern everything in honest-state.
 
 > **Every declared piece of state has exactly one mutator** — one piece of code allowed to change it.
 
-One mutator means one place to look; the set of changes stays small; small is what makes checking every case possible. This is not a rule bolted on — it is the spine that `guarded_mutation` (stored state), the DOM-as-single-store (user state), HC-P016 (closures), and the HC-P004 global-read clause (module state) are each a part of.
+One mutator means one place to look; the set of changes stays small; small is what makes checking every case possible. This is not a rule bolted on — it is the spine that the ordinary boundary write (stored state), the DOM-as-single-store (user state), HC-P016 (closures), and the HC-P004 global-read clause (module state) are each a part of.
 
 ### 1.1 The single-mutator law, precisely
 
@@ -39,7 +39,7 @@ Every piece of state belongs to exactly one kind, and every kind names exactly o
 | Individual user state | manifest-declared regions of the DOM | the user (any user-initiated action) |
 | Server (SSE) state | non-declared regions of the DOM (alerts/notifications) | the server / alert source (honest-alerts) |
 | Shared session / login | a shared store — Redis (scale-out) | the auth provider |
-| Persisted domain state | the database | `guarded_mutation` |
+| Persisted domain state | the database | an ordinary boundary write (honest-persist update/insert/delete executed at the I/O boundary, §7.4) |
 | Cache | at / preferably across an I/O boundary | refresh-from-source (only write) |
 | Transient request state | the chain (the manifest), in-memory | a link's return value (functional threading) |
 | Static config | process memory, frozen at startup | startup (then read-only) |
@@ -392,8 +392,7 @@ state_machine = {
     states:      vocabulary       — all valid state names (Set recognizer)
     events:      vocabulary       — all valid event names (Set recognizer)
     transitions: {
-        (state, event): target    — a next-state name, OR a record that also carries
-                                     an action (see "Transitions that carry an action")
+        (state, event): next      — a next-state name
     }                             — the complete transition table
     initial:     String           — the starting state
     terminal:    [String]?        — optional terminal states
@@ -402,14 +401,11 @@ state_machine = {
 
 States and events are honest-type vocabularies. This means all honest-check HC-SM rules, honest-test exhaustive testing, and honest-type's reserved word validation apply automatically. State and event names cannot collide with framework reserved words. The transition table can only contain states and events declared in the vocabularies.
 
-#### Transitions that carry an action
+#### The transition is purely a routing
 
-A transition may carry an action. In the full discrete model a row is *(condition, event) → (next condition, an action to perform, the values it works on)*. The target of a transition is therefore one of two things:
+A transition is `(condition, event) → next condition` and nothing more. It does not carry an action. The target of a transition is always a single thing: a **next-state name**. The machine is plain data, and `transition()` looks up the `(state, event)` pair and returns the next state.
 
-- a **next-state name** — plain routing, no action; or
-- a **record** `{ next, action, values }` — the next state plus an action to perform and the values it works on.
-
-The action is usually a guarded mutation (honest-persist §7.5), and the values come from the only three places a value can: user input, stored data, or a calculation over those. **The machine treats the action and the values as opaque** — it stores and routes them but never looks inside them. That is deliberate: it keeps the state machine free of any dependency on what the action actually does, so the same machine works whether the action is a database write, a DOM update, or anything else. honest-test (§5.4/§5.6) reads the action and values off each transition to run the action and check that its guard still holds. `transition()` itself only routes — it returns the next state; the action is read off the table by whoever needs it.
+Anything a transition might trigger — a database write, a DOM update, a recorded history row — is not part of the machine. It is composed onto the machine's pure output by the chain that calls `transition()`. The sanctioned way to change stored data after a transition is an ordinary boundary write (honest-persist §7.4): a link that runs after a successful transition builds an update/insert/delete Query and executes it at the I/O boundary. That keeps the state machine free of any dependency on what happens next, so the same machine works whatever the surrounding chain does with its result.
 
 #### transition_result
 

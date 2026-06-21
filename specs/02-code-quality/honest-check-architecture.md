@@ -28,7 +28,6 @@ Every HC rule is a precondition for auto-generation. Each rule, when it fires, n
 | HC-P002 | Cannot verify the caught path — catching in business logic hides faults from the manifest |
 | HC-P004, HC008 | Cannot verify boundary isolation — I/O outside declared boundaries |
 | HC-P014 | Cannot distinguish slots — recognizer reuse collapses semantic roles |
-| HC-P015 | Cannot verify serializable correctness — guard references stale provenance |
 | HC-P016 | Cannot verify purity — closure carries mutable state |
 | HC-P017 | Cannot generate serialization tests — HTTP output function has no declared vocabulary |
 | HC-R001 | Cannot reach every function — orphan function has no declared role |
@@ -419,7 +418,6 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-P010 | Error | ✓ | Non-serializable return value |
 | HC-P011 | Error | ✓ | Framework lifecycle hook |
 | HC-P014 | Error | ✓ | Recognizer reused across slots |
-| HC-P015 | Error | ✓ | Cross-chain TOCTOU in guard expression |
 | HC-P016 | Error | ✓ | Nonlocal closure over mutable state |
 | HC-P017 | Error | ✓ | Serializer not declared as chain link |
 | HC-R001 | Error | ✓ | Orphan function (no role, not reachable) |
@@ -856,34 +854,6 @@ FUNCTION check_HC_P014(bindings):
 2. **Composed / sum types.** Declare a `transfer` composed type that captures `{from: user_id, to: user_id}` as a single slot. The composed type preserves both values but binds as a single slot.
 3. **Explicit acknowledgement.** A `# honest: allow-recognizer-reuse <reason>` comment suppresses HC-P014 at the binding site, but requires a BDD feature file named `{chain_name}_swap.feature` to be present and cover each slot's semantic role. honest-test verifies the feature presence.
 
-#### HC-P015 — Cross-chain TOCTOU in guard expression
-
-Guards inside `guarded_mutation` must reference only:
-- Manifest slots bound to recognizers classified at the HTTP boundary (inputs the actor directly controls)
-- `session_actor(token)`-style lookups resolved inside the persist transaction
-- Persist-side lookup expressions (`role_of`, `owner_count`, `EXISTS`, aggregates over the current snapshot)
-
-Guards must **not** reference manifest slots whose provenance is a prior `persist.read()` within the same chain — such values may be stale relative to the mutation's commit point, defeating serializable isolation.
-
-```
-FUNCTION check_HC_P015(chain):
-    FOR EACH link IN chain.links WHERE link calls guarded_mutation:
-        guard ast ← extract_guard_expression(link)
-        FOR EACH reference IN guard_ast.manifest_slot_references:
-            provenance ← trace_slot_provenance(reference, chain)
-
-            IF provenance includes persist.read OR persist.execute:
-                EMIT error(HC-P015, link.location,
-                    f"Guard references slot '{reference.slot}' whose value "
-                    f"comes from a prior persist read in the chain. This is a "
-                    f"cross-chain TOCTOU: the read value may be stale at commit. "
-                    f"Move the check into the guard via a persist-side lookup "
-                    f"expression, or fuse the read and write into a single "
-                    f"guarded_mutation.")
-```
-
-**Rationale:** serializable isolation guarantees that concurrent mutations commit as if serialized in some order — but only within the atomic scope of each transaction. A value read in transaction T1 and used as a guard parameter in transaction T2 is not within T2's snapshot. Another transaction may have invalidated the read between T1 and T2. The authorization check must happen inside the mutation's transaction, not before it.
-
 #### HC-P016 — Nonlocal closure over mutable state
 
 A function that captures a name from an enclosing scope via `nonlocal` (or equivalent) and mutates it hides state outside class declarations — closures are the non-class vector for smuggling state into otherwise-pure-looking functions.
@@ -1036,24 +1006,21 @@ FUNCTION check_HC_A001(application_context):
 
 #### HC-A002 — Authorizing link does not reference the provider
 
-An `@link` declared `authorizes=True` must compose the registered `AuthProvider`'s `derivation_expression` into its guard. Without the reference, actor identity is either trusted from external input (vulnerable to forgery) or derived outside the atomic scope of the mutation (vulnerable to TOCTOU).
+An `@link` declared `authorizes=True` must reference the registered `AuthProvider`'s derivation in its body. Without the reference, actor identity is trusted from external input (vulnerable to forgery) rather than derived from the provider.
 
 ```
 FUNCTION check_HC_A002(link, provider):
     IF link.authorizes = False: RETURN
     IF provider IS NONE: RETURN   // HC-A001 handles this case
 
-    guard_ast ← extract_guard_expression(link)
-    IF provider.derivation_expression NOT referenced_in guard_ast:
+    IF provider.derivation_name NOT referenced_in link.body:
         EMIT error(HC-A002, link.location,
-            f"Link '{link.name}' declares authorizes=True but its guard does "
+            f"Link '{link.name}' declares authorizes=True but its body does "
             f"not reference the registered AuthProvider "
-            f"('{provider.name}')'s derivation expression "
-            f"('{provider.derivation_expression.signature}'). Actor identity "
-            f"must be derived inside the guard, not trusted from manifest input.")
+            f"('{provider.name}')'s derivation "
+            f"('{provider.derivation_name}'). Actor identity "
+            f"must be derived from the provider, not trusted from manifest input.")
 ```
-
-**Relationship to HC-P015.** HC-P015 forbids guards from referencing any slot whose provenance is a prior persist read. HC-A002 specializes this for authorization: it requires that authorization decisions use the provider's derivation expression specifically, not any other persist-side lookup that happens to return something that looks like an actor identity. Together, HC-P015 and HC-A002 eliminate every path by which a stale or untrusted actor identity can reach a mutation.
 
 ### 4.3 Test Time (Deferred to honest-test)
 
@@ -1325,7 +1292,6 @@ This ensures suppressions are visible in CI and do not silently accumulate.
 | HC-P010 | Error | Static | — | Non-serializable return value |
 | HC-P011 | Error | Static | — | Framework lifecycle hook |
 | HC-P014 | Error | Static | — | Recognizer reused across slots |
-| HC-P015 | Error | Static | — | Cross-chain TOCTOU in guard expression |
 | HC-P016 | Error | Static | — | Nonlocal closure over mutable state |
 | HC-P017 | Error | Static | — | Serializer not declared as chain link |
 | HC-R001 | Error | Static | — | Orphan function (no role, not reachable) |
@@ -1335,7 +1301,7 @@ This ensures suppressions are visible in CI and do not silently accumulate.
 | HC-A002 | Error | Static | — | Authorizing link does not reference provider's derivation |
 | HC-P012 | Warning | Test | — | Excessive mocks in test (honest-test) |
 
-**Withdrawn:** *HC-SM06 ("transition writes to undeclared state field")* has been removed. It assumed a state-machine model where a state is a record of fields and transitions are field-writing functions. The canonical model (`honest-state-architecture.md`) defines a state as an atomic name and `transition()` as a pure `(state, event) → next_state` lookup that writes nothing — the caller persists the next state via `guarded_mutation`, where field-level writes are governed (HC-P015). There are no transition-written fields to police, so the rule described a model the framework does not have. honest-state §4 correctly lists only HC-SM01/02/03/04/05.
+**Withdrawn:** *HC-SM06 ("transition writes to undeclared state field")* has been removed. It assumed a state-machine model where a state is a record of fields and transitions are field-writing functions. The canonical model (`honest-state-architecture.md`) defines a state as an atomic name and `transition()` as a pure `(state, event) → next_state` lookup that writes nothing — the caller persists the next state. There are no transition-written fields to police, so the rule described a model the framework does not have. honest-state §4 correctly lists only HC-SM01/02/03/04/05.
 
 ---
 

@@ -1,22 +1,23 @@
 # honest-check self-compliance audit
 
 honest-check must itself pass every Honest Code rule — including the rules it does
-not yet *automate*. Until all 35 Full-set rules are implemented, this file records
+not yet *automate*. Until all 34 Full-set rules are implemented, this file records
 the **manual** audit of honest-check's own source against each not-yet-automated
 rule. Re-run the audit whenever the source changes; promote a row to "automated"
 when its rule lands in `_ALL_CHECKS`.
 
-Automated rules (33) enforce themselves on every self-lint (`python -m
+Automated rules (32) enforce themselves on every self-lint (`python -m
 honest_check.cli src/honest_check`, exit 0). The rule set is now closed: the only
 remaining manual row is HC-P010 (subsumed by HC-P003); HC-SM06 was withdrawn from
-the spec, and HC-P008/P009/P012 belong to honest-test.
+the spec, HC-P015 was removed with the guard primitive, and HC-P008/P009/P012
+belong to honest-test.
 
 | Rule | Manual audit result |
 |---|---|
 | ~~HC004 / HC005 / HC-P014~~ | **Now AUTOMATED** (binding tier). |
 | ~~HC010 / HC-A001 / HC-A002~~ | **Now AUTOMATED** (emission + auth tier). |
 | ~~HC-OR003~~ | **Now AUTOMATED** (roles tier). Fires only on `@orchestrator` bodies; the `function_name` dedup intent still re-audited manually on new helpers. |
-| ~~HC-P015~~ | **Now AUTOMATED.** Built against the honest-persist guard DSL (§7.5). Traces `slot()` provenance in a guard vs prior `persist.read`/`execute`. (Cross-link taint — read in link N, guard in link M of the same chain — is a documented extension; the within-link case is covered.) |
+| ~~HC-P015~~ | **REMOVED from the spec.** The framework deleted the guarded-mutation primitive and the guard-expression DSL the rule depended on; race conditions are now the programmer's responsibility. The rule function, helpers, registration, and conformance cases were removed. |
 | ~~HC-SM06~~ | **WITHDRAWN from the spec.** Assumed a state-as-record/transition-as-function model; the canonical honest-state model is state-as-name with a pure `(state,event)→next_state` lookup that writes no fields — so there is nothing to police. honest-state §4 lists only HC-SM01–05. |
 | **HC-OR003** duplication between orchestrators | **Audited — one finding, fixed.** No `@orchestrator` functions (rule formally N/A), but enforcing the underlying no-duplication intent: `function_name` was duplicated as `rules._function_name`. Removed; `rules.py` now imports `declgraph.function_name`. Re-audit on new helpers. |
 | **HC-P010** non-serializable return value | **Audited — standing exemption documented (below).** |

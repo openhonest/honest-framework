@@ -24,7 +24,7 @@ honest-test tests a function according to **what kind of function it is** — th
 
 2. **Supervisory functions** — `@orchestrator`s and the chains they run: the wiring that connects pieces and passes the manifest along. They compute nothing themselves, so they are tested by **checking the joins** — every valid output of one step is accepted by the next, and faults flow where they should. This is contract checking, not input enumeration. (Section 4.6.)
 
-3. **I/O boundary functions** — `@link(boundary=True)` / `@boundary`: the actual reads and writes (database, DOM, network). They touch the outside world, so they cannot be run purely. Tested by **standing in for the outside world** — made-up data or a fake connection — and **checking the effect is legal**: the change left the data's **health rules** intact. This is where mock data, the permission checks (guards), and the health-rule checks belong. It works for any store — database, DOM, session — because the store is simply what the stand-in replaces. (Sections 5, 6.)
+3. **I/O boundary functions** — `@link(boundary=True)` / `@boundary`: the actual reads and writes (database, DOM, network). They touch the outside world, so they cannot be run purely. Tested by **standing in for the outside world** — a fake connection or made-up inputs — and **checking the effect is the intended one**: the right query is built and issued, and the right result or fault comes back. It works for any store — database, DOM, session — because the store is simply what the stand-in replaces. (Sections 5, 6.)
 
 Sitting above all three is **BDD**: developer-authored Gherkin `.feature` files at the system-requirement level, for the multi-step user journeys no single function's test can express. Scaffolding is auto-generated from `@link` declarations; the developer writes only the `.feature` files. (Section 8.)
 
@@ -560,113 +560,6 @@ FUNCTION test_adversarial_state_machine(machine):
 
 ---
 
-### 5.4 Data Health Rules
-
-This is the **I/O-boundary testing strategy** (§1): the action a transition carries is a write, so it is tested by standing in for the outside world and checking the effect is legal.
-
-In the discrete model a transition carries more than the next condition: it carries the **action** to perform and the **values** that action works on — `(condition, event) → (next_condition, action, values)`. The action is usually a guarded mutation of stored or DOM data, and its values come from the only three places a value can: user input, stored data, or a calculation over those (§3, §6).
-
-Two different things must be kept apart:
-
-- the **guard** on the action is a **precondition** — the condition for the action to be allowed (e.g. "there is more than one required member"). It gates the write and is *not* expected to hold afterward: demoting one of two leaves one, and "more than one" is now false.
-- a **health rule** is a statement of what valid data looks like — e.g. "every set keeps at least one required member", "no member appears twice in a set". It must hold *after* every action. Health rules are not properties of the discrete condition (that is just a label like `active`/`archived`); they are properties of the **data**, true no matter which action runs. They live with the state they describe — for stored data, alongside the schema; for DOM/user state, with that state — written as the same guard-expression data, free to count and check across rows.
-
-honest-test checks that **no action can leave the data breaking a health rule.** For every transition whose action is a write, it runs the action over its value-sources — each from a bounded domain, so the check covers every case without enumerating an unbounded data space:
-
-- input values from the recognizer vocabularies (§3),
-- stored values from the schema mock-data generator (honest-persist §8.9),
-- calculated values transitively, as pure functions of those.
-
-**Harness algorithm:**
-
-```
-FUNCTION check_action_health(machine, schema, health_rules):
-    FOR EACH (condition, event), (next_condition, action, value_spec) IN machine.transitions:
-        FOR EACH data IN mock_data_states(schema):                 // bounded made-up data
-            FOR EACH values IN enumerate_value_sources(value_spec):  // input × actors, bounded
-                result ← run_action(action, data, values)
-                IF result is ok:                                    // the write went through
-                    after ← result.ok.data
-                    FOR EACH rule IN health_rules:
-                        IF NOT rule.holds(after):
-                            EMIT failure("health_rule_broken",
-                                f"Action on ({condition}, {event}) left rule '{rule.name}' "
-                                f"broken. Values: {values}.")
-                // a result the guard REFUSED (err) is correct, not a failure
-```
-
-**Why a precondition and a health rule are different.** Re-checking the precondition after the action would flag correct code: a correct demote (two required → one) makes "more than one" false, yet the data is fine because "at least one" still holds. The health rule ("at least one") is what must survive; the precondition ("more than one") is only what makes the write safe. Checking the health rule after catches a *broken* precondition — one that let a write take the last required member — with no false alarms on correct ones.
-
-**Relationship to transition testing (§5.1).** §5.1 checks the discrete table — `(condition, event) → next_condition`. §5.4 checks that the **action** bound to that transition cannot leave the data breaking a health rule. Both run on the same pass over the table.
-
-**Dependency.** Health-rule checking, the action runner, and mock data are honest-persist concerns (honest-persist §7.5, §8.9). §5.4 is the boundary-testing driver over that model — it cannot run before honest-persist provides `run_action`, the guard/health-rule evaluator, and the mock-data generator.
-
-**Why this matters.** An action can move to a valid-looking next condition — passing §5.1 — while its write breaks a whole-collection rule the condition table cannot see (it removes the last required member of a set). Single-step transition testing cannot catch that; §5.4 runs the action over the limited value-sources and finds the broken rule while the tests are being generated, with no end-to-end test needed.
-
-### 5.5 TOCTOU Detection — Runtime Analog of HC-P015
-
-honest-check HC-P015 forbids guards in `guarded_mutation` from referencing manifest slots whose provenance is a prior `persist.read()` within the same chain. honest-test verifies this at runtime for cases the static analyzer cannot resolve (dynamic call paths, indirect references).
-
-```
-FUNCTION verify_toctou_isolation(chain, test_manifest):
-    // Instrument persist.read and persist.execute to tag returned values
-    // with a provenance marker. Run the chain with the instrumented persist.
-
-    WITH persist_provenance_tracker():
-        result ← execute_chain(chain, test_manifest)
-
-    // Inspect every guard expression executed during the chain run.
-    // For each reference in each guard, check the provenance tag.
-
-    FOR EACH guard_invocation IN tracker.guard_invocations:
-        FOR EACH referenced_value IN guard_invocation.references:
-            IF referenced_value.provenance IS persist.read:
-                EMIT failure("toctou_vulnerable",
-                    f"Chain '{chain.name}' executed a guard that references "
-                    f"value read from persist earlier in the chain. "
-                    f"Guard location: {guard_invocation.location}. "
-                    f"Source read: {referenced_value.provenance.location}. "
-                    f"This is a cross-chain TOCTOU vulnerability. "
-                    f"Use a persist-side lookup expression in the guard instead.")
-```
-
-Runtime detection complements static HC-P015: every call path that HC-P015 can see is already flagged pre-commit; any path that dynamic dispatch hides from the static analyzer is caught here. Together the two checks leave no escape.
-
-### 5.6 K-Step Sequence Enumeration
-
-Single-step health checking (§5.4) catches a problem caused by one action. Many whole-collection bugs only show up after a **sequence** — three individually-legal transitions (add → reassign → remove) can leave a set with zero required members, a state no single step reaches.
-
-Because conditions and events are bounded Sets (HC-SM01, HC-SM02), the sequence space is finite. honest-test enumerates every event sequence of length ≤ K from each initial condition, runs each transition's action with values from the bounded sources, and checks the **health rules** after **every** step.
-
-```
-FUNCTION enumerate_k_step_sequences(machine, schema, health_rules, K):
-    FOR EACH start IN enumerate_initial_conditions(machine):
-        FOR EACH data IN mock_data_states(schema):                 // bounded made-up data states
-            FOR EACH sequence IN all_event_sequences(machine.events, length ≤ K):
-                condition ← start
-                state     ← data
-                FOR i, event IN enumerate(sequence):
-                    entry ← machine.transitions.get((condition, event))
-                    IF entry IS NONE: BREAK    // sequence leaves the reachable space
-                    next_condition, action, value_spec ← entry
-                    FOR EACH values IN enumerate_value_sources(value_spec):
-                        result ← run_action(action, state, values)
-                        IF result is ok:
-                            state ← result.ok.data
-                            FOR EACH rule IN health_rules:
-                                IF NOT rule.holds(state):
-                                    EMIT failure("health_rule_broken_at_depth",
-                                        f"Rule '{rule.name}' broken at step {i+1} "
-                                        f"of sequence {sequence[:i+1]} from {start}.")
-                    condition ← next_condition
-```
-
-**Keeping the space small.** Three things must stay limited for the run to be finite and cover every case: the **conditions** and **events** (finite Sets by construction), and the **value-sources** the actions use. Input values are limited by their vocabularies (§3); stored values by the schema mock-data generator (§6.2); action parameters drawn from an actor-like range are limited to a small fixed test pool. A small pool is enough by the **small-scope hypothesis** — almost every whole-collection or role-confusion bug already shows up in small cases, so two or three test actors reveal it. You do not need a thousand to reach the zero-required-member state.
-
-**Configuration.** K is declared per machine, default K = 4. The space is `|events|^K` sequences per starting point (initial condition × initial data × value combination). For `|events| = 8, K = 4`, that is 4,096 event sequences per starting point — tractable in seconds. Raise K for high-assurance domains (authorization, financial workflows); K = 1 reduces to single-step guard checking (§5.4).
-
-**Why this matters.** Actions can be correct for every single `(condition, event)` pair — passing §5.1 and §5.4 — yet corrupt the data only after N events. §5.6 catches such sequences whenever N ≤ K, while the tests are being generated, with no end-to-end run of the full multi-step flow.
-
 ## 6. honest-persist Tests
 
 honest-test generates contract tests for honest-persist query functions. These verify that queries behave correctly against the declared schema without requiring a production database.
@@ -692,22 +585,6 @@ FUNCTION test_persist_contract(query_fn, table_config, db_connection):
         ASSERT result["ok"] is list
         IF len(result["ok"]) > 0:
             ASSERT conforms_to_schema(result["ok"][0], table_config.columns)
-```
-
-### 6.2 Mock Data Integration
-
-When `data_mode = "mock"`, honest-test uses honest-persist's mock data generator to produce schema-conformant test rows. This guarantees every conditional formatting rule in a `TableConfig` fires at least once.
-
-```
-FUNCTION test_mock_coverage(table_config):
-    mock_rows ← generate_mock_data(table_config, coverage_spec=table_config.formatting_rules)
-
-    FOR EACH rule IN table_config.formatting_rules:
-        matching_rows ← [row FOR row IN mock_rows IF rule.condition(row)]
-        IF len(matching_rows) = 0:
-            EMIT failure("formatting_rule_never_fires",
-                f"Conditional formatting rule '{rule.name}' never fires in mock data. "
-                "Add an explicit coverage case to honest-test.toml.")
 ```
 
 ---
