@@ -278,18 +278,41 @@ A new language version (after the Python reference) is not built module-first an
 
 ### The build order
 
-The modules depend on each other in one direction, with no cycles. Build them in an order that respects those dependencies. In the Python reference:
+The modules depend on each other in one direction, with no cycles. Build them in an order that respects those dependencies. The full set, with each module's upstream dependencies:
 
 ```
-parse                       the shared parser — wraps tree-sitter; depends on nothing else
-type                        the type system — depends on nothing else
-check      → parse          the structural gate
-test       → parse, type    builds and runs the tests
-observe    → type           the event log and projections — the boundaries instrument through it
-persist    → type, observe  schema/query/transaction boundaries emit to the event log
+# Leaves — depend on nothing. Built and hand-checked first.
+parse                                              the shared parser (wraps tree-sitter)
+type                                               the type system
+errors                                             the error-policy leaf: normalizers,
+                                                   behavior table, rate-limiter; no I/O
+
+# Code-quality tier
+check      → parse                                 the structural gate
+test       → parse, type                           builds and runs the tests
+observe    → type, errors                          the event log and projections;
+                                                   composes errors' normalizers
+persist    → type, observe                         schema/query/transaction boundaries
+                                                   emit to the event log
+gherkin    → test, check                           BDD scaffolding over the generated tests
+auth       → type, persist                          authentication / authorization
+state      → type, check, test, persist            the kinds of state and the single-mutator rule
+features   → type, check, test, observe            feature flags as a bounded vocabulary
+
+# Application-production tier
+page       → type                                   the host-page structural contract
+DOM        → type, state, observe                   DOM-as-state (DATAOS) primitives
+components → type, page, observe                     atoms / molecules / organisms
+alerts     → errors, observe, persist, state, auth  server-push notifications
 ```
 
-`observe` comes before `persist` because every persistence boundary (execute, apply, transactions) emits to the event log: persist instruments *through* observe, so observe must exist first.
+Three rules fix this order:
+
+- **Leaves first.** `parse`, `type`, and `errors` depend on nothing. `errors` is a true leaf — it normalizes failures into one report, decides behavior as a pure function of the environment, and throttles repeats, all with no I/O — and it is *composed* by `observe` (the normalizers) and `alerts` (the behavior table and rate-limiter), so it must precede both.
+- **`observe` before `persist`.** Every persistence boundary (execute, apply, transactions) emits to the event log: persist instruments *through* observe. (observe's own emit stores via persist, but it receives that writer at the boundary rather than importing persist, so the dependency runs one way: persist → observe.)
+- **Application tier last.** `page`, `DOM`, `components`, and `alerts` build on the code-quality tier; `components` and `alerts` mount into `page`.
+
+The Python reference has implemented through `parse`, `type`, `check`, `test`, `persist`, and `observe` (the last as its pure foundation); the remaining modules are specified and not yet built.
 
 **`parse` is the real starting point, not `check`.** The gate depends on the parser, so the parser is built and checked by hand first. A language whose grammar tree-sitter does not yet cover must add that grammar to the parser before anything else; the rest of the framework only ever reaches the parser through this one module, never tree-sitter directly.
 
@@ -333,8 +356,12 @@ The generated proof is complete only when it reaches every line and branch of th
        ┌─────────────────────────────────────────────────────────┐
  │       The Patterns (language-agnostic spec)             |
  │                          │                              │
- │honest-type   honest-check   honest-test   honest-persist│
- │  honest-observe   honest-alerts   honest-DOM            │
+ │ leaves:  honest-parse  honest-type  honest-errors       │
+ │ quality: honest-check  honest-test  honest-observe       │
+ │          honest-persist  honest-gherkin  honest-auth     │
+ │          honest-state  honest-features                   │
+ │ app:     honest-page  honest-DOM  honest-components       │
+ │          honest-alerts                                   │
  └──────────────────────────┬──────────────────────────────┘
                each language | implements all patterns
           ┌──────────────────┼──────────────────────┐
