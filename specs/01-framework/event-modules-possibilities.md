@@ -59,7 +59,7 @@ See `specs/01-framework/event-modules-spec.md`.
 | **honest-tax** | Every taxable event logged. Jurisdiction rules as recognizers. Filings derived from projections. | Avalara-lite. Audit trail is free. |
 | **honest-revenue** | Revenue recognition (ASC 606, IFRS 15). Event log gives perfect audit trail. Deferred revenue = projection over lifecycle events. | Sarbanes-Oxley sign-off becomes trivial. |
 | **honest-commission** | Sales commission calculation. Attribution + payout rules as projections. | CaptivateIQ-lite. Disputes resolved by replay. |
-| **honest-cost** | FinOps. Showback/chargeback by tag is a reduction. Unit economics (cost per request, cost per tenant) are ratios of reductions. | Most companies do this in spreadsheets. |
+| **honest-cost** | FinOps. Showback/chargeback by tag is a running total over events. Unit economics (cost per request, cost per tenant) are ratios of those totals. | Most companies do this in spreadsheets. |
 
 ## Product & growth
 

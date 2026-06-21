@@ -42,6 +42,9 @@ plain language in the text itself.
 | **conformance** | Meeting the standard. A conformance suite is the shared set of input/output cases an implementation must pass to count as correct. |
 | **Big State** (the thing the framework refuses) | Hidden state, undifferentiated state, and more than one source of truth — the failure modes the framework will not let you express. |
 | **DATAOS** | "DOM As The Authority On State" — the page itself holds the user's state; there is no separate copy of it in client-side code. |
+| **atom / molecule / organism** | The three component tiers: an atom is the smallest piece (a button, an input); a molecule composes atoms into one unit (a labelled field); an organism is a self-contained page section that talks to the server. |
+| **tenant** | One customer organization in a shared deployment; data and addressing can be scoped to a tenant. |
+| **subscriber** | In pub-sub messaging, something that registers to receive every message matching a topic. |
 
 ## General computing terms kept for brevity
 
