@@ -413,6 +413,113 @@ def _probe_extended():
     return bad
 
 
+def _probe_guards():
+    """The Guard Expression DSL (§7.5): constructors validate at construction; validate_guard
+    walks the closed kind sets + registry; instantiate resolves param templates; provenance
+    classifies terms."""
+    from honest_persist.guards import (
+        GuardError,
+        and_,
+        column,
+        compare,
+        count,
+        derive,
+        exists,
+        instantiate,
+        literal,
+        lookup,
+        match,
+        not_,
+        or_,
+        param,
+        provenance,
+        slot,
+        truthy,
+        validate_guard,
+    )
+
+    bad = []
+
+    # Term + predicate constructors produce the right kind; literal accepts every scalar.
+    scalars = [literal(None), literal("a"), literal(1), literal(1.5), literal(True)]
+    if any(t["kind"] != "literal" for t in scalars):
+        bad.append("literal scalar construction wrong")
+    kinds = {
+        "column": column("c"), "slot": slot("s"), "derive": derive("d"), "lookup": lookup("l"),
+        "count": count("t"), "param": param("p"), "and": and_(truthy()), "or": or_(truthy()),
+        "not": not_(truthy()), "compare": compare(column("c"), "=", literal(1)),
+        "exists": exists("t", [match("c", literal(1))]), "true": truthy(),
+    }
+    for expected, node in kinds.items():
+        if node["kind"] != expected:
+            bad.append(f"constructor for {expected!r} produced {node['kind']!r}")
+
+    # Construction-time errors.
+    errors = [
+        ("non-scalar literal", lambda: literal([1])),
+        ("empty and", lambda: and_()),
+        ("empty or", lambda: or_()),
+        ("bad compare op", lambda: compare(column("c"), "bogus", literal(1))),
+    ]
+    for label, thunk in errors:
+        try:
+            thunk()
+            bad.append(f"{label} should raise GuardError")
+        except GuardError:
+            pass
+
+    # Provenance — fixed for six kinds, chain-traced for slot.
+    prov = {
+        "constant": literal(1), "target_snapshot": column("c"),
+        "in_transaction_derivation": derive("d"), "transaction_snapshot": count("t"),
+        "chain_traced": slot("s"),
+    }
+    for cls, term in prov.items():
+        if provenance(term) != cls:
+            bad.append(f"provenance({term['kind']}) != {cls}")
+    if provenance(lookup("l")) != "transaction_snapshot":
+        bad.append("provenance(lookup) wrong")
+
+    # validate_guard — a fully-featured valid guard over a registry.
+    registry = {"derive": {"session_actor"}, "lookup": {"role_of"}}
+    good = and_(
+        compare(lookup("role_of", [slot("token")]), "=", literal("owner")),
+        not_(or_(
+            compare(column("x"), ">", literal(0)),
+            exists("t", [match("c", derive("session_actor", [slot("token")]))]),
+        )),
+        compare(count("t", [match("c", literal(1))]), ">", literal(0)),
+        compare(param("token"), "=", literal(1)),
+    )
+    if "ok" not in validate_guard(good, registry):
+        bad.append(f"valid guard rejected: {validate_guard(good, registry)}")
+    # Rejections: unregistered name, unknown predicate kind, unknown term kind, bad op at
+    # validate level, and the registry=None default (any derive fails).
+    rejects = [
+        ("unregistered lookup", compare(lookup("nope"), "=", literal(1)), registry),
+        ("unknown predicate kind", {"kind": "bogus"}, registry),
+        ("unknown term kind", compare({"kind": "weird"}, "=", literal(1)), registry),
+        ("bad op at validate", {"kind": "compare", "op": "bogus", "left": literal(1), "right": literal(1)}, registry),
+        ("derive with no registry", compare(derive("d"), "=", literal(1)), None),
+    ]
+    for label, guard, reg in rejects:
+        if "err" not in validate_guard(guard, reg):
+            bad.append(f"{label} should be invalid_guard")
+
+    # instantiate — a template's param leaves are replaced; an unbound param faults.
+    template = and_(
+        compare(derive("session_actor", [param("token")]), "=", literal("owner")),
+        not_(exists("t", [match("c", param("uid"))])),
+        or_(compare(count("t", [match("c", param("n"))]), ">", literal(0)), truthy()),
+    )
+    resolved = instantiate(template, {"token": slot("token"), "uid": column("uid"), "n": literal(5)})
+    if "ok" not in resolved:
+        bad.append(f"instantiate failed: {resolved}")
+    if "err" not in instantiate(compare(param("missing"), "=", literal(1)), {}):
+        bad.append("unbound param should fault")
+    return bad
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -424,6 +531,7 @@ def run():
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),
         "extended": _probe_extended(),
+        "guards": _probe_guards(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():
