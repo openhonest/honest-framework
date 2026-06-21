@@ -148,8 +148,8 @@ definition.
 honest-persist is polymorphic across SQL dialects. The supported dialects are:
 
 ```
-"postgresql"  — PostgreSQL via asyncpg or equivalent
-"sqlite"      — SQLite via aiosqlite or equivalent
+"postgresql"  — PostgreSQL via the host language's async driver
+"sqlite"      — SQLite via the host language's driver (synchronous; wrapped for async, see 7.4)
 "turso"       — Turso embedded with optional Cloud sync (MVCC, Rust-native)
 ```
 
@@ -864,12 +864,14 @@ execute_scalar(query: Query, conn: Connection)   → Any?
 execute_many(query: Query, conn: Connection)     → Int  // rows affected
 ```
 
-All execute functions are async, and so is the connection they await. **Async is the layer's
-interface everywhere — sync lives only at the SQLite edge.** A native async driver (pyturso's
-`turso.aio`, Postgres via asyncpg) is awaited directly. SQLite is the one synchronous backend:
-`sqlite3` is a blocking DB-API 2.0 driver because SQLite is an embedded library, not network
-I/O — so a SQLite connection adapter makes that one sync call off the event loop and presents
-the async `execute` the boundary expects. Above that adapter, nothing is synchronous.
+All execute functions are async, and so is the connection they await — the spec's standing
+assumption is a host language with async I/O support (see the introduction). **Async is the
+layer's interface everywhere; synchrony lives only at the SQLite edge.** A backend with a
+native async driver is awaited directly. SQLite is the one inherently synchronous backend — an
+embedded library reached by a blocking in-process call, not a network service — so its driver
+is synchronous in every language. A SQLite connection adapter makes that one blocking call
+without stalling other work (for example, on a worker thread) and presents the async `execute`
+the boundary expects. Above that adapter, nothing is synchronous.
 
 They accept a connection (not a pool — the caller manages connection acquisition). They return
 plain data: lists of dicts, single dicts, or scalars. `execute_one` and `execute_scalar` return
