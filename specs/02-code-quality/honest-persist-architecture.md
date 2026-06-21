@@ -864,10 +864,16 @@ execute_scalar(query: Query, conn: Connection)   → Any?
 execute_many(query: Query, conn: Connection)     → Int  // rows affected
 ```
 
-All execute functions are async — a synchronous database call is the deprecated pattern, so the
-boundary awaits the driver. They accept a connection (not a pool — the caller manages connection
-acquisition). They return plain data: lists of dicts, single dicts, or scalars. `execute_one`
-and `execute_scalar` return nothing (the host language's null) when there are no rows.
+All execute functions are async, and so is the connection they await. **Async is the layer's
+interface everywhere — sync lives only at the SQLite edge.** A native async driver (pyturso's
+`turso.aio`, Postgres via asyncpg) is awaited directly. SQLite is the one synchronous backend:
+`sqlite3` is a blocking DB-API 2.0 driver because SQLite is an embedded library, not network
+I/O — so a SQLite connection adapter makes that one sync call off the event loop and presents
+the async `execute` the boundary expects. Above that adapter, nothing is synchronous.
+
+They accept a connection (not a pool — the caller manages connection acquisition). They return
+plain data: lists of dicts, single dicts, or scalars. `execute_one` and `execute_scalar` return
+nothing (the host language's null) when there are no rows.
 
 The connection is the boundary's one collaborator, duck-typed: `await conn.execute(sql, params)`
 returns `{rows: [row, ...], rowcount: Int}`, where each row is a plain dict. `execute` returns
