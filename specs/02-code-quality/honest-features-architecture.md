@@ -67,7 +67,7 @@ No other keys are permitted at the vocabulary level. Metadata (owner, descriptio
 
 ### 2.2 Vocabulary as honest-type Integration
 
-The `states` set of each flag is a Set recognizer in the honest-type sense: finite, enumerable, exhaustively testable. `feature_state()` returns a value that is guaranteed to be a member of the declared states set. Downstream handler tables are guaranteed to have a handler for every possible flag state.
+The `states` set of each flag is a Set recognizer in the honest-type sense: finite, listable, testable in full. `feature_state()` returns a value that is guaranteed to be a member of the declared states set. Downstream handler tables are guaranteed to have a handler for every possible flag state.
 
 ---
 
@@ -329,9 +329,9 @@ def reset_features():
         _state[flag] = spec["default"]
 ```
 
-### 6.3 Exhaustive Testing
+### 6.3 Testing every combination
 
-Because each flag's states are a finite Set, honest-test can enumerate all combinations and generate a test case for each. For a flag with two states and a handler table with two handlers, honest-test generates two test cases automatically. For three flags each with two states, honest-test generates eight test cases. No test case is written by hand for correctness coverage — the combinations fall out of the vocabulary.
+Because each flag's states are a finite Set, honest-test can list all combinations and generate a test case for each. For a flag with two states and a handler table with two handlers, honest-test generates two test cases automatically. For three flags each with two states, honest-test generates eight test cases. No test case is written by hand for correctness coverage — the combinations fall out of the vocabulary.
 
 ---
 
@@ -405,7 +405,7 @@ honest-features already provides everything needed for the flag mechanism: a mul
 
 A/B testing adds three concerns on top:
 
-- **Variant assignment:** routing a specific user or session to a specific variant deterministically and consistently
+- **Variant assignment:** routing a specific user or session to a specific variant the same way every time
 - **Measurement:** correlating variant assignment with outcome metrics in the event log
 - **Statistical analysis:** determining when a measured difference is significant
 

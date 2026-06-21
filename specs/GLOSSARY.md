@@ -47,6 +47,7 @@ plain language in the text itself.
 | **serializable isolation** | The database runs overlapping transactions as if they had happened one at a time, in some order — no half-mixed results. |
 | **TOCTOU** | "Time of check to time of use" — the gap between checking a condition and acting on it, during which the condition can change and the action become wrong. |
 | **small-scope hypothesis** | Almost every bug of this kind already shows up in very small cases, so testing small cases finds it. |
+| **deterministic** | Always gives the same result for the same inputs — no randomness, no dependence on the time or outside state. |
 | **enumerate** | List out every case, one by one (used when a set of values is finite, so the full list is possible). |
 | **exhaustive** | Covering every case, not a sample. |
 | **adversarial neighbours** | The near-miss inputs around a valid value (one character changed, a look-alike letter, an added control character) that a correct recognizer must reject. |
