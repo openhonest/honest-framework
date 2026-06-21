@@ -1,0 +1,20 @@
+{
+  "version": "0.1",
+  "module": "honest-errors",
+  "cases": [
+    {"id": "he-js-critical", "classify": {"fn": "js", "payload": {"message": "Critical failure", "source": "app.js", "lineno": 42, "colno": 5, "stack": "at f", "function": "h", "context": {"u": 1}}, "environment": "production", "timestamp": "2026-01-01T00:00:00Z"}, "expect": "ok", "expect_report": {"exception_type": "JavaScriptError", "message": "Critical failure", "severity": "critical", "environment": "production", "file": "app.js", "line": 42, "function": "h", "traceback": "at f", "context": {"u": 1}, "timestamp": "2026-01-01T00:00:00Z"}},
+    {"id": "he-js-minimal", "classify": {"fn": "js", "payload": {"message": "boom", "source": "app.js", "lineno": 1, "colno": 1}, "environment": "test", "timestamp": "2026-01-01T00:00:00Z"}, "expect": "ok", "expect_report": {"exception_type": "JavaScriptError", "message": "boom", "severity": "error", "environment": "test", "file": "app.js", "line": 1, "function": "", "traceback": "", "context": {}, "timestamp": "2026-01-01T00:00:00Z"}},
+    {"id": "he-js-missing-colno", "classify": {"fn": "js", "payload": {"message": "x", "source": "a", "lineno": 1}, "environment": "test", "timestamp": "2026-01-01T00:00:00Z"}, "expect": "err", "expect_code": "malformed_payload"},
+    {"id": "he-py-ok", "classify": {"fn": "py", "payload": {"exception_type": "ValueError", "message": "bad", "tb_file": "x.py", "tb_line": 10, "tb_function": "g", "traceback": "TB", "context": {"k": 2}}, "environment": "production", "timestamp": "2026-01-01T00:00:00Z"}, "expect": "ok", "expect_report": {"exception_type": "ValueError", "message": "bad", "severity": "error", "environment": "production", "file": "x.py", "line": 10, "function": "g", "traceback": "TB", "context": {"k": 2}, "timestamp": "2026-01-01T00:00:00Z"}},
+    {"id": "he-py-missing-tb-function", "classify": {"fn": "py", "payload": {"exception_type": "E", "message": "m", "tb_file": "f", "tb_line": 1}, "environment": "test", "timestamp": "2026-01-01T00:00:00Z"}, "expect": "err", "expect_code": "malformed_payload"},
+    {"id": "he-bypass-critical", "bypass": {"severity": "critical"}, "expect": true},
+    {"id": "he-bypass-error", "bypass": {"severity": "error"}, "expect": false},
+    {"id": "he-behaviors-production", "behaviors": {"environment": "production"}, "expect": [{"name": "log", "order": 0}, {"name": "email", "order": 1}]},
+    {"id": "he-behaviors-development", "behaviors": {"environment": "development"}, "expect": [{"name": "log", "order": 0}, {"name": "reraise", "order": 1}]},
+    {"id": "he-behaviors-test", "behaviors": {"environment": "test"}, "expect": [{"name": "log", "order": 0}]},
+    {"id": "he-behaviors-unknown", "behaviors": {"environment": "staging"}, "expect": [{"name": "log", "order": 0}, {"name": "reraise", "order": 1}]},
+    {"id": "he-rl-allow", "rate_limit": {"key": {"exception_type": "E", "file": "f", "line": 1}, "config": {"dedup_window_seconds": 60, "max_per_hour": 3}, "state": {"dedup_cache": {}, "hourly_sends": []}, "now": 1000}, "expect_decision": {"should_send": true, "reason": ""}},
+    {"id": "he-rl-hourly", "rate_limit": {"key": {"exception_type": "E", "file": "f", "line": 1}, "config": {"dedup_window_seconds": 60, "max_per_hour": 3}, "state": {"dedup_cache": {}, "hourly_sends": [990, 995, 998]}, "now": 1000}, "expect_decision": {"should_send": false, "reason": "rate_limit_hourly"}},
+    {"id": "he-rl-dedup", "rate_limit": {"key": {"exception_type": "E", "file": "f", "line": 1}, "config": {"dedup_window_seconds": 60, "max_per_hour": 3}, "state": {"dedup_cache": {"E|f|1": 990}, "hourly_sends": [990]}, "now": 1000}, "expect_decision": {"should_send": false, "reason": "rate_limit_dedup"}}
+  ]
+}

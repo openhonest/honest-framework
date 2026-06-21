@@ -10,7 +10,7 @@
 set -uo pipefail
 cd "$(dirname "$0")"            # -> python/
 
-SRC=honest_check,honest_observe,honest_parse,honest_persist,honest_test,honest_type
+SRC=honest_check,honest_errors,honest_observe,honest_parse,honest_persist,honest_test,honest_type
 COV="uv run --with coverage coverage"
 
 $COV erase
