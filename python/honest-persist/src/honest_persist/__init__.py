@@ -7,6 +7,7 @@ structures (section 4) and the pure schema diff (section 5.1).
 from honest_persist.apply import apply, reconstruction_sql, requires_reconstruction, to_sql
 from honest_persist.check import check_holds, parse_check
 from honest_persist.evaluate import evaluate_guard, run_action
+from honest_persist.mock import mock_data_states
 from honest_persist.guards import GuardError, compile_guard, instantiate, provenance, validate_guard
 from honest_persist.mutation import compile_guarded_mutation, diagnose_guard_failure, guarded_mutation
 from honest_persist.query import delete, insert, raw, select, update
@@ -47,6 +48,7 @@ __all__ = [
     "diagnose_guard_failure",
     "evaluate_guard",
     "run_action",
+    "mock_data_states",
     "GuardError",
     "operation",
     "diff_result",

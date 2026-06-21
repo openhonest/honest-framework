@@ -803,6 +803,58 @@ def _probe_evaluate():
     return bad
 
 
+def _probe_mock():
+    """Mock data (§8.9): small {table: [row]} datasets enumerated from a schema's bounded
+    column values — the input honest-test §5.4/§5.6 run guards and actions over."""
+    from honest_persist import mock_data_states
+
+    bad = []
+    # Empty schema -> a single empty state.
+    if mock_data_states({}) != [{}]:
+        bad.append("empty schema should be [{}]")
+    # A table with no columns -> only the empty population.
+    if mock_data_states({"t": {"columns": {}}}) != [{"t": []}]:
+        bad.append("a column-less table should yield only the empty population")
+
+    # Single table from declared value sets: count, max_rows, value domain, orphan-relevant spread.
+    schema = {"membership": {"columns": {"member": {"literal_values": ["m1", "m2"]}, "role": {"literal_values": ["required", "plain"]}}}}
+    states = mock_data_states(schema, max_rows=2)
+    if len(states) != 11:  # empty + C(4,1) + C(4,2)
+        bad.append(f"expected 11 states, got {len(states)}")
+    if any(len(s["membership"]) > 2 for s in states):
+        bad.append("max_rows not respected")
+    if any(row["role"] not in {"required", "plain"} for s in states for row in s["membership"]):
+        bad.append("a row value fell outside the declared set")
+    required_counts = {sum(1 for row in s["membership"] if row["role"] == "required") for s in states}
+    if not {0, 1, 2} <= required_counts:
+        bad.append(f"orphan-relevant 0/1/2 required-counts missing: {required_counts}")
+
+    # Boolean column -> True/False.
+    bool_vals = {row["b"] for s in mock_data_states({"t": {"columns": {"b": {"type": "boolean"}}}}, max_rows=1) for row in s["t"]}
+    if bool_vals != {True, False}:
+        bad.append(f"boolean column should yield True/False, got {bool_vals}")
+
+    # Pool fallback by column name, by type, by _default; and an un-pooled column -> empty.
+    if not any(r.get("id") == "x" for s in mock_data_states({"t": {"columns": {"id": {"type": "uuid"}}}}, max_rows=1, pools={"id": ["x"]}) for r in s["t"]):
+        bad.append("pool by column name not used")
+    if not any(r.get("k") == "u" for s in mock_data_states({"t": {"columns": {"k": {"type": "uuid"}}}}, max_rows=1, pools={"uuid": ["u"]}) for r in s["t"]):
+        bad.append("pool by type not used")
+    if not any(r.get("k") == "d" for s in mock_data_states({"t": {"columns": {"k": {"type": "text"}}}}, max_rows=1, pools={"_default": ["d"]}) for r in s["t"]):
+        bad.append("pool _default not used")
+    if mock_data_states({"t": {"columns": {"k": {"type": "text"}}}}, max_rows=2) != [{"t": []}]:
+        bad.append("an un-pooled column should yield only the empty population")
+
+    # Multiple tables -> the cartesian of each table's populations.
+    multi = mock_data_states({"a": {"columns": {"x": {"literal_values": ["1"]}}}, "b": {"columns": {"y": {"literal_values": ["2"]}}}}, max_rows=1)
+    if len(multi) != 4:  # 2 populations per table x 2 tables
+        bad.append(f"multi-table cartesian wrong: {len(multi)}")
+
+    # Determinism.
+    if mock_data_states(schema, max_rows=2) != mock_data_states(schema, max_rows=2):
+        bad.append("mock_data_states is not deterministic")
+    return bad
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -818,6 +870,7 @@ def run():
         "guard_compile": _probe_guard_compile(),
         "guarded_mutation": _probe_guarded_mutation(),
         "evaluate": _probe_evaluate(),
+        "mock": _probe_mock(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():
