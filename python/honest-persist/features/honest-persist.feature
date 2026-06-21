@@ -1,0 +1,181 @@
+Feature: honest-persist (Python supplement) — SQL rendering and query construction
+  The host-language and SQL-dialect behaviour that the platform-neutral feature cannot
+  state. One scenario per function: the DDL renderers, the type map, and the query
+  builders all emit concrete SQL, whose exact form belongs to the dialect, not the
+  language-agnostic standard. The count joins the neutral count to equal the module's
+  function-point size.
+
+  Scenario: _sql_type maps an abstract type to its dialect spelling
+    Given an abstract type name and a target dialect
+    When _sql_type looks it up
+    Then it returns the dialect's concrete type for that abstract type, or the name unchanged when the dialect has no mapping for it
+
+  Scenario: _column_ddl renders one column's definition as DDL
+    Given a column name, its definition, and a dialect
+    When _column_ddl renders it
+    Then it produces the name and dialect type followed by the primary-key, not-null, unique, and default clauses the definition declares
+
+  Scenario: _render_create_table renders a CREATE TABLE statement
+    Given a create-table operation and a dialect
+    When _render_create_table renders it
+    Then it produces a CREATE TABLE statement with each column rendered as DDL
+
+  Scenario: _render_drop_table renders a DROP TABLE statement
+    Given a drop-table operation and a dialect
+    When _render_drop_table renders it
+    Then it produces a DROP TABLE statement for that table
+
+  Scenario: _render_rename_table renders an ALTER TABLE RENAME statement
+    Given a rename-table operation and a dialect
+    When _render_rename_table renders it
+    Then it produces an ALTER TABLE RENAME TO statement to the new name
+
+  Scenario: _render_add_column renders an ADD COLUMN statement
+    Given an add-column operation and a dialect
+    When _render_add_column renders it
+    Then it produces an ALTER TABLE ADD COLUMN statement with the column rendered as DDL
+
+  Scenario: _render_drop_column renders a DROP COLUMN statement
+    Given a drop-column operation and a dialect
+    When _render_drop_column renders it
+    Then it produces an ALTER TABLE DROP COLUMN statement for that column
+
+  Scenario: _render_rename_column renders a RENAME COLUMN statement
+    Given a rename-column operation and a dialect
+    When _render_rename_column renders it
+    Then it produces an ALTER TABLE RENAME COLUMN statement from the old name to the new
+
+  Scenario: _render_alter_column renders the column alterations as DDL
+    Given an alter-column operation and a dialect
+    When _render_alter_column renders it
+    Then it produces, in PostgreSQL form, an ALTER COLUMN clause for each of the changed type, nullability, and default
+
+  Scenario: _render_add_index renders a CREATE INDEX statement
+    Given an add-index operation and a dialect
+    When _render_add_index renders it
+    Then it produces a CREATE INDEX statement over the named columns, marked unique when the definition is unique
+
+  Scenario: _render_drop_index renders a DROP INDEX statement
+    Given a drop-index operation and a dialect
+    When _render_drop_index renders it
+    Then it produces a DROP INDEX statement for that index
+
+  Scenario: _render_add_foreign_key renders an ADD CONSTRAINT foreign-key statement
+    Given an add-foreign-key operation and a dialect
+    When _render_add_foreign_key renders it
+    Then it produces an ALTER TABLE ADD CONSTRAINT FOREIGN KEY statement referencing the named table and column, with a derived constraint name
+
+  Scenario: _render_drop_foreign_key renders a DROP CONSTRAINT foreign-key statement
+    Given a drop-foreign-key operation and a dialect
+    When _render_drop_foreign_key renders it
+    Then it produces an ALTER TABLE DROP CONSTRAINT statement using the derived foreign-key constraint name
+
+  Scenario: _render_add_constraint renders an ADD CONSTRAINT CHECK statement
+    Given an add-constraint operation and a dialect
+    When _render_add_constraint renders it
+    Then it produces an ALTER TABLE ADD CONSTRAINT CHECK statement with the constraint's expression
+
+  Scenario: _render_drop_constraint renders a DROP CONSTRAINT statement
+    Given a drop-constraint operation and a dialect
+    When _render_drop_constraint renders it
+    Then it produces an ALTER TABLE DROP CONSTRAINT statement for that constraint
+
+  Scenario: to_sql renders one operation to a DDL string for a dialect
+    Given an operation and a dialect
+    When to_sql dispatches on the operation's change name
+    Then it returns the rendered DDL for that operation
+    But an operation type with no renderer returns nothing
+
+  Scenario: reconstruction_sql renders the statements that rebuild a table
+    Given a table, its target shape, the columns to carry over, a dialect, and an optional temporary name
+    When reconstruction_sql renders the rebuild
+    Then it produces the statements to create a temporary table, copy the shared columns, drop the old, rename the temporary into place, and recreate the target indexes
+    And without a supplied temporary name it uses a deterministic default so the plan is reproducible
+
+  Scenario: _query packages built SQL with its named parameters
+    Given a SQL string and its parameter map
+    When _query assembles them
+    Then it returns a query record carrying the SQL and its parameters
+
+  Scenario: _where_clause builds a WHERE clause from equality conditions
+    Given a mapping of columns to required values
+    When _where_clause builds it
+    Then it produces a WHERE clause of named-parameter equalities joined by AND, with the matching parameters
+    But an empty mapping produces no clause and no parameters
+
+  Scenario: _order_clause builds an ORDER BY clause from a column list
+    Given a list of order columns
+    When _order_clause builds it
+    Then it produces an ORDER BY clause where a leading minus marks descending and any other column is ascending
+    But an empty list produces no clause
+
+  Scenario: _join_clause builds JOIN clauses from join specifications
+    Given a list of join specifications
+    When _join_clause builds them
+    Then it produces a JOIN clause for each specification's table and condition
+    But an empty list produces no clause
+
+  Scenario: select builds a parameterized SELECT query
+    Given a table and optional columns, conditions, ordering, limit, offset, and joins
+    When select builds the query
+    Then it returns a SELECT query naming the columns, joins, conditions, and ordering, with limit and offset as named parameters when supplied
+
+  Scenario: insert builds a parameterized INSERT query
+    Given a table and the values to insert
+    When insert builds the query
+    Then it returns an INSERT query whose columns and named-parameter placeholders match the values
+
+  Scenario: update builds a parameterized UPDATE query
+    Given a table, the new values, and the conditions to match
+    When update builds the query
+    Then it returns an UPDATE query whose set parameters are prefixed so they never collide with a condition parameter on the same column
+
+  Scenario: delete builds a parameterized DELETE query
+    Given a table and the conditions to match
+    When delete builds the query
+    Then it returns a DELETE query with the matching WHERE clause and parameters
+
+  Scenario: raw builds a query from supplied SQL and parameters
+    Given a SQL string and optional named parameters
+    When raw builds the query
+    Then it returns a query carrying that SQL and those parameters as the escape hatch, still data
+
+  Scenario: _declared_columns names the columns declared for a table
+    Given a schema and a table
+    When _declared_columns reads the schema
+    Then it returns the declared column names for that table, or nothing when the table is undeclared
+
+  Scenario: _unknown_columns finds referenced names that are not declared
+    Given the declared columns and the referenced names
+    When _unknown_columns compares them
+    Then it returns, sorted, the referenced names that are not declared, ignoring the wildcard and an ordering minus prefix
+
+  Scenario: _check_columns verifies a table and its referenced columns are declared
+    Given a schema, a table, and the names a query references
+    When _check_columns verifies them
+    Then it returns the table when the table and every referenced column is declared
+    But an undeclared table returns an "unknown_table" fault and undeclared columns return an "unknown_column" fault
+
+  Scenario: checked_select builds a SELECT only against a declared schema
+    Given a schema, a table, and the optional clauses of a select
+    When checked_select verifies the references
+    Then it returns the built SELECT query when the table, columns, conditions, ordering, and join tables are all declared
+    But an undeclared reference returns a fault
+
+  Scenario: checked_insert builds an INSERT only against a declared schema
+    Given a schema, a table, and the values to insert
+    When checked_insert verifies the references
+    Then it returns the built INSERT query when the table and value columns are declared
+    But an undeclared reference returns a fault
+
+  Scenario: checked_update builds an UPDATE only against a declared schema
+    Given a schema, a table, the new values, and the conditions
+    When checked_update verifies the references
+    Then it returns the built UPDATE query when the table, value columns, and condition columns are declared
+    But an undeclared reference returns a fault
+
+  Scenario: checked_delete builds a DELETE only against a declared schema
+    Given a schema, a table, and the conditions
+    When checked_delete verifies the references
+    Then it returns the built DELETE query when the table and condition columns are declared
+    But an undeclared reference returns a fault
