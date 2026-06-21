@@ -1386,6 +1386,33 @@ payload: {
 for unrecoverable pool failures. All of these were previously silent or
 logged to stderr with no structured record. They are now first-class events.
 
+### 8.9 Mock Data
+
+honest-persist owns the data boundary — the place real rows are read from. So it is also the
+place made-up rows come from. Fake data is a stand-in for that boundary, so it belongs in the
+same module, not scattered into whatever happens to need it. This is the I/O-at-the-boundary
+rule applied to test data.
+
+`mock_data_states(schema, max_rows)` is a pure function: a schema in, a list of small
+made-up datasets out. Each dataset is `{table: [row, ...]}` — the same shape `run_action` and
+`evaluate_guard` (§7.5) already take. For each table in the schema it produces every
+population from zero up to `max_rows` rows, where each row's column values are drawn from that
+column's declared set of allowed values; a column with no finite set (an id, an actor) draws
+from a small fixed pool the caller supplies. The result is every small dataset the columns can
+form, nothing larger.
+
+The datasets are deliberately tiny. `max_rows` defaults to 2; two or three rows is enough by
+the small-scope hypothesis — almost every whole-collection bug (a set left with no required
+member, the same member counted twice) already shows up at that size, so there is no need for
+realistic data. Because every column's values come from a finite set and the row count is
+capped, the list of datasets is itself finite and the caller can run over all of it.
+
+This is what honest-test §5.4/§5.6 consume: ask honest-persist for the small datasets, run
+each action over each with `run_action`, and check the guard held with `evaluate_guard`. A
+richer, coverage-driven version — making rows so that every declared display rule fires at
+least once — is a separate, later concern (honest-test §6.2) and is not required for guard
+testing.
+
 ---
 
 ## 9. Migration Workflow

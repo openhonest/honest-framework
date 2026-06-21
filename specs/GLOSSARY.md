@@ -23,6 +23,8 @@ plain language in the text itself.
 | **chain** | An ordered list of steps the manifest flows through, stopping at the first fault. A chain is itself a step, so chains nest. |
 | **guard** | A yes/no condition checked at the moment of a write, written as data (not code), that must hold for the write to happen. |
 | **guarded mutation** | A write that checks its guard and changes the data in one all-or-nothing step, so the condition cannot become false between the check and the write. The only sanctioned way to change stored data. |
+| **data state** | A snapshot of stored data as plain data — `{table: [row, ...]}` — that a guard is checked against and an action is applied to. |
+| **mock data** | Small made-up datasets that stand in for real database reads, so guards and actions can be tested without a database. Lives in honest-persist because that is where real data is read. |
 | **fault** | A reported problem, carried as plain data `{code, message, who-is-at-fault, detail}` — never thrown as an exception except at the outer edge. |
 | **rejection** | An input that could not be recognized or placed, carried as data in the manifest — not an error that stops the program. |
 | **slot** | The name a recognized value is stored under in the manifest. |
