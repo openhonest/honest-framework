@@ -533,7 +533,8 @@ apply(result: DiffResult, target: SchemaDefinition, conn: Connection, dialect: D
 ```
 
 Executes the operations from a DiffResult against the database. This is an
-I/O boundary function. It is not pure.
+I/O boundary function — async, like execute and transactions (section 7.4, 7.5),
+awaiting the connection's `execute` and its sync-push pause/resume. It is not pure.
 
 Operations execute in `execution_order` (topologically sorted). On any
 failure, execution halts. The ApplyResult records what was executed before

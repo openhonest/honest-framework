@@ -142,20 +142,20 @@ def _check_check(case):
 
 class _FakeConn:
     """Records the SQL apply() executes and any sync push pause/resume (the boundary's
-    collaborators). Test fixture - the runner is not linted."""
+    async collaborators). Test fixture - the runner is not linted."""
 
     def __init__(self):
         self.executed = []
         self.paused = 0
         self.resumed = 0
 
-    def execute(self, sql):
+    async def execute(self, sql):
         self.executed.append(sql)
 
-    def pause_push(self):
+    async def pause_push(self):
         self.paused += 1
 
-    def resume_push(self):
+    async def resume_push(self):
         self.resumed += 1
 
 
@@ -168,7 +168,7 @@ def _check_apply(case):
     spec = case["apply"]
     result = diff(spec["current"], spec["target"])
     conn = _FakeConn()
-    applied = apply(result, spec["target"], conn, case["dialect"])
+    applied = asyncio.run(apply(result, spec["target"], conn, case["dialect"]))
     ok = applied["success"] == case["expect_success"]
     if "expect_applied" in case:
         ok = ok and applied["operations_applied"] == case["expect_applied"]

@@ -160,13 +160,13 @@ class _Conn:
         self.paused = 0
         self.resumed = 0
 
-    def execute(self, sql):
+    async def execute(self, sql):
         self.executed.append(sql)
 
-    def pause_push(self):
+    async def pause_push(self):
         self.paused += 1
 
-    def resume_push(self):
+    async def resume_push(self):
         self.resumed += 1
 
 
@@ -176,7 +176,7 @@ class _BareConn:
     def __init__(self):
         self.executed = []
 
-    def execute(self, sql):
+    async def execute(self, sql):
         self.executed.append(sql)
 
 
@@ -185,13 +185,13 @@ class _FailingConn:
         self.executed = []
         self._fail_on = fail_on
 
-    def pause_push(self):
+    async def pause_push(self):
         pass
 
-    def resume_push(self):
+    async def resume_push(self):
         pass
 
-    def execute(self, sql):
+    async def execute(self, sql):
         if self._fail_on in sql:
             raise RuntimeError(f"boom on {self._fail_on}")
         self.executed.append(sql)
@@ -205,52 +205,55 @@ _RECON_TARGET = {"t": {"columns": {"id": {"type": "text", "nullable": False}, "k
 
 
 def _probe_apply():
-    bad = []
-    plan = diff(_RECON_CURRENT, _RECON_TARGET)
+    async def _run():
+        bad = []
+        plan = diff(_RECON_CURRENT, _RECON_TARGET)
 
-    full = _Conn()
-    result = apply(plan, _RECON_TARGET, full, "sqlite")
-    joined = " ; ".join(full.executed)
-    if not result["success"] or "INSERT INTO" not in joined or "CREATE" not in joined:
-        bad.append(f"reconstruction did not copy data / recreate index: {full.executed}")
-    if full.paused < 1 or full.resumed < 1:
-        bad.append("reconstruction did not pause/resume sync push")
+        full = _Conn()
+        result = await apply(plan, _RECON_TARGET, full, "sqlite")
+        joined = " ; ".join(full.executed)
+        if not result["success"] or "INSERT INTO" not in joined or "CREATE" not in joined:
+            bad.append(f"reconstruction did not copy data / recreate index: {full.executed}")
+        if full.paused < 1 or full.resumed < 1:
+            bad.append("reconstruction did not pause/resume sync push")
 
-    bare = _BareConn()
-    if not apply(plan, _RECON_TARGET, bare, "sqlite")["success"]:
-        bad.append("reconstruction failed on a connection without push hooks")
+        bare = _BareConn()
+        if not (await apply(plan, _RECON_TARGET, bare, "sqlite"))["success"]:
+            bad.append("reconstruction failed on a connection without push hooks")
 
-    failing = _FailingConn("DROP TABLE")
-    if apply(plan, _RECON_TARGET, failing, "sqlite")["success"]:
-        bad.append("reconstruction should report failure when a statement raises")
+        failing = _FailingConn("DROP TABLE")
+        if (await apply(plan, _RECON_TARGET, failing, "sqlite"))["success"]:
+            bad.append("reconstruction should report failure when a statement raises")
 
-    # Two reconstruction ops on one table reconstruct it once (the already-done skip).
-    two = {"t": {"columns": {"id": {"type": "text"}, "keep": {"type": "integer"}}}}
-    plan2 = diff(_RECON_CURRENT, two)
-    conn2 = _Conn()
-    apply(plan2, two, conn2, "sqlite")
+        # Two reconstruction ops on one table reconstruct it once (the already-done skip).
+        two = {"t": {"columns": {"id": {"type": "text"}, "keep": {"type": "integer"}}}}
+        plan2 = diff(_RECON_CURRENT, two)
+        conn2 = _Conn()
+        await apply(plan2, two, conn2, "sqlite")
 
-    # An unknown operation has no renderer: apply must report it, not silently skip.
-    unknown_plan = {"operations": [operation("frobnicate", "t", {})], "execution_order": [0], "ambiguities": [], "dependencies": {}}
-    if apply(unknown_plan, {"t": {"columns": {}}}, _Conn(), "postgresql")["success"]:
-        bad.append("apply should fail on an operation with no renderer")
+        # An unknown operation has no renderer: apply must report it, not silently skip.
+        unknown_plan = {"operations": [operation("frobnicate", "t", {})], "execution_order": [0], "ambiguities": [], "dependencies": {}}
+        if (await apply(unknown_plan, {"t": {"columns": {}}}, _Conn(), "postgresql"))["success"]:
+            bad.append("apply should fail on an operation with no renderer")
 
-    # A normal (non-reconstruction) DDL that raises halts apply.
-    add_plan = diff({}, {"t": {"columns": {"id": {"type": "text"}}}})
-    if apply(add_plan, {"t": {"columns": {"id": {"type": "text"}}}}, _FailingConn("CREATE TABLE"), "postgresql")["success"]:
-        bad.append("apply should halt when a DDL statement raises")
+        # A normal (non-reconstruction) DDL that raises halts apply.
+        add_plan = diff({}, {"t": {"columns": {"id": {"type": "text"}}}})
+        if (await apply(add_plan, {"t": {"columns": {"id": {"type": "text"}}}}, _FailingConn("CREATE TABLE"), "postgresql"))["success"]:
+            bad.append("apply should halt when a DDL statement raises")
 
-    # Unknown op with no renderer also returns None from to_sql directly.
-    if to_sql(operation("frobnicate", "t", {}), "sqlite") is not None:
-        bad.append("to_sql of an unknown op should be None")
+        # Unknown op with no renderer also returns None from to_sql directly.
+        if to_sql(operation("frobnicate", "t", {}), "sqlite") is not None:
+            bad.append("to_sql of an unknown op should be None")
 
-    # reconstruction_sql with no common columns omits the INSERT.
-    statements = reconstruction_sql("t", {"columns": {"id": {"type": "text"}}}, [], "sqlite")
-    if any("INSERT" in s for s in statements):
-        bad.append("reconstruction_sql with no common columns should not INSERT")
-    if not requires_reconstruction(operation("alter_column", "t", {}), "sqlite"):
-        bad.append("alter_column should require reconstruction on sqlite")
-    return bad
+        # reconstruction_sql with no common columns omits the INSERT.
+        statements = reconstruction_sql("t", {"columns": {"id": {"type": "text"}}}, [], "sqlite")
+        if any("INSERT" in s for s in statements):
+            bad.append("reconstruction_sql with no common columns should not INSERT")
+        if not requires_reconstruction(operation("alter_column", "t", {}), "sqlite"):
+            bad.append("alter_column should require reconstruction on sqlite")
+        return bad
+
+    return asyncio.run(_run())
 
 
 # --------------------------------------------------------------------------- check parser probes

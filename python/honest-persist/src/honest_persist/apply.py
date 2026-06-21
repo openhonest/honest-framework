@@ -196,39 +196,39 @@ def _columns_added(operations, table):
     return {op["details"]["column"] for op in operations if op["op"] == "add_column" and op["table"] == table}
 
 
-def _pause_push(conn):
+async def _pause_push(conn):
     if hasattr(conn, "pause_push"):
-        conn.pause_push()
+        await conn.pause_push()
 
 
-def _resume_push(conn):
+async def _resume_push(conn):
     if hasattr(conn, "resume_push"):
-        conn.resume_push()
+        await conn.resume_push()
 
 
-def _reconstruct(table, target_tables, operations, conn, dialect, executed):
+async def _reconstruct(table, target_tables, operations, conn, dialect, executed):
     """Rebuild one table to its target shape (section 5.5), pausing sync push for the duration
-    (Turso). Returns None on success, or an ApplyResult on failure."""
+    (Turso). Returns None on success, or an ApplyResult on failure. I/O."""
     target_table = target_tables.get(table, {})
     added = _columns_added(operations, table)
     common = [name for name in target_table.get("columns", {}) if name not in added]
-    _pause_push(conn)
+    await _pause_push(conn)
     try:
         for sql in reconstruction_sql(table, target_table, common, dialect):
-            conn.execute(sql)
+            await conn.execute(sql)
             executed.append(sql)
     except Exception as exc:
-        _resume_push(conn)
+        await _resume_push(conn)
         return _apply_result(False, executed, str(exc), None)
-    _resume_push(conn)
+    await _resume_push(conn)
     return None
 
 
-def apply(diff_result, target, conn, dialect):
-    """Execute a DiffResult against the connection in execution_order (section 5.2). The
+async def apply(diff_result, target, conn, dialect):
+    """Execute a DiffResult against the connection in execution_order (section 5.2). Async I/O
     boundary: refuses while ambiguities are unresolved, reconstructs tables that cannot be
     altered in place (section 5.5) — pausing sync push for the rebuild — halts on the first
-    failure, and returns an ApplyResult. Not pure: it performs I/O through conn."""
+    failure, and returns an ApplyResult. Not pure: it awaits I/O through conn."""
     if diff_result.get("ambiguities"):
         return _apply_result(False, [], "unresolved ambiguities; resolve before applying", None)
     target_tables = _normalize(target)["tables"]
@@ -241,7 +241,7 @@ def apply(diff_result, target, conn, dialect):
         if op["table"] in reconstruct_tables:
             if op["table"] in reconstructed:
                 continue
-            failure = _reconstruct(op["table"], target_tables, operations, conn, dialect, executed)
+            failure = await _reconstruct(op["table"], target_tables, operations, conn, dialect, executed)
             if failure is not None:
                 return failure
             reconstructed.add(op["table"])
@@ -250,7 +250,7 @@ def apply(diff_result, target, conn, dialect):
         if sql is None:
             return _apply_result(False, executed, f"no renderer for '{op['op']}'", index)
         try:
-            conn.execute(sql)
+            await conn.execute(sql)
         except Exception as exc:
             return _apply_result(False, executed, str(exc), index)
         executed.append(sql)
