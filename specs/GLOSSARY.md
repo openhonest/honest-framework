@@ -30,6 +30,9 @@ plain language in the text itself.
 | **boundary** | The edge of the program, and the only place a step may touch the outside world (read input, write output, read the clock, use the database). Everything inside is pure. |
 | **pure (function/step)** | Same input always gives the same output; it reads and writes nothing outside what it is handed. |
 | **mutator** | The one piece of code allowed to change a given piece of state. The rule: every declared piece of state has exactly one. |
+| **event log** | The append-only record of everything that happened — the single source of truth that projections are built from. |
+| **projection** | A derived view computed from the event log by a pure function (a dashboard, a count, a timeline). Recomputed from events, never stored as primary data. |
+| **aggregate** | The single thing a stream of events is grouped under (one order, one account); events for the same aggregate are numbered in order. |
 | **poka-yoke** | The guiding rule: every framework decision must make some named kind of bug impossible to even write, or it does not earn its place. |
 | **Set** | A finite, written-out list of allowed values for a kind — so every value can be listed and tested in full. (Capitalized to mark the framework concept, distinct from a general set.) |
 | **state machine** | A lookup table that says, for each current condition and each event, what the next condition is. Plain data; looking up the next condition is a pure step. |
@@ -48,6 +51,8 @@ plain language in the text itself.
 | **TOCTOU** | "Time of check to time of use" — the gap between checking a condition and acting on it, during which the condition can change and the action become wrong. |
 | **small-scope hypothesis** | Almost every bug of this kind already shows up in very small cases, so testing small cases finds it. |
 | **deterministic** | Always gives the same result for the same inputs — no randomness, no dependence on the time or outside state. |
+| **fold** | The pure function at the heart of a projection: it takes the running result and one event and returns the new running result (also the name of that field). |
+| **monotonic** | Only ever increases, never goes back down. |
 | **enumerate** | List out every case, one by one (used when a set of values is finite, so the full list is possible). |
 | **exhaustive** | Covering every case, not a sample. |
 | **adversarial neighbours** | The near-miss inputs around a valid value (one character changed, a look-alike letter, an added control character) that a correct recognizer must reject. |
