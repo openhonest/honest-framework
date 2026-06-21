@@ -707,6 +707,102 @@ def _probe_guarded_mutation():
     return bad
 
 
+def _const_actor(data, *args):
+    return 1
+
+
+def _const_roles(data, *args):
+    return ("owner", "ro")
+
+
+def _probe_evaluate():
+    """In-memory guard evaluation + run_action (honest-test §5.4/§5.6 dependency): the guard
+    grammar evaluated over an in-memory data state, and a guarded mutation applied to it."""
+    from honest_persist.evaluate import evaluate_guard, run_action
+    from honest_persist.guards import (
+        and_,
+        column,
+        compare,
+        count,
+        derive,
+        exists,
+        literal,
+        lookup,
+        match,
+        not_,
+        or_,
+        param,
+        slot,
+        truthy,
+    )
+    from honest_persist.guards import GuardError
+
+    bad = []
+    data = {"perm": [{"uid": 1, "tid": 9, "role": "owner"}, {"uid": 2, "tid": 9, "role": "ro"}]}
+    row = data["perm"][0]
+    registry = {"derive": {"actor": _const_actor}, "lookup": {"roles": _const_roles}}
+
+    # Every compare operator over a column.
+    for op, value, expected in [("=", "owner", True), ("!=", "ro", True), ("<", "z", True), ("<=", "owner", True), (">", "a", True), (">=", "owner", True)]:
+        if evaluate_guard(compare(column("role"), op, literal(value)), row, data) is not expected:
+            bad.append(f"compare {op!r} wrong")
+    # in / not_in against a lookup that returns a collection.
+    if not evaluate_guard(compare(column("role"), "in", lookup("roles")), row, data, registry=registry):
+        bad.append("'in' wrong")
+    if evaluate_guard(compare(column("role"), "not_in", lookup("roles")), row, data, registry=registry):
+        bad.append("'not_in' wrong")
+    # and / or / not / true.
+    if not evaluate_guard(and_(compare(column("role"), "=", literal("owner")), or_(truthy(), compare(column("uid"), "=", literal(99))), not_(compare(column("uid"), "=", literal(99)))), row, data):
+        bad.append("boolean composition wrong")
+    # count + exists over the data state.
+    if not evaluate_guard(compare(count("perm", [match("tid", literal(9)), match("role", literal("owner"))]), "=", literal(1)), row, data):
+        bad.append("count wrong")
+    if not evaluate_guard(exists("perm", [match("uid", literal(2))]), row, data) or evaluate_guard(exists("perm", [match("uid", literal(99))]), row, data):
+        bad.append("exists wrong")
+    # derive term via the registry; slot bound; unbound slot and param raise.
+    if not evaluate_guard(compare(derive("actor"), "=", literal(1)), row, data, registry=registry):
+        bad.append("derive wrong")
+    if not evaluate_guard(compare(column("uid"), "=", slot("u")), row, data, bindings={"u": 1}):
+        bad.append("slot wrong")
+    for term in [slot("missing"), param("p")]:
+        try:
+            evaluate_guard(compare(column("uid"), "=", term), row, data)
+            bad.append(f"{term['kind']} term should raise GuardError")
+        except GuardError:
+            pass
+
+    # run_action — the canonical orphan prevention: demoting the sole owner is refused.
+    sole_owner_demote = {
+        "target": {"table": "perm", "key": {"uid": 1, "tid": 9}},
+        "guard": compare(count("perm", [match("tid", literal(9)), match("role", literal("owner"))]), ">", literal(1)),
+        "update": {"kind": "set", "values": {"role": "ro"}},
+        "op": "update",
+    }
+    if run_action(sole_owner_demote, data).get("err", {}).get("code") != "guard_failed":
+        bad.append("demoting the sole owner should be guard_failed")
+    if data["perm"][0]["role"] != "owner":
+        bad.append("run_action mutated its input (not pure)")
+    # update that holds, applies the new values to a fresh state.
+    ok_update = {"target": {"table": "perm", "key": {"uid": 1}}, "guard": compare(column("role"), "=", literal("owner")), "update": {"kind": "set", "values": {"role": "ro"}}, "op": "update"}
+    result = run_action(ok_update, data)
+    if "ok" not in result or result["ok"]["data"]["perm"][0]["role"] != "ro":
+        bad.append(f"holding update wrong: {result}")
+    # update on a missing row -> guard_failed.
+    if "err" not in run_action({"target": {"table": "perm", "key": {"uid": 99}}, "guard": truthy(), "update": {"kind": "set", "values": {}}, "op": "update"}, data):
+        bad.append("update on a missing row should guard_fail")
+    # delete that holds.
+    deleted = run_action({"target": {"table": "perm", "key": {"uid": 2}}, "guard": truthy(), "update": {"kind": "delete_row"}, "op": "delete"}, data)
+    if "ok" not in deleted or len(deleted["ok"]["data"]["perm"]) != 1:
+        bad.append(f"delete wrong: {deleted}")
+    # insert that holds, and one the guard rejects.
+    inserted = run_action({"target": {"table": "perm"}, "guard": truthy(), "update": {"kind": "insert_row", "values": {"uid": 3, "tid": 9, "role": "ro"}}, "op": "insert"}, data)
+    if "ok" not in inserted or len(inserted["ok"]["data"]["perm"]) != 3:
+        bad.append(f"insert wrong: {inserted}")
+    if "err" not in run_action({"target": {"table": "perm"}, "guard": compare(literal(1), "=", literal(2)), "update": {"kind": "insert_row", "values": {"uid": 3}}, "op": "insert"}, data):
+        bad.append("a rejected insert should guard_fail")
+    return bad
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -721,6 +817,7 @@ def run():
         "guards": _probe_guards(),
         "guard_compile": _probe_guard_compile(),
         "guarded_mutation": _probe_guarded_mutation(),
+        "evaluate": _probe_evaluate(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():
