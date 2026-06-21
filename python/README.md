@@ -30,7 +30,7 @@ author works against. Read the path that fits you:
 | [`honest-type`](honest-type/) | The pure-function-table type system — recognizers, vocabularies, `classify()`, links, chains. The substrate the upper modules build on. | No — plumbing. The modules call it for you. |
 | [`honest-test`](honest-test/) | The auto-generated verification layer — test cases derived from declarations (Set enumeration, adversarial neighbours). The behavioural half of the gate. | No — plumbing. You declare; it generates. |
 | [`honest-parse`](honest-parse/) | The shared tree-sitter parsing boundary — the single place source is parsed. honest-check and honest-test both depend on it. | No — plumbing. |
-| [`honest-persist`](honest-persist/) | Schema-first persistence — schema as data, migrations as a pure diff, queries as data. Pure functions on top, I/O only at the boundary. | Partly — adopters declare schemas; the diff/query engines are plumbing. |
+| [`honest-persist`](honest-persist/) | Schema-first persistence — schema as data, migrations as a pure diff, queries and transactions as data. Pure functions on top, I/O only at the boundary. Transactions are atomic (all-or-nothing); making overlapping writes race-safe is the application's job, not the framework's. | Partly — adopters declare schemas; the diff/query engines are plumbing. |
 
 The package inventory and per-module status are the authoritative checkpoint; this
 table is the short form.
