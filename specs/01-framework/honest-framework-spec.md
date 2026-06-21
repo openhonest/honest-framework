@@ -215,11 +215,11 @@ All four languages make impurity *inconvenient* without making it *impossible*. 
 
 The Honest Framework operates in Tier 0 languages — Python, TypeScript, Java, C#, Ruby, PHP — where the compiler offers zero purity enforcement and mutable state is the path of least resistance. It achieves purity guarantees through three mechanisms that together match Tier 1's mathematical strength for bounded input spaces:
 
-**honest-check (pre-commit linter).** It runs before code enters the repository, at a lifecycle stage equivalent to compilation, and in languages that have no compilation step. Its *structural* rules — no hidden state, bounded vocabularies, dict-dispatch — are **complete**: they match the syntactic form and cannot be evaded. Its I/O and non-determinism *watch-lists* are heuristic and may miss a call not on the list — but that gap is on the purity axis, not the boundedness axis, and is backstopped by honest-test (see The Verification Model).
+**honest-check (pre-commit checker).** It runs before code enters the repository, at the point where compiling would happen, and in languages that have no compile step. Its *shape* rules — no hidden state, finite vocabularies, table-lookup instead of branching — are **complete**: they match the shape of the code and cannot be dodged. Its outside-world and run-to-run *watch-lists* are best-effort and may miss a call not on the list — but that gap is about purity, not about limited input, and honest-test covers it (see The Verification Model).
 
-**honest-test (exhaustive prover).** For every function operating on bounded vocabularies (Set-based recognizers), honest-test enumerates *every* valid input combination and runs the function on all of them. It calls each function twice with identical inputs and compares outputs (purity verification). It instruments for global reads, mutations, I/O, and network access. It snapshots inputs before and after dispatch (mutation detection). It runs every chain twice with the same manifest (idempotency proof). This is not sampling. This is exhaustive verification: every input, every output, every combination.
+**honest-test (runs every case).** For every function that works over finite vocabularies (Set-based recognizers), honest-test lists *every* valid combination of inputs and runs the function on all of them. It calls each function twice with the same inputs and compares the outputs (a purity check). It watches for reads of hidden state, writes, outside-world calls, and network access. It snapshots inputs before and after each step (to catch writes to the input). It runs every chain twice with the same manifest (a repeat-run check). This is not sampling. Every input, every output, every combination is checked.
 
-**honest-type (bounded enumeration).** The type system that makes exhaustive testing possible. Set-based recognizers define a finite, enumerable input space at declaration time. `5 formats × 150 currencies × 4 styles = 3,000 tests`: all run, not sampled. The input space is closed at definition time; there is no "unknown input" category for Set-based types. Predicate-based recognizers (open-ended patterns like UUID format checks) fall back to boundary testing, not exhaustive — this is where the framework's guarantee is weaker than Tier 1's.
+**honest-type (a finite, listable set of inputs).** The type system that makes running-every-case possible. Set-based recognizers fix a finite input space you can list in full at declaration time. `5 formats × 150 currencies × 4 styles = 3,000 tests`: all run, not sampled. The input space is closed when it is defined; there is no "unknown input" category for Set-based types. Open-ended recognizers (patterns like a UUID-format check) fall back to testing the edges rather than every case — this is where the framework's guarantee is weaker than Tier 1's.
 
 ### What the Honest Framework proves vs. what Haskell proves
 
@@ -243,84 +243,84 @@ The Honest Framework is not "Haskell for Python." It is the observation that Has
 
 ## The Verification Model
 
-Correctness is guaranteed in two stages, and the order is not negotiable.
+Correctness is guaranteed in two stages, and the order is fixed.
 
-**Stage one — honest-check (structural, decidable).** Before any code lands, honest-check asks one question of it: *can the complete test suite be generated from this code's declarations?* If not, the code is rejected at commit. This is the gate. It runs at a lifecycle stage equivalent to compilation, but it asks a question a compiler does not — not "are the types consistent?" but "is the behaviour of this code derivable from what it declares?"
+**Stage one — honest-check (the structural gate).** Before any code lands, honest-check asks it one question: *can the complete set of tests be generated from what this code declares?* If not, the code is turned away at commit time. This is the gate. It runs at the same point in the workflow where compiling would, but it asks a question a compiler does not — not "do the types line up?" but "can the behaviour of this code be worked out from what it declares?"
 
-**Stage two — honest-test (behavioural, generative).** For code that passes the gate, honest-test generates the suite from the declarations and runs it. *Defining is testing*; the developer writes no test code. Because stage one guaranteed the behaviour is derivable, stage two can derive it.
+**Stage two — honest-test (generate and run the tests).** For code that passes the gate, honest-test builds the tests from the declarations and runs them. *Defining is testing* — the developer writes no test code. Because stage one made sure the behaviour can be worked out, stage two can work it out.
 
-The two stages are unidirectional: structural admissibility is the precondition for behavioural verification. The gate is therefore seeded before the modules it must govern — honest-check minimally, so it can lint its own source, atop the one component it depends on (the shared parsing boundary, hand-verified first) — and every subsequent module, honest-check included, lands only by passing it. **This is Verification First: no code that fails the framework's own gate enters the repository.** The concrete order this implies is set out in *Bootstrapping a New Language Implementation* below.
+The two stages run one way only: code must pass the structural gate before its behaviour can be checked. So the gate is built before the modules it has to govern — honest-check first, in a minimal form so it can check its own source, on top of the one thing it needs (the shared parser, checked by hand first) — and every module after it, honest-check included, lands only by passing it. **This is Verification First: no code that fails the framework's own gate enters the repository.** The exact build order is in *Bootstrapping a New Language Implementation* below.
 
 ### What the gate actually guarantees
 
-The property that makes code verifiable is **bounded input**. Unverifiability comes from combinatorial explosion — an input domain too large or too open to enumerate. The framework forecloses that *structurally*: every value a function receives is a manifest typed by declared vocabularies; a Set is finite and fully enumerable; a predicate is boundary-sampled; a catch-all recognizer — the construct that would reopen an infinite domain — is rejected at construction. Bounded input → enumerable behaviour → exhaustive proof.
+What makes code checkable is **limited input**. Code becomes uncheckable when its inputs are too many or too open-ended to list — there are simply too many combinations to ever test. The framework rules this out by the shape of the code: every value a function receives is a manifest sorted into declared kinds; a finite set of allowed values can be listed in full; an open-ended check is tested at its edges; and a catch-everything recognizer — the one thing that would re-open an endless range of inputs — is refused when the vocabulary is built. Limited input means the behaviour can be listed in full, which means it can be tested in full.
 
-This guarantee is **complete and fail-closed**, because it is enforced on the *structural form*: there is no unrecognised construct that smuggles an unbounded input past it, the same way there is no way to write a class that "no classes" does not see. A class is always a class node; an unbounded vocabulary cannot be declared.
+This guarantee is **complete, and it defaults to rejecting**, because it is enforced on the shape of the code: nothing unrecognized can slip an unlimited input past it, the same way there is no way to write a class that "no classes" fails to see. A class is always a class; an unlimited set of allowed values cannot be declared in the first place.
 
-### Two classes of rule
+### Two kinds of rule
 
-honest-check's rules divide by what they can guarantee:
+honest-check's rules split by what they can promise:
 
-- **Structural rules** — no classes / no hidden state, dict-dispatch over value-discriminating if/elif, faults as data not exceptions, bounded vocabularies, role reachability — match universal syntactic forms. They are **complete and fail-closed**, and they carry the bounded-input guarantee above.
-- **Watch-list rules** — I/O and non-determinism, identified by called name against a normative list — address a *different axis*: not "is the input bounded?" but "does the same input yield the same output?" They are deny-lists: heuristic, and fail-open for a name not on the list (a novel library, a dynamic call). They are **not load-bearing for verifiability** — an undetected I/O call makes a function non-deterministic for an input that is still bounded — and their incompleteness is backstopped *behaviourally* by honest-test's double-invocation purity check, not by the linter being exhaustive.
+- **Shape rules** — no classes, no hidden state, table-lookup instead of an if/elif that branches on a value, faults carried as data rather than thrown, finite vocabularies, every function reachable from a declared role — match shapes that hold in any language. They are **complete and default to rejecting**, and they carry the limited-input guarantee above.
+- **Watch-list rules** — touching the outside world, and anything that can differ from one run to the next, spotted by the name of the call against a maintained list — answer a *different* question: not "is the input limited?" but "does the same input always give the same output?" They are lists of known-bad names, so they are best-effort: a name not on the list slips through (a new library, a call made indirectly). They are **not what the checkability guarantee rests on** — a missed outside-world call makes a function differ run-to-run for an input that is still limited — and the gap is covered another way: honest-test runs every step twice and compares, rather than the checker having to catch every case.
 
-So honest-check is **complete on the dimension that governs verifiability** (input boundedness) and heuristic on the orthogonal purity dimension. "Any code that passes honest-check is honest" is exact for the former and qualified-but-backstopped for the latter.
+So honest-check is **complete on the thing that decides checkability** (limited input) and best-effort on the separate question of purity. "Any code that passes honest-check is honest" is exactly true for the first and true-but-backstopped for the second.
 
-### One parser, fail closed
+### One parser, and when in doubt it rejects
 
-Source is parsed with tree-sitter — the framework's sole AST mechanism, chosen because the framework is a language-agnostic standard and one grammar family lets the same rule shapes run across Python, Rust, C, and the rest. tree-sitter is error-recovering: input it cannot parse surfaces as ERROR and MISSING nodes rather than being dropped, and honest-check rejects on the first of them (HC-SYN). The gate never certifies code it cannot fully parse.
+Source is read with tree-sitter — the framework's only parser, chosen because the framework is one standard meant to run across many languages, and a single parser family lets the same rule shapes run on Python, Rust, C, and the rest. tree-sitter keeps going when it meets something it cannot read, marking those spots rather than dropping them; honest-check stops at the first such spot (HC-SYN). The gate never passes code it could not fully read.
 
 ---
 
 ## Bootstrapping a New Language Implementation
 
-A new language implementation (after the Python reference) is not built module-first and tested afterwards. It is built **gate-first**, in dependency order, with the verifier standing up before the modules it must certify. This section is the normative path; it makes the Verification Model above concrete.
+A new language version (after the Python reference) is not built module-first and tested after. It is built **gate-first**, in dependency order, with the checker standing up before the modules it has to certify. This is the required path; it makes the two-stage check above concrete.
 
-### The dependency order
+### The build order
 
-The modules form a directed acyclic graph. Build them in an order that respects it. In the Python reference the graph is:
+The modules depend on each other in one direction, with no cycles. Build them in an order that respects those dependencies. In the Python reference:
 
 ```
-parse                       (the shared parsing boundary — wraps tree-sitter; no framework deps)
-type                        (the pure-function type system — no framework deps)
-check      → parse          (the structural gate)
-test       → parse, type    (the generative verifier)
+parse                       the shared parser — wraps tree-sitter; depends on nothing else
+type                        the type system — depends on nothing else
+check      → parse          the structural gate
+test       → parse, type    builds and runs the tests
 persist    → type
 ```
 
-**`parse` is the true base, not `check`.** The gate depends on the parsing boundary, so the boundary is seeded and hand-verified first. A language whose grammar tree-sitter does not yet cover must add that grammar to the parsing boundary before anything else; the rest of the framework touches the parser only through this one module, never tree-sitter directly.
+**`parse` is the real starting point, not `check`.** The gate depends on the parser, so the parser is built and checked by hand first. A language whose grammar tree-sitter does not yet cover must add that grammar to the parser before anything else; the rest of the framework only ever reaches the parser through this one module, never tree-sitter directly.
 
-### The seed-then-gate phases
+### Build the un-checkable parts first, then turn the gate on
 
-Two modules cannot be gated by the mechanism they implement until that mechanism exists. They are **seeded**: written, then verified by hand or by a minimal harness, once.
+Two modules cannot be checked by the very thing they implement until that thing exists. They are written, then checked once by hand or a small harness, to get started:
 
-1. **Seed `parse`.** Hand-verify it against the parser-boundary laws (node-text round-trip, walk completeness and order, 1-based line/col, error detection as a biconditional, determinism, a closed language vocabulary, correct text decoding).
-2. **Seed `check`.** Write the structural rules, then run honest-check on its own source until it is clean. From this point the gate exists.
-3. **Seed `test`.** Write the generators, then have them verify their own laws (a generator that fails to exhaust a declared Set is non-conformant). From this point behavioural generation exists.
-4. **Gate everything else.** Every remaining module — and re-verification of the seeded three — lands only by passing honest-check (structural) and its conformance (behavioural). No code that fails the framework's own gate enters the repository.
+1. **Start `parse`.** Check it by hand against the parser rules: a node's text is exactly the slice of source it covers; the walk visits every node, parents before children; line and column count from 1; it reports an error exactly when the tree has one; the same input gives the same result; only known languages are accepted; text decodes correctly.
+2. **Start `check`.** Write the shape rules, then run honest-check on its own source until it is clean. From here on the gate exists.
+3. **Start `test`.** Write the generators, then have them check their own rules (a generator that fails to cover a declared finite set is wrong). From here on test generation exists.
+4. **Gate everything else.** Every other module — and re-checking the first three — lands only by passing honest-check (shape) and its own conformance (behaviour). No code that fails the framework's own gate enters the repository.
 
-### Two conformance artefacts per module
+### Two proofs per module
 
-Each module carries two complementary proofs, and a new implementation must produce both:
+Each module carries two proofs, and a new version must produce both:
 
-- **The portable contract — `suite.json`.** A language-agnostic collection of declarative input/output cases (the laws of the conformance suite, expressed as data). It is the cross-language test-of-record: the *same* file proves any implementation conformant, with no host language in the loop. It stays JSON for exactly this reason; it cannot express predicates, functions, or injected dependencies, and it is not converted to a host-language or config format.
-- **The implementation's generative proof.** A host-language harness that drives the module's own declarations through the generators and asserts the module's laws across the generated space — exhausting the behaviour the data format cannot reach (predicates, throwing functions, composed types, fake I/O boundaries, malformed input). This is implementation-specific by necessity; it is where "defining is testing" is actually realised for that language.
+- **The portable contract — `suite.json`.** A language-neutral list of input/output cases (the module's rules, written as plain data). It is the shared record every version is measured against: the *same* file proves any version correct, with no particular language involved. It stays as plain data for that reason; it cannot express things like predicates, functions, or stand-in dependencies, and it is not rewritten into a language or config format.
+- **The version's own generated proof.** A harness in the host language that feeds the module's own declarations through the generators and checks the module's rules across everything they generate — covering what the data file cannot reach (predicates, functions that throw, multi-part types, stand-in edges of the outside world, malformed input). This is specific to each language; it is where "defining is testing" actually happens for that language.
 
-The portable contract says *what every implementation must satisfy*; the generative proof is *how this implementation proves itself exhaustively*. Neither replaces the other.
+The portable contract says *what every version must satisfy*; the generated proof is *how this version proves itself in full*. Neither replaces the other.
 
 ### What carries across languages
 
-A new implementation is not a from-scratch rebuild of the whole framework. Most of the verification machinery is already language-agnostic by construction, and recognising this up front changes the size of the job:
+A new version is not a rebuild of the whole framework from scratch. Most of the checking machinery already works for any language, and seeing that up front changes how big the job is:
 
-- **The structural rules are shared shapes, not shared code-to-rewrite.** honest-check's structural rules match tree-sitter node forms — a class node, a value-discriminating if/elif, a catch-all recognizer — and tree-sitter is one grammar family across languages. So registering the new language's grammar in the parsing boundary lets the *existing* structural rules gate the new language's source. The structural stage is extended by a grammar, not reimplemented per language. (Watch-list rules are the exception: I/O and non-determinism are identified by called name, and those names are language-specific, so each language supplies its own normative watch-lists.)
-- **The portable contracts are shared data.** The `suite.json` files are language-agnostic; the new implementation runs the *same* files. It writes no new conformance data, only the host-language harness that loads them.
-- **The generators are shared algorithms.** Set enumeration, adversarial-neighbour generation, boundary sampling, K-step sequencing are pure data transforms specified once; a port reproduces the algorithm, not a new design.
+- **The shape rules are shared patterns, not code to rewrite.** honest-check's shape rules match patterns in the parsed source — a class, an if/elif that branches on a value, a catch-everything recognizer — and tree-sitter is one parser family across languages. So adding the new language's grammar to the parser lets the *existing* shape rules check the new language's source. The shape stage is extended with a grammar, not rewritten per language. (The watch-list rules are the exception: outside-world and run-to-run calls are spotted by name, and the names differ per language, so each language supplies its own list.)
+- **The portable contracts are shared data.** The `suite.json` files are language-neutral; the new version runs the *same* files. It writes no new contract data, only the host-language harness that loads them.
+- **The generators are shared methods.** Listing a finite set in full, generating near-miss inputs, sampling the edges, walking short sequences of steps — these are plain data transforms, specified once; a port re-creates the method, not a new design.
 
-What is genuinely net-new per language is therefore narrow: the parsing-boundary grammar registration, the thin boundary wrappers (parser, I/O, persistence drivers), each language's watch-lists, and the host-language generative proof that drives declarations through the generators. The reusable core — rule shapes, contracts, generator algorithms — is the bulk, and it is reused, not rewritten.
+So what is genuinely new per language is narrow: adding the grammar to the parser, the thin edge wrappers (parser, outside-world, database drivers), each language's watch-lists, and the host-language generated proof. The reusable core — rule patterns, contracts, generator methods — is the bulk, and it is reused, not rewritten.
 
-### Completeness is measured, not asserted
+### Completeness is measured, not claimed
 
-The generative proof is complete only when it exercises every line and branch of the module. **The bar is 100% line and branch coverage, enforced as a gate, and it is an oracle, not a vanity metric:** a line no law or example reaches is either dead code (delete it) or a behaviour no declaration entails (specify it). Both are defects the coverage gate surfaces. A new implementation wires this gate into its commit hook alongside honest-check: nothing lands unless the conformance suites pass *and* coverage is total. Entry-point shims that only run when a module is executed as a program are covered by executing them that way, not by exclusion — the gate carries no carve-outs.
+The generated proof is complete only when it reaches every line and branch of the module. **The bar is 100% line and branch coverage, enforced as a gate — and it is a real test of completeness, not a vanity number:** a line that no rule or example reaches is either dead code (delete it) or a behaviour nothing declares (declare it). Both are faults the coverage gate exposes. A new version wires this gate into its commit step alongside honest-check: nothing lands unless the conformance suites pass *and* coverage is total. The small bits of code that only run when a module is launched as a program are covered by launching it that way, not by leaving them out — the gate has no exceptions.
 
 ---
 
@@ -601,7 +601,7 @@ const result = classify(['currency', 'EUR', '2'], currencies, formatBinding)
 // { format: 'currency', currency: 'EUR', precision: '2' }
 ```
 
-### Properties (Invariants)
+### Properties (rules that always hold)
 
 These must hold in both implementations:
 
@@ -668,7 +668,7 @@ Property-based testing (Hypothesis, QuickCheck) *samples* from infinite input sp
 
 honest-test *enumerates* from bounded input spaces. It proves their absence exhaustively, not probabilistically. Run it a thousand times and the result is identical, because every possible input was tested every time.
 
-This is only possible because honest-type vocabularies are bounded. No other framework has enumerable type spaces. This is a categorically different guarantee.
+This is only possible because honest-type vocabularies are limited to a known, finite set of values. No other framework has type spaces you can list in full. This is a categorically different guarantee.
 
 **The compile-time argument, resolved:**
 
@@ -1092,7 +1092,7 @@ end
 class CardsController < ApplicationController
   # Vocabulary declared per-controller (composable)
   honest_vocab(
-    card_type: Set['task', 'note', 'reference'],
+    card_type: Set['note', 'reference', 'bookmark'],
     priority:  Set['low', 'medium', 'high', 'critical'],
     uuid:      ->(s) { s.match?(/^[0-9a-f-]{36}$/) },
   )
@@ -1104,7 +1104,7 @@ class CardsController < ApplicationController
   )
 
   def create
-    # manifest[:type] is guaranteed to be one of task/note/reference
+    # manifest[:type] is guaranteed to be one of note/reference/bookmark
     # manifest[:priority] is guaranteed to be one of low/medium/high/critical
     # No params.require().permit() ceremony
     Card.create!(manifest.slice(:type, :priority, :title))
@@ -1247,7 +1247,7 @@ The specific formulation of pure function tables as a type system appears to be 
 
 **The thesis that appears unoccupied:**
 
-A Set used for membership testing is structurally isomorphic to a type declaration. A collection of such predicates is a type system. A table mapping resolved types to semantic slots is a binding rule set. Together, they provide type-directed composition of untyped tokens without requiring a compiler, a static type system, or heuristic detection.
+A Set used to check whether a value belongs has the same shape as a type declaration. A collection of such checks is a type system. A table mapping recognized types to named slots is a binding rule set. Together they sort untyped inputs into typed slots without needing a compiler, a static type system, or guesswork.
 
 The enemy of early type checking is classes, not dynamicism.
 

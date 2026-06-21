@@ -966,19 +966,21 @@ FUNCTION guarded_mutation(mutation, conn):
         RETURN err({code: "constraint_violation", detail: e.message})
 ```
 
-**Example — orphaning prevented by construction:**
+**Example — a rule kept true by construction.** Consider a `membership` table where each
+`set_id` must always keep at least one row whose `role` is `required`; demoting the last such
+row would leave the set with none:
 
 ```
 guarded_mutation(
     target = {
-        table: "task_permission",
-        key:   {user_id: actor_id, task_id: task_id}
+        table: "membership",
+        key:   {member_id: actor_id, set_id: set_id}
     },
     guard = and(
-        compare(lookup("role_of", session_actor(token), task_id), "=", "owner"),
-        compare(lookup("owner_count", task_id), ">", 1)
+        compare(lookup("role_of", session_actor(token), set_id), "=", "required"),
+        compare(lookup("required_count", set_id), ">", 1)
     ),
-    update = {kind: "set", values: {role: "ro"}},
+    update = {kind: "set", values: {role: "plain"}},
     op = "update"
 )
 ```
@@ -986,19 +988,21 @@ guarded_mutation(
 Compiles to (Postgres):
 
 ```sql
-UPDATE task_permission
+UPDATE membership
 SET role = $1
-WHERE user_id = $2
-  AND task_id  = $3
-  AND (SELECT role FROM task_permission
-       WHERE user_id = (SELECT user_id FROM sessions WHERE token = $4
+WHERE member_id = $2
+  AND set_id  = $3
+  AND (SELECT role FROM membership
+       WHERE member_id = (SELECT member_id FROM sessions WHERE token = $4
                           AND expires_at > NOW() AND revoked_at IS NULL)
-         AND task_id = $3) = 'owner'
-  AND (SELECT COUNT(*) FROM task_permission
-       WHERE task_id = $3 AND role = 'owner') > 1
+         AND set_id = $3) = 'required'
+  AND (SELECT COUNT(*) FROM membership
+       WHERE set_id = $3 AND role = 'required') > 1
 ```
 
-Sole owner demote → owner_count is 1 → guard fails → `guard_failed` returned. Cannot produce an orphan under any interleaving, because the guard and the update are atomic per SSI.
+Demoting the sole required member → required_count is 1 → the guard fails → `guard_failed`
+is returned. The rule cannot be broken no matter how transactions overlap, because the check
+and the write happen together, all-or-nothing (serializable isolation).
 
 #### The Guard Expression DSL
 
@@ -1085,20 +1089,20 @@ FUNCTION transaction(mutations, conn):
 ```
 transaction(
     mutations = [
-        // Promote target to owner
+        // Promote target to the required role
         guarded_mutation(
-            target = {table: "task_permission",
-                      key: {user_id: target_id, task_id: task_id}},
-            guard  = compare(lookup("role_of", session_actor(token), task_id), "=", "owner"),
-            update = {kind: "set", values: {role: "owner"}},
+            target = {table: "membership",
+                      key: {member_id: target_id, set_id: set_id}},
+            guard  = compare(lookup("role_of", session_actor(token), set_id), "=", "required"),
+            update = {kind: "set", values: {role: "required"}},
             op     = "update"
         ),
-        // Demote current actor to rw
+        // Demote current actor to plain
         guarded_mutation(
-            target = {table: "task_permission",
-                      key: {user_id: actor_id, task_id: task_id}},
-            guard  = compare(lookup("role_of", session_actor(token), task_id), "=", "owner"),
-            update = {kind: "set", values: {role: "rw"}},
+            target = {table: "membership",
+                      key: {member_id: actor_id, set_id: set_id}},
+            guard  = compare(lookup("role_of", session_actor(token), set_id), "=", "required"),
+            update = {kind: "set", values: {role: "plain"}},
             op     = "update"
         ),
     ],
@@ -1106,7 +1110,7 @@ transaction(
 )
 ```
 
-Under SSI, this is equivalent to some serial execution of the two mutations. Intermediate states ("two owners", "zero owners") are never observable to any other transaction. Either both commit together or both roll back.
+Under SSI, this is equivalent to some serial execution of the two mutations. Intermediate states ("two required members", "zero required members") are never observable to any other transaction. Either both commit together or both roll back.
 
 **Prohibition of direct SQL inside transactions.** honest-persist's transaction API accepts only `GuardedMutation` values. Raw SQL or unguarded query builders cannot be composed into a transaction through the sanctioned API. This is not advisory — implementations must refuse to execute a transaction containing non-guarded operations.
 
