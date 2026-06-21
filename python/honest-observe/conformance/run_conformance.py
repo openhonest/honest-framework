@@ -1,17 +1,18 @@
-"""honest-observe conformance runner (sections 2, 6).
+"""honest-observe conformance runner (sections 2, 3, 6).
 
-Each case is data: a `build_event` case (envelope assembly/validation) or a `matches` case
-(projection filtering). The fold-based projection behaviour, which a data file cannot express,
-is in laws_ho.py.
+Each case is data: a `build_event` case (envelope assembly/validation), a `matches` case
+(projection filtering), or an `emit` case (the boundary, driven with a stand-in runtime). The
+fold-based projection behaviour, which a data file cannot express, is in laws_ho.py.
 
   uv run --package honest-observe python honest-observe/conformance/run_conformance.py
 """
 
+import asyncio
 import json
 import sys
 from pathlib import Path
 
-from honest_observe import build_event, matches
+from honest_observe import build_event, emit, matches
 
 
 def _check_build_event(case):
@@ -28,15 +29,55 @@ def _check_matches(case):
     return got == case["expect"], f"got {got}"
 
 
+class _Runtime:
+    """A stand-in emit runtime (section 3): canned id/timestamp/sequence/version, an append that
+    succeeds or fails per the case, recording what it was handed. Fixture - not linted."""
+
+    def __init__(self, spec):
+        self._spec = spec
+        self.auth_fields = spec.get("auth_fields", [])
+        self.meta_fields = spec.get("meta_fields", [])
+        self.appended = []
+
+    def event_id(self):
+        return self._spec["event_id"]
+
+    def timestamp(self):
+        return self._spec["timestamp"]
+
+    def sequence(self, aggregate_id):
+        return self._spec["sequence"]
+
+    def version(self, event_type):
+        return self._spec["version"]
+
+    async def append(self, event):
+        self.appended.append(event)
+        if self._spec.get("append_ok", True):
+            return {"ok": {}}
+        return {"err": {"code": "log_write_failed", "message": "boom", "category": "server", "detail": None}}
+
+
+def _check_emit(case):
+    spec = case["emit"]
+    runtime = _Runtime(spec)
+    result = asyncio.run(emit(spec["event_type"], spec["aggregate_type"], spec["aggregate_id"], spec["payload"], spec["context"], runtime))
+    if case["expect"] == "ok":
+        return "ok" in result and result["ok"]["event_id"] == case["expect_event_id"], f"got {result}"
+    return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"
+
+
 _CHECKERS = {
     "build_event": _check_build_event,
     "matches": _check_matches,
+    "emit": _check_emit,
 }
 
 
 def _kind(case):
-    if "build_event" in case:
-        return "build_event"
+    for kind in _CHECKERS:
+        if kind in case:
+            return kind
     return "matches"
 
 

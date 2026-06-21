@@ -10,6 +10,9 @@
     {"id": "ho-match-type-hit", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"event_types": ["a.b", "c.d"]}}, "expect": true},
     {"id": "ho-match-type-miss", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"event_types": ["x.y"]}}, "expect": false},
     {"id": "ho-match-window-in", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"from_ts": "2026-03-15T00:00:00Z", "to_ts": "2026-03-16T00:00:00Z"}}, "expect": true},
-    {"id": "ho-match-window-before", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"from_ts": "2026-03-16T00:00:00Z"}}, "expect": false}
+    {"id": "ho-match-window-before", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"from_ts": "2026-03-16T00:00:00Z"}}, "expect": false},
+    {"id": "ho-emit-ok", "emit": {"event_type": "hf.chain.completed", "aggregate_type": "chain", "aggregate_id": "c1", "payload": {"result": "ok"}, "context": {}, "event_id": "019x2k", "timestamp": "2026-03-15T14:23:07.441832Z", "sequence": 0, "version": "1.0", "append_ok": true}, "expect": "ok", "expect_event_id": "019x2k"},
+    {"id": "ho-emit-build-err", "emit": {"event_type": "", "aggregate_type": "chain", "aggregate_id": "c1", "payload": {}, "context": {}, "event_id": "019x2k", "timestamp": "2026-03-15T14:23:07.441832Z", "sequence": 0, "version": "1.0", "append_ok": true}, "expect": "err", "expect_code": "invalid_event"},
+    {"id": "ho-emit-append-err", "emit": {"event_type": "order.placed", "aggregate_type": "order", "aggregate_id": "o1", "payload": {"total": 5}, "context": {}, "event_id": "019aaa", "timestamp": "2026-03-15T14:23:07.000001Z", "sequence": 3, "version": "1.0", "append_ok": false}, "expect": "err", "expect_code": "emit_failed"}
   ]
 }

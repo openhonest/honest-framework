@@ -2,10 +2,13 @@
 
 What a data file cannot express is proved here: the envelope's auth/meta attachment and
 validation branches, the auth/meta extraction, the projection filter predicate across every
-filter, and the fold itself (a function). Each probe returns a list of failures; run() aggregates.
+filter, the fold itself (a function), and the async emit boundary driven through a stand-in
+runtime. Each probe returns a list of failures; run() aggregates.
 """
 
-from honest_observe import apply_projection, build_event, extract_auth, extract_meta, matches
+import asyncio
+
+from honest_observe import apply_projection, build_event, emit, extract_auth, extract_meta, matches
 
 # A complete, valid set of envelope arguments — probes vary one thing at a time off this base.
 _BASE = {
@@ -122,12 +125,91 @@ def _probe_projection():
     return bad
 
 
+class _Runtime:
+    """A stand-in emit runtime (§3): canned id/timestamp/sequence/version, configured auth/meta
+    field names, an append that succeeds or fails, recording what it was handed."""
+
+    def __init__(self, append_ok=True, auth_fields=(), meta_fields=()):
+        self._append_ok = append_ok
+        self.auth_fields = list(auth_fields)
+        self.meta_fields = list(meta_fields)
+        self.appended = []
+
+    def event_id(self):
+        return "019x2k"
+
+    def timestamp(self):
+        return "2026-03-15T14:23:07.441832Z"
+
+    def sequence(self, aggregate_id):
+        return 7
+
+    def version(self, event_type):
+        return "1.0"
+
+    async def append(self, event):
+        self.appended.append(event)
+        if self._append_ok:
+            return {"ok": {}}
+        return {"err": {"code": "log_write_failed", "message": "boom", "category": "server", "detail": None}}
+
+
+def _probe_emit():
+    """The emit boundary (§3): assemble through the runtime and append. Success returns the
+    event_id and appends a complete envelope (id/version/sequence from the runtime, auth/meta from
+    context); a malformed envelope returns its validation fault and writes nothing; an append
+    failure becomes emit_failed."""
+
+    async def _run():
+        bad = []
+        context = {"caller_id": "u1", "release": "r1", "other": "x"}
+
+        # Success: ok(event_id); the appended envelope carries the runtime's values and the
+        # auth/meta pulled from context by the configured field names.
+        rt = _Runtime(auth_fields=["caller_id"], meta_fields=["release"])
+        result = await emit("hf.chain.completed", "chain", "c1", {"result": "ok"}, context, rt)
+        if result != {"ok": {"event_id": "019x2k"}}:
+            bad.append(f"successful emit should return the event_id: {result}")
+        elif len(rt.appended) != 1:
+            bad.append("a successful emit should append exactly one event")
+        else:
+            event = rt.appended[0]
+            if event["event_version"] != "1.0" or event["sequence"] != 7 or event["event_type"] != "hf.chain.completed":
+                bad.append(f"appended envelope wrong: {event}")
+            if event.get("auth") != {"caller_id": "u1"} or event.get("meta") != {"release": "r1"}:
+                bad.append(f"emit should attach auth/meta from context: {event.get('auth')} {event.get('meta')}")
+
+        # No configured auth/meta fields -> those keys are absent on the appended event.
+        rt2 = _Runtime()
+        await emit("hf.chain.completed", "chain", "c1", {}, context, rt2)
+        if "auth" in rt2.appended[0] or "meta" in rt2.appended[0]:
+            bad.append("with no configured fields, auth/meta must be absent")
+
+        # Malformed envelope (empty aggregate_id) -> validation fault, nothing appended.
+        rt3 = _Runtime()
+        bad_result = await emit("hf.chain.completed", "chain", "", {}, context, rt3)
+        if bad_result.get("err", {}).get("code") != "invalid_event":
+            bad.append(f"an empty required field should return invalid_event: {bad_result}")
+        if rt3.appended:
+            bad.append("a malformed envelope must not be appended")
+
+        # Append failure -> emit_failed wrapping the cause.
+        rt4 = _Runtime(append_ok=False)
+        failed = await emit("hf.chain.completed", "chain", "c1", {}, context, rt4)
+        if failed.get("err", {}).get("code") != "emit_failed" or failed["err"]["detail"]["cause"]["code"] != "log_write_failed":
+            bad.append(f"an append failure should become emit_failed wrapping the cause: {failed}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
         "extract": _probe_extract(),
         "matches": _probe_matches(),
         "projection": _probe_projection(),
+        "emit": _probe_emit(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:
