@@ -16,6 +16,7 @@ values use `u_*`.
 """
 
 from honest_persist.guards import compile_guard
+from honest_type import err, fault, ok
 
 
 def _key_clause(key, params) -> str:
@@ -72,3 +73,71 @@ def compile_guarded_mutation(mutation, dialect="postgresql", registry=None, bind
     table = mutation["target"]["table"]
     sql = _RENDERERS[mutation["op"]](mutation, table, guard_sql, params)
     return sql, params
+
+
+# --------------------------------------------------------------------------- the I/O boundary
+
+# guarded_mutation performs I/O and catches at the boundary by design (Typed Exceptions at the
+# Boundary). The pure compilation above is unaffected; the disable is scoped to the boundary.
+# honest: disable HC-P002
+
+
+def _clause_holds(table, key, clause, conn, registry, bindings) -> bool:
+    """True if a single guard clause holds for the target row right now — a probe SELECT used
+    only to diagnose which clause of a failed guard was the culprit."""
+    clause_sql, params = compile_guard(clause, registry, bindings)
+    for column, value in key.items():
+        params[f"k_{column}"] = value
+    key_sql = " AND ".join(f"{column} = :k_{column}" for column in key)
+    where = " AND ".join(part for part in [key_sql, f"({clause_sql})"] if part)
+    rows = conn.execute(f"SELECT 1 FROM {table} WHERE {where}", params)["rows"]
+    return len(rows) > 0
+
+
+def diagnose_guard_failure(mutation, conn, registry=None, bindings=None) -> dict:
+    """Identify which sub-clause of the guard failed, so the boundary can map guard_failed to
+    the right HTTP status. For a top-level `and`, probe each operand and name the first that no
+    longer holds; otherwise the whole guard is the clause. `index` is None when every clause
+    holds — the target row itself is absent or was changed out from under the write."""
+    guard = mutation["guard"]
+    table = mutation["target"]["table"]
+    key = mutation["target"].get("key") or {}
+    if guard["kind"] == "and":
+        for index, operand in enumerate(guard["operands"]):
+            if not _clause_holds(table, key, operand, conn, registry, bindings):
+                return {"index": index, "clause": operand}
+        return {"index": None, "clause": {"kind": "target"}}
+    if not _clause_holds(table, key, guard, conn, registry, bindings):
+        return {"index": 0, "clause": guard}
+    return {"index": None, "clause": {"kind": "target"}}
+
+
+def _classify_failure(exc):
+    """Map a driver exception to a Result fault by its `kind`, or None to re-raise (an error
+    honest-persist does not own must not be silently swallowed)."""
+    kind = getattr(exc, "kind", None)
+    if kind == "serialization":
+        return err(fault("serialization_conflict", str(exc), "server", {"detail": str(exc)}))
+    if kind == "constraint":
+        return err(fault("constraint_violation", str(exc), "client", {"detail": str(exc)}))
+    return None
+
+
+def guarded_mutation(mutation, conn, registry=None, bindings=None):
+    """Execute a guarded mutation atomically (section 7.5). Compiles the fused statement, runs
+    it, and maps the outcome: rows affected -> ok; zero rows -> guard_failed (with the failing
+    clause); a serialization or constraint driver error -> the matching Result fault. The only
+    sanctioned way to mutate persisted state."""
+    sql, params = compile_guarded_mutation(mutation, getattr(conn, "dialect", "postgresql"), registry, bindings)
+    try:
+        result = conn.execute(sql, params)
+    except Exception as exc:
+        classified = _classify_failure(exc)
+        if classified is None:
+            raise
+        return classified
+    if result["rows_affected"] == 0:
+        which = diagnose_guard_failure(mutation, conn, registry, bindings)
+        return err(fault("guard_failed", "guard precondition not met", "client", {"which": which}))
+    return ok({"rows_affected": result["rows_affected"], "returned": result.get("returned")})
+# honest: enable HC-P002

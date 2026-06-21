@@ -619,6 +619,94 @@ def _probe_guard_compile():
     return bad
 
 
+class _GuardConn:
+    """A fake connection for the guarded-mutation boundary: returns a canned rows_affected for
+    the mutation, canned row-lists for the successive diagnosis SELECTs, or raises a driver
+    error tagged with a `kind`. Test fixture — not linted."""
+
+    def __init__(self, dialect="postgresql", rows_affected=1, returned=None, select_rows=None, raise_kind=None):
+        self.dialect = dialect
+        self._rows_affected = rows_affected
+        self._returned = returned
+        self._select_rows = list(select_rows or [])
+        self._raise_kind = raise_kind
+        self.executed = []
+
+    def execute(self, sql, params):
+        self.executed.append(sql)
+        if sql.startswith("SELECT"):
+            return {"rows": self._select_rows.pop(0) if self._select_rows else []}
+        if self._raise_kind is not None:
+            exc = RuntimeError("driver error")
+            if self._raise_kind in ("serialization", "constraint"):
+                exc.kind = self._raise_kind
+            raise exc
+        return {"rows_affected": self._rows_affected, "returned": self._returned}
+
+
+def _probe_guarded_mutation():
+    """The guarded-mutation I/O boundary (§7.5): execute, 0-rows -> guard_failed with the
+    failing clause, and the serialization/constraint fault mapping."""
+    from honest_persist.guards import and_, column, compare, literal
+    from honest_persist.mutation import guarded_mutation
+
+    bad = []
+    g_and = and_(compare(column("role"), "=", literal("owner")), compare(column("n"), ">", literal(1)))
+    g_one = compare(column("role"), "=", literal("owner"))
+    target = {"table": "perm", "key": {"uid": 1}}
+    update = {"kind": "set", "values": {"role": "ro"}}
+
+    def mut(guard):
+        return {"target": target, "guard": guard, "update": update, "op": "update"}
+
+    # Success: rows affected -> ok with the returned row.
+    result = guarded_mutation(mut(g_one), _GuardConn(rows_affected=1, returned={"id": 1}))
+    if "ok" not in result or result["ok"]["rows_affected"] != 1 or result["ok"]["returned"] != {"id": 1}:
+        bad.append(f"success wrong: {result}")
+
+    # guard_failed, top-level AND, second operand fails (diagnosis names index 1).
+    result = guarded_mutation(mut(g_and), _GuardConn(rows_affected=0, select_rows=[[1], []]))
+    if result.get("err", {}).get("code") != "guard_failed" or result["err"]["detail"]["which"]["index"] != 1:
+        bad.append(f"guard_failed AND diagnosis wrong: {result}")
+
+    # guard_failed, single (non-AND) guard -> index 0.
+    result = guarded_mutation(mut(g_one), _GuardConn(rows_affected=0, select_rows=[[]]))
+    if result["err"]["detail"]["which"]["index"] != 0:
+        bad.append(f"guard_failed single diagnosis wrong: {result}")
+
+    # guard_failed but every clause still holds -> the target row itself is gone (index None),
+    # for both a top-level AND and a single guard.
+    result = guarded_mutation(mut(g_and), _GuardConn(rows_affected=0, select_rows=[[1], [1]]))
+    if result["err"]["detail"]["which"]["index"] is not None:
+        bad.append(f"AND target-fallback diagnosis wrong: {result}")
+    result = guarded_mutation(mut(g_one), _GuardConn(rows_affected=0, select_rows=[[1]]))
+    if result["err"]["detail"]["which"]["index"] is not None:
+        bad.append(f"single-guard target-fallback diagnosis wrong: {result}")
+
+    # An insert guard_failed exercises diagnosis with no target key.
+    insert = {"target": {"table": "perm"}, "guard": g_one, "update": {"kind": "insert_row", "values": {"uid": 1}}, "op": "insert"}
+    result = guarded_mutation(insert, _GuardConn(rows_affected=0, select_rows=[[]]))
+    if result["err"]["detail"]["which"]["index"] != 0:
+        bad.append(f"insert guard_failed wrong: {result}")
+
+    # Driver faults map by kind; an unknown error re-raises rather than being swallowed.
+    if guarded_mutation(mut(g_one), _GuardConn(raise_kind="serialization"))["err"]["code"] != "serialization_conflict":
+        bad.append("serialization fault not mapped")
+    if guarded_mutation(mut(g_one), _GuardConn(raise_kind="constraint"))["err"]["code"] != "constraint_violation":
+        bad.append("constraint fault not mapped")
+    try:
+        guarded_mutation(mut(g_one), _GuardConn(raise_kind="unknown"))
+        bad.append("an unknown driver error should re-raise")
+    except RuntimeError:
+        pass
+
+    # A connection without a declared dialect falls back to the default.
+    no_dialect = type("_ND", (), {"execute": lambda self, sql, params: {"rows_affected": 1, "returned": None}})()
+    if "ok" not in guarded_mutation(mut(g_one), no_dialect):
+        bad.append("dialect-less connection should use the default dialect")
+    return bad
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -632,6 +720,7 @@ def run():
         "extended": _probe_extended(),
         "guards": _probe_guards(),
         "guard_compile": _probe_guard_compile(),
+        "guarded_mutation": _probe_guarded_mutation(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():
