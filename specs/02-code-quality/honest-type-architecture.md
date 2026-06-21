@@ -1977,7 +1977,7 @@ FUNCTION check_HC011(recognizer):
 
 ### 13.4 Set Enumeration
 
-For Set-based recognizers, honest-test enumerates every member. For a vocabulary with multiple Sets, it generates the full cartesian product.
+For Set-based recognizers, honest-test enumerates every member. For a vocabulary with multiple Sets, it generates every combination.
 
 ```
 FUNCTION enumerate_sets(vocabulary):

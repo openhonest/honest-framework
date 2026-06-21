@@ -84,7 +84,7 @@ This is the same relationship Swagger has to API testing: the API description ge
 
 ### 3.2 Set Enumeration
 
-For Set-based recognizers, honest-test enumerates every member. For a vocabulary with multiple Sets, it generates the full cartesian product.
+For Set-based recognizers, honest-test enumerates every member. For a vocabulary with multiple Sets, it generates every combination.
 
 ```
 FUNCTION enumerate_sets(vocabulary):
