@@ -285,8 +285,11 @@ parse                       the shared parser — wraps tree-sitter; depends on 
 type                        the type system — depends on nothing else
 check      → parse          the structural gate
 test       → parse, type    builds and runs the tests
-persist    → type
+observe    → type           the event log and projections — the boundaries instrument through it
+persist    → type, observe  schema/query/transaction boundaries emit to the event log
 ```
+
+`observe` comes before `persist` because every persistence boundary (execute, apply, transactions) emits to the event log: persist instruments *through* observe, so observe must exist first.
 
 **`parse` is the real starting point, not `check`.** The gate depends on the parser, so the parser is built and checked by hand first. A language whose grammar tree-sitter does not yet cover must add that grammar to the parser before anything else; the rest of the framework only ever reaches the parser through this one module, never tree-sitter directly.
 
