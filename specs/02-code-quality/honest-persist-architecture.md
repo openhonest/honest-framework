@@ -890,7 +890,7 @@ What comes back from the database is what you get.
 
 ### 7.5 Transactions
 
-A transaction groups several writes into one all-or-nothing step: either every write commits, or none does. It is the sanctioned way to perform a multi-write operation, so a half-applied change is never left behind for another reader to see.
+A transaction groups several writes into one all-or-nothing step: either every write commits, or none does. It is the sanctioned way to perform a multi-write operation, so a half-applied change is never left behind for another reader to see. Like execute (section 7.4) it is async, and its connection is the same duck-typed collaborator with three more awaited methods — `begin()`, `commit()`, `rollback()`.
 
 **Signature:**
 
@@ -898,34 +898,35 @@ A transaction groups several writes into one all-or-nothing step: either every w
 transaction(writes: [Query], conn: Connection) -> Result
 
 Result =
-    ok({results: [WriteResult]})                                       -- all writes applied and committed
-  | err({code: "constraint_violation", detail: {failed_at: Integer, message: String}})
+    ok({results: [Integer]})                              -- each write's rows-affected count, in order
+  | err({code: "write_failed", detail: {failed_at: Integer, message: String}})
 ```
 
 Each write is an ordinary `insert`/`update`/`delete` Query (section 7.2): data, built by a pure function, inspectable before it runs.
 
 **Semantics:**
 
-1. All writes run inside a single database transaction.
-2. If any write fails — a foreign-key, unique, or CHECK violation, for example — the transaction rolls back and the matching `err` is returned with `failed_at` set to the index of the failing write.
+1. All writes run inside a single database transaction (`begin` … `commit`).
+2. If any write fails — a foreign-key, unique, or CHECK violation is the usual cause — the transaction rolls back and `err` is returned with `failed_at` set to the failing write's index and `message` carrying the driver's text. The code is `write_failed` because the boundary cannot, in general, tell one driver failure from another; an implementation whose driver raises a classifiable error MAY narrow it (for example to `constraint_violation`).
 3. On success, all writes commit together. Another reader sees all of the changes or none of them.
 
 **Execution algorithm:**
 
 ```
-FUNCTION transaction(writes, conn):
-    BEGIN
+FUNCTION transaction(writes, conn):                      -- async; awaits the connection
+    await conn.begin()
     results ← []
     FOR i, write IN enumerate(writes):
         TRY:
-            r ← execute(write, conn)
-        CATCH constraint_violation as e:
-            ROLLBACK
-            RETURN err({code: "constraint_violation", detail: {failed_at: i, message: e.message}})
-        APPEND r TO results
-    COMMIT
+            results.append(await execute_many(write, conn))   -- section 7.4: rows affected
+        CATCH any driver error as e:
+            await conn.rollback()
+            RETURN err({code: "write_failed", detail: {failed_at: i, message: text(e)}})
+    await conn.commit()
     RETURN ok({results: results})
 ```
+
+Catching here is sanctioned, exactly as in `apply` (section 5.2): a transaction cannot roll back without seeing the failure, so this one boundary function turns a driver error into control flow. Everywhere else, faults flow as data.
 
 **Preconditions are ordinary code.** Where a write should happen only under some condition — a balance stays non-negative, a set keeps at least one required member — the developer writes that check as an ordinary early-return guard in the link before the write, the same as any other business rule, and honest-test reaches it through the pure-function strategy (honest-test section 5). The framework provides no special check-and-write primitive and does not promise to make overlapping transactions safe for you: choosing an isolation level and handling concurrent writes is the application's responsibility, not honest-persist's.
 
