@@ -509,7 +509,7 @@ FUNCTION test_auth_honesty(link):
 | `missing` | `guard_failed` categorized as `unauthenticated` → 401 |
 | `forged` | `guard_failed` categorized as `unauthenticated` → 401 |
 
-**Rationale.** A provider's correctness claim is only as strong as the behaviors its contract covers. The seven-class probe is the minimal set that exercises the contract. A challenger who modifies an authorizing link such that, for example, expired tokens are accepted, fails this test even though the chain's output shape is unchanged. Without auth honesty testing, expired-token acceptance would require an integration test running against the deployed application.
+**Rationale.** A provider's correctness claim is only as strong as the behaviours its contract covers. The seven-class probe is the smallest set that exercises the contract. A change to an authorizing link that, say, starts accepting expired tokens fails this test even though the step's output shape is unchanged. Without auth-honesty testing, accepting expired tokens would only surface in an end-to-end test against the deployed application.
 
 **Conformance requirement.** Every honest-test implementation must run the auth honesty test on every authorizing link, using the registered provider's generator. An implementation that reports no failures on a link whose authorization is broken (verified against the conformance probe suite in `honest/honest-auth-conformance/`) fails honest-test conformance.
 
@@ -594,7 +594,7 @@ FUNCTION check_action_guards(machine):
 
 **Dependency.** Guard evaluation and mock data are honest-persist concerns (§6; honest-persist §7.5). §5.4 is the state-machine driver over honest-persist's guard model — it cannot run before honest-persist provides `run_action`, the guard evaluator, and the mock-data generator.
 
-**Rationale for the challenge:** a challenger can write an action that moves to a valid-looking next condition — passing §5.1 — whose mutation drops the last owner. Without guard checking, only an integration test catches the orphaned task. With §5.4 the harness runs the action over the bounded value-sources and finds the guard violation at enumeration time.
+**Why this matters.** An action can move to a valid-looking next condition — passing §5.1 — while its write breaks a whole-collection rule the condition table cannot see (it removes the last required member of a set). Single-step transition testing cannot catch that; §5.4 runs the action over the limited value-sources and finds the broken guard while the tests are being generated, with no end-to-end test needed.
 
 ### 5.5 TOCTOU Detection — Runtime Analog of HC-P015
 
@@ -627,7 +627,7 @@ Runtime detection complements static HC-P015: every call path that HC-P015 can s
 
 ### 5.6 K-Step Sequence Enumeration
 
-Single-step guard checking (§5.4) catches a violation introduced by one action. Many aggregate bugs surface only after a **sequence** — `grant → transfer → revoke` can leave zero owners through three individually-legal transitions, a state no single step reaches.
+Single-step guard checking (§5.4) catches a problem caused by one action. Many whole-collection bugs only show up after a **sequence** — three individually-legal transitions (add → reassign → remove) can leave a set with zero required members, a state no single step reaches.
 
 Because conditions and events are bounded Sets (HC-SM01, HC-SM02), the sequence space is finite. honest-test enumerates every event sequence of length ≤ K from each initial condition, runs each transition's action with values from the bounded sources, and checks the action's guards after **every** step.
 
@@ -654,11 +654,11 @@ FUNCTION enumerate_k_step_sequences(machine, K):
                     condition ← next_condition
 ```
 
-**Bounding the space.** Three things must stay bounded for the enumeration to be finite and exhaustive: the **conditions** and **events** (bounded Sets by construction), and the **value-sources** the actions consume. Input values are bounded by their vocabularies (§3); persisted values by the schema mock-data generator (§6.2); action parameters drawn from an actor-like domain are bounded to a small fixed test pool. A small pool suffices by the **small-scope hypothesis** — almost every aggregate or role-confusion bug manifests at small instances, so two or three test actors exhibit it. You do not need a thousand users to reach the orphaned-task state.
+**Keeping the space small.** Three things must stay limited for the run to be finite and cover every case: the **conditions** and **events** (finite Sets by construction), and the **value-sources** the actions use. Input values are limited by their vocabularies (§3); stored values by the schema mock-data generator (§6.2); action parameters drawn from an actor-like range are limited to a small fixed test pool. A small pool is enough by the **small-scope hypothesis** — almost every whole-collection or role-confusion bug already shows up in small cases, so two or three test actors reveal it. You do not need a thousand to reach the zero-required-member state.
 
 **Configuration.** K is declared per machine, default K = 4. The space is `|events|^K` sequences per starting point (initial condition × initial data × value combination). For `|events| = 8, K = 4`, that is 4,096 event sequences per starting point — tractable in seconds. Raise K for high-assurance domains (authorization, financial workflows); K = 1 reduces to single-step guard checking (§5.4).
 
-**Rationale for the challenge:** a challenger can write actions correct for every single `(condition, event)` pair — passing §5.1 and §5.4 — that corrupt the data only after N events. §5.6 catches such sequences whenever N ≤ K, at enumeration time, without an integration test running the full multi-step flow.
+**Why this matters.** Actions can be correct for every single `(condition, event)` pair — passing §5.1 and §5.4 — yet corrupt the data only after N events. §5.6 catches such sequences whenever N ≤ K, while the tests are being generated, with no end-to-end run of the full multi-step flow.
 
 ## 6. honest-persist Tests
 
@@ -878,9 +878,9 @@ When the session from the previous response is reused
 Then the response and the previous response share the same session cookie value
 ```
 
-**Rationale.** A challenger who modifies a serializer to emit `Content-Type: text/plain` instead of `text/html; charset=utf-8` produces output that passes chain contract testing (the link's manifest output is unchanged), passes honesty checks (still pure), but breaks every client that dispatches on Content-Type. The standard library gives feature authors a vocabulary to assert on exactly those properties. With a feature scenario that says `Then the response Content-Type is "text/html; charset=utf-8"`, the mutation fails in the auto-run. Without such a scenario (and without the step library making it easy to write), the mutation passes.
+**Rationale.** A change to a serializer that emits `Content-Type: text/plain` instead of `text/html; charset=utf-8` produces output that passes chain contract testing (the step's manifest output is unchanged) and passes honesty checks (still pure), but breaks every client that keys on Content-Type. The standard library gives feature authors a way to assert on exactly those properties. With a feature scenario that says `Then the response Content-Type is "text/html; charset=utf-8"`, the change fails in the auto-run. Without such a scenario (and without the step library making it easy to write), it passes.
 
-**Requirement for the challenge.** The published reference application ships BDD feature files covering all HTTP endpoints with standard protocol-level assertions on status, Content-Type, charset, and body shape. Any mutation that changes an HTTP-level property captured by the standard library is caught at pre-commit. Integration-test-catchable HTTP bugs are thereby auto-generated-test-catchable.
+**Requirement.** A conformant application ships BDD feature files covering all HTTP endpoints, with standard checks on status, Content-Type, charset, and body shape. Any change that alters an HTTP-level property the standard library covers is caught before commit — so HTTP-level bugs that would otherwise need an end-to-end test are caught by the generated suite.
 
 ---
 
