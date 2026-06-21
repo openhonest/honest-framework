@@ -18,17 +18,17 @@ The pipeline is two stages and runs one way only:
 
 Developers write **no test code** — the vocabulary, link, recognizer, state machine, guard, and BDD-feature declarations are the test specification. Auto-generation derives every test case, every property check, every guard check, every permutation. *Defining is testing.*
 
-honest-test has three distinct responsibilities, all auto-generated from declarations:
+honest-test tests a function according to **what kind of function it is** — the role honest-check has already given it. There are three kinds, and each gets its own strategy. Picking the strategy from the role is the whole organizing idea: you do not test wiring the way you test a calculation, and you do not test a database write the way you test either.
 
-1. **Classification and chain tests** — every vocabulary member is fed through every chain that consumes it. Every valid output of link N is fed to link N+1 and confirmed accepted. Exhaustive for bounded vocabularies; boundary-sampled for predicates (Fibonacci, length enumeration).
+1. **Pure functions** — `@recognizer`, `@helper`, and any `@link` that does no I/O. Tested by **exhausting their inputs**: list every input the declarations allow, run the function on all of them, and check the result. The inputs come from finite Sets, so the list is the whole story — every case, no sampling. The honesty checks ride along here: each pure function is run twice on the same input and must give the same answer, must not change its input, and a chain of pure functions run twice must match; recognizers also get the near-miss inputs (one character changed, look-alike letters, control characters) and must reject them. (Sections 2, 3, 4.)
 
-2. **Honesty properties** — for every `@link`, the harness verifies purity (same input, same output, twice), mutation isolation (manifest unchanged), idempotency (same chain, same result), and boundary isolation (no I/O or non-determinism outside declared boundaries). Every `@recognizer` is adversarially probed (edit-distance-1, Unicode confusables, control characters, length-extension). Every `@helper` is exercised transitively.
+2. **Supervisory functions** — `@orchestrator`s and the chains they run: the wiring that connects pieces and passes the manifest along. They compute nothing themselves, so they are tested by **checking the joins** — every valid output of one step is accepted by the next, and faults flow where they should. This is contract checking, not input enumeration. (Section 4.6.)
 
-3. **State machine enumeration** — every (condition, event) pair is exercised; every transition action's guards are checked after the mutation, over bounded value-sources; every K-step event sequence (default K=4) is enumerated with guard checks at every intermediate step.
+3. **I/O boundary functions** — `@link(boundary=True)` / `@boundary`: the actual reads and writes (database, DOM, network). They touch the outside world, so they cannot be run purely. Tested by **standing in for the outside world** — made-up data or a fake connection — and **checking the effect is legal**: the change left the data's **health rules** intact. This is where mock data, the permission checks (guards), and the health-rule checks belong. It works for any store — database, DOM, session — because the store is simply what the stand-in replaces. (Sections 5, 6.)
 
-4. **BDD features** — developer-authored Gherkin `.feature` files at the system-requirement level. Scaffolding is auto-generated from `@link` declarations; the developer writes only the `.feature` files themselves. BDD covers semantic correctness of multi-step user journeys — what auto-generation of properties alone cannot cover.
+Sitting above all three is **BDD**: developer-authored Gherkin `.feature` files at the system-requirement level, for the multi-step user journeys no single function's test can express. Scaffolding is auto-generated from `@link` declarations; the developer writes only the `.feature` files. (Section 8.)
 
-All four share one runner and one coverage model. Coverage is **structural, not audited**: HC-R001 (enforced in honest-check) guarantees every function has a declared role or is reachable from one, which guarantees the auto-generated suite reaches every function. If auto-generation completes, coverage is complete by construction.
+All of it shares one runner and one coverage model. Coverage is **structural, not audited**: HC-R001 (enforced in honest-check) guarantees every function has a declared role or is reachable from one, so the strategy for its kind reaches it. If auto-generation completes, coverage is complete by construction.
 
 ### 1.1 Relationship to Other Specs
 
@@ -560,41 +560,48 @@ FUNCTION test_adversarial_state_machine(machine):
 
 ---
 
-### 5.4 Data Invariants (Action Guards)
+### 5.4 Data Health Rules
 
-In the discrete model a transition's value side carries more than the next condition: it carries the **action** to perform and the **values** that action operates on — `(condition, event) → (next_condition, action, values)`. The action is typically a **guarded mutation** of persisted or DOM data, and its values come from the only three places a value can: user input, persistence, or a calculation over those (§3, §6).
+This is the **I/O-boundary testing strategy** (§1): the action a transition carries is a write, so it is tested by standing in for the outside world and checking the effect is legal.
 
-Aggregate properties — e.g. *a set must always retain at least one required member*, *no member appears twice in the same set* — are **not** properties of the discrete condition. The condition is a label (`active`, `archived`); the members live in **persist**, not in the machine. So they are not state-machine invariants. They are **guards on the action's mutation**: `GuardExpression`s (honest-persist §7.5), the same guards HC-P015 and §5.5 protect from TOCTOU. The machine dispatches the action; the guard keeps the data honest.
+In the discrete model a transition carries more than the next condition: it carries the **action** to perform and the **values** that action works on — `(condition, event) → (next_condition, action, values)`. The action is usually a guarded mutation of stored or DOM data, and its values come from the only three places a value can: user input, stored data, or a calculation over those (§3, §6).
 
-honest-test checks that **no action can leave the data in a guard-violating state.** For every transition whose action is a guarded mutation, it runs the action over its value-sources — each drawn from a bounded domain, so the check is exhaustive without enumerating the unbounded data space:
+Two different things must be kept apart:
+
+- the **guard** on the action is a **precondition** — the condition for the action to be allowed (e.g. "there is more than one required member"). It gates the write and is *not* expected to hold afterward: demoting one of two leaves one, and "more than one" is now false.
+- a **health rule** is a statement of what valid data looks like — e.g. "every set keeps at least one required member", "no member appears twice in a set". It must hold *after* every action. Health rules are not properties of the discrete condition (that is just a label like `active`/`archived`); they are properties of the **data**, true no matter which action runs. They live with the state they describe — for stored data, alongside the schema; for DOM/user state, with that state — written as the same guard-expression data, free to count and check across rows.
+
+honest-test checks that **no action can leave the data breaking a health rule.** For every transition whose action is a write, it runs the action over its value-sources — each from a bounded domain, so the check covers every case without enumerating an unbounded data space:
 
 - input values from the recognizer vocabularies (§3),
-- persisted values from the schema mock-data generator (§6.2),
+- stored values from the schema mock-data generator (honest-persist §8.9),
 - calculated values transitively, as pure functions of those.
 
 **Harness algorithm:**
 
 ```
-FUNCTION check_action_guards(machine):
+FUNCTION check_action_health(machine, schema, health_rules):
     FOR EACH (condition, event), (next_condition, action, value_spec) IN machine.transitions:
-        FOR EACH data IN mock_data_states(action.guards):          // bounded mock-persist
+        FOR EACH data IN mock_data_states(schema):                 // bounded made-up data
             FOR EACH values IN enumerate_value_sources(value_spec):  // input × actors, bounded
                 result ← run_action(action, data, values)
-                IF result is ok:                                    // the mutation went through
+                IF result is ok:                                    // the write went through
                     after ← result.ok.data
-                    FOR EACH guard IN action.guards:
-                        IF NOT guard.holds(after):
-                            EMIT failure("guard_violation",
-                                f"Action '{action.name}' on ({condition}, {event}) left "
-                                f"guard '{guard.name}' violated. Values: {values}.")
-                // a result the guard REJECTED (err) is correct, not a failure
+                    FOR EACH rule IN health_rules:
+                        IF NOT rule.holds(after):
+                            EMIT failure("health_rule_broken",
+                                f"Action on ({condition}, {event}) left rule '{rule.name}' "
+                                f"broken. Values: {values}.")
+                // a result the guard REFUSED (err) is correct, not a failure
 ```
 
-**Relationship to transition testing (§5.1).** §5.1 checks the discrete table — `(condition, event) → next_condition`. §5.4 checks that the **action** bound to that transition cannot corrupt the data its guards protect. Both run on the same pass over the table.
+**Why a precondition and a health rule are different.** Re-checking the precondition after the action would flag correct code: a correct demote (two required → one) makes "more than one" false, yet the data is fine because "at least one" still holds. The health rule ("at least one") is what must survive; the precondition ("more than one") is only what makes the write safe. Checking the health rule after catches a *broken* precondition — one that let a write take the last required member — with no false alarms on correct ones.
 
-**Dependency.** Guard evaluation and mock data are honest-persist concerns (§6; honest-persist §7.5). §5.4 is the state-machine driver over honest-persist's guard model — it cannot run before honest-persist provides `run_action`, the guard evaluator, and the mock-data generator.
+**Relationship to transition testing (§5.1).** §5.1 checks the discrete table — `(condition, event) → next_condition`. §5.4 checks that the **action** bound to that transition cannot leave the data breaking a health rule. Both run on the same pass over the table.
 
-**Why this matters.** An action can move to a valid-looking next condition — passing §5.1 — while its write breaks a whole-collection rule the condition table cannot see (it removes the last required member of a set). Single-step transition testing cannot catch that; §5.4 runs the action over the limited value-sources and finds the broken guard while the tests are being generated, with no end-to-end test needed.
+**Dependency.** Health-rule checking, the action runner, and mock data are honest-persist concerns (honest-persist §7.5, §8.9). §5.4 is the boundary-testing driver over that model — it cannot run before honest-persist provides `run_action`, the guard/health-rule evaluator, and the mock-data generator.
+
+**Why this matters.** An action can move to a valid-looking next condition — passing §5.1 — while its write breaks a whole-collection rule the condition table cannot see (it removes the last required member of a set). Single-step transition testing cannot catch that; §5.4 runs the action over the limited value-sources and finds the broken rule while the tests are being generated, with no end-to-end test needed.
 
 ### 5.5 TOCTOU Detection — Runtime Analog of HC-P015
 
@@ -627,14 +634,14 @@ Runtime detection complements static HC-P015: every call path that HC-P015 can s
 
 ### 5.6 K-Step Sequence Enumeration
 
-Single-step guard checking (§5.4) catches a problem caused by one action. Many whole-collection bugs only show up after a **sequence** — three individually-legal transitions (add → reassign → remove) can leave a set with zero required members, a state no single step reaches.
+Single-step health checking (§5.4) catches a problem caused by one action. Many whole-collection bugs only show up after a **sequence** — three individually-legal transitions (add → reassign → remove) can leave a set with zero required members, a state no single step reaches.
 
-Because conditions and events are bounded Sets (HC-SM01, HC-SM02), the sequence space is finite. honest-test enumerates every event sequence of length ≤ K from each initial condition, runs each transition's action with values from the bounded sources, and checks the action's guards after **every** step.
+Because conditions and events are bounded Sets (HC-SM01, HC-SM02), the sequence space is finite. honest-test enumerates every event sequence of length ≤ K from each initial condition, runs each transition's action with values from the bounded sources, and checks the **health rules** after **every** step.
 
 ```
-FUNCTION enumerate_k_step_sequences(machine, K):
+FUNCTION enumerate_k_step_sequences(machine, schema, health_rules, K):
     FOR EACH start IN enumerate_initial_conditions(machine):
-        FOR EACH data IN enumerate_initial_data(machine):          // bounded mock-persist states
+        FOR EACH data IN mock_data_states(schema):                 // bounded made-up data states
             FOR EACH sequence IN all_event_sequences(machine.events, length ≤ K):
                 condition ← start
                 state     ← data
@@ -646,10 +653,10 @@ FUNCTION enumerate_k_step_sequences(machine, K):
                         result ← run_action(action, state, values)
                         IF result is ok:
                             state ← result.ok.data
-                            FOR EACH guard IN action.guards:
-                                IF NOT guard.holds(state):
-                                    EMIT failure("guard_violation_at_depth",
-                                        f"Guard '{guard.name}' violated at step {i+1} "
+                            FOR EACH rule IN health_rules:
+                                IF NOT rule.holds(state):
+                                    EMIT failure("health_rule_broken_at_depth",
+                                        f"Rule '{rule.name}' broken at step {i+1} "
                                         f"of sequence {sequence[:i+1]} from {start}.")
                     condition ← next_condition
 ```

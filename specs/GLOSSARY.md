@@ -32,6 +32,9 @@ plain language in the text itself.
 | **boundary** | The edge of the program, and the only place a step may touch the outside world (read input, write output, read the clock, use the database). Everything inside is pure. |
 | **pure (function/step)** | Same input always gives the same output; it reads and writes nothing outside what it is handed. |
 | **mutator** | The one piece of code allowed to change a given piece of state. The rule: every declared piece of state has exactly one. |
+| **role** | The kind a function is declared as — recognizer, helper, link, orchestrator, or boundary. honest-check assigns it; honest-test picks a testing strategy from it. |
+| **supervisory function** | A function that wires pieces together and passes data along (an orchestrator, or a chain) rather than computing anything itself — tested by checking its joins, not by listing its inputs. |
+| **health rule** | A statement of what valid data looks like — e.g. "every task keeps at least one owner." Checked after a boundary write to confirm the change left the data legal. The cross-row cousin of a column check. |
 | **event log** | The append-only record of everything that happened — the single source of truth that projections are built from. |
 | **projection** | A derived view computed from the event log by a pure function (a dashboard, a count, a timeline). Recomputed from events, never stored as primary data. |
 | **aggregate** | The single thing a stream of events is grouped under (one order, one account); events for the same aggregate are numbered in order. |
