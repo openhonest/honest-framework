@@ -7,6 +7,7 @@ per-case hand-coded tests.
   uv run --package honest-persist python honest-persist/conformance/run_conformance.py
 """
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -65,15 +66,15 @@ _EXEC_FNS = {"execute": execute, "execute_one": execute_one, "execute_scalar": e
 
 
 class _RowsConn:
-    """A stand-in connection (section 7.4): returns canned rows/rowcount for any query and
-    records the (sql, params) it was given. Test fixture - conformance is not linted."""
+    """A stand-in async connection (section 7.4): awaits to canned rows/rowcount for any query
+    and records the (sql, params) it was given. Test fixture - conformance is not linted."""
 
     def __init__(self, rows, rowcount):
         self.rows = rows
         self.rowcount = rowcount
         self.calls = []
 
-    def execute(self, sql, params):
+    async def execute(self, sql, params):
         self.calls.append((sql, params))
         return {"rows": self.rows, "rowcount": self.rowcount}
 
@@ -81,7 +82,7 @@ class _RowsConn:
 def _check_execute(case):
     spec = case["execute"]
     conn = _RowsConn(spec.get("rows", []), spec.get("rowcount", 0))
-    result = _EXEC_FNS[spec["fn"]](spec["query"], conn)
+    result = asyncio.run(_EXEC_FNS[spec["fn"]](spec["query"], conn))
     return result == case["expect"], f"got {result}"
 
 
