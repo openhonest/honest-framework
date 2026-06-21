@@ -9,7 +9,7 @@ Deferred: section 5.4 (state invariants) and 5.6 (K-step sequences) need a field
 model the name-based primitive does not carry; section 5.5 (TOCTOU) needs honest-persist.
 """
 
-from honest_type import ok, transition
+from honest_type import ok, target_next, transition
 
 from honest_test.adversarial import adversarial_neighbours
 
@@ -31,8 +31,8 @@ def _first(names):
 def test_valid_transitions(machine):
     """Every declared (state, event) -> next must produce ok({state: next}) (section 5.1)."""
     findings = []
-    for (state, event), next_state in machine["transitions"].items():
-        if transition(machine, state, event) != ok({"state": next_state}):
+    for (state, event), target in machine["transitions"].items():
+        if transition(machine, state, event) != ok({"state": target_next(target)}):
             findings.append(_finding("transition_incorrect", {"state": state, "event": event}))
     return findings
 

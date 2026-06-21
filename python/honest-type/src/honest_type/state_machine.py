@@ -13,6 +13,20 @@ class StateMachineError(Exception):
     event, a transition lands on an unknown state, or the initial state is unknown."""
 
 
+def target_next(target):
+    """The next state a transition target names: a bare state name, or the `next` of an
+    action-carrying record `{next, action, values}` (section 3.2). Tolerant of both forms."""
+    return target["next"] if hasattr(target, "get") else target
+
+
+def target_action(target):
+    """The (action, values) a transition target carries, or (None, None) for plain routing.
+    The machine never looks inside the action; it only hands it back."""
+    if hasattr(target, "get"):
+        return target.get("action"), target.get("values")
+    return None, None
+
+
 def _names(declaration):
     """The set of names from a states/events declaration: a vocabulary's Set members, or a
     plain set of names used directly."""
@@ -31,13 +45,13 @@ def state_machine(states, events, transitions, initial, terminal=None):
     state_names = _names(states)
     event_names = _names(events)
     table = dict(transitions)
-    for (state, event), next_state in table.items():
+    for (state, event), target in table.items():
         if state not in state_names:
             raise StateMachineError(f"Transition from unknown state '{state}'.")
         if event not in event_names:
             raise StateMachineError(f"Transition on unknown event '{event}'.")
-        if next_state not in state_names:
-            raise StateMachineError(f"Transition to unknown state '{next_state}'.")
+        if target_next(target) not in state_names:
+            raise StateMachineError(f"Transition to unknown state '{target_next(target)}'.")
     if initial not in state_names:
         raise StateMachineError(f"Initial state '{initial}' is not a declared state.")
     return {
@@ -62,4 +76,4 @@ def transition(machine, current_state, event):
             fault("no_transition", f"No transition for ({current_state}, {event})", "client",
                   {"state": current_state, "event": event})
         )
-    return ok({"state": machine["transitions"][key]})
+    return ok({"state": target_next(machine["transitions"][key])})

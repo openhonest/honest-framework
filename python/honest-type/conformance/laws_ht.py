@@ -31,7 +31,13 @@ from honest_type import (
 )
 from honest_type.recognizers import recognize
 from honest_type.reserved import _LAYER1, _LAYER2, _LAYER3_PYTHON, reservation_layer
-from honest_type.state_machine import StateMachineError, state_machine, transition
+from honest_type.state_machine import (
+    StateMachineError,
+    state_machine,
+    target_action,
+    target_next,
+    transition,
+)
 from honest_type.vocabulary import VocabularyError, merge
 
 
@@ -327,7 +333,33 @@ SM_CONSTRUCTION_SUBJECTS = [
 SM_LAWS = [
     law("SM-construct", "an invalid state machine is rejected at construction", _sm_construction_rejected),
 ]
-SM_VOCAB_LAWS = [law("SM-vocab", "states/events may be declared as vocabularies", _sm_from_vocabulary)]
+def _sm_actions(subject):
+    """A transition may carry an action and values; the machine routes on `next` and hands
+    the action back opaquely. Plain routing targets carry no action."""
+    bad = []
+    action = {"kind": "set", "values": {"role": "ro"}}
+    machine = state_machine(
+        {"idle", "running"},
+        {"start"},
+        {("idle", "start"): {"next": "running", "action": action, "values": {"x": 1}}},
+        "idle",
+    )
+    if transition(machine, "idle", "start").get("ok", {}).get("state") != "running":
+        bad.append("action-carrying transition did not route to its next state")
+    target = machine["transitions"][("idle", "start")]
+    if target_next(target) != "running":
+        bad.append("target_next of an action record is wrong")
+    if target_action(target) != (action, {"x": 1}):
+        bad.append(f"target_action is wrong: {target_action(target)}")
+    if target_next("running") != "running" or target_action("running") != (None, None):
+        bad.append("plain routing target helpers are wrong")
+    return bad
+
+
+SM_VOCAB_LAWS = [
+    law("SM-vocab", "states/events may be declared as vocabularies", _sm_from_vocabulary),
+    law("SM-actions", "a transition may carry an opaque action and values", _sm_actions),
+]
 
 
 def _reservation_layer_law():
