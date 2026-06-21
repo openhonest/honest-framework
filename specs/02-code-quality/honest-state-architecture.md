@@ -13,11 +13,11 @@ Two ground truths govern everything in honest-state.
 
 **1. There is no such thing as "the state."** There are many *kinds* of state, and each kind deserves its own treatment, store, and handling. The DOM is the store for *individual user* state — one kind among many, not "the" store. Login/session state that must be visible to every instance in a horizontally-scaled deployment lives in a shared store (Redis). Persisted domain state lives in the database. Conflating these — the mistake every general-purpose "state manager" makes — is the disease.
 
-**2. Indiscriminately mutable state is the enemy.** Unconstrained mutators produce a combinatorial explosion of reachable states, and that explosion is precisely what makes software unverifiable — the exact thing this framework exists to defeat. Hence the law:
+**2. Freely changeable state is the enemy.** When anything can change state from anywhere, the number of states the program can reach explodes beyond what anyone can follow, and that is exactly what makes software impossible to check — the very thing this framework exists to defeat. Hence the law:
 
-> **Every declared piece of state has exactly one mutator.**
+> **Every declared piece of state has exactly one mutator** — one piece of code allowed to change it.
 
-One mutator means one place to enumerate; mutation stays bounded; bounded is what makes exhaustive verification possible. This is not a rule bolted on — it is the spine that `guarded_mutation` (persisted state), the DOM-as-single-store (user state), HC-P016 (closures), and the HC-P004 global-read clause (module state) are each a vertebra of.
+One mutator means one place to look; the set of changes stays small; small is what makes checking every case possible. This is not a rule bolted on — it is the spine that `guarded_mutation` (stored state), the DOM-as-single-store (user state), HC-P016 (closures), and the HC-P004 global-read clause (module state) are each a part of.
 
 ### 1.1 The single-mutator law, precisely
 

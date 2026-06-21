@@ -29,6 +29,7 @@ plain language in the text itself.
 | **binding** | The table that says which recognized kind goes into which slot. |
 | **boundary** | The edge of the program, and the only place a step may touch the outside world (read input, write output, read the clock, use the database). Everything inside is pure. |
 | **pure (function/step)** | Same input always gives the same output; it reads and writes nothing outside what it is handed. |
+| **mutator** | The one piece of code allowed to change a given piece of state. The rule: every declared piece of state has exactly one. |
 | **poka-yoke** | The guiding rule: every framework decision must make some named kind of bug impossible to even write, or it does not earn its place. |
 | **Set** | A finite, written-out list of allowed values for a kind — so every value can be listed and tested in full. (Capitalized to mark the framework concept, distinct from a general set.) |
 | **state machine** | A lookup table that says, for each current condition and each event, what the next condition is. Plain data; looking up the next condition is a pure step. |
