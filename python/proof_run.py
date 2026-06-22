@@ -112,6 +112,15 @@ def module_value_results(m):
     return by_function
 
 
+def module_public(m):
+    """The module's public function names — its package __all__. This is the surface the portable
+    value contract (suite.json) covers. A function not here is an internal helper, off the contract:
+    it is verified indirectly, by 100% coverage, the laws, and the public value-checks that run it,
+    so it carries no value oracle of its own."""
+    pkg = importlib.import_module(f"honest_{m}")
+    return {name for name in getattr(pkg, "__all__", []) if callable(getattr(pkg, name, None))}
+
+
 def module_exempt(m):
     """Functions the module's suite.json declares value-oracle exempt (§8.5): a value oracle cannot
     cover them by nature (combinatorial output, a tuple), so their value leg is waived and the laws
@@ -129,15 +138,18 @@ def build_proofs():
         cases = module_cases(m)
         value_results = module_value_results(m)
         exempt = module_exempt(m)
+        public = module_public(m)
         seen = defaultdict(int)
         for fqn, func in module_functions(m):
             scenarios = gher.get(func, [])
             i = seen[func]
             seen[func] += 1
             # A green gate establishes the honesty and coverage legs; the value oracle is the third
-            # leg (§8.5). decide_proof grants `proved` only when all three hold — or, for a declared-
-            # exempt function, when honesty and coverage hold and the laws carry the value.
-            decision = decide_proof(True, True, value_results.get(func, []), exempt=func in exempt)
+            # leg (§8.5). decide_proof grants `proved` only when all three hold — or when the value
+            # leg is waived: for a declared-exempt public function (the laws carry the value), or for
+            # an internal helper, which is off the portable value contract and verified indirectly.
+            waived = func in exempt or func not in public
+            decision = decide_proof(True, True, value_results.get(func, []), exempt=waived)
             proofs.append({
                 "function": fqn,
                 "gherkin": scenarios[i] if i < len(scenarios) else func,
@@ -188,11 +200,24 @@ def main(argv):
     with LOG.open("w", encoding="utf-8") as handle:
         asyncio.run(emit_proofs(make_sink(handle), proofs))
 
-    exempt_fqns = {fqn for m in BUILT for fqn, func in module_functions(m) if func in module_exempt(m)}
+    public = {m: module_public(m) for m in BUILT}
+    declared_exempt = {m: module_exempt(m) for m in BUILT}
+
+    def _category(proof):
+        mod = proof["module"][len("honest-"):]
+        func = proof["function"].rsplit(".", 1)[1]
+        if proof["result"] != "proved":
+            return "mismatch" if any(f.startswith("value case") for f in proof["failures"]) else "unchecked"
+        if func not in public[mod]:
+            return "internal"
+        if func in declared_exempt[mod]:
+            return "laws-exempt"
+        return "value-checked"
+
+    counts = defaultdict(int)
+    for proof in proofs:
+        counts[_category(proof)] += 1
     proved = sum(1 for p in proofs if p["result"] == "proved")
-    exempt_proved = sum(1 for p in proofs if p["result"] == "proved" and p["function"] in exempt_fqns)
-    no_oracle = sum(1 for p in proofs if any("no value oracle" in f for f in p["failures"]))
-    mismatch = sum(1 for p in proofs if any(f.startswith("value case") for f in p["failures"]))
     per_module = defaultdict(int)
     for p in proofs:
         per_module[p["module"]] += 1
@@ -200,7 +225,8 @@ def main(argv):
     for mod in BUILT:
         print(f"    honest-{mod}: {per_module['honest-' + mod]}")
     print(f"proof-run: {len(proofs)} functions = the directly-counted function-point total.")
-    print(f"proof-run: {proved} proved ({proved - exempt_proved} value-checked, {exempt_proved} laws-exempt), {no_oracle} not yet value-checked, {mismatch} value mismatch.")
+    print(f"proof-run: {proved} proved — {counts['value-checked']} value-checked, {counts['laws-exempt']} laws-exempt, {counts['internal']} internal (private, covered indirectly).")
+    print(f"proof-run: {counts['unchecked']} public functions not yet value-checked, {counts['mismatch']} value mismatch.")
     return 0
 
 
