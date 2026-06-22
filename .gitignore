@@ -12,3 +12,4 @@ build/
 AGENTS.md
 .agents.md
 CLAUDE.md
+python/honest_event_log.jsonl
