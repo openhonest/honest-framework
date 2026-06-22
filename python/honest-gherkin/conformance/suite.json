@@ -18,6 +18,18 @@
     {"id": "match-none", "match": {"patterns": [{"kind": "given", "pattern": "a known step", "handler": "h"}], "step_text": "an unknown step"}, "expect": "err", "expect_code": "step_unmatched"},
     {"id": "match-ambiguous", "match": {"patterns": [{"kind": "given", "pattern": "a {x}", "handler": "h"}, {"kind": "given", "pattern": "{y} step", "handler": "h"}], "step_text": "a step"}, "expect": "err", "expect_code": "ambiguous_step"},
     {"id": "fold-mixed", "fold": {"feature_name": "Login", "source_path": "login.feature", "scenario_statuses": ["ok", "err", "ok", "err"]}, "expect_passed": 2, "expect_failed": 2},
-    {"id": "fold-all-pass", "fold": {"feature_name": "Empty", "source_path": "e.feature", "scenario_statuses": ["ok", "ok"]}, "expect_passed": 2, "expect_failed": 0}
+    {"id": "fold-all-pass", "fold": {"feature_name": "Empty", "source_path": "e.feature", "scenario_statuses": ["ok", "ok"]}, "expect_passed": 2, "expect_failed": 0},
+    {"id": "value-step-fault", "value_case": {"function": "step_fault", "args": ["step_unmatched", "no match here"], "expected": {"code": "step_unmatched", "scenario_name": "", "step_text": "", "detail": "no match here"}}},
+    {"id": "value-empty-registry", "value_case": {"function": "empty_registry", "args": [], "expected": {"patterns": []}}},
+    {"id": "value-parse-feature", "value_case": {"function": "parse_feature", "args": ["Feature: Login\n\n  Scenario: signs in\n    Given a user\n    Then a dashboard\n", "login.feature"], "expected": {"ok": {"name": "Login", "description": "", "scenarios": [{"name": "signs in", "steps": [{"kind": "given", "resolved_kind": "given", "text": "a user", "source_line": 4}, {"kind": "then", "resolved_kind": "then", "text": "a dashboard", "source_line": 5}], "tags": [], "source_line": 3}], "background_steps": [], "source_path": "login.feature"}}}},
+    {"id": "value-fold-report", "value_case": {"function": "fold_feature_report", "args": [{"name": "F", "description": "", "scenarios": [], "background_steps": [], "source_path": "f.feature"}, [{"name": "s1", "status": "ok", "step_results": [], "duration_ms": 0}, {"name": "s2", "status": "err", "step_results": [], "duration_ms": 0}]], "expected": {"feature_name": "F", "source_path": "f.feature", "scenarios": [{"name": "s1", "status": "ok", "step_results": [], "duration_ms": 0}, {"name": "s2", "status": "err", "step_results": [], "duration_ms": 0}], "total_passed": 1, "total_failed": 1}}}
+  ],
+  "value_oracle_exempt": [
+    {"function": "compile_pattern", "reason": "Output embeds the compiled regex, whose dialect is per-spoke (section 1.5); not a portable value."},
+    {"function": "register_step", "reason": "Output embeds the step handler (a callable); not a portable value."},
+    {"function": "match_step", "reason": "Output (StepMatch) embeds the matched pattern's handler (a callable); not a portable value."},
+    {"function": "run_step", "reason": "Threads the immutable context shaped by the developer's handler; part of the execution engine the value oracle itself runs on."},
+    {"function": "run_scenario", "reason": "Its report carries wall-clock duration (non-deterministic); the scenario runner the value oracle runs on."},
+    {"function": "run_feature_file", "reason": "Reads the filesystem and reports wall-clock duration (non-deterministic); verified by its own conformance probe."}
   ]
 }

@@ -87,6 +87,8 @@ def run(suite_path):
     passed = 0
     failed = 0
     for case in suite["cases"]:
+        if "value_case" in case:
+            continue  # value cases are checked centrally by value-check.py; a module cannot run the oracle on itself
         ok, detail = _CHECKERS[_kind(case)](case)
         if ok:
             passed += 1
