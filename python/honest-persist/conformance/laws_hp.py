@@ -643,6 +643,62 @@ def _probe_instrument():
     return bad
 
 
+def _probe_instrumented():
+    """Instrumented execute (§8.5): the boundary emits hf.persist.query through the injected emit on
+    success and on failure (then re-raises), never blocks the result, swallows emit failures, and
+    skips instrumentation entirely when no emit is wired in (zero overhead when disabled)."""
+    from honest_persist.instrumented import instrumented_execute
+
+    async def _run():
+        bad = []
+        q = {"sql": "SELECT id FROM users WHERE id = :id", "params": {"id": 1}}
+        conn = _RowsConn([{"id": 1}, {"id": 2}], 2)
+
+        # No emit wired in: run and return, no event.
+        if await instrumented_execute(q, conn, None, "users_db", "select", "r1", True) != [{"id": 1}, {"id": 2}]:
+            bad.append("with no emit, instrumented_execute should just return the rows")
+
+        # Success: one hf.persist.query event, keyed db:table, fault_code null, row_count set.
+        calls = []
+
+        async def emit(event_type, aggregate_type, aggregate_id, payload):
+            calls.append((event_type, aggregate_type, aggregate_id, payload))
+            return {"ok": {"event_id": "e"}}
+
+        if await instrumented_execute(q, conn, emit, "users_db", "select", "r1", True) != [{"id": 1}, {"id": 2}]:
+            bad.append("instrumented_execute should still return the rows")
+        if len(calls) != 1 or calls[0][:3] != ("hf.persist.query", "persist", "users_db:users"):
+            bad.append(f"a successful query should emit one hf.persist.query keyed db:table: {calls}")
+        elif calls[0][3]["fault_code"] is not None or calls[0][3]["row_count"] != 2 or calls[0][3]["operation"] != "select":
+            bad.append(f"the success event payload is wrong: {calls[0][3]}")
+
+        # Query failure: emit the event with a fault code (and no full sql outside development), re-raise.
+        failures = []
+
+        async def emit_fail(event_type, aggregate_type, aggregate_id, payload):
+            failures.append(payload)
+
+        raised = False
+        try:
+            await instrumented_execute(q, _TxConn(fail_at=0), emit_fail, "users_db", "select", "r1", False)
+        except RuntimeError:
+            raised = True
+        if not raised:
+            bad.append("a query failure should re-raise after emitting")
+        if len(failures) != 1 or failures[0]["fault_code"] is None or failures[0]["row_count"] != 0 or failures[0]["sql"] is not None:
+            bad.append(f"a failed non-development query should emit fault_code, row_count 0, no full sql: {failures}")
+
+        # A failing emit is swallowed: the query result is unaffected.
+        async def emit_down(event_type, aggregate_type, aggregate_id, payload):
+            raise ValueError("emit is down")
+
+        if await instrumented_execute(q, conn, emit_down, "users_db", "select", "r1", True) != [{"id": 1}, {"id": 2}]:
+            bad.append("a failing emit must never break the query")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -658,6 +714,7 @@ def run():
         "execute": _probe_execute(),
         "transaction": _probe_transaction(),
         "instrument": _probe_instrument(),
+        "instrumented": _probe_instrumented(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():

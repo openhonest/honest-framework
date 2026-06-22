@@ -210,3 +210,14 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given a pool lifecycle transition
     When build_pool_event builds the payload
     Then it carries the db, the event, the pool size, the active and waiting counts, and any duration or fault, so pool health is in the same log
+
+  Scenario: instrumented_execute runs a query and emits the query event
+    Given a query, a connection, an injected emit, and the query's context
+    When instrumented_execute runs the query
+    Then it returns the rows and emits one hf.persist.query event keyed by db and table, with the fault code on failure, then re-raises
+    But a failing emit never breaks the query, and no emit means no event
+
+  Scenario: _safe_emit emits the query event and swallows an emit failure
+    Given the injected emit, an aggregate id, and a query event payload
+    When _safe_emit emits it
+    Then it sends the hf.persist.query event through the emit, but a failure in the emit is logged and swallowed so it never breaks the query

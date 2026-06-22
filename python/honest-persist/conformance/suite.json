@@ -126,6 +126,7 @@
     {"function": "execute_scalar", "reason": "Async I/O boundary: runs a query against a live connection."},
     {"function": "execute_many", "reason": "Async I/O boundary: runs a query against a live connection."},
     {"function": "transaction", "reason": "Async I/O boundary: runs writes in a transaction against a live connection."},
-    {"function": "reconstruction_sql", "reason": "Takes detailed column specifications; covered by the to_sql / apply reconstruction paths."}
+    {"function": "reconstruction_sql", "reason": "Takes detailed column specifications; covered by the to_sql / apply reconstruction paths."},
+    {"function": "instrumented_execute", "reason": "Async I/O boundary: runs a query against a live connection and emits through an injected emit. Verified by its own conformance probe."}
   ]
 }
