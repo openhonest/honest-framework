@@ -766,6 +766,16 @@ Then the response and the previous response share the same session cookie value
 
 **Requirement.** A conformant application ships BDD feature files covering all HTTP endpoints, with standard checks on status, Content-Type, charset, and body shape. Any change that alters an HTTP-level property the standard library covers is caught before commit — so HTTP-level bugs that would otherwise need an end-to-end test are caught by the generated suite.
 
+### 8.5 Proof Events: Gherkin Traceability into the Log
+
+A gherkin states a function's behaviour; auto-generation proves it; but a passing run is, by itself, anonymous — it shows the function is sound, not *which stated behaviour was verified* or *whether every requirement has a proof*. To make the requirement→proof thread traceable, and to put it in the same place as the runtime fault thread, honest-test emits one **proof event** per function on every conformance run.
+
+For each roled function it proves, honest-test emits `hf.proof.checked` (honest-observe §4.8). The event is keyed by the function's fully-qualified name — which is its one gherkin (the requirement) and its function-point unit — and carries the gherkin scenario name, the number of cases run, `proved` or `failed`, and the function's line and branch coverage.
+
+**Emitted through an injected runtime, never an import.** honest-test's core does not depend on honest-observe. The conformance runner wires an observe `emit` (honest-observe §3) into the run; honest-test calls it per function. A pure local run with no runtime injected emits nothing — the dependency runs one way (test → observe, at the run boundary only), with no cycle and no build-order change to honest-test's module dependencies.
+
+**The traceability matrix is complete by construction.** HC-P009 guarantees exactly one gherkin per function, and the run emits exactly one proof event per function, so the proof events are a gap-free **requirement → proof → result** record. Two threads then read from one log: the static thread (is requirement X proved? by how many cases? at what coverage?) is a projection over `hf.proof.checked` keyed by function name; the runtime thread (what happened to request Y?) is a projection keyed by `request_id`. The directly-counted function-point measure (honest-gherkin §9.2) is itself a projection over `hf.proof.checked`. This is why the per-function gherkins need no bespoke step-handlers: auto-generation proves them and the proof event makes that proof traceable. Bespoke step-handlers remain only for the integration- and HTTP-level features of §8.4, which auto-generation cannot reach.
+
 ---
 
 ## 9. Coverage

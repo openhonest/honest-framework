@@ -549,6 +549,30 @@ payload: {
 
 `hf.app.error` replaces unhandled exception logging. Any exception that escapes `@catch_at_boundary` or occurs outside a chain is caught at the application supervisor level and written as `hf.app.error`.
 
+### 4.8 Proof Events
+
+honest-test emits one proof event per function on every conformance run. Where every other framework event records what happened during a *request* at runtime, a proof event records that a function's stated behaviour was *verified* — putting the static "is this requirement proved?" thread into the same log as the runtime "what happened to this request?" thread.
+
+The two threads use **different correlation keys**. Runtime events join on `request_id`. Proof events join on the function's fully-qualified name, which is also its one gherkin (the requirement statement, honest-gherkin §9.1) and its function-point unit (honest-gherkin §9.2). There is no `request_id` on a proof event — it is emitted at test time, outside any request.
+
+**`hf.proof.checked`**
+```
+aggregate_type: "function"
+aggregate_id:   function_fqn            // e.g. "honest_test.honesty._finding"
+payload: {
+    function:        String,            // fully-qualified function name (= aggregate_id)
+    gherkin:         String,            // the one gherkin scenario stating this behaviour
+    module:          String,            // owning module
+    cases:           Integer,           // generated + contract cases run for this function
+    result:          "proved" | "failed",
+    failures:        [String],          // empty unless result = "failed"
+    line_coverage:   Float,             // percent of the function's lines reached
+    branch_coverage: Float,             // percent of the function's branches reached
+}
+```
+
+The proof event is emitted through the injected runtime (section 3), exactly as any other `emit`: honest-test does not import honest-observe; the conformance runner wires `emit` in, and a pure local run with no runtime injected emits nothing. Because every function carries exactly one gherkin (HC-P009) and the run emits exactly one proof event per function, the proof events form a complete, gap-free **requirement → proof → result** matrix. It is read with the same tools as the runtime log (section 9), and the function-point count (honest-gherkin §9.2) is itself a projection over it: count the `hf.proof.checked` events, partition `proved` from `failed`.
+
 ---
 
 ## 5. Application Events
