@@ -33,7 +33,7 @@ author works against. Read the path that fits you:
 | [`honest-persist`](honest-persist/) | Schema-first persistence — schema as data, migrations as a pure diff, queries and transactions as data. Pure functions on top, I/O only at the boundary. Transactions are atomic (all-or-nothing); making overlapping writes race-safe is the application's job, not the framework's. | Partly — adopters declare schemas; the diff/query engines are plumbing. |
 | [`honest-observe`](honest-observe/) | Event-sourced observability — one append-only event log; projections are pure folds over it; `emit` writes events. `emit` reaches the outside world (id, clock, sequence, log writer) only through an injected runtime, so observe is stored by persist without importing it. The persistence boundaries instrument through it. | No — plumbing. The boundaries emit for you. |
 | [`honest-errors`](honest-errors/) | The error-policy leaf — two raw payloads (browser, server) normalized to one report; what happens to a report is a pure function of the environment; a pure state-threaded throttle suppresses repeats. No I/O. Composed by observe (normalizers) and alerts (behavior table + rate-limiter). | No — plumbing. Composed by observe and alerts. |
-| [`honest-gherkin`](honest-gherkin/) | The BDD execution engine — parse a feature, match its steps against a registry, fold and run the scenario, report; all as data, no shared mutable context. honest-test runs on it. This release: the parse contract (the Feature IR and `parse_feature`). | No — plumbing. honest-test runs features through it. |
+| [`honest-gherkin`](honest-gherkin/) | The BDD execution engine — parse a feature, compile step patterns, match steps against a registry, fold and run the scenario over an immutable context, and report; all as data, no shared mutable context, faults as data. A single I/O boundary (`run_feature_file` + the CLI). honest-test runs on it. | No — plumbing. honest-test runs features through it. |
 
 The package inventory and per-module status are the authoritative checkpoint; this
 table is the short form.
@@ -69,12 +69,20 @@ behaviourally, two complementary ways, and both must pass:
   generated space. This reaches what no data format can express: predicates, composed
   types, throwing functions, fake I/O boundaries, malformed input. It is where
   *defining is testing* is actually realised.
+- A **value oracle** — the `value_case`s in `suite.json`, run through honest-test's
+  value-assertion vocabulary (`value-check.py`, wired into the gate). Generation proves
+  *properties* and *shape* but never *value*, so a pure, fully-covered function can still
+  return the wrong answer; the value oracle is the known-good `(input, expected)` pair
+  that catches it. A function is `proved` only when it passes the honesty checks, is fully
+  covered, and its value oracle holds — or, where a value oracle cannot apply, it is
+  declared exempt with a reason. Every public function across the eight packages is so
+  accounted for.
 
 Completeness is **measured, not asserted**: the gate (`coverage-all.sh`) fails below
-**100% line and branch coverage**. An unhit line is dead code or an unspecified
-behaviour — both are defects the gate surfaces. All eight packages are at 100%, and each
-is self-verifying in isolation. The full path — build order, seeding, and what carries
-across languages — is in
+**100% line and branch coverage**, and below a clean value-oracle run. An unhit line is
+dead code or an unspecified behaviour — both are defects the gate surfaces. All eight
+packages are at 100%, and each is self-verifying in isolation. The full path — build
+order, seeding, and what carries across languages — is in
 [`../specs/01-framework/honest-framework-spec.md`](../specs/01-framework/honest-framework-spec.md)
 under *Bootstrapping a New Language Implementation*.
 
