@@ -94,6 +94,12 @@ def _build_machine(case):
     transitions = {(t[0], t[1]): t[2] for t in case["transitions"]}
     return state_machine(set(case["states"]), set(case["events"]), transitions, case["initial"])
 
+
+def _make_machine(states, events, transitions, initial):
+    """Build a state machine from JSON-able parts: a value case cannot carry the tuple-keyed
+    transitions dict directly, so it passes [from, event, to] triples that this folds into one."""
+    return state_machine(set(states), set(events), {(t[0], t[1]): t[2] for t in transitions}, initial)
+
 # Honesty-test fixtures: live links (functions), so they live in the runner, not the suite.
 _counter = {"n": 0}
 
@@ -131,6 +137,17 @@ _HONESTY_LINKS = {
     "set_role": _set_role,
 }
 
+# Fixtures a value case may $ref/$call to reach a function-taking or object-input function: links,
+# the JSON-able machine builder, and the honest_type constructors. These live in the runner (live
+# callables), like the honesty links — proof_run reads this same map.
+_VALUE_FUNCTIONS.update({
+    "pure_link": _pure_link,
+    "set_role": _set_role,
+    "make_machine": _make_machine,
+    "vocabulary": vocabulary,
+    "binding": binding,
+})
+
 # Chain-contract fixtures: a producer that declares an accepts vocabulary, and consumers that
 # accept or reject its outputs in different ways.
 _fmt_vocab = vocabulary({"fmt": {"currency", "number"}})
@@ -164,6 +181,18 @@ _CONTRACT_LINKS = {
     "client_picky": _client_picky,
     "always_ok": _always_ok,
 }
+
+
+async def _recording_emit(event_type, aggregate_type, aggregate_id, payload):
+    return {"ok": {"event_id": "e"}}
+
+
+# Chain and proof fixtures a value case may $ref: the contract producer/consumer and an async emit.
+_VALUE_FUNCTIONS.update({
+    "emit_format": _emit_format,
+    "accepts_currency": _accepts_currency,
+    "recording_emit": _recording_emit,
+})
 
 
 def _vocab(declarations):

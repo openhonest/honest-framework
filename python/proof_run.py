@@ -31,6 +31,7 @@ the boundary.
 """
 import asyncio
 import importlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -77,13 +78,31 @@ def module_cases(m):
     return len(json.loads(suite.read_text()).get("cases", [])) if suite.exists() else 0
 
 
+def value_function_map(m):
+    """The module's value-oracle function map. Its run_conformance._VALUE_FUNCTIONS if defined —
+    that carries the live fixtures a value case may $ref/$call (links, a machine builder, the
+    honest_type constructors) — else the package's exported callables. Running run_conformance for
+    its map keeps proof_run consistent with the gate, which uses the same map."""
+    runner = PY / f"honest-{m}" / "conformance" / "run_conformance.py"
+    if runner.exists():
+        spec = importlib.util.spec_from_file_location(f"_runner_{m}", runner)
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+            if hasattr(module, "_VALUE_FUNCTIONS"):
+                return module._VALUE_FUNCTIONS
+        except Exception:
+            pass
+    pkg = importlib.import_module(f"honest_{m}")
+    return {name: getattr(pkg, name) for name in getattr(pkg, "__all__", []) if callable(getattr(pkg, name))}
+
+
 def module_value_results(m):
     """func name -> [value-oracle results] for the module's real functions: run its suite.json
-    `value_case`s through honest-test's value oracle (§8.6) against the package's own exported
-    callables. Cases naming a function the package does not export (a module's mechanism-test
-    fixtures) are skipped, so only real-function value oracles count toward a proof."""
-    pkg = importlib.import_module(f"honest_{m}")
-    function_map = {name: getattr(pkg, name) for name in getattr(pkg, "__all__", []) if callable(getattr(pkg, name))}
+    `value_case`s through honest-test's value oracle (§8.6) against the module's value-function map.
+    Cases naming a function not in the map (a module's mechanism-test fixtures) are skipped, so only
+    real-function value oracles count toward a proof."""
+    function_map = value_function_map(m)
     suite = PY / f"honest-{m}" / "conformance" / "suite.json"
     cases = json.loads(suite.read_text()).get("cases", []) if suite.exists() else []
     resolvable = [{**c["value_case"], "id": c["id"]} for c in cases if "value_case" in c and c["value_case"]["function"] in function_map]

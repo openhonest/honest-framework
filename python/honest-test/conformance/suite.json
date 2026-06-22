@@ -197,6 +197,18 @@
     {"id": "value-enumerate-lengths", "value_case": {"function": "enumerate_lengths", "input": "len(x) < 5", "expected": {"min": 1, "max": 4, "valid": ["a", "ab", "abc", "abcd"], "invalid": ["abcde"]}}},
     {"id": "value-load-config", "value_case": {"function": "load_config", "input": "/nonexistent/honest-test.toml", "expected": {}}},
     {"id": "value-classify-predicate", "value_case": {"function": "classify_predicate", "args": [{"$ref": "fibonacci_sequence"}], "expected": "numeric"}},
+    {"id": "value-verify-purity", "value_case": {"function": "verify_purity", "args": [{"$ref": "pure_link"}, {"x": "1"}], "expected": null}},
+    {"id": "value-detect-mutation", "value_case": {"function": "detect_mutation", "args": [{"$ref": "pure_link"}, {"x": "1"}], "expected": null}},
+    {"id": "value-verify-idempotency", "value_case": {"function": "verify_idempotency", "args": [[{"$ref": "pure_link"}, {"$ref": "set_role"}], {"x": "1"}], "expected": null}},
+    {"id": "value-test-valid-transitions", "value_case": {"function": "test_valid_transitions", "args": [{"$call": "make_machine", "args": [["pending", "paid"], ["pay"], [["pending", "pay", "paid"]], "pending"]}], "expected": []}},
+    {"id": "value-test-invalid-transitions", "value_case": {"function": "test_invalid_transitions", "args": [{"$call": "make_machine", "args": [["pending", "paid"], ["pay"], [["pending", "pay", "paid"]], "pending"]}], "expected": []}},
+    {"id": "value-test-adversarial-transitions", "value_case": {"function": "test_adversarial_transitions", "args": [{"$call": "make_machine", "args": [["pending", "paid"], ["pay"], [["pending", "pay", "paid"]], "pending"]}], "expected": []}},
+    {"id": "value-enumerate-sets", "value_case": {"function": "enumerate_sets", "args": [{"$call": "vocabulary", "args": [{"color": ["red", "green"]}]}], "expected": [{"color": "green"}, {"color": "red"}]}},
+    {"id": "value-enumerate-test-cases", "value_case": {"function": "enumerate_test_cases", "args": [{"$call": "vocabulary", "args": [{"color": ["red", "green"]}]}, {"$call": "binding", "args": [{"shade": "color"}]}], "expected": [{"color": "green"}, {"color": "red"}]}},
+    {"id": "value-supplied-for", "value_case": {"function": "supplied_for", "args": [{"predicates": {"p": {"valid": ["x"], "invalid": ["y"]}}}, "p"], "expected": {"valid": ["x"], "invalid": ["y"], "strategy": "supplied_only"}}},
+    {"id": "value-test-chain-contracts", "value_case": {"function": "test_chain_contracts", "args": [[{"$ref": "emit_format"}, {"$ref": "accepts_currency"}]], "expected": [{"code": "chain_contract", "subject": "_accepts_currency", "message": "Rejected valid output from '_emit_format'"}]}},
+    {"id": "value-emit-proofs", "value_case": {"function": "emit_proofs", "args": [{"$ref": "recording_emit"}, [{"function": "m.a", "gherkin": "a", "module": "m", "cases": 1, "result": "proved", "failures": [], "line_coverage": 100.0, "branch_coverage": 100.0}]], "expected": [{"ok": {"event_id": "e"}}]}},
+    {"id": "value-law-field", "value_case": {"function": "law", "args": ["L1", "f doubles", {"$ref": "double"}], "field": {"name": "id", "value": "L1"}}},
     {"id": "decide-proved", "decide": {"honesty_ok": true, "coverage_ok": true, "value_results": [{"id": "v1", "proved": true, "fault": null}]}, "expect": {"result": "proved", "failures": []}},
     {"id": "decide-value-mismatch", "decide": {"honesty_ok": true, "coverage_ok": true, "value_results": [{"id": "v1", "proved": true, "fault": null}, {"id": "v2", "proved": false, "fault": {"code": "assertion_failed", "detail": "expected 42, got 7", "scenario_name": "", "step_text": ""}}]}, "expect": {"result": "failed", "failures": ["value case 'v2': expected 42, got 7"]}},
     {"id": "decide-no-oracle", "decide": {"honesty_ok": true, "coverage_ok": true, "value_results": []}, "expect": {"result": "failed", "failures": ["no value oracle: the function's Then is not yet checked by a value case"]}},
@@ -211,6 +223,9 @@
   "value_oracle_exempt": [
     {"function": "adversarial_neighbours", "reason": "Combinatorial generator: ~229 neighbours, ~1.2 MB, aggregating the giant length-extension strings. Its correctness is property-based (the laws), not an exact-list value."},
     {"function": "length_extensions", "reason": "Generates boundary-length repeats — multi-hundred-KB strings. No portable value to assert; the laws prove the lengths."},
-    {"function": "extract_length_bounds", "reason": "Returns a tuple (min, max), which cannot round-trip a JSON value contract (a tuple reloads as a list)."}
+    {"function": "extract_length_bounds", "reason": "Returns a tuple (min, max), which cannot round-trip a JSON value contract (a tuple reloads as a list)."},
+    {"function": "run_value_case", "reason": "The value oracle itself: exercised by every value case, and its `functions` argument is a map of live callables. Value-checking the oracle through the oracle is circular."},
+    {"function": "run_value_cases", "reason": "The value oracle itself (maps run_value_case): same circularity and live-callable map as run_value_case."},
+    {"function": "verify_laws", "reason": "Takes law objects and subject callables whose structure embeds functions; the full report is not a portable value. Verified by its own conformance probe."}
   ]
 }
