@@ -1,14 +1,26 @@
 #!/usr/bin/env bash
-# pre-commit — Verification First: no Python commit lands while the framework fails its
-# own linter, its own conformance suites, or its 100% dogfooding bar. Runs only when
-# Python sources are staged, so non-Python commits are never blocked. Enabled via
-# `core.hooksPath=.githooks` (see bootstrap.sh).
+# pre-commit — Verification First: no commit lands while the framework fails its own linter,
+# its conformance suites, its 100% dogfooding bar, or its function-point invariant (one gherkin
+# scenario per function). Each gate fires only when its inputs are staged; a commit that touches
+# neither Python nor a feature file is never blocked. Enabled via `core.hooksPath=.githooks`.
 set -uo pipefail
-
-staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^python/.*\.py$' || true)
-[ -z "$staged" ] && exit 0
-
-echo "honest-check gate (staged Python detected)…"
 root=$(git rev-parse --show-toplevel)
-"$root/python/lint-affected.sh" || exit 1   # structural: must be Honest Code
-"$root/python/coverage-all.sh"  || exit 1   # behavioural: all conformance suites pass AND 100% line+branch coverage (the dogfooding circle)
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+py=$(printf '%s\n' "$staged" | grep -E '^python/.*\.py$' || true)
+feat=$(printf '%s\n' "$staged" | grep -E '\.feature$' || true)
+
+[ -z "$py" ] && [ -z "$feat" ] && exit 0
+
+if [ -n "$py" ]; then
+    echo "honest-check gate (staged Python detected)…"
+    "$root/python/lint-affected.sh" || exit 1   # structural: must be Honest Code
+    "$root/python/coverage-all.sh"  || exit 1   # behavioural: all conformance suites pass AND 100% line+branch coverage
+fi
+
+# The feature gate fires on staged Python (a new/removed function changes the function set) OR a
+# staged feature file (the scenario set changed). Affected modules only — it tests what changed.
+if [ -n "$py" ] || [ -n "$feat" ]; then
+    echo "feature gate (one gherkin per function)…"
+    "$root/python/feature-gate.sh" || exit 1
+fi
