@@ -24,6 +24,7 @@ from honest_gherkin.ir import (
     StepResult,
     step_fault,
 )
+from honest_gherkin.cli import run_feature_file
 from honest_gherkin.parse import parse_feature
 from honest_gherkin.registry import empty_registry, match_step, register_step
 from honest_gherkin.run import fold_feature_report, run_scenario, run_step
@@ -38,6 +39,7 @@ __all__ = [
     "run_step",
     "run_scenario",
     "fold_feature_report",
+    "run_feature_file",
     "step_fault",
     "STEP_KINDS",
     "STEP_STATUSES",

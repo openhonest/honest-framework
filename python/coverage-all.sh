@@ -37,6 +37,8 @@ done
 tmp=$(mktemp -d)
 printf 'def add(a, b):\n    return a + b\n' > "$tmp/ok.py"
 $COV run --append --branch --source="$SRC" -m honest_check.cli "$tmp/ok.py" >/dev/null 2>&1 || true
+printf 'Feature: f\n\n  Scenario: s\n    Given a step\n' > "$tmp/f.feature"
+$COV run --append --branch --source="$SRC" -m honest_gherkin.cli run "$tmp/f.feature" >/dev/null 2>&1 || true
 rm -rf "$tmp"
 
 if [ "$status" -ne 0 ]; then

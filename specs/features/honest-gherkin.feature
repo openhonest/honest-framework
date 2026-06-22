@@ -144,3 +144,30 @@ Feature: honest-gherkin — the parse contract (unit 1)
     Given a feature and its scenario reports
     When fold_feature_report combines them
     Then it counts the ok scenarios as passed and the rest as failed, carrying the feature name and path
+
+  # io boundary
+  Scenario: _parse_failure_report surfaces a parse failure as a failing report
+    Given the path of a feature that did not parse and its bad-feature-syntax fault
+    When _parse_failure_report wraps it
+    Then it returns a feature report with one failed scenario carrying the fault, so the failure is never swallowed
+
+  Scenario: run_feature_file runs one feature file end to end
+    Given the path of a feature file and a step registry
+    When run_feature_file runs it
+    Then it reads the file, runs every scenario, and folds the report
+    But a file that does not parse yields a failing report rather than raising
+
+  Scenario: _discover_features expands a path into the feature files to run
+    Given a path that is either a feature file or a directory
+    When _discover_features expands it
+    Then a directory is searched recursively for feature files and a single file is taken as-is
+
+  Scenario: _load_steps threads the registry through each step module
+    Given a registry and the dotted paths of step modules
+    When _load_steps loads them
+    Then it imports each module and threads the registry through its register builder in order
+
+  Scenario: main runs the CLI and maps the result to an exit code
+    Given the run command, a path, and any step modules
+    When main runs the CLI
+    Then it loads the steps, runs every discovered feature, and exits zero only when nothing failed

@@ -6,6 +6,8 @@ returns a list of failures; run() aggregates.
 """
 
 import re
+import tempfile
+from pathlib import Path
 
 from honest_gherkin import (
     compile_pattern,
@@ -15,6 +17,14 @@ from honest_gherkin import (
     parse_feature,
     register_step,
     run_scenario,
+    step_fault,
+)
+from honest_gherkin.cli import (
+    _discover_features,
+    _load_steps,
+    _parse_failure_report,
+    main,
+    run_feature_file,
 )
 from honest_gherkin.run import _classify_exception
 
@@ -282,12 +292,64 @@ def _probe_run():
     return bad
 
 
+def _probe_io():
+    """run_feature_file / _discover_features / _load_steps / main / _parse_failure_report (§8): the
+    single I/O boundary. A well-formed feature runs and passes; a parse failure is surfaced as a
+    failing report, never swallowed; the CLI threads --steps modules and maps results to exit codes."""
+    bad = []
+    here = Path(__file__).parent
+    sample = str(here / "_sample.feature")
+
+    # _load_steps threads the registry through a real step module's register(registry) (§8.2).
+    registry = _load_steps(["_sample_steps"], empty_registry())
+    if len(registry["patterns"]) != 2:
+        bad.append(f"_load_steps should thread register() through the module: {registry}")
+
+    # A runnable feature with matching steps passes every scenario; the report carries its path.
+    report = run_feature_file(sample, registry)
+    if report["total_failed"] != 0 or report["total_passed"] < 1:
+        bad.append(f"a runnable feature should pass: {report}")
+    if report["source_path"] != sample:
+        bad.append(f"the report should carry the source path: {report['source_path']!r}")
+
+    with tempfile.TemporaryDirectory() as directory:
+        # A parse failure is surfaced as a failing report carrying bad_feature_syntax, not raised.
+        broken_path = Path(directory) / "broken.feature"
+        broken_path.write_text("Feature: X\n  Given an orphan step\n", encoding="utf-8")
+        broken = run_feature_file(str(broken_path), registry)
+        fault = broken["scenarios"][0]["step_results"][0]["fault"]
+        if broken["total_failed"] != 1 or fault["code"] != "bad_feature_syntax":
+            bad.append(f"a parse failure should be a failing report carrying bad_feature_syntax: {broken}")
+
+        # _discover_features: a directory is searched recursively; a single file is taken as-is.
+        (Path(directory) / "extra.feature").write_text("Feature: A\n\n  Scenario: s\n    Given x\n", encoding="utf-8")
+        found = _discover_features(directory)
+        if len(found) != 2 or not all(str(path).endswith(".feature") for path in found):
+            bad.append(f"_discover_features should find every .feature under a directory: {found}")
+        if _discover_features(sample) != [Path(sample)]:
+            bad.append(f"_discover_features on a single file should return just that file: {_discover_features(sample)}")
+
+    # _parse_failure_report directly: one failing scenario carrying the fault, metadata set.
+    pf_fault = step_fault("bad_feature_syntax", "no Feature declared")
+    pf = _parse_failure_report("x.feature", pf_fault)
+    if pf["total_failed"] != 1 or pf["scenarios"][0]["step_results"][0]["fault"] is not pf_fault:
+        bad.append(f"_parse_failure_report should carry the fault as a single failure: {pf}")
+
+    # main maps results to exit codes: a passing run exits 0; an all-unmatched run exits 1.
+    if main(["run", sample, "--steps", "_sample_steps"]) != 0:
+        bad.append("a passing run should exit 0")
+    if main(["run", sample]) != 1:
+        bad.append("a run with no registered steps should exit 1 (every step unmatched)")
+    return bad
+
+
 def run():
     probes = {
         "parse": _probe_parse(),
         "compile": _probe_compile(),
         "registry": _probe_registry(),
         "run": _probe_run(),
+        "io": _probe_io(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

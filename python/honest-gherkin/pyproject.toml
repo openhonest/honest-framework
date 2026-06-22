@@ -5,6 +5,9 @@ description = "The BDD execution engine: parse a feature, match steps against a 
 requires-python = ">=3.11"
 dependencies = ["honest-type"]
 
+[project.scripts]
+honest-gherkin = "honest_gherkin.cli:main"
+
 [tool.uv.sources]
 honest-type = { workspace = true }
 
