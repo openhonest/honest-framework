@@ -7,6 +7,10 @@
     {"id": "parse-two-scenarios", "parse": {"source": "Feature: Two\n\n  Scenario: one\n    Given a\n    Then b\n\n  Scenario: two\n    When c\n    Then d\n", "path": "two.feature"}, "expect": "ok", "expect_feature_name": "Two", "expect_scenarios": 2, "expect_first_steps": 2},
     {"id": "parse-comments-tolerated", "parse": {"source": "# a comment\nFeature: WithComments\n\n  # another\n  Scenario: works\n    Given a\n    Then b\n", "path": "c.feature"}, "expect": "ok", "expect_feature_name": "WithComments", "expect_scenarios": 1, "expect_first_steps": 2},
     {"id": "parse-step-outside-scenario", "parse": {"source": "Feature: X\n  Given an orphan step\n", "path": "x.feature"}, "expect": "err", "expect_code": "bad_feature_syntax"},
-    {"id": "parse-scenario-no-name", "parse": {"source": "Feature: X\n\n  Scenario:\n    Given a\n", "path": "x.feature"}, "expect": "err", "expect_code": "bad_feature_syntax"}
+    {"id": "parse-scenario-no-name", "parse": {"source": "Feature: X\n\n  Scenario:\n    Given a\n", "path": "x.feature"}, "expect": "err", "expect_code": "bad_feature_syntax"},
+    {"id": "compile-str-default", "compile": {"pattern": "say \"{word}\""}, "expect": "ok", "expect_captures": [{"name": "word", "type": "str"}]},
+    {"id": "compile-typed", "compile": {"pattern": "n {x:int} f {y:float}"}, "expect": "ok", "expect_captures": [{"name": "x", "type": "int"}, {"name": "y", "type": "float"}]},
+    {"id": "compile-no-placeholder", "compile": {"pattern": "plain text"}, "expect": "ok", "expect_captures": []},
+    {"id": "compile-unknown-type", "compile": {"pattern": "a {x:widget}"}, "expect": "err", "expect_code": "bad_feature_syntax"}
   ]
 }

@@ -11,7 +11,15 @@ import json
 import sys
 from pathlib import Path
 
-from honest_gherkin import parse_feature
+from honest_gherkin import compile_pattern, parse_feature
+
+
+def _check_compile(case):
+    spec = case["compile"]
+    result = compile_pattern(spec["pattern"])
+    if case["expect"] == "ok":
+        return "ok" in result and result["ok"]["captures"] == case["expect_captures"], f"got {result}"
+    return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"
 
 
 def _check_parse(case):
@@ -30,11 +38,11 @@ def _check_parse(case):
     return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"
 
 
-_CHECKERS = {"parse": _check_parse}
+_CHECKERS = {"parse": _check_parse, "compile": _check_compile}
 
 
 def _kind(case):
-    return "parse"
+    return "compile" if "compile" in case else "parse"
 
 
 def run(suite_path):

@@ -44,6 +44,11 @@ class Feature(TypedDict):
     source_path: str
 
 
+class CompiledPattern(TypedDict):
+    regex: str                          # the anchored host regex with named capture groups
+    captures: list[dict[str, str]]      # one {name, type} per placeholder, in order; type drives bind-time coercion
+
+
 class StepFault(TypedDict):
     code: str            # one of FAULT_CODES
     scenario_name: str

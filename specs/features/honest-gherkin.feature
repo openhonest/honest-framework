@@ -86,3 +86,10 @@ Feature: honest-gherkin — the parse contract (unit 1)
     When parse_feature reads it
     Then it returns the feature with its description, scenarios, and steps
     But malformed source returns a bad-feature-syntax fault rather than raising
+
+  # compile
+  Scenario: compile_pattern turns a step pattern into an anchored matcher
+    Given a step pattern with optional placeholders, written {name} or {name:type}
+    When compile_pattern compiles it
+    Then it returns an anchored matcher with one named capture per placeholder, recording each capture's type
+    But an unknown placeholder type returns a bad-feature-syntax fault rather than raising

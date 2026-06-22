@@ -5,7 +5,9 @@ description capture, source-line tracking, and the malformed-input fault paths. 
 returns a list of failures; run() aggregates.
 """
 
-from honest_gherkin import parse_feature
+import re
+
+from honest_gherkin import compile_pattern, parse_feature
 
 
 def _probe_parse():
@@ -76,8 +78,48 @@ def _probe_parse():
     return bad
 
 
+def _probe_compile():
+    """compile_pattern (§4): named captures per placeholder, recorded types, full-text anchoring,
+    literal escaping, and the unknown-type fault. The regex dialect is the host's (§1.5), so the
+    behaviour is checked by matching with the host engine, not by asserting the regex string."""
+    bad = []
+
+    # str (the default type): the capture binds a run of non-quote text.
+    word = compile_pattern('say "{word}"')
+    if "ok" not in word:
+        bad.append(f"a valid pattern should compile: {word}")
+        return bad
+    match = re.match(word["ok"]["regex"], 'say "hello"')
+    if match is None or match.group("word") != "hello":
+        bad.append("the str capture should bind the quoted text")
+    # Anchored full-text: a substring occurrence does not match.
+    if re.match(word["ok"]["regex"], 'now say "hi" loudly') is not None:
+        bad.append("the compiled pattern must be anchored (full-text, not substring)")
+
+    # int and float types match signed numbers and record their types.
+    nums = compile_pattern("n {x:int} f {y:float}")
+    if nums["ok"]["captures"] != [{"name": "x", "type": "int"}, {"name": "y", "type": "float"}]:
+        bad.append(f"captures should record name and type: {nums['ok']['captures']}")
+    nm = re.match(nums["ok"]["regex"], "n -42 f 3.14")
+    if nm is None or nm.group("x") != "-42" or nm.group("y") != "3.14":
+        bad.append("int/float fragments should match signed numbers")
+    if re.match(compile_pattern("{x:int}")["ok"]["regex"], "abc") is not None:
+        bad.append("the int fragment should not match non-digits")
+
+    # No placeholder: a literal pattern matches itself, and special characters are escaped.
+    if re.match(compile_pattern("plain text")["ok"]["regex"], "plain text") is None:
+        bad.append("a literal pattern should match itself")
+    if re.match(compile_pattern("a.b")["ok"]["regex"], "axb") is not None:
+        bad.append("a literal '.' should be escaped, not match any character")
+
+    # Unknown placeholder type -> fault as data, never raised.
+    if compile_pattern("a {x:widget}").get("err", {}).get("code") != "bad_feature_syntax":
+        bad.append("an unknown placeholder type should return bad_feature_syntax")
+    return bad
+
+
 def run():
-    probes = {"parse": _probe_parse()}
+    probes = {"parse": _probe_parse(), "compile": _probe_compile()}
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:
         print(f"FAIL HG-probe [{name}]: {messages}")
