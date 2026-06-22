@@ -24,6 +24,7 @@ from honest_test import (
     enumerate_lengths,
     enumerate_sets,
     decide_proof,
+    fibonacci_sequence,
     numeric_values,
     proof_payload,
     run_value_case,
@@ -51,7 +52,16 @@ def _box(n):
 
 # The function map the value-oracle steps resolve against: suite.json carries names + (input,
 # expected); the live callables stay in the runner, exactly as honesty-test links do (above).
-_VALUE_FUNCTIONS = {"double": _double, "parity": _parity, "box": _box}
+# double/parity/box exercise the oracle mechanism; fibonacci_sequence/numeric_values are honest-test's
+# OWN exported functions — real value oracles, so the gate value-checks them (proof_run resolves the
+# same names from honest_test.__all__).
+_VALUE_FUNCTIONS = {
+    "double": _double,
+    "parity": _parity,
+    "box": _box,
+    "fibonacci_sequence": fibonacci_sequence,
+    "numeric_values": numeric_values,
+}
 
 _SM_TESTS = {
     "valid": test_valid_transitions,
