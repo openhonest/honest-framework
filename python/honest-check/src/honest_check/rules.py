@@ -65,7 +65,7 @@ def check_hc_syn(root, source: bytes, path: str) -> list[Diagnostic]:
     node = first_error_node(root)
     line, col = line_col(node) if node is not None else (1, 1)
     return [
-        diagnostic("HC-SYN", "error", path, line, col, "Source does not parse.")
+        diagnostic("HC-SYN", "error", path, line, col, "Source does not parse. Fix the syntax error at this location so the file can be parsed.")
     ]
 
 
@@ -657,7 +657,7 @@ def check_hc007(root, source: bytes, path: str) -> list[Diagnostic]:
             continue
         line, col = call_location(call)
         name = assigned_name(call, source) or "<anonymous>"
-        out.append(diagnostic("HC007", "error", path, line, col, f"Chain '{name}' has no links."))
+        out.append(diagnostic("HC007", "error", path, line, col, f"Chain '{name}' has no links. Add at least one @link to the chain, or remove the chain."))
     return out
 
 
@@ -685,7 +685,7 @@ def check_hc003(root, source: bytes, path: str) -> list[Diagnostic]:
                             path,
                             line,
                             col,
-                            f"Types '{name_a}' and '{name_b}' share values: {sorted(overlap)}.",
+                            f"Types '{name_a}' and '{name_b}' share values: {sorted(overlap)}. Make their value sets disjoint, or merge the types.",
                         )
                     )
             if rec_a[0] == "predicate" and rec_b[0] == "predicate":
@@ -713,16 +713,16 @@ def check_state_machine_vocab(root, source: bytes, path: str) -> list[Diagnostic
             for state, _event, _next in machine["transitions"]:
                 if state not in machine["states"]:
                     out.append(diagnostic("HC-SM01", "error", path, line, col,
-                        f"State '{state}' in transition table not in states vocabulary."))
+                        f"State '{state}' in transition table not in states vocabulary. Add it to the states vocabulary, or correct the name in the transition."))
             initial = machine["initial"]
             if initial is not None and initial not in machine["states"]:
                 out.append(diagnostic("HC-SM05", "error", path, line, col,
-                    f"Initial state '{initial}' not in states vocabulary."))
+                    f"Initial state '{initial}' not in states vocabulary. Add it to the states vocabulary, or correct the initial-state name."))
         if machine["events"]:
             for _state, event, _next in machine["transitions"]:
                 if event not in machine["events"]:
                     out.append(diagnostic("HC-SM02", "error", path, line, col,
-                        f"Event '{event}' in transition table not in events vocabulary."))
+                        f"Event '{event}' in transition table not in events vocabulary. Add it to the events vocabulary, or correct the name in the transition."))
     return out
 
 
@@ -754,12 +754,12 @@ def check_state_machine_reachability(root, source: bytes, path: str) -> list[Dia
         for state in sorted(machine["states"]):
             if state not in reachable and state != machine["initial"]:
                 out.append(diagnostic("HC-SM03", "warning", path, line, col,
-                    f"State '{state}' is unreachable."))
+                    f"State '{state}' is unreachable. Add a transition that reaches it, or remove the state."))
         for state in sorted(machine["states"]):
             has_outgoing = any(src == state for src, _event, _target in transitions)
             if not has_outgoing and state not in machine["terminal"]:
                 out.append(diagnostic("HC-SM04", "warning", path, line, col,
-                    f"State '{state}' has no outgoing transitions and is not declared terminal."))
+                    f"State '{state}' has no outgoing transitions and is not declared terminal. Add a transition out of it, or declare it a terminal state."))
     return out
 
 
@@ -992,7 +992,7 @@ def check_hc010(root, source: bytes, path: str) -> list[Diagnostic]:
                 line,
                 col,
                 f"Link '{function_name(node, source)}' declares emission of types never "
-                f"produced: {sorted(phantom)}.",
+                f"produced: {sorted(phantom)}. Remove them from the link's emits, or produce them in the body.",
             )
         )
     return out
@@ -1024,7 +1024,7 @@ def check_hc004(root, source: bytes, path: str) -> list[Diagnostic]:
                 continue
             seen.add(key)
             out.append(diagnostic("HC004", "warning", path, line, col,
-                f"Type '{type_name}' defined in vocabulary '{vocab_var}' but never bound or composed."))
+                f"Type '{type_name}' defined in vocabulary '{vocab_var}' but never bound or composed. Bind it in a binding table or compose it into another type, or remove it from the vocabulary."))
     return out
 
 
@@ -1051,7 +1051,7 @@ def check_hc005(root, source: bytes, path: str) -> list[Diagnostic]:
             seen.add(key)
             out.append(diagnostic("HC005", "warning", path, line, col,
                 f"Binding '{binding_var}' references type '{type_name}' not found in "
-                f"vocabulary '{vocab_var}'."))
+                f"vocabulary '{vocab_var}'. Add the type to the vocabulary, or correct the name in the binding."))
     return out
 
 
@@ -1308,7 +1308,7 @@ def check_hc002(root, source: bytes, path: str) -> list[Diagnostic]:
                         line,
                         col,
                         f"Link '{sequence[index]}' accepts types not provided by previous "
-                        f"link '{sequence[index - 1]}': {sorted(missing)}.",
+                        f"link '{sequence[index - 1]}': {sorted(missing)}. Emit those types from the previous link, or drop them from this link's accepts.",
                     )
                 )
     return out
@@ -1346,11 +1346,11 @@ def check_hc006(root, source: bytes, path: str) -> list[Diagnostic]:
             for required in sorted(composed["requires"]):
                 if required not in base_names:
                     out.append(diagnostic("HC006", "error", path, line, col,
-                        f"Composed type '{composed['name']}' requires unknown base type '{required}'."))
+                        f"Composed type '{composed['name']}' requires unknown base type '{required}'. Declare the base type in the vocabulary, or correct its name."))
             captures = composed["captures"]
             if captures is not None and captures not in base_names:
                 out.append(diagnostic("HC006", "error", path, line, col,
-                    f"Composed type '{composed['name']}' captures unknown base type '{captures}'."))
+                    f"Composed type '{composed['name']}' captures unknown base type '{captures}'. Declare the base type in the vocabulary, or correct its name."))
     return out
 
 

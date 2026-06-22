@@ -23,7 +23,10 @@ if [ ${#runners[@]} -eq 0 ]; then
 fi
 for runner in "${runners[@]}"; do
     if ! $COV run --append --branch --source="$SRC" "$runner" >/dev/null 2>&1; then
+        mod=$(echo "$runner" | sed -E 's#(honest-[a-z]+)/.*#\1#')
         echo "coverage-all: conformance FAILED: $runner" >&2
+        echo "  its output was suppressed here — run it directly to see which case failed:" >&2
+        echo "    cd python && uv run --package $mod python $runner" >&2
         status=1
     fi
 done
@@ -42,7 +45,9 @@ if [ "$status" -ne 0 ]; then
 fi
 
 if ! $COV report -m --fail-under=100; then
-    echo "coverage-all: below 100% line+branch coverage — dogfooding gate blocked." >&2
+    echo "coverage-all: below 100% line+branch coverage — gate blocked." >&2
+    echo "  see the 'Missing' column in the report above: each unreached line or branch is either" >&2
+    echo "  dead code (delete it) or a behaviour nothing tests (add a conformance case for it). Then re-run." >&2
     exit 1
 fi
 echo "coverage-all: 100% line+branch coverage — every line is dogfooded."

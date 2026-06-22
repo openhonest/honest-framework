@@ -19,6 +19,7 @@ echo "lint-all: ${srcdirs[*]}"
 if uv run --package honest-check python -m honest_check.cli "${srcdirs[@]}"; then
     echo "lint-all: all modules pass honest-check."
 else
-    echo "lint-all: honest-check FAILED — dishonest code." >&2
+    echo "lint-all: honest-check FAILED — fix each violation listed above (every line names its" >&2
+    echo "  rule id and the honest alternative), then re-run. Nothing dishonest may be committed." >&2
     exit 1
 fi
