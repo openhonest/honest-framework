@@ -176,3 +176,15 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When supplied_for looks it up
     Then it returns the valid examples, the invalid examples, and the strategy for that predicate
     But it returns nothing when there is no entry for that predicate
+
+  # proof
+  Scenario: proof_payload builds one function's proof record
+    Given a function's name, its gherkin, the cases run, the result, and its coverage
+    When proof_payload assembles them
+    Then it returns the proof record carrying every field
+
+  Scenario: emit_proofs records a run's proofs through the injected emit
+    Given an emit and a list of per-function proofs
+    When emit_proofs runs
+    Then it emits one proof event per function, keyed by the function's name
+    And an empty run emits nothing

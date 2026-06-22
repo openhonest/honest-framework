@@ -24,6 +24,7 @@ from honest_test import (
     enumerate_lengths,
     enumerate_sets,
     numeric_values,
+    proof_payload,
     supplied_for,
     test_adversarial_transitions,
     test_chain_contracts,
@@ -215,6 +216,11 @@ def _check_statemachine(case):
     return len(findings) >= case["expect_min_findings"], f"got {len(findings)} findings"
 
 
+def _check_proof(case):
+    got = proof_payload(**case["proof_payload"]["args"])
+    return got == case["expect"], f"got {got}"
+
+
 _CHECKERS = {
     "enumeration": _check_enumeration,
     "adversarial": _check_adversarial,
@@ -225,10 +231,13 @@ _CHECKERS = {
     "honesty": _check_honesty,
     "contract": _check_contract,
     "statemachine": _check_statemachine,
+    "proof": _check_proof,
 }
 
 
 def _kind(case):
+    if "proof_payload" in case:
+        return "proof"
     if "sm_test" in case:
         return "statemachine"
     if "contract" in case:

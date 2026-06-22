@@ -31,9 +31,13 @@ from honest_test.statemachine import (
     test_invalid_transitions,
     test_valid_transitions,
 )
+from honest_test.proof import PROOF_RESULTS, emit_proofs, proof_payload
 from honest_test.supplied import load_config, supplied_for
 
 __all__ = [
+    "PROOF_RESULTS",
+    "proof_payload",
+    "emit_proofs",
     "enumerate_sets",
     "law",
     "verify_laws",

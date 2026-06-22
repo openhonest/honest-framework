@@ -12,6 +12,7 @@ The conformance directory is outside the honest-check gate, so it may read files
 throwing fixtures, and inject a bad dependency to exercise a verifier's failure branch.
 """
 
+import asyncio
 import tempfile
 from pathlib import Path
 
@@ -236,6 +237,41 @@ def _probe_runner():
     return bad
 
 
+def _probe_proof():
+    """Proof events (§8.5): the pure payload, and the injected-emit loop that writes one
+    hf.proof.checked per function (and nothing for an empty run)."""
+    from honest_test import PROOF_RESULTS, emit_proofs, proof_payload
+
+    async def _run():
+        bad = []
+        if PROOF_RESULTS != {"proved", "failed"}:
+            bad.append("PROOF_RESULTS vocabulary is wrong")
+        payload = proof_payload("m.f", "f does x", "m", 3, "proved", [], 100.0, 100.0)
+        if payload["function"] != "m.f" or payload["result"] != "proved" or payload["branch_coverage"] != 100.0:
+            bad.append(f"proof_payload wrong: {payload}")
+
+        calls = []
+
+        async def emit(event_type, aggregate_type, aggregate_id, event_payload):
+            calls.append((event_type, aggregate_type, aggregate_id, event_payload))
+            return {"ok": {"event_id": "e"}}
+
+        proofs = [
+            {"function": "m.a", "gherkin": "a", "module": "m", "cases": 1, "result": "proved", "failures": [], "line_coverage": 100.0, "branch_coverage": 100.0},
+            {"function": "m.b", "gherkin": "b", "module": "m", "cases": 2, "result": "failed", "failures": ["x"], "line_coverage": 50.0, "branch_coverage": 0.0},
+        ]
+        results = await emit_proofs(emit, proofs)
+        if len(calls) != 2 or len(results) != 2:
+            bad.append(f"emit_proofs should emit once per proof: {calls}")
+        elif calls[0][:3] != ("hf.proof.checked", "function", "m.a") or calls[1][2] != "m.b" or calls[1][3]["result"] != "failed":
+            bad.append(f"emit_proofs emitted the wrong event/aggregate/payload: {calls}")
+        if await emit_proofs(emit, []) != [] or len(calls) != 2:
+            bad.append("an empty run should emit nothing")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
@@ -245,6 +281,7 @@ def run():
         "supplied": _probe_supplied(),
         "statemachine": _probe_statemachine(),
         "runner": _probe_runner(),
+        "proof": _probe_proof(),
     }
     violations = list(report["violations"])
     for name, messages in probes.items():
