@@ -94,6 +94,32 @@
     {"id": "tx-commit", "transaction": {"writes": [{"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 1}}, {"sql": "UPDATE users SET status = :set_status WHERE id = :id", "params": {"set_status": "active", "id": 1}}], "fail_at": null}, "expect": "ok", "expect_results": [1, 1]},
     {"id": "tx-empty", "transaction": {"writes": [], "fail_at": null}, "expect": "ok", "expect_results": []},
     {"id": "tx-rollback-first", "transaction": {"writes": [{"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 1}}, {"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 1}}], "fail_at": 0}, "expect": "err", "expect_code": "write_failed", "expect_failed_at": 0},
-    {"id": "tx-rollback-middle", "transaction": {"writes": [{"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 1}}, {"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 2}}, {"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 3}}], "fail_at": 1}, "expect": "err", "expect_code": "write_failed", "expect_failed_at": 1}
+    {"id": "tx-rollback-middle", "transaction": {"writes": [{"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 1}}, {"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 2}}, {"sql": "INSERT INTO users (id) VALUES (:id)", "params": {"id": 3}}], "fail_at": 1}, "expect": "err", "expect_code": "write_failed", "expect_failed_at": 1},
+    {"id": "value-insert", "value_case": {"function": "insert", "args": ["users", {"name": "x"}], "expected": {"sql": "INSERT INTO users (name) VALUES (:name)", "params": {"name": "x"}}}},
+    {"id": "value-delete", "value_case": {"function": "delete", "args": ["users", {"id": 1}], "expected": {"sql": "DELETE FROM users WHERE id = :id", "params": {"id": 1}}}},
+    {"id": "value-update", "value_case": {"function": "update", "args": ["users", {"name": "y"}, {"id": 1}], "expected": {"sql": "UPDATE users SET name = :set_name WHERE id = :id", "params": {"set_name": "y", "id": 1}}}},
+    {"id": "value-select", "value_case": {"function": "select", "args": ["users", ["id"]], "expected": {"sql": "SELECT id FROM users", "params": {}}}},
+    {"id": "value-raw", "value_case": {"function": "raw", "args": ["SELECT 1"], "expected": {"sql": "SELECT 1", "params": {}}}},
+    {"id": "value-operation", "value_case": {"function": "operation", "args": ["create_table", "users"], "expected": {"op": "create_table", "table": "users", "details": {}}}},
+    {"id": "value-to-sql", "value_case": {"function": "to_sql", "args": [{"op": "create_table", "table": "users", "details": {"columns": {"id": {"type": "integer"}}}}, "sqlite"], "expected": "CREATE TABLE users (id integer)"}},
+    {"id": "value-requires-reconstruction", "value_case": {"function": "requires_reconstruction", "args": [{"op": "drop_column", "table": "users", "details": {"column": "name"}}, "sqlite"], "expected": false}},
+    {"id": "value-parse-check", "value_case": {"function": "parse_check", "args": ["age > 0"], "expected": {"ok": {"kind": "compare", "op": ">", "left": {"kind": "column", "name": "age"}, "right": {"kind": "literal", "value": 0}}}}},
+    {"id": "value-check-holds", "value_case": {"function": "check_holds", "args": [{"kind": "compare", "op": ">", "left": {"kind": "column", "name": "age"}, "right": {"kind": "literal", "value": 0}}, {"age": 5}], "expected": true}},
+    {"id": "value-validate-schema", "value_case": {"function": "validate_schema", "args": [{"users": {"columns": {"id": {"type": "integer"}, "name": {"type": "text"}}, "primary_key": ["id"]}}], "expected": {"ok": {"users": {"columns": {"id": {"type": "integer"}, "name": {"type": "text"}}, "primary_key": ["id"]}}}}},
+    {"id": "value-checked-insert", "value_case": {"function": "checked_insert", "args": [{"users": {"columns": {"id": {"type": "integer"}, "name": {"type": "text"}}, "primary_key": ["id"]}}, "users", {"name": "x"}], "expected": {"ok": {"sql": "INSERT INTO users (name) VALUES (:name)", "params": {"name": "x"}}}}},
+    {"id": "value-checked-delete", "value_case": {"function": "checked_delete", "args": [{"users": {"columns": {"id": {"type": "integer"}, "name": {"type": "text"}}, "primary_key": ["id"]}}, "users", {"id": 1}], "expected": {"ok": {"sql": "DELETE FROM users WHERE id = :id", "params": {"id": 1}}}}},
+    {"id": "value-checked-select", "value_case": {"function": "checked_select", "args": [{"users": {"columns": {"id": {"type": "integer"}, "name": {"type": "text"}}, "primary_key": ["id"]}}, "users", ["id"]], "expected": {"ok": {"sql": "SELECT id FROM users", "params": {}}}}},
+    {"id": "value-checked-update", "value_case": {"function": "checked_update", "args": [{"users": {"columns": {"id": {"type": "integer"}, "name": {"type": "text"}}, "primary_key": ["id"]}}, "users", {"name": "y"}, {"id": 1}], "expected": {"ok": {"sql": "UPDATE users SET name = :set_name WHERE id = :id", "params": {"set_name": "y", "id": 1}}}}}
+  ],
+  "value_oracle_exempt": [
+    {"function": "diff", "reason": "Its dependency map is keyed by non-string keys, which cannot round-trip a JSON value contract."},
+    {"function": "diff_result", "reason": "Assembles a DiffResult whose dependency map is keyed by non-string keys; not a portable value."},
+    {"function": "apply", "reason": "Async schema-apply boundary: executes the diff against a live connection; its effect is the schema change, verified by its own conformance."},
+    {"function": "execute", "reason": "Async I/O boundary: runs a query against a live connection."},
+    {"function": "execute_one", "reason": "Async I/O boundary: runs a query against a live connection."},
+    {"function": "execute_scalar", "reason": "Async I/O boundary: runs a query against a live connection."},
+    {"function": "execute_many", "reason": "Async I/O boundary: runs a query against a live connection."},
+    {"function": "transaction", "reason": "Async I/O boundary: runs writes in a transaction against a live connection."},
+    {"function": "reconstruction_sql", "reason": "Takes detailed column specifications; covered by the to_sql / apply reconstruction paths."}
   ]
 }
