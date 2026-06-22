@@ -54,6 +54,34 @@
     {"id": "sm-transition-valid", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["pending", "pay"], "expect_state": "paid"},
     {"id": "sm-transition-invalid-state", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["zzz", "pay"], "expect_code": "invalid_state"},
     {"id": "sm-transition-invalid-event", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["pending", "zzz"], "expect_code": "invalid_event"},
-    {"id": "sm-transition-no-transition", "sm": true, "states": ["pending", "paid"], "events": ["pay", "ship"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["paid", "ship"], "expect_code": "no_transition"}
+    {"id": "sm-transition-no-transition", "sm": true, "states": ["pending", "paid"], "events": ["pay", "ship"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["paid", "ship"], "expect_code": "no_transition"},
+    {"id": "value-ok", "value_case": {"function": "ok", "args": [{"x": "1"}], "expected": {"ok": {"x": "1"}}}},
+    {"id": "value-fault", "value_case": {"function": "fault", "args": ["unrecognized", "bad", "server"], "expected": {"code": "unrecognized", "message": "bad", "category": "server", "detail": null}}},
+    {"id": "value-err", "value_case": {"function": "err", "args": [{"code": "unrecognized", "message": "bad", "category": "server", "detail": null}], "expected": {"err": {"code": "unrecognized", "message": "bad", "category": "server", "detail": null}}}},
+    {"id": "value-maybe", "value_case": {"function": "maybe", "args": ["slot"], "expected": {"kind": "maybe", "slot": "slot"}}},
+    {"id": "value-rejection", "value_case": {"function": "rejection", "args": ["tok", "why"], "expected": {"token": "tok", "reason": "why", "detail": null}}},
+    {"id": "value-ticket", "value_case": {"function": "ticket", "args": ["currency", "USD"], "expected": {"type": "currency", "value": "USD"}}},
+    {"id": "value-is-reserved", "value_case": {"function": "is_reserved", "args": ["ok"], "expected": false}},
+    {"id": "value-check-rejections", "value_case": {"function": "check_rejections", "args": [{"x": "1"}], "expected": {"ok": {"x": "1"}}}},
+    {"id": "value-binding", "value_case": {"function": "binding", "args": [{"slot": "type"}], "expected": {"slot": "type"}}},
+    {"id": "value-composed", "value_case": {"function": "composed", "args": ["n", {"a": "cur"}, null], "expected": {"name": "n", "requires": {"a": "cur"}, "captures": null}}},
+    {"id": "value-auto-binding", "value_case": {"function": "auto_binding", "args": [{"$call": "vocabulary", "args": [{"cur": ["USD"]}]}], "expected": {"cur": "cur"}}},
+    {"id": "value-recognize", "value_case": {"function": "recognize", "args": ["USD", {"$call": "insensitive", "args": [["USD", "EUR"]]}], "expected": true}},
+    {"id": "value-classify", "value_case": {"function": "classify", "args": [["USD"], {"$call": "vocabulary", "args": [{"cur": ["USD", "EUR"]}]}], "expected": {"cur": "USD"}}},
+    {"id": "value-transition", "value_case": {"function": "transition", "args": [{"$call": "make_machine", "args": [["a", "b"], ["go"], [["a", "go", "b"]], "a"]}, "a", "go"], "expected": {"ok": {"state": "b"}}}},
+    {"id": "value-is-link", "value_case": {"function": "is_link", "args": [{"$ref": "value_link"}], "expected": true}},
+    {"id": "value-link-meta", "value_case": {"function": "link_meta", "args": [{"$ref": "value_link"}], "expected": {"name": "value_link", "accepts": null, "binds": null, "boundary": false, "authorizes": false, "emits": null}}},
+    {"id": "value-execute-chain", "value_case": {"function": "execute_chain", "args": [[{"$ref": "value_link"}], {"x": "1"}], "expected": {"ok": {"x": "1", "seen": true}}}}
+  ],
+  "value_oracle_exempt": [
+    {"function": "vocabulary", "reason": "Returns a vocabulary whose Set members are frozensets; not JSON-serialisable. A constructor, exercised by classify/enumerate via \\$call."},
+    {"function": "insensitive", "reason": "Returns a recognizer whose members are a frozenset; not JSON-serialisable. Exercised by recognize via \\$call."},
+    {"function": "merge", "reason": "Returns a merged vocabulary (frozenset members); not JSON-serialisable."},
+    {"function": "predicate", "reason": "Returns a recognizer wrapping the predicate (a callable / frozenset); not a portable value."},
+    {"function": "state_machine", "reason": "Returns a machine whose state/event sets are not JSON-serialisable; built for transition via \\$call make_machine."},
+    {"function": "chain", "reason": "Returns a composed chain that embeds its link callables; not a portable value."},
+    {"function": "link", "reason": "Returns a decorator (a callable); not a portable value."},
+    {"function": "validate_all", "reason": "Returns/raises over link callables; its argument and effect are callables, not a portable value."},
+    {"function": "catch_at_boundary", "reason": "Wraps a handler callable at the boundary; its arguments and result are callables, not a portable value."}
   ]
 }

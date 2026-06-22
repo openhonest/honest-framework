@@ -251,11 +251,35 @@ def _kind(case):
     return "classify" if "tokens" in case else "construction"
 
 
+import honest_type as _ht
+
+
+@_ht.link()
+def value_link(manifest):
+    return _ht.ok({**manifest, "seen": True})
+
+
+def _make_machine(states, events, transitions, initial):
+    return _ht.state_machine(set(states), set(events), {(t[0], t[1]): t[2] for t in transitions}, initial)
+
+
+# The value-oracle function map: the public functions, plus fixtures a value case may $ref/$call —
+# a sample link (for is_link/link_meta/execute_chain) and a JSON-able machine builder (for transition,
+# whose tuple-keyed transitions dict cannot be carried directly). proof_run and value-check.py read it.
+_VALUE_FUNCTIONS = {
+    **{name: getattr(_ht, name) for name in _ht.__all__ if callable(getattr(_ht, name))},
+    "value_link": value_link,
+    "make_machine": _make_machine,
+}
+
+
 def run(suite_path):
     suite = json.loads(Path(suite_path).read_text(encoding="utf-8"))
     passed = 0
     failed = 0
     for case in suite["cases"]:
+        if "value_case" in case:
+            continue  # value cases are checked centrally by value-check.py; a module cannot run the oracle on itself
         ok, detail = _CHECKERS[_kind(case)](case)
         if ok:
             passed += 1
