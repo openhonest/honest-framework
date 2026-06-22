@@ -190,10 +190,10 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     And an empty run emits nothing
 
   Scenario: decide_proof grants proved only when all three legs hold
-    Given whether honesty and coverage hold and the function's value-oracle results
+    Given whether honesty and coverage hold, the function's value-oracle results, and whether it is value-oracle exempt
     When decide_proof decides
     Then it returns proved only when honesty holds, coverage is full, and the value oracle ran with every case passing
-    But any missing leg returns failed, naming it — and an unrun oracle is a failure, not a vacuous proof
+    But any missing leg returns failed, naming it — an unrun oracle is a failure, not a vacuous proof — unless the function is declared exempt, which waives the value-oracle leg only, never honesty or coverage
 
   # value-assertion oracle (section 8.6)
   Scenario: _oracle_expected checks the result equals the known-good value

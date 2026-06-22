@@ -93,20 +93,32 @@ def module_value_results(m):
     return by_function
 
 
+def module_exempt(m):
+    """Functions the module's suite.json declares value-oracle exempt (§8.5): a value oracle cannot
+    cover them by nature (combinatorial output, a tuple), so their value leg is waived and the laws
+    carry correctness. Explicit and auditable — never inferred."""
+    suite = PY / f"honest-{m}" / "conformance" / "suite.json"
+    if not suite.exists():
+        return set()
+    return {entry["function"] for entry in json.loads(suite.read_text()).get("value_oracle_exempt", [])}
+
+
 def build_proofs():
     proofs = []
     for m in BUILT:
         gher = module_gherkins(m)
         cases = module_cases(m)
         value_results = module_value_results(m)
+        exempt = module_exempt(m)
         seen = defaultdict(int)
         for fqn, func in module_functions(m):
             scenarios = gher.get(func, [])
             i = seen[func]
             seen[func] += 1
             # A green gate establishes the honesty and coverage legs; the value oracle is the third
-            # leg (§8.5). decide_proof grants `proved` only when all three hold.
-            decision = decide_proof(True, True, value_results.get(func, []))
+            # leg (§8.5). decide_proof grants `proved` only when all three hold — or, for a declared-
+            # exempt function, when honesty and coverage hold and the laws carry the value.
+            decision = decide_proof(True, True, value_results.get(func, []), exempt=func in exempt)
             proofs.append({
                 "function": fqn,
                 "gherkin": scenarios[i] if i < len(scenarios) else func,
@@ -157,7 +169,9 @@ def main(argv):
     with LOG.open("w", encoding="utf-8") as handle:
         asyncio.run(emit_proofs(make_sink(handle), proofs))
 
+    exempt_fqns = {fqn for m in BUILT for fqn, func in module_functions(m) if func in module_exempt(m)}
     proved = sum(1 for p in proofs if p["result"] == "proved")
+    exempt_proved = sum(1 for p in proofs if p["result"] == "proved" and p["function"] in exempt_fqns)
     no_oracle = sum(1 for p in proofs if any("no value oracle" in f for f in p["failures"]))
     mismatch = sum(1 for p in proofs if any(f.startswith("value case") for f in p["failures"]))
     per_module = defaultdict(int)
@@ -167,7 +181,7 @@ def main(argv):
     for mod in BUILT:
         print(f"    honest-{mod}: {per_module['honest-' + mod]}")
     print(f"proof-run: {len(proofs)} functions = the directly-counted function-point total.")
-    print(f"proof-run: {proved} proved (value-checked), {no_oracle} not yet value-checked, {mismatch} value mismatch.")
+    print(f"proof-run: {proved} proved ({proved - exempt_proved} value-checked, {exempt_proved} laws-exempt), {no_oracle} not yet value-checked, {mismatch} value mismatch.")
     return 0
 
 

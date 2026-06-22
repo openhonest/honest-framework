@@ -13,18 +13,24 @@ earns `proved`. The closed result vocabulary is `PROOF_RESULTS`.
 PROOF_RESULTS = frozenset({"proved", "failed"})
 
 
-def decide_proof(honesty_ok, coverage_ok, value_results):
+def decide_proof(honesty_ok, coverage_ok, value_results, exempt=False):
     """Decide a function's proof result (section 8.5). A function is `proved` only when all three
     legs hold together: the honesty checks pass, it is fully covered, and its value oracle ran and
     every case passed. An unrun oracle is not a pass — an unchecked value can be silently wrong,
     which is the bug the value oracle exists to catch — so an empty `value_results` is a failure,
-    not a vacuous proof. Returns {result, failures}; `failures` names every missing leg. Pure."""
+    not a vacuous proof.
+
+    `exempt` waives the value-oracle leg only — never honesty or coverage — for a function a value
+    oracle cannot cover by nature: its output is not expressible as a portable value (a combinatorial
+    generator, a tuple), so its correctness is carried by the property laws instead. The exemption is
+    declared explicitly per function (auditable), never inferred. Returns {result, failures};
+    `failures` names every missing leg. Pure."""
     failures = []
     if not honesty_ok:
         failures.append("honesty checks did not pass")
     if not coverage_ok:
         failures.append("not fully covered (line or branch below 100%)")
-    if not value_results:
+    if not exempt and not value_results:
         failures.append("no value oracle: the function's Then is not yet checked by a value case")
     failures.extend(f"value case {result['id']!r}: {result['fault']['detail']}" for result in value_results if not result["proved"])
     return {"result": "proved" if not failures else "failed", "failures": failures}
