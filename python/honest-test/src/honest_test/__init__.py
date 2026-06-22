@@ -31,13 +31,14 @@ from honest_test.statemachine import (
     test_invalid_transitions,
     test_valid_transitions,
 )
-from honest_test.proof import PROOF_RESULTS, emit_proofs, proof_payload
+from honest_test.proof import PROOF_RESULTS, decide_proof, emit_proofs, proof_payload
 from honest_test.supplied import load_config, supplied_for
 from honest_test.value_oracle import check_oracle, run_value_case, run_value_cases
 
 __all__ = [
     "PROOF_RESULTS",
     "proof_payload",
+    "decide_proof",
     "emit_proofs",
     "check_oracle",
     "run_value_case",

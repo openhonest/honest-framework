@@ -30,6 +30,7 @@ the boundary.
   uv run python proof_run.py --no-gate  # skip the gate check (assumes a known-green tree)
 """
 import asyncio
+import importlib
 import json
 import re
 import subprocess
@@ -39,13 +40,13 @@ import uuid
 from collections import defaultdict
 from pathlib import Path
 
-from honest_test import emit_proofs
+from honest_test import decide_proof, emit_proofs, run_value_cases
 
 PY = Path(__file__).resolve().parent
 ROOT = PY.parent
 FEATURES = ROOT / "specs" / "features"
 LOG = PY / "honest_event_log.jsonl"
-BUILT = ["parse", "type", "errors", "observe", "persist", "test", "check"]
+BUILT = ["parse", "type", "errors", "gherkin", "observe", "persist", "test", "check"]
 
 _DEF = re.compile(r"^(?:async )?def ([a-z_][a-z0-9_]*)", re.M)
 _SCEN = re.compile(r"^  Scenario: ([A-Za-z_][A-Za-z0-9_]*)(.*)$", re.M)
@@ -76,23 +77,43 @@ def module_cases(m):
     return len(json.loads(suite.read_text()).get("cases", [])) if suite.exists() else 0
 
 
+def module_value_results(m):
+    """func name -> [value-oracle results] for the module's real functions: run its suite.json
+    `value_case`s through honest-test's value oracle (§8.6) against the package's own exported
+    callables. Cases naming a function the package does not export (a module's mechanism-test
+    fixtures) are skipped, so only real-function value oracles count toward a proof."""
+    pkg = importlib.import_module(f"honest_{m}")
+    function_map = {name: getattr(pkg, name) for name in getattr(pkg, "__all__", []) if callable(getattr(pkg, name))}
+    suite = PY / f"honest-{m}" / "conformance" / "suite.json"
+    cases = json.loads(suite.read_text()).get("cases", []) if suite.exists() else []
+    resolvable = [{**c["value_case"], "id": c["id"]} for c in cases if "value_case" in c and c["value_case"]["function"] in function_map]
+    by_function = defaultdict(list)
+    for value_case, result in zip(resolvable, run_value_cases(resolvable, function_map)):
+        by_function[value_case["function"]].append(result)
+    return by_function
+
+
 def build_proofs():
     proofs = []
     for m in BUILT:
         gher = module_gherkins(m)
         cases = module_cases(m)
+        value_results = module_value_results(m)
         seen = defaultdict(int)
         for fqn, func in module_functions(m):
             scenarios = gher.get(func, [])
             i = seen[func]
             seen[func] += 1
+            # A green gate establishes the honesty and coverage legs; the value oracle is the third
+            # leg (§8.5). decide_proof grants `proved` only when all three hold.
+            decision = decide_proof(True, True, value_results.get(func, []))
             proofs.append({
                 "function": fqn,
                 "gherkin": scenarios[i] if i < len(scenarios) else func,
                 "module": f"honest-{m}",
                 "cases": cases,
-                "result": "proved",
-                "failures": [],
+                "result": decision["result"],
+                "failures": decision["failures"],
                 "line_coverage": 100.0,
                 "branch_coverage": 100.0,
             })
@@ -137,13 +158,16 @@ def main(argv):
         asyncio.run(emit_proofs(make_sink(handle), proofs))
 
     proved = sum(1 for p in proofs if p["result"] == "proved")
+    no_oracle = sum(1 for p in proofs if any("no value oracle" in f for f in p["failures"]))
+    mismatch = sum(1 for p in proofs if any(f.startswith("value case") for f in p["failures"]))
     per_module = defaultdict(int)
     for p in proofs:
         per_module[p["module"]] += 1
     print(f"proof-run: {len(proofs)} hf.proof.checked events written to {LOG.relative_to(ROOT)}")
     for mod in BUILT:
         print(f"    honest-{mod}: {per_module['honest-' + mod]}")
-    print(f"proof-run: {proved} proved, {len(proofs) - proved} failed = the directly-counted function-point total.")
+    print(f"proof-run: {len(proofs)} functions = the directly-counted function-point total.")
+    print(f"proof-run: {proved} proved (value-checked), {no_oracle} not yet value-checked, {mismatch} value mismatch.")
     return 0
 
 

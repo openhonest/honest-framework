@@ -23,6 +23,7 @@ from honest_test import (
     detect_mutation,
     enumerate_lengths,
     enumerate_sets,
+    decide_proof,
     numeric_values,
     proof_payload,
     run_value_case,
@@ -246,6 +247,12 @@ def _check_value(case):
     return result["proved"], f"got {result}"
 
 
+def _check_decide(case):
+    """The proof decision (§8.5): proved only when honesty, coverage, and the value oracle all hold."""
+    got = decide_proof(**case["decide"])
+    return got == case["expect"], f"got {got}"
+
+
 _CHECKERS = {
     "enumeration": _check_enumeration,
     "adversarial": _check_adversarial,
@@ -258,10 +265,13 @@ _CHECKERS = {
     "statemachine": _check_statemachine,
     "proof": _check_proof,
     "value_oracle": _check_value,
+    "decide": _check_decide,
 }
 
 
 def _kind(case):
+    if "decide" in case:
+        return "decide"
     if "value_case" in case:
         return "value_oracle"
     if "proof_payload" in case:

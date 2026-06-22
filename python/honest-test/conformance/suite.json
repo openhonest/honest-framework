@@ -179,6 +179,11 @@
     {"id": "value-returns-list", "value_case": {"function": "double", "input": [1, 2], "expected": [1, 2, 1, 2]}},
     {"id": "value-fault", "value_case": {"function": "parity", "input": 3, "fault": "odd"}},
     {"id": "value-ok", "value_case": {"function": "parity", "input": 4, "ok": true}},
-    {"id": "value-field", "value_case": {"function": "box", "input": 5, "field": {"name": "n", "value": 5}}}
+    {"id": "value-field", "value_case": {"function": "box", "input": 5, "field": {"name": "n", "value": 5}}},
+    {"id": "decide-proved", "decide": {"honesty_ok": true, "coverage_ok": true, "value_results": [{"id": "v1", "proved": true, "fault": null}]}, "expect": {"result": "proved", "failures": []}},
+    {"id": "decide-value-mismatch", "decide": {"honesty_ok": true, "coverage_ok": true, "value_results": [{"id": "v1", "proved": true, "fault": null}, {"id": "v2", "proved": false, "fault": {"code": "assertion_failed", "detail": "expected 42, got 7", "scenario_name": "", "step_text": ""}}]}, "expect": {"result": "failed", "failures": ["value case 'v2': expected 42, got 7"]}},
+    {"id": "decide-no-oracle", "decide": {"honesty_ok": true, "coverage_ok": true, "value_results": []}, "expect": {"result": "failed", "failures": ["no value oracle: the function's Then is not yet checked by a value case"]}},
+    {"id": "decide-honesty-fail", "decide": {"honesty_ok": false, "coverage_ok": true, "value_results": [{"id": "v1", "proved": true, "fault": null}]}, "expect": {"result": "failed", "failures": ["honesty checks did not pass"]}},
+    {"id": "decide-coverage-fail", "decide": {"honesty_ok": true, "coverage_ok": false, "value_results": [{"id": "v1", "proved": true, "fault": null}]}, "expect": {"result": "failed", "failures": ["not fully covered (line or branch below 100%)"]}}
   ]
 }
