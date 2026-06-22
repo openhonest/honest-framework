@@ -4,15 +4,24 @@
 differences resolved in lookup tables (no branching on dialect). `apply(diff, conn, dialect)`
 is the boundary: it refuses to run while ambiguities are unresolved, executes the operations in
 execution_order against the connection, halts on the first failure, and records what ran in an
-ApplyResult. Catching at the boundary is by design, so HC-P002 is disabled file-wide here.
+ApplyResult. It also emits one `hf.persist.migration` per operation through an INJECTED emit
+(section 8.7) — the one-way persist -> observe instrumentation, never an import — so schema history
+joins the unified event log; a failing emit is swallowed, never breaking a migration, and no emit
+means no events. Catching at the boundary, reading the clock, naming the fault from the exception,
+and logging a swallowed emit to stderr are all boundary behaviours, so HC-P002/P004/P005 are
+disabled file-wide here.
 
 DDL is rendered in standard SQL; the type map resolves abstract types per dialect. alter_column
 is rendered in the PostgreSQL form; dialects without in-place column alteration (sqlite) require
-a table rebuild, which is a later concern.
+a table rebuild, emitted as one `reconstruct_table` migration event.
 """
 
-# honest: disable HC-P002
+# honest: disable HC-P002, HC-P004, HC-P005
 
+import sys
+import time
+
+from honest_persist.instrument import build_migration_event
 from honest_persist.schema import _normalize
 
 _TYPE_MAP = {
@@ -224,11 +233,26 @@ async def _reconstruct(table, target_tables, operations, conn, dialect, executed
     return None
 
 
-async def apply(diff_result, target, conn, dialect):
+async def _emit_migration(emit, db_id, op, table, detail, sql, duration_ns, success, fault_code):
+    """Emit one hf.persist.migration through the injected emit (section 8.7), keyed by the schema
+    aggregate. A failure in emit is logged to stderr and swallowed — instrumentation must never break
+    a migration. No-op when no emit is wired in. I/O."""
+    if emit is None:
+        return
+    payload = build_migration_event(db_id, op, table, detail, duration_ns, sql, success, fault_code)
+    try:
+        await emit("hf.persist.migration", "schema", db_id + ":" + table, payload)
+    except Exception as exc:
+        print(f"honest-persist: migration event emit failed: {exc}", file=sys.stderr)
+
+
+async def apply(diff_result, target, conn, dialect, emit=None, db_id=""):
     """Execute a DiffResult against the connection in execution_order (section 5.2). Async I/O
     boundary: refuses while ambiguities are unresolved, reconstructs tables that cannot be
     altered in place (section 5.5) — pausing sync push for the rebuild — halts on the first
-    failure, and returns an ApplyResult. Not pure: it awaits I/O through conn."""
+    failure, and returns an ApplyResult. Emits one hf.persist.migration per operation through the
+    injected emit (section 8.7); a reconstructed table emits one reconstruct_table event. Not pure:
+    it awaits I/O through conn."""
     if diff_result.get("ambiguities"):
         return _apply_result(False, [], "unresolved ambiguities; resolve before applying", None)
     target_tables = _normalize(target)["tables"]
@@ -241,18 +265,26 @@ async def apply(diff_result, target, conn, dialect):
         if op["table"] in reconstruct_tables:
             if op["table"] in reconstructed:
                 continue
+            start = time.perf_counter_ns()
+            mark = len(executed)
             failure = await _reconstruct(op["table"], target_tables, operations, conn, dialect, executed)
+            rebuilt_sql = "; ".join(executed[mark:])
             if failure is not None:
+                await _emit_migration(emit, db_id, "reconstruct_table", op["table"], {}, rebuilt_sql, time.perf_counter_ns() - start, False, "reconstruction_failed")
                 return failure
+            await _emit_migration(emit, db_id, "reconstruct_table", op["table"], {}, rebuilt_sql, time.perf_counter_ns() - start, True, None)
             reconstructed.add(op["table"])
             continue
         sql = to_sql(op, dialect)
         if sql is None:
             return _apply_result(False, executed, f"no renderer for '{op['op']}'", index)
+        start = time.perf_counter_ns()
         try:
             await conn.execute(sql)
         except Exception as exc:
+            await _emit_migration(emit, db_id, op["op"], op["table"], op["details"], sql, time.perf_counter_ns() - start, False, type(exc).__name__)
             return _apply_result(False, executed, str(exc), index)
         executed.append(sql)
+        await _emit_migration(emit, db_id, op["op"], op["table"], op["details"], sql, time.perf_counter_ns() - start, True, None)
     return _apply_result(True, executed, None, None)
 # honest: enable HC-P002

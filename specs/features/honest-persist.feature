@@ -294,11 +294,16 @@ Feature: honest-persist — schema diffing, query building, and the write bounda
     Then it returns the columns the diff adds to that table, which the rebuild must not copy from the old table
 
   Scenario: apply executes a diff against a database in execution order
-    Given a diff result, the target schema, a connection, and a target engine
+    Given a diff result, the target schema, a connection, a target engine, and an optional injected emit
     When apply runs the operations in order
-    Then it applies each operation, rebuilding any table that cannot be altered in place, and returns a record of what was applied
+    Then it applies each operation, rebuilding any table that cannot be altered in place, returns a record of what was applied, and emits one migration event per operation through the emit
     But if the diff still has unresolved ambiguities it refuses and returns a failure
-    And it halts on the first operation that fails, returning the failure and what had already run
+    And it halts on the first operation that fails, emitting that operation with its fault code, returning the failure and what had already run
+
+  Scenario: _emit_migration emits one migration event through the injected emit
+    Given the injected emit, the operation facts, and whether it succeeded
+    When _emit_migration emits the event
+    Then it sends one hf.persist.migration through the emit, keyed by the schema aggregate, but a failure in the emit is logged and swallowed, and no emit means no event
 
   Scenario: _reconstruct rebuilds one table to its target shape
     Given a table, the target tables, the operations, a connection, the engine, and the running record of applied statements

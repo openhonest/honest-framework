@@ -699,6 +699,74 @@ def _probe_instrumented():
     return asyncio.run(_run())
 
 
+def _probe_instrumented_apply():
+    """Instrumented apply (§8.7): apply emits one hf.persist.migration per operation executed, in
+    execution order, through the injected emit (schema aggregate, db:table id); a failed operation
+    emits with the fault code; a reconstructed table emits one reconstruct_table event; a failing
+    emit is swallowed."""
+
+    async def _run():
+        bad = []
+        target = {"a": {"columns": {"id": {"type": "integer"}}}, "b": {"columns": {"id": {"type": "integer"}}}}
+        plan = diff({}, target)
+
+        # Two plain DDL operations -> one migration event per op.
+        events = []
+
+        async def emit(event_type, aggregate_type, aggregate_id, payload):
+            events.append((event_type, aggregate_type, aggregate_id, payload))
+
+        result = await apply(plan, target, _Conn(), "postgresql", emit, "users_db")
+        if not result["success"]:
+            bad.append("the plain apply should succeed")
+        if len(events) != 2 or any(e[0] != "hf.persist.migration" or e[1] != "schema" for e in events):
+            bad.append(f"apply should emit one hf.persist.migration per operation: {events}")
+        elif events[0][3]["success"] is not True or events[0][3]["fault_code"] is not None or events[0][3]["operation"] != "create_table":
+            bad.append(f"the migration event payload is wrong: {events[0][3]}")
+
+        # A failing DDL emits one event with the fault code, then apply halts.
+        fail_events = []
+
+        async def emit_fail(event_type, aggregate_type, aggregate_id, payload):
+            fail_events.append(payload)
+
+        one = {"a": {"columns": {"id": {"type": "integer"}}}}
+        fresult = await apply(diff({}, one), one, _FailingConn("CREATE TABLE"), "postgresql", emit_fail, "users_db")
+        if fresult["success"]:
+            bad.append("apply should halt on a failing DDL")
+        if len(fail_events) != 1 or fail_events[0]["success"] is not False or fail_events[0]["fault_code"] is None:
+            bad.append(f"a failed operation should emit success False with a fault code: {fail_events}")
+
+        # A reconstructed table emits one reconstruct_table event (success), and a failed
+        # reconstruction emits one with success False.
+        recon_events = []
+
+        async def emit_recon(event_type, aggregate_type, aggregate_id, payload):
+            recon_events.append(payload)
+
+        await apply(diff(_RECON_CURRENT, _RECON_TARGET), _RECON_TARGET, _Conn(), "sqlite", emit_recon, "users_db")
+        if not any(p["operation"] == "reconstruct_table" and p["success"] is True for p in recon_events):
+            bad.append(f"a reconstructed table should emit a successful reconstruct_table event: {recon_events}")
+        recon_fail = []
+
+        async def emit_recon_fail(event_type, aggregate_type, aggregate_id, payload):
+            recon_fail.append(payload)
+
+        await apply(diff(_RECON_CURRENT, _RECON_TARGET), _RECON_TARGET, _FailingConn("DROP TABLE"), "sqlite", emit_recon_fail, "users_db")
+        if not any(p["operation"] == "reconstruct_table" and p["success"] is False for p in recon_fail):
+            bad.append(f"a failed reconstruction should emit a reconstruct_table event with success False: {recon_fail}")
+
+        # A failing emit is swallowed: the migration still succeeds.
+        async def emit_down(event_type, aggregate_type, aggregate_id, payload):
+            raise ValueError("emit is down")
+
+        if not (await apply(plan, target, _Conn(), "postgresql", emit_down, "users_db"))["success"]:
+            bad.append("a failing emit must never break the migration")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -706,6 +774,7 @@ def run():
     ]
     probes = {
         "apply": _probe_apply(),
+        "instrumented_apply": _probe_instrumented_apply(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),
