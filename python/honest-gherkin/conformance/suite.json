@@ -11,6 +11,11 @@
     {"id": "compile-str-default", "compile": {"pattern": "say \"{word}\""}, "expect": "ok", "expect_captures": [{"name": "word", "type": "str"}]},
     {"id": "compile-typed", "compile": {"pattern": "n {x:int} f {y:float}"}, "expect": "ok", "expect_captures": [{"name": "x", "type": "int"}, {"name": "y", "type": "float"}]},
     {"id": "compile-no-placeholder", "compile": {"pattern": "plain text"}, "expect": "ok", "expect_captures": []},
-    {"id": "compile-unknown-type", "compile": {"pattern": "a {x:widget}"}, "expect": "err", "expect_code": "bad_feature_syntax"}
+    {"id": "compile-unknown-type", "compile": {"pattern": "a {x:widget}"}, "expect": "err", "expect_code": "bad_feature_syntax"},
+    {"id": "match-one-str", "match": {"patterns": [{"kind": "given", "pattern": "a user named \"{name}\"", "handler": "h"}], "step_text": "a user named \"Ada\""}, "expect": "ok", "expect_captures": {"name": "Ada"}},
+    {"id": "match-coerce-int", "match": {"patterns": [{"kind": "when", "pattern": "add {x:int}", "handler": "h"}], "step_text": "add 42"}, "expect": "ok", "expect_captures": {"x": 42}},
+    {"id": "match-coerce-float", "match": {"patterns": [{"kind": "then", "pattern": "it is {y:float}", "handler": "h"}], "step_text": "it is 3.14"}, "expect": "ok", "expect_captures": {"y": 3.14}},
+    {"id": "match-none", "match": {"patterns": [{"kind": "given", "pattern": "a known step", "handler": "h"}], "step_text": "an unknown step"}, "expect": "err", "expect_code": "step_unmatched"},
+    {"id": "match-ambiguous", "match": {"patterns": [{"kind": "given", "pattern": "a {x}", "handler": "h"}, {"kind": "given", "pattern": "{y} step", "handler": "h"}], "step_text": "a step"}, "expect": "err", "expect_code": "ambiguous_step"}
   ]
 }

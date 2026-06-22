@@ -7,7 +7,70 @@ returns a list of failures; run() aggregates.
 
 import re
 
-from honest_gherkin import compile_pattern, parse_feature
+from honest_gherkin import (
+    compile_pattern,
+    empty_registry,
+    match_step,
+    parse_feature,
+    register_step,
+)
+
+
+def _step(text):
+    return {"kind": "given", "resolved_kind": "given", "text": text, "source_line": 1}
+
+
+def _probe_registry():
+    """empty_registry / register_step / match_step (§5, §5.1): registration is a value (never a
+    global), register_step never mutates its argument, and match_step returns a Result with coerced
+    captures — exactly one match -> ok, none -> step_unmatched, more than one -> ambiguous_step."""
+    bad = []
+
+    def handler(context):
+        return context
+
+    if empty_registry() != {"patterns": []}:
+        bad.append("empty_registry should be a registry value with no patterns")
+
+    # register_step appends and returns a NEW registry; the argument is untouched (no shared state).
+    r0 = empty_registry()
+    r1 = register_step(r0, "given", 'a user named "{name}"', handler)
+    r2 = register_step(r1, "when", "they add {x:int}", handler)
+    if r0["patterns"] != []:
+        bad.append("register_step must not mutate its argument")
+    if [p["kind"] for p in r2["patterns"]] != ["given", "when"]:
+        bad.append(f"register_step should append in order: {[p['kind'] for p in r2['patterns']]}")
+    if r2["patterns"][0]["handler"] is not handler:
+        bad.append("the registered pattern should carry its handler")
+
+    # Exactly one match -> ok(StepMatch) with the matched pattern and coerced captures.
+    one = match_step(_step('a user named "Ada"'), r2)
+    if "ok" not in one or one["ok"]["captures"] != {"name": "Ada"}:
+        bad.append(f"a single str match should bind the capture: {one}")
+    if one.get("ok", {}).get("pattern", {}).get("handler") is not handler:
+        bad.append("the StepMatch should carry the matched pattern (handler included)")
+    coerced = match_step(_step("they add 42"), r2)
+    if "ok" not in coerced or coerced["ok"]["captures"] != {"x": 42}:
+        bad.append(f"an int capture should be coerced to int, not left a string: {coerced}")
+
+    # Zero matches -> step_unmatched; more than one -> ambiguous_step.
+    none = match_step(_step("nothing matches this"), r2)
+    if none.get("err", {}).get("code") != "step_unmatched":
+        bad.append(f"no match should return step_unmatched: {none}")
+    ambiguous = register_step(register_step(empty_registry(), "given", "a {x}", handler), "given", "{y} z", handler)
+    amb = match_step(_step("a z"), ambiguous)
+    if amb.get("err", {}).get("code") != "ambiguous_step":
+        bad.append(f"more than one match should return ambiguous_step: {amb}")
+
+    # A registered pattern that fails to compile cannot match: it is skipped, not raised.
+    with_bad = register_step(register_step(empty_registry(), "given", "a {x:widget}", handler), "given", "good step", handler)
+    skipped = match_step(_step("good step"), with_bad)
+    if "ok" not in skipped:
+        bad.append(f"a non-compiling pattern should be skipped, leaving the good match: {skipped}")
+    only_bad = match_step(_step("a value"), register_step(empty_registry(), "given", "a {x:widget}", handler))
+    if only_bad.get("err", {}).get("code") != "step_unmatched":
+        bad.append(f"when only a non-compiling pattern is present, the step is unmatched: {only_bad}")
+    return bad
 
 
 def _probe_parse():
@@ -119,7 +182,7 @@ def _probe_compile():
 
 
 def run():
-    probes = {"parse": _probe_parse(), "compile": _probe_compile()}
+    probes = {"parse": _probe_parse(), "compile": _probe_compile(), "registry": _probe_registry()}
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:
         print(f"FAIL HG-probe [{name}]: {messages}")

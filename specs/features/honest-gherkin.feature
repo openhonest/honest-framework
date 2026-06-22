@@ -93,3 +93,26 @@ Feature: honest-gherkin — the parse contract (unit 1)
     When compile_pattern compiles it
     Then it returns an anchored matcher with one named capture per placeholder, recording each capture's type
     But an unknown placeholder type returns a bad-feature-syntax fault rather than raising
+
+  # registry
+  Scenario: empty_registry is a registry value with no patterns
+    Given nothing
+    When empty_registry is called
+    Then it returns a registry holding an empty list of patterns, never a global
+
+  Scenario: register_step adds one pattern without mutating its argument
+    Given a registry, a step kind, a pattern, and a handler
+    When register_step adds them
+    Then it returns a new registry with the pattern appended in order
+    But the registry passed in is left unchanged
+
+  Scenario: _coerce_captures binds each capture to its recorded type
+    Given a regex match and the captures recorded for a pattern
+    When _coerce_captures binds them
+    Then each named value is coerced to its recorded type, so an int reads as an int rather than a string
+
+  Scenario: match_step resolves a step against the registry
+    Given a step and a registry of patterns
+    When match_step matches the step
+    Then exactly one matching pattern returns the match with its captures coerced
+    But no match returns a step-unmatched fault and more than one returns an ambiguous-step fault

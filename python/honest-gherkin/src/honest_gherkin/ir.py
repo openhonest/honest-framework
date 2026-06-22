@@ -49,6 +49,21 @@ class CompiledPattern(TypedDict):
     captures: list[dict[str, str]]      # one {name, type} per placeholder, in order; type drives bind-time coercion
 
 
+class StepPattern(TypedDict):
+    kind: str            # one of STEP_KINDS: the keyword this pattern registers under
+    pattern: str         # the {name}/{name:type} source pattern, compiled on demand by match_step
+    handler: Any         # StepHandler: (context, **captures) -> context; carried, invoked by the runner
+
+
+class StepRegistry(TypedDict):
+    patterns: list[StepPattern]   # registration is a value, never a module global (section 10.5)
+
+
+class StepMatch(TypedDict):
+    pattern: StepPattern          # the single pattern that matched
+    captures: dict[str, Any]      # placeholder bindings, coerced per the pattern's recorded types
+
+
 class StepFault(TypedDict):
     code: str            # one of FAULT_CODES
     scenario_name: str

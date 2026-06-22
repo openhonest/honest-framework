@@ -11,12 +11,30 @@ import json
 import sys
 from pathlib import Path
 
-from honest_gherkin import compile_pattern, parse_feature
+from honest_gherkin import (
+    compile_pattern,
+    empty_registry,
+    match_step,
+    parse_feature,
+    register_step,
+)
 
 
 def _check_compile(case):
     spec = case["compile"]
     result = compile_pattern(spec["pattern"])
+    if case["expect"] == "ok":
+        return "ok" in result and result["ok"]["captures"] == case["expect_captures"], f"got {result}"
+    return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"
+
+
+def _check_match(case):
+    spec = case["match"]
+    registry = empty_registry()
+    for pattern in spec["patterns"]:
+        registry = register_step(registry, pattern["kind"], pattern["pattern"], pattern["handler"])
+    step = {"kind": "given", "resolved_kind": "given", "text": spec["step_text"], "source_line": 1}
+    result = match_step(step, registry)
     if case["expect"] == "ok":
         return "ok" in result and result["ok"]["captures"] == case["expect_captures"], f"got {result}"
     return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"
@@ -38,11 +56,14 @@ def _check_parse(case):
     return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"
 
 
-_CHECKERS = {"parse": _check_parse, "compile": _check_compile}
+_CHECKERS = {"parse": _check_parse, "compile": _check_compile, "match": _check_match}
 
 
 def _kind(case):
-    return "compile" if "compile" in case else "parse"
+    for name in ("compile", "match"):
+        if name in case:
+            return name
+    return "parse"
 
 
 def run(suite_path):
