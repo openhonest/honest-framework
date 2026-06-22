@@ -21,6 +21,9 @@ FAULT_STEP_ERRORED = "step_errored"
 FAULT_BAD_FEATURE_SYNTAX = "bad_feature_syntax"
 FAULT_CODES = frozenset({"step_unmatched", "ambiguous_step", "assertion_failed", "step_errored", "bad_feature_syntax"})
 
+STEP_STATUSES = frozenset({"ok", "failed", "unmatched", "ambiguous", "errored"})
+SCENARIO_STATUSES = frozenset({"ok", "err", "skipped"})
+
 
 class Step(TypedDict, total=False):
     kind: str            # the literal keyword, lowercased: one of STEP_KINDS
@@ -62,6 +65,27 @@ class StepRegistry(TypedDict):
 class StepMatch(TypedDict):
     pattern: StepPattern          # the single pattern that matched
     captures: dict[str, Any]      # placeholder bindings, coerced per the pattern's recorded types
+
+
+class StepResult(TypedDict):
+    step: Step
+    status: str                   # one of STEP_STATUSES
+    fault: Any                    # StepFault, or None iff status == "ok"
+
+
+class ScenarioReport(TypedDict):
+    name: str
+    status: str                   # one of SCENARIO_STATUSES
+    step_results: list[StepResult]
+    duration_ms: int
+
+
+class FeatureReport(TypedDict):
+    feature_name: str
+    source_path: str
+    scenarios: list[ScenarioReport]
+    total_passed: int
+    total_failed: int
 
 
 class StepFault(TypedDict):

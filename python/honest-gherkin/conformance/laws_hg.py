@@ -10,10 +10,13 @@ import re
 from honest_gherkin import (
     compile_pattern,
     empty_registry,
+    fold_feature_report,
     match_step,
     parse_feature,
     register_step,
+    run_scenario,
 )
+from honest_gherkin.run import _classify_exception
 
 
 def _step(text):
@@ -181,8 +184,111 @@ def _probe_compile():
     return bad
 
 
+def _probe_run():
+    """run_step / run_scenario / fold_feature_report / _classify_exception / _now_ms (§6, §7.1):
+    fold steps over an empty immutable context, thread context through, stop at the first non-ok
+    step, classify a caught handler exception into the fault vocabulary, and combine reports."""
+    bad = []
+
+    def set_user(context):
+        return {**context, "user": "ada"}
+
+    def keep(context):
+        return None  # a falsey return is treated as the unchanged context (§6.1)
+
+    def check_user(context):
+        assert context.get("user") == "ada"
+        return context
+
+    def check_missing(context):
+        assert context.get("user") == "missing"
+        return context
+
+    def boom(context):
+        raise ValueError("kaboom")
+
+    registry = empty_registry()
+    registry = register_step(registry, "given", "a user named ada", set_user)
+    registry = register_step(registry, "given", "nothing changes", keep)
+    registry = register_step(registry, "then", "the user is ada", check_user)
+    registry = register_step(registry, "then", "the user is missing", check_missing)
+    registry = register_step(registry, "when", "it explodes", boom)
+
+    def scenario(name, texts):
+        steps = [{"kind": "given", "resolved_kind": "given", "text": t, "source_line": 1} for t in texts]
+        return {"name": name, "steps": steps, "tags": [], "source_line": 1}
+
+    # All steps ok: context threads through; status ok; duration is a non-negative int.
+    passing = scenario("pass", ["a user named ada", "nothing changes", "the user is ada"])
+    report = run_scenario(passing, [], registry)
+    if report["status"] != "ok":
+        bad.append(f"a passing scenario should be ok: {report}")
+    if [r["status"] for r in report["step_results"]] != ["ok", "ok", "ok"]:
+        bad.append(f"every executed step should be ok: {[r['status'] for r in report['step_results']]}")
+    if not isinstance(report["duration_ms"], int) or report["duration_ms"] < 0:
+        bad.append(f"duration_ms should be a non-negative int: {report['duration_ms']!r}")
+
+    # Background steps run first, and their context threads into the scenario's own steps.
+    bg_step = {"kind": "given", "resolved_kind": "given", "text": "a user named ada", "source_line": 1}
+    bg_report = run_scenario(scenario("bg", ["the user is ada"]), [bg_step], registry)
+    if bg_report["status"] != "ok":
+        bad.append(f"background should run first and thread context into the scenario: {bg_report}")
+
+    # A failing Then (assertion) stops the scenario; the failed step is reported, later steps are not.
+    failing = scenario("fail", ["a user named ada", "the user is missing", "the user is ada"])
+    fr = run_scenario(failing, [], registry)
+    if fr["status"] != "err":
+        bad.append(f"a failing scenario should be err: {fr}")
+    if len(fr["step_results"]) != 2:
+        bad.append(f"M1 stops at the first non-ok step and does not report the rest: {fr['step_results']}")
+    last = fr["step_results"][-1]
+    if last["status"] != "failed" or last["fault"]["code"] != "assertion_failed":
+        bad.append(f"an assertion failure -> failed / assertion_failed: {last}")
+    if last["fault"]["scenario_name"] != "fail":
+        bad.append(f"the fault should carry the scenario name: {last['fault']}")
+
+    # Any other handler exception -> errored / step_errored.
+    err_report = run_scenario(scenario("boom", ["it explodes"]), [], registry)
+    eb = err_report["step_results"][-1]
+    if err_report["status"] != "err" or eb["status"] != "errored" or eb["fault"]["code"] != "step_errored":
+        bad.append(f"a non-assertion exception -> errored / step_errored: {err_report}")
+
+    # An unmatched step -> unmatched / step_unmatched (no exception involved); ok steps before it stand.
+    um = run_scenario(scenario("um", ["this matches nothing"]), [], registry)
+    ub = um["step_results"][-1]
+    if um["status"] != "err" or ub["status"] != "unmatched" or ub["fault"]["code"] != "step_unmatched":
+        bad.append(f"an unmatched step -> unmatched / step_unmatched: {um}")
+
+    # An ambiguous step -> ambiguous / ambiguous_step.
+    amb_registry = register_step(register_step(empty_registry(), "given", "a {x}", set_user), "given", "{y} thing", set_user)
+    amb = run_scenario(scenario("amb", ["a thing"]), [], amb_registry)
+    ab = amb["step_results"][-1]
+    if amb["status"] != "err" or ab["status"] != "ambiguous" or ab["fault"]["code"] != "ambiguous_step":
+        bad.append(f"an ambiguous step -> ambiguous / ambiguous_step: {amb}")
+
+    # _classify_exception directly: AssertionError is the specific row, anything else hits the catch-all.
+    if _classify_exception(AssertionError("x")) != ("failed", "assertion_failed"):
+        bad.append("AssertionError should classify as failed / assertion_failed")
+    if _classify_exception(KeyError("x")) != ("errored", "step_errored"):
+        bad.append("a non-assertion exception should hit the catch-all errored / step_errored")
+
+    # fold_feature_report: total_passed counts ok scenarios; the rest fail; metadata is carried.
+    feature = {"name": "F", "description": "", "scenarios": [], "background_steps": [], "source_path": "f.feature"}
+    combined = fold_feature_report(feature, [report, fr, bg_report])
+    if combined["total_passed"] != 2 or combined["total_failed"] != 1:
+        bad.append(f"fold should count ok vs non-ok scenarios: {combined}")
+    if combined["feature_name"] != "F" or combined["source_path"] != "f.feature":
+        bad.append(f"fold should carry the feature name and path: {combined}")
+    return bad
+
+
 def run():
-    probes = {"parse": _probe_parse(), "compile": _probe_compile(), "registry": _probe_registry()}
+    probes = {
+        "parse": _probe_parse(),
+        "compile": _probe_compile(),
+        "registry": _probe_registry(),
+        "run": _probe_run(),
+    }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:
         print(f"FAIL HG-probe [{name}]: {messages}")

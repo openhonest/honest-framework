@@ -14,6 +14,7 @@ from pathlib import Path
 from honest_gherkin import (
     compile_pattern,
     empty_registry,
+    fold_feature_report,
     match_step,
     parse_feature,
     register_step,
@@ -56,11 +57,26 @@ def _check_parse(case):
     return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"
 
 
-_CHECKERS = {"parse": _check_parse, "compile": _check_compile, "match": _check_match}
+def _check_fold(case):
+    spec = case["fold"]
+    feature = {"name": spec["feature_name"], "description": "", "scenarios": [], "background_steps": [], "source_path": spec["source_path"]}
+    reports = [{"name": f"s{i}", "status": status, "step_results": [], "duration_ms": 0} for i, status in enumerate(spec["scenario_statuses"])]
+    report = fold_feature_report(feature, reports)
+    ok = (
+        report["total_passed"] == case["expect_passed"]
+        and report["total_failed"] == case["expect_failed"]
+        and report["feature_name"] == spec["feature_name"]
+        and report["source_path"] == spec["source_path"]
+        and len(report["scenarios"]) == len(reports)
+    )
+    return ok, f"got {report}"
+
+
+_CHECKERS = {"parse": _check_parse, "compile": _check_compile, "match": _check_match, "fold": _check_fold}
 
 
 def _kind(case):
-    for name in ("compile", "match"):
+    for name in ("compile", "match", "fold"):
         if name in case:
             return name
     return "parse"

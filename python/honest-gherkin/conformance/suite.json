@@ -16,6 +16,8 @@
     {"id": "match-coerce-int", "match": {"patterns": [{"kind": "when", "pattern": "add {x:int}", "handler": "h"}], "step_text": "add 42"}, "expect": "ok", "expect_captures": {"x": 42}},
     {"id": "match-coerce-float", "match": {"patterns": [{"kind": "then", "pattern": "it is {y:float}", "handler": "h"}], "step_text": "it is 3.14"}, "expect": "ok", "expect_captures": {"y": 3.14}},
     {"id": "match-none", "match": {"patterns": [{"kind": "given", "pattern": "a known step", "handler": "h"}], "step_text": "an unknown step"}, "expect": "err", "expect_code": "step_unmatched"},
-    {"id": "match-ambiguous", "match": {"patterns": [{"kind": "given", "pattern": "a {x}", "handler": "h"}, {"kind": "given", "pattern": "{y} step", "handler": "h"}], "step_text": "a step"}, "expect": "err", "expect_code": "ambiguous_step"}
+    {"id": "match-ambiguous", "match": {"patterns": [{"kind": "given", "pattern": "a {x}", "handler": "h"}, {"kind": "given", "pattern": "{y} step", "handler": "h"}], "step_text": "a step"}, "expect": "err", "expect_code": "ambiguous_step"},
+    {"id": "fold-mixed", "fold": {"feature_name": "Login", "source_path": "login.feature", "scenario_statuses": ["ok", "err", "ok", "err"]}, "expect_passed": 2, "expect_failed": 2},
+    {"id": "fold-all-pass", "fold": {"feature_name": "Empty", "source_path": "e.feature", "scenario_statuses": ["ok", "ok"]}, "expect_passed": 2, "expect_failed": 0}
   ]
 }

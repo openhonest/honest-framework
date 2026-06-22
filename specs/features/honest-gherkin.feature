@@ -116,3 +116,31 @@ Feature: honest-gherkin — the parse contract (unit 1)
     When match_step matches the step
     Then exactly one matching pattern returns the match with its captures coerced
     But no match returns a step-unmatched fault and more than one returns an ambiguous-step fault
+
+  # run
+  Scenario: _now_ms reads the wall clock in milliseconds
+    Given the running engine
+    When _now_ms is read
+    Then it returns the current wall-clock time in milliseconds, the one impure seam in the run model
+
+  Scenario: _classify_exception sorts a caught handler exception into the fault vocabulary
+    Given an exception caught at the handler boundary
+    When _classify_exception sorts it
+    Then an assertion failure becomes failed with assertion-failed, and any other exception the catch-all errored with step-errored
+
+  Scenario: run_step matches a step and classifies its outcome
+    Given a step, the running context, and a registry
+    When run_step runs the step
+    Then a matched, successful handler returns ok with the new context, a falsey return keeps the context unchanged
+    But an unmatched or ambiguous match, an assertion, or any other exception each becomes its own non-ok status carried as data
+
+  Scenario: run_scenario folds the steps over an empty immutable context
+    Given a scenario, its background steps, and a registry
+    When run_scenario runs them
+    Then it folds background then own steps over an empty context, threading a new context on each success, stopping at the first non-ok step
+    But the scenario status is ok only when every executed step is ok
+
+  Scenario: fold_feature_report combines scenario reports into a feature report
+    Given a feature and its scenario reports
+    When fold_feature_report combines them
+    Then it counts the ok scenarios as passed and the rest as failed, carrying the feature name and path
