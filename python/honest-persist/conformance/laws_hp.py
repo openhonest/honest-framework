@@ -767,6 +767,31 @@ def _probe_instrumented_apply():
     return asyncio.run(_run())
 
 
+def _probe_pool():
+    """Pool routing (§8.1, 8.2): resolve a manifest to its pool selector — a db_id selects a
+    registered database, a tenant_id a per-tenant one, the credential and lifecycle are carried, and
+    a manifest naming no database faults unknown_database."""
+    from honest_persist.pool import POOL_LIFECYCLES, resolve_pool_key
+
+    bad = []
+    if POOL_LIFECYCLES != {"persistent", "ephemeral", "on_demand"}:
+        bad.append("POOL_LIFECYCLES vocabulary is wrong")
+    by_db = resolve_pool_key({"db_id": "users_db", "id": 1})
+    if "ok" not in by_db or by_db["ok"]["database"] != "users_db" or by_db["ok"]["kind"] != "db_id":
+        bad.append(f"a db_id should select a registered database: {by_db}")
+    elif by_db["ok"]["lifecycle"] != "persistent" or by_db["ok"]["credential"] is not None:
+        bad.append("the default lifecycle is persistent and there is no credential by default")
+    by_tenant = resolve_pool_key({"tenant_id": "acme", "credential": "read_replica", "db_lifecycle": "ephemeral"})
+    if "ok" not in by_tenant or by_tenant["ok"]["kind"] != "tenant_id" or by_tenant["ok"]["database"] != "acme":
+        bad.append(f"a tenant_id should select a per-tenant database: {by_tenant}")
+    elif by_tenant["ok"]["credential"] != "read_replica" or by_tenant["ok"]["lifecycle"] != "ephemeral":
+        bad.append("the credential and lifecycle should be carried through")
+    none = resolve_pool_key({"some": "query data"})
+    if none.get("err", {}).get("code") != "unknown_database":
+        bad.append(f"a manifest naming no database should fault unknown_database: {none}")
+    return bad
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -775,6 +800,7 @@ def run():
     probes = {
         "apply": _probe_apply(),
         "instrumented_apply": _probe_instrumented_apply(),
+        "pool": _probe_pool(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

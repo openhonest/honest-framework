@@ -221,3 +221,9 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given the injected emit, an aggregate id, and a query event payload
     When _safe_emit emits it
     Then it sends the hf.persist.query event through the emit, but a failure in the emit is logged and swallowed so it never breaks the query
+
+  Scenario: resolve_pool_key routes a manifest to its pool selector
+    Given a manifest with its database-routing keys
+    When resolve_pool_key resolves it
+    Then a db_id selects a registered database and a tenant_id a per-tenant one, carrying the credential and the lifecycle, defaulting the lifecycle to persistent
+    But a manifest that names no database returns an unknown-database fault
