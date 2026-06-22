@@ -15,6 +15,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+import honest_test as _ht
 from honest_type import binding, fault, link, maybe, ok, state_machine, vocabulary
 
 from honest_test import (
@@ -50,17 +51,31 @@ def _box(n):
     return {"n": n, "doubled": n * 2}
 
 
-# The function map the value-oracle steps resolve against: suite.json carries names + (input,
+def _apply_fn(f, x):
+    return f(x)
+
+
+async def _add_async(a, b):
+    return a + b
+
+
+def _echo(value):
+    return value
+
+
+# The function map the value-oracle steps resolve against: suite.json carries names + (input/args,
 # expected); the live callables stay in the runner, exactly as honesty-test links do (above).
-# double/parity/box exercise the oracle mechanism; fibonacci_sequence/numeric_values are honest-test's
-# OWN exported functions — real value oracles, so the gate value-checks them (proof_run resolves the
-# same names from honest_test.__all__).
+# double/parity/box/apply_fn/add_async/echo exercise the oracle mechanism ($ref/$call/args/kwargs/
+# async/literal); honest-test's OWN exported callables are auto-included, so a value_case can name or
+# $ref any of them and the gate value-checks them (proof_run resolves the same names from __all__).
 _VALUE_FUNCTIONS = {
     "double": _double,
     "parity": _parity,
     "box": _box,
-    "fibonacci_sequence": fibonacci_sequence,
-    "numeric_values": numeric_values,
+    "apply_fn": _apply_fn,
+    "add_async": _add_async,
+    "echo": _echo,
+    **{name: getattr(_ht, name) for name in _ht.__all__ if callable(getattr(_ht, name))},
 }
 
 _SM_TESTS = {

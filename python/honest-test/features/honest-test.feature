@@ -89,3 +89,13 @@ Feature: honest-test — Python supplement
     Given a value case and the function map
     When _bound_registry builds the registry
     Then it registers the supply-input, call-function, and assert-oracle steps with the concrete data bound directly, resolving the function inside the step so an unknown name surfaces as a caught fault
+
+  Scenario: _settle runs an awaitable result to completion
+    Given the result of calling a function under test
+    When _settle settles it
+    Then an awaitable is run to completion so async functions are value-checkable, and a plain value is returned unchanged
+
+  Scenario: _invoke calls the function under test per the value case
+    Given a value case and the function map
+    When _invoke calls the function
+    Then it calls with positional args, keyword args, or a single input, evaluating each argument and settling an awaitable result

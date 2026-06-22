@@ -13,7 +13,17 @@ malformed case is rejected — all as data, never a crash. Concrete input/expect
 from the case (they are already structured data), so a list or dict value crosses in intact, where a
 text capture could not. A function earns `proved` only when every one of its value cases holds
 (section 8.5), alongside the honesty checks and full coverage.
+
+Arguments are evaluated as a small recursive expression so a function-taking function is reachable
+without putting a callable in JSON: a literal is itself, `{"$ref": name}` resolves the named callable
+from the function map, and `{"$call": name, "args": [...]}` applies the named function to evaluated
+arguments — recursively, so a value case is a tree of applications the oracle walks bottom-up. The
+function under test is called by `input` (one positional), `args` (positional, each an expression),
+or `kwargs`. An awaitable result is run to completion, so async functions are value-checkable too.
 """
+
+import asyncio
+import inspect
 
 from honest_gherkin import empty_registry, register_step, run_scenario
 
@@ -65,15 +75,45 @@ def check_oracle(case, result):
     _ORACLE_ASSERTIONS[kind](case, result)
 
 
+def _eval(expr, functions):
+    """Recursively evaluate a value-case argument against the function map (section 8.6): a literal
+    is itself, {"$ref": name} is the named callable, and {"$call": name, "args": [...]} applies the
+    named function to evaluated arguments — so a function-taking function is reachable by naming its
+    callable arguments, with no callable in the JSON."""
+    if not isinstance(expr, dict):  # honest: ignore HC-P005  (a non-dict argument is a literal, not a domain discriminant)
+        return expr
+    if "$ref" in expr:
+        return functions[expr["$ref"]]
+    if "$call" in expr:
+        return _settle(functions[expr["$call"]](*[_eval(arg, functions) for arg in expr.get("args", [])]))
+    return expr
+
+
+def _settle(result):
+    """Run an awaitable result to completion so async functions are value-checkable (section 8.6)."""
+    return asyncio.run(result) if inspect.isawaitable(result) else result
+
+
+def _invoke(case, functions):
+    """Call the function under test per the value case (section 8.6): `args` (each an expression),
+    `kwargs`, or a single `input`. Each argument is evaluated, and an awaitable result is settled."""
+    function = functions[case["function"]]
+    if "args" in case:
+        return _settle(function(*[_eval(arg, functions) for arg in case["args"]]))
+    if "kwargs" in case:
+        return _settle(function(**{name: _eval(value, functions) for name, value in case["kwargs"].items()}))
+    return _settle(function(_eval(case["input"], functions)))
+
+
 def _bound_registry(case, functions):
     """A per-case registry whose three steps bind the case's concrete data directly (section 8.6):
-    supply the input, call the named function on it, and assert the oracle. The function is resolved
-    inside the step so an unknown name surfaces as a caught fault, not a registration-time crash."""
+    supply the call, evaluate and run it, and assert the oracle. The function is resolved inside the
+    step so an unknown name surfaces as a caught fault, not a registration-time crash."""
     def given(context):
-        return {**context, "input": case["input"]}
+        return {**context, "case": case}
 
     def when(context):
-        return {**context, "result": functions[case["function"]](context["input"])}
+        return {**context, "result": _invoke(case, functions)}
 
     def then(context):
         check_oracle(case, context["result"])
