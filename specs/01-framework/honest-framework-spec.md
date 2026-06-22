@@ -288,13 +288,16 @@ type                                               the type system
 # Code-quality tier
 errors     → type                                  the error-policy leaf: normalizers,
                                                    behavior table, rate-limiter; no I/O
+gherkin    → type                                  the BDD execution engine (parse a feature,
+                                                   match steps against a registry, fold/run,
+                                                   report); test runs on it
 check      → parse                                 the structural gate
-test       → parse, type                           builds and runs the tests
+test       → parse, type, gherkin                  builds and runs the tests; runs feature
+                                                   files through the gherkin engine
 observe    → type, errors                          the event log and projections;
                                                    composes errors' normalizers
 persist    → type, observe                         schema/query/transaction boundaries
                                                    emit to the event log
-gherkin    → test, check                           BDD scaffolding over the generated tests
 auth       → type, persist                          authentication / authorization
 state      → type, check, test, persist            the kinds of state and the single-mutator rule
 features   → type, check, test, observe            feature flags as a bounded vocabulary
@@ -309,10 +312,11 @@ alerts     → errors, observe, persist, state, auth  server-push notifications
 Three rules fix this order:
 
 - **Leaves first, then `errors`.** `parse` and `type` depend on nothing. `errors` depends only on `type` (it returns faults as data in the shared `Result` shape) and is otherwise a pure leaf — it normalizes failures into one report, decides behavior as a pure function of the environment, and throttles repeats, all with no I/O. It is *composed* by `observe` (the normalizers) and `alerts` (the behavior table and rate-limiter), so it must precede both.
+- **`gherkin` before `test`.** honest-gherkin is the BDD execution *engine* (parse a feature, match its steps against a registry, fold the scenario, report). honest-test *runs on* it — it generates the step scaffolding and ships the standard step library, and the engine runs them (honest-test §8.1, honest-gherkin §1.3). So the engine must exist before test, not the other way round; the engine itself depends only on `type` (for the `Result`/fault-as-data shape).
 - **`observe` before `persist`.** Every persistence boundary (execute, apply, transactions) emits to the event log: persist instruments *through* observe. (observe's own emit stores via persist, but it receives that writer at the boundary rather than importing persist, so the dependency runs one way: persist → observe.)
 - **Application tier last.** `page`, `DOM`, `components`, and `alerts` build on the code-quality tier; `components` and `alerts` mount into `page`.
 
-The Python reference has implemented through `parse`, `type`, `check`, `test`, `persist`, and `observe` (the last as its pure foundation); the remaining modules are specified and not yet built.
+The Python reference has implemented through `parse`, `type`, `check`, `test`, `persist`, and `observe` (the last as its pure foundation); the remaining modules — `gherkin` next — are specified and not yet built.
 
 **`parse` is the real starting point, not `check`.** The gate depends on the parser, so the parser is built and checked by hand first. A language whose grammar tree-sitter does not yet cover must add that grammar to the parser before anything else; the rest of the framework only ever reaches the parser through this one module, never tree-sitter directly.
 

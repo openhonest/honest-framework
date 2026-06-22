@@ -564,7 +564,8 @@ payload: {
     gherkin:         String,            // the one gherkin scenario stating this behaviour
     module:          String,            // owning module
     cases:           Integer,           // generated + contract cases run for this function
-    result:          "proved" | "failed",
+    result:          "proved" | "failed",  // "proved" requires all of: honesty, full coverage,
+                                            // and a passing value oracle (honest-test §8.5/§8.6)
     failures:        [String],          // empty unless result = "failed"
     line_coverage:   Float,             // percent of the function's lines reached
     branch_coverage: Float,             // percent of the function's branches reached

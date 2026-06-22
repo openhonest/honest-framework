@@ -774,7 +774,30 @@ For each roled function it proves, honest-test emits `hf.proof.checked` (honest-
 
 **Emitted through an injected runtime, never an import.** honest-test's core does not depend on honest-observe. The conformance runner wires an observe `emit` (honest-observe §3) into the run; honest-test calls it per function. A pure local run with no runtime injected emits nothing — the dependency runs one way (test → observe, at the run boundary only), with no cycle and no build-order change to honest-test's module dependencies.
 
-**The traceability matrix is complete by construction.** HC-P009 guarantees exactly one gherkin per function, and the run emits exactly one proof event per function, so the proof events are a gap-free **requirement → proof → result** record. Two threads then read from one log: the static thread (is requirement X proved? by how many cases? at what coverage?) is a projection over `hf.proof.checked` keyed by function name; the runtime thread (what happened to request Y?) is a projection keyed by `request_id`. The directly-counted function-point measure (honest-gherkin §9.2) is itself a projection over `hf.proof.checked`. This is why the per-function gherkins need no bespoke step-handlers: auto-generation proves them and the proof event makes that proof traceable. Bespoke step-handlers remain only for the integration- and HTTP-level features of §8.4, which auto-generation cannot reach.
+**The traceability matrix is complete by construction.** HC-P009 guarantees exactly one gherkin per function, and the run emits exactly one proof event per function, so the proof events are a gap-free **requirement → proof → result** record. Two threads then read from one log: the static thread (is requirement X proved? at what coverage?) is a projection over `hf.proof.checked` keyed by function name; the runtime thread (what happened to request Y?) is a projection keyed by `request_id`. The directly-counted function-point measure (honest-gherkin §9.2) is itself a projection over `hf.proof.checked`.
+
+**What earns `proved`.** A function is `proved` only when three things hold together: it passes the honesty checks (§4), it is fully covered (§9 — 100% line and branch), **and** its gherkin's `Then` steps — the value oracle — pass. Coverage and honesty alone do not earn `proved`: auto-generation checks *properties* (purity, idempotency) and *shape* (§6.1 confirms output conforms to the declared schema, not which value it is), so a pure, idempotent, fully-covered function can still return the wrong value, and only the `Then` assertion catches that. A run where any of the three does not hold emits `proved: false`. The per-function gherkin's `Then` is made checkable through the value-assertion step library (§8.6), a small standard vocabulary — not a bespoke handler per phrasing. Bespoke step-handlers remain only for the integration- and HTTP-level features of §8.4, which auto-generation cannot reach.
+
+### 8.6 Value-Assertion Step Library (pure functions)
+
+§8.4 gives a standard step library for the HTTP surface. This is its counterpart for the pure-function surface: the small, parametrized vocabulary that makes a function's output **value** checkable, so a `Then` step asserts what the function returned, not merely that it ran or that the shape conformed. Every implementation of honest-test ships these steps; the gherkin engine (honest-gherkin) runs them.
+
+**The standard steps (every spoke ships these):**
+
+```gherkin
+Given the input {input}
+When {function} is called
+Then it returns {expected}
+Then it returns a fault with code {code}
+Then the result is ok
+Then the field "{name}" of the result is {value}
+```
+
+The handlers are few and reusable: `When` calls the named function on the bound input and records the result in the immutable context; each `Then` reads that result and asserts. `{input}`, `{expected}`, and `{value}` are bound captures carrying concrete data — they are the **oracle**, the known-good values the output is compared against. This is the one thing auto-generation cannot supply (it generates inputs and checks properties, but does not know the correct output), and it is what earns a function `proved` (§8.5).
+
+**Where the concrete values come from — `suite.json`, not a second copy.** The `(input, expected)` pairs these steps assert over are the module's **portable contract**: the `suite.json` cases of §6. honest-test runs each suite case through this vocabulary — the case's input drives `When`, its expected output drives `Then it returns` — so the value oracle is executed without authoring the values twice. `suite.json` remains the single value source and the cross-language test-of-record; the value-assertion steps are its **executable face**. The per-function gherkin written one-per-function (honest-gherkin §9.1) stays the human-readable requirement and the function-point unit; these concrete value scenarios are how that requirement's `Then` is actually checked.
+
+So the layers compose without duplication: the gherkin names the behaviour and counts it; `suite.json` pins the values; this vocabulary executes them; auto-generation (§3, §4) proves the surrounding properties over every input; and a function is `proved` only when all of these hold.
 
 ---
 
