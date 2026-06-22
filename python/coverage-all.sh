@@ -53,3 +53,11 @@ if ! $COV report -m --fail-under=100; then
     exit 1
 fi
 echo "coverage-all: 100% line+branch coverage — every line is dogfooded."
+
+# The value-oracle gate (honest-test §8.6): every module's suite.json value cases must prove. A
+# module cannot run the oracle on itself (it would import its own dependant), so this is checked
+# centrally here, where honest-test is available.
+if ! uv run python value-check.py; then
+    echo "coverage-all: value-oracle gate failed — a value case asserts the wrong output." >&2
+    exit 1
+fi
