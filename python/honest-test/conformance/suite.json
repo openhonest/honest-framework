@@ -188,6 +188,7 @@
     {"id": "value-kwargs", "value_case": {"function": "double", "kwargs": {"x": 21}, "expected": 42}},
     {"id": "value-async", "value_case": {"function": "add_async", "args": [2, 3], "expected": 5}},
     {"id": "value-dict-literal", "value_case": {"function": "echo", "input": {"k": "v"}, "expected": {"k": "v"}}},
+    {"id": "value-list-of-refs", "value_case": {"function": "first_of", "args": [[{"$ref": "double"}, {"$ref": "echo"}], 5], "expected": 10}},
     {"id": "value-decide-proof", "value_case": {"function": "decide_proof", "args": [true, true, [{"id": "v1", "proved": true, "fault": null}]], "expected": {"result": "proved", "failures": []}}},
     {"id": "value-proof-payload", "value_case": {"function": "proof_payload", "args": ["m.f", "f does x", "m", 3, "proved", [], 100.0, 100.0], "expected": {"function": "m.f", "gherkin": "f does x", "module": "m", "cases": 3, "result": "proved", "failures": [], "line_coverage": 100.0, "branch_coverage": 100.0}}},
     {"id": "value-check-oracle", "value_case": {"function": "check_oracle", "args": [{"expected": 4}, 4], "expected": null}},

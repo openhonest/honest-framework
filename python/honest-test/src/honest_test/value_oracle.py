@@ -77,9 +77,12 @@ def check_oracle(case, result):
 
 def _eval(expr, functions):
     """Recursively evaluate a value-case argument against the function map (section 8.6): a literal
-    is itself, {"$ref": name} is the named callable, and {"$call": name, "args": [...]} applies the
-    named function to evaluated arguments — so a function-taking function is reachable by naming its
-    callable arguments, with no callable in the JSON."""
+    is itself, a list evaluates each element, {"$ref": name} is the named callable, and
+    {"$call": name, "args": [...]} applies the named function to evaluated arguments — so a
+    function-taking function is reachable by naming its callable arguments (even inside a list), with
+    no callable in the JSON."""
+    if isinstance(expr, list):  # honest: ignore HC-P005  (a list is a structural form, not a domain discriminant)
+        return [_eval(item, functions) for item in expr]
     if not isinstance(expr, dict):  # honest: ignore HC-P005  (a non-dict argument is a literal, not a domain discriminant)
         return expr
     if "$ref" in expr:

@@ -63,6 +63,10 @@ def _echo(value):
     return value
 
 
+def _first_of(fns, x):
+    return fns[0](x)
+
+
 # The function map the value-oracle steps resolve against: suite.json carries names + (input/args,
 # expected); the live callables stay in the runner, exactly as honesty-test links do (above).
 # double/parity/box/apply_fn/add_async/echo exercise the oracle mechanism ($ref/$call/args/kwargs/
@@ -75,6 +79,7 @@ _VALUE_FUNCTIONS = {
     "apply_fn": _apply_fn,
     "add_async": _add_async,
     "echo": _echo,
+    "first_of": _first_of,
     **{name: getattr(_ht, name) for name in _ht.__all__ if callable(getattr(_ht, name))},
 }
 

@@ -240,4 +240,4 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
   Scenario: _eval evaluates a value-case argument against the function map
     Given an argument expression and the function map
     When _eval evaluates it
-    Then a literal is itself, a reference resolves the named callable, and a call applies the named function to its evaluated arguments recursively, so a function-taking function needs no callable in the data
+    Then a literal is itself, a list evaluates each element, a reference resolves the named callable, and a call applies the named function to its evaluated arguments recursively, so a function-taking function needs no callable in the data, even inside a list
