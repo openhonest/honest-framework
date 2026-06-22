@@ -36,14 +36,30 @@ for m in $mods; do
   extra=$(comm -13 <(printf '%s\n' "$funcs" | uniq) <(printf '%s\n' "$scen" | uniq))
 
   if [ "$nf" != "$ns" ] || [ -n "$missing" ] || [ -n "$extra" ]; then
-    echo "feature-gate: honest-$m MISMATCH (functions=$nf, scenarios=$ns)"
-    [ -n "$missing" ] && echo "  function(s) with no gherkin scenario: $(echo $missing)"
-    [ -n "$extra" ]   && echo "  scenario(s) with no matching function: $(echo $extra)"
     fail=1
+    nfeat="specs/features/honest-$m.feature"
+    supp="python/honest-$m/features/honest-$m.feature"
+    echo ""
+    echo "feature-gate: honest-$m — the gherkin features do not match the code ($nf functions, $ns scenarios)."
+    echo "  The rule: every function has exactly one scenario named after it, written as"
+    echo "    Scenario: <function_name> <plain description>"
+    echo "  in $nfeat (or, for host-specific behaviour, the supplement $supp)."
+    if [ -n "$missing" ]; then
+      echo "  ADD a scenario for each of these functions (it has none yet):"
+      printf '    %s\n' $missing
+    fi
+    if [ -n "$extra" ]; then
+      echo "  These scenarios name no function — the function was renamed or removed."
+      echo "  DELETE the scenario, or correct its name to match the function:"
+      printf '    %s\n' $extra
+    fi
   else
     echo "feature-gate: honest-$m OK ($nf functions = $ns scenarios)"
   fi
 done
 
-[ "$fail" -ne 0 ] && echo "feature-gate: a module's gherkin coverage is incomplete — add/remove the scenario." >&2
+if [ "$fail" -ne 0 ]; then
+  echo "" >&2
+  echo "feature-gate: commit blocked — make the features above match the code, then commit again." >&2
+fi
 exit "$fail"
