@@ -272,6 +272,77 @@ def _probe_proof():
     return asyncio.run(_run())
 
 
+def _probe_value():
+    """The value-assertion oracle (§8.6): each Then variant proves on a match and fails as data on
+    a mismatch; an unknown function or a raising function is step_errored; a case with no oracle is
+    rejected. Concrete (input, expected) come from data and bind directly — a list input round-trips
+    where a text capture could not."""
+    from honest_test import check_oracle, run_value_case, run_value_cases
+
+    bad = []
+
+    def double(x):
+        return x * 2
+
+    def ok_fn(x):
+        return {"ok": x}
+
+    def err_fn(x):
+        return {"err": {"code": "bad"}}
+
+    def box_fn(x):
+        return {"n": x}
+
+    def boom(x):
+        raise ValueError("kaboom")
+
+    functions = {"double": double, "ok_fn": ok_fn, "err_fn": err_fn, "box_fn": box_fn, "boom": boom}
+
+    # Each oracle proves on a match (and a list input binds directly, no text round-trip).
+    proved = [
+        {"function": "double", "input": [1, 2], "expected": [1, 2, 1, 2]},
+        {"function": "err_fn", "input": 0, "fault": "bad"},
+        {"function": "ok_fn", "input": 7, "ok": True},
+        {"function": "box_fn", "input": 9, "field": {"name": "n", "value": 9}},
+    ]
+    for case in proved:
+        result = run_value_case(case, functions)
+        if not result["proved"] or result["fault"] is not None:
+            bad.append(f"a matching oracle should prove cleanly: {case} -> {result}")
+
+    # Each oracle fails as data on a mismatch — assertion_failed, never a raised exception.
+    mismatched = [
+        {"function": "double", "input": 21, "expected": 99},
+        {"function": "ok_fn", "input": 1, "fault": "bad"},
+        {"function": "err_fn", "input": 1, "ok": True},
+        {"function": "box_fn", "input": 1, "field": {"name": "n", "value": 999}},
+    ]
+    for case in mismatched:
+        result = run_value_case(case, functions)
+        if result["proved"] or result["fault"]["code"] != "assertion_failed":
+            bad.append(f"a mismatched oracle should fail with assertion_failed: {case} -> {result}")
+
+    # An unknown function and a raising function are both step_errored, not crashes.
+    unknown = run_value_case({"function": "missing", "input": 1, "expected": 1}, functions)
+    if unknown["proved"] or unknown["fault"]["code"] != "step_errored":
+        bad.append(f"an unknown function should be step_errored: {unknown}")
+    raising = run_value_case({"function": "boom", "input": 1, "expected": 1}, functions)
+    if raising["proved"] or raising["fault"]["code"] != "step_errored":
+        bad.append(f"a raising function should be step_errored: {raising}")
+
+    # A case declaring no oracle is rejected (not silently proved).
+    no_oracle = run_value_case({"function": "double", "input": 1}, functions)
+    if no_oracle["proved"]:
+        bad.append(f"a case with no oracle must not be proved: {no_oracle}")
+
+    # check_oracle is reusable on a result directly; run_value_cases maps over a list.
+    check_oracle({"expected": 4}, 4)
+    batch = run_value_cases([{"function": "double", "input": 2, "expected": 4}], functions)
+    if len(batch) != 1 or not batch[0]["proved"]:
+        bad.append(f"run_value_cases should map over the cases: {batch}")
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
@@ -282,6 +353,7 @@ def run():
         "statemachine": _probe_statemachine(),
         "runner": _probe_runner(),
         "proof": _probe_proof(),
+        "value": _probe_value(),
     }
     violations = list(report["violations"])
     for name, messages in probes.items():

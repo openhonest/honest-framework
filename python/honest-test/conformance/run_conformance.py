@@ -25,6 +25,7 @@ from honest_test import (
     enumerate_sets,
     numeric_values,
     proof_payload,
+    run_value_case,
     supplied_for,
     test_adversarial_transitions,
     test_chain_contracts,
@@ -33,6 +34,23 @@ from honest_test import (
     verify_idempotency,
     verify_purity,
 )
+
+
+def _double(x):
+    return x * 2
+
+
+def _parity(n):
+    return {"ok": "even"} if n % 2 == 0 else {"err": {"code": "odd"}}
+
+
+def _box(n):
+    return {"n": n, "doubled": n * 2}
+
+
+# The function map the value-oracle steps resolve against: suite.json carries names + (input,
+# expected); the live callables stay in the runner, exactly as honesty-test links do (above).
+_VALUE_FUNCTIONS = {"double": _double, "parity": _parity, "box": _box}
 
 _SM_TESTS = {
     "valid": test_valid_transitions,
@@ -221,6 +239,13 @@ def _check_proof(case):
     return got == case["expect"], f"got {got}"
 
 
+def _check_value(case):
+    """A value-oracle case (§8.6): run the (function, input, expected) through the oracle and
+    confirm it proves. suite.json holds the values; the function map lives in the runner."""
+    result = run_value_case({**case["value_case"], "id": case["id"]}, _VALUE_FUNCTIONS)
+    return result["proved"], f"got {result}"
+
+
 _CHECKERS = {
     "enumeration": _check_enumeration,
     "adversarial": _check_adversarial,
@@ -232,10 +257,13 @@ _CHECKERS = {
     "contract": _check_contract,
     "statemachine": _check_statemachine,
     "proof": _check_proof,
+    "value_oracle": _check_value,
 }
 
 
 def _kind(case):
+    if "value_case" in case:
+        return "value_oracle"
     if "proof_payload" in case:
         return "proof"
     if "sm_test" in case:

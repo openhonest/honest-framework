@@ -84,3 +84,8 @@ Feature: honest-test — Python supplement
     When load_config reads it
     Then it returns the parsed contents using the standard-library parser
     But it returns an empty configuration when the file is absent
+
+  Scenario: _bound_registry builds a per-case registry that binds the case data directly
+    Given a value case and the function map
+    When _bound_registry builds the registry
+    Then it registers the supply-input, call-function, and assert-oracle steps with the concrete data bound directly, resolving the function inside the step so an unknown name surfaces as a caught fault

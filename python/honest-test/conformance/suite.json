@@ -174,6 +174,11 @@
     {"id": "sm-adversarial-clean", "sm_test": "adversarial", "states": ["pending", "paid", "shipped", "cancelled"], "events": ["pay", "ship", "cancel", "refund"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "expect_findings": 0},
     {"id": "sm-adversarial-detects-similar-states", "sm_test": "adversarial", "states": ["cat", "car"], "events": ["go"], "transitions": [["cat", "go", "car"]], "initial": "cat", "expect_min_findings": 1},
     {"id": "proof-payload-proved", "proof_payload": {"args": {"function": "honest_observe.events.build_event", "gherkin": "build_event assembles a validated envelope", "module": "honest-observe", "cases": 12, "result": "proved", "failures": [], "line_coverage": 100.0, "branch_coverage": 100.0}}, "expect": {"function": "honest_observe.events.build_event", "gherkin": "build_event assembles a validated envelope", "module": "honest-observe", "cases": 12, "result": "proved", "failures": [], "line_coverage": 100.0, "branch_coverage": 100.0}},
-    {"id": "proof-payload-failed", "proof_payload": {"args": {"function": "m.f", "gherkin": "f does the thing", "module": "m", "cases": 4, "result": "failed", "failures": ["case 3: wrong output"], "line_coverage": 80.0, "branch_coverage": 50.0}}, "expect": {"function": "m.f", "gherkin": "f does the thing", "module": "m", "cases": 4, "result": "failed", "failures": ["case 3: wrong output"], "line_coverage": 80.0, "branch_coverage": 50.0}}
+    {"id": "proof-payload-failed", "proof_payload": {"args": {"function": "m.f", "gherkin": "f does the thing", "module": "m", "cases": 4, "result": "failed", "failures": ["case 3: wrong output"], "line_coverage": 80.0, "branch_coverage": 50.0}}, "expect": {"function": "m.f", "gherkin": "f does the thing", "module": "m", "cases": 4, "result": "failed", "failures": ["case 3: wrong output"], "line_coverage": 80.0, "branch_coverage": 50.0}},
+    {"id": "value-returns", "value_case": {"function": "double", "input": 21, "expected": 42}},
+    {"id": "value-returns-list", "value_case": {"function": "double", "input": [1, 2], "expected": [1, 2, 1, 2]}},
+    {"id": "value-fault", "value_case": {"function": "parity", "input": 3, "fault": "odd"}},
+    {"id": "value-ok", "value_case": {"function": "parity", "input": 4, "ok": true}},
+    {"id": "value-field", "value_case": {"function": "box", "input": 5, "field": {"name": "n", "value": 5}}}
   ]
 }

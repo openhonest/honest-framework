@@ -188,3 +188,45 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When emit_proofs runs
     Then it emits one proof event per function, keyed by the function's name
     And an empty run emits nothing
+
+  # value-assertion oracle (section 8.6)
+  Scenario: _oracle_expected checks the result equals the known-good value
+    Given a case carrying an expected value and a function result
+    When _oracle_expected checks it
+    Then it holds when the result equals the expected value, and fails as data otherwise
+
+  Scenario: _oracle_fault checks the result is a fault with the declared code
+    Given a case carrying a fault code and a function result
+    When _oracle_fault checks it
+    Then it holds when the result is an error carrying that code, and fails as data otherwise
+
+  Scenario: _oracle_ok checks the result is ok
+    Given a case asking for an ok result and a function result
+    When _oracle_ok checks it
+    Then it holds when the result is an ok result, and fails as data otherwise
+
+  Scenario: _oracle_field checks one named field of the result
+    Given a case naming a field and its value and a function result
+    When _oracle_field checks it
+    Then it holds when that field of the result equals the value, and fails as data otherwise
+
+  Scenario: _oracle_kind names the oracle a case declares
+    Given a value case
+    When _oracle_kind reads it
+    Then it returns the first recognised oracle key the case carries, or nothing when it declares none
+
+  Scenario: check_oracle runs the oracle a case declares against a result
+    Given a value case and a function result
+    When check_oracle runs it
+    Then it dispatches to the declared oracle and asserts it, rejecting a case that declares none
+
+  Scenario: run_value_case runs one value case through the engine
+    Given a value case and the function map
+    When run_value_case runs it
+    Then it proves when every step is ok, and otherwise reports the first fault as data
+    But an unknown or raising function is reported as an errored step, never a crash
+
+  Scenario: run_value_cases runs every value case against the function map
+    Given a list of value cases and the function map
+    When run_value_cases runs them
+    Then it returns one result per case, the executable face of the suite.json value contract

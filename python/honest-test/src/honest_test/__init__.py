@@ -33,11 +33,15 @@ from honest_test.statemachine import (
 )
 from honest_test.proof import PROOF_RESULTS, emit_proofs, proof_payload
 from honest_test.supplied import load_config, supplied_for
+from honest_test.value_oracle import check_oracle, run_value_case, run_value_cases
 
 __all__ = [
     "PROOF_RESULTS",
     "proof_payload",
     "emit_proofs",
+    "check_oracle",
+    "run_value_case",
+    "run_value_cases",
     "enumerate_sets",
     "law",
     "verify_laws",
