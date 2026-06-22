@@ -598,6 +598,51 @@ def _probe_transaction():
     return asyncio.run(_run())
 
 
+def _probe_instrument():
+    """Pool-layer instrumentation (§8.3, 8.5, 8.7, 8.8): the typed pool faults and the pure event
+    payload builders persist emits through honest-observe — branch paths a data file leaves implicit."""
+    from honest_persist.instrument import (
+        POOL_FAULT_CODES,
+        build_migration_event,
+        build_pool_event,
+        build_query_event,
+        extract_table,
+        pool_fault,
+        sql_hash,
+    )
+
+    bad = []
+    if POOL_FAULT_CODES != {"unknown_database", "unresolvable_dsn", "unknown_tenant", "pool_exhausted", "pool_closed", "credential_rejected", "lifecycle_failed"}:
+        bad.append("POOL_FAULT_CODES vocabulary is wrong")
+    if pool_fault("unknown_database", "x")["category"] != "client":
+        bad.append("unknown_database is a caller (client) error")
+    if pool_fault("pool_exhausted", "x")["category"] != "server":
+        bad.append("pool_exhausted is a server (capacity) error")
+    if extract_table("SELECT * FROM users WHERE id = 1") != "users":
+        bad.append("extract_table should find the FROM table")
+    if extract_table("INSERT INTO orders (x) VALUES (1)") != "orders":
+        bad.append("extract_table should find the INTO table")
+    if extract_table("BEGIN") != "":
+        bad.append("extract_table should return '' when no table is present")
+    if sql_hash("SELECT 1") != sql_hash("SELECT 1") or sql_hash("SELECT 1") == sql_hash("SELECT 2"):
+        bad.append("sql_hash should be a stable per-sql digest")
+    if len(sql_hash("SELECT 1")) != 64:
+        bad.append("sql_hash should be a 64-char sha256 hex digest")
+    dev = build_query_event("db", "users", "select", 3, 1500, "SELECT 1", "r1", None, True)
+    prod = build_query_event("db", "users", "select", 3, 1500, "SELECT 1", "r1", None, False)
+    if dev["sql"] != "SELECT 1" or prod["sql"] is not None:
+        bad.append("the full sql is included only in development mode")
+    if dev["sql_hash"] != sql_hash("SELECT 1"):
+        bad.append("the query event should always carry the sql_hash")
+    migration = build_migration_event("db", "create_table", "users", {"x": 1}, 2000, "CREATE TABLE users", True, None)
+    if migration["operation"] != "create_table" or migration["success"] is not True:
+        bad.append("build_migration_event should carry the operation and success flag")
+    pool = build_pool_event("db", "created", 10, 1, 0, None, None, None)
+    if pool["event"] != "created" or pool["pool_size"] != 10:
+        bad.append("build_pool_event should carry the event and pool size")
+    return bad
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -612,6 +657,7 @@ def run():
         "checked": _probe_checked(),
         "execute": _probe_execute(),
         "transaction": _probe_transaction(),
+        "instrument": _probe_instrument(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():

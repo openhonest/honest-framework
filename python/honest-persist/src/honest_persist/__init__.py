@@ -19,6 +19,15 @@ from honest_persist.query import (
 )
 from honest_persist.transaction import transaction
 from honest_persist.schema import diff, validate_schema
+from honest_persist.instrument import (
+    POOL_FAULT_CODES,
+    build_migration_event,
+    build_pool_event,
+    build_query_event,
+    extract_table,
+    pool_fault,
+    sql_hash,
+)
 from honest_persist.types import (
     Ambiguity,
     Column,
@@ -65,4 +74,11 @@ __all__ = [
     "Query",
     "Ambiguity",
     "DiffResult",
+    "POOL_FAULT_CODES",
+    "pool_fault",
+    "extract_table",
+    "sql_hash",
+    "build_query_event",
+    "build_migration_event",
+    "build_pool_event",
 ]

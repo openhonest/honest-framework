@@ -179,3 +179,34 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When checked_delete verifies the references
     Then it returns the built DELETE query when the table and condition columns are declared
     But an undeclared reference returns a fault
+
+  # pool-layer instrumentation (section 8)
+  Scenario: pool_fault builds a typed pool fault with its category
+    Given a pool fault code and a message
+    When pool_fault builds it
+    Then it returns the fault with its category — a caller error for an unknown database or tenant, a server error otherwise
+
+  Scenario: extract_table reads the table a SQL statement targets
+    Given a SQL string
+    When extract_table reads it
+    Then it returns the identifier after FROM, INTO, UPDATE, or TABLE, or an empty string when none is present
+
+  Scenario: sql_hash digests a SQL string
+    Given a SQL string
+    When sql_hash digests it
+    Then it returns a stable SHA-256 hex digest, the same for the same SQL and different for different SQL, so queries group without exposing parameter values
+
+  Scenario: build_query_event builds the query event payload
+    Given the facts of a completed query and whether the run is in development
+    When build_query_event builds the payload
+    Then it carries the db, table, operation, row count, duration, and SQL hash, including the full SQL only in development mode
+
+  Scenario: build_migration_event builds the migration event payload
+    Given a DDL operation that apply executed
+    When build_migration_event builds the payload
+    Then it carries the db, operation, table, detail, duration, SQL, success, and any fault — one event per operation, a schema-change history
+
+  Scenario: build_pool_event builds the pool lifecycle event payload
+    Given a pool lifecycle transition
+    When build_pool_event builds the payload
+    Then it carries the db, the event, the pool size, the active and waiting counts, and any duration or fault, so pool health is in the same log
