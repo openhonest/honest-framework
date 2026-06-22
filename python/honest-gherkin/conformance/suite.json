@@ -1,0 +1,12 @@
+{
+  "version": "0.1",
+  "module": "honest-gherkin",
+  "cases": [
+    {"id": "parse-simple", "parse": {"source": "Feature: Login\n\n  Scenario: a user signs in\n    Given a registered user\n    When they sign in\n    Then they reach the dashboard\n", "path": "login.feature"}, "expect": "ok", "expect_feature_name": "Login", "expect_scenarios": 1, "expect_first_steps": 3},
+    {"id": "parse-description-and-tags", "parse": {"source": "Feature: Orders\n  Orders can be placed and cancelled.\n\n  @smoke @fast\n  Scenario: place an order\n    Given an empty cart\n    And a logged-in user\n    When the order is placed\n    Then it is recorded\n", "path": "orders.feature"}, "expect": "ok", "expect_feature_name": "Orders", "expect_scenarios": 1, "expect_first_steps": 4},
+    {"id": "parse-two-scenarios", "parse": {"source": "Feature: Two\n\n  Scenario: one\n    Given a\n    Then b\n\n  Scenario: two\n    When c\n    Then d\n", "path": "two.feature"}, "expect": "ok", "expect_feature_name": "Two", "expect_scenarios": 2, "expect_first_steps": 2},
+    {"id": "parse-comments-tolerated", "parse": {"source": "# a comment\nFeature: WithComments\n\n  # another\n  Scenario: works\n    Given a\n    Then b\n", "path": "c.feature"}, "expect": "ok", "expect_feature_name": "WithComments", "expect_scenarios": 1, "expect_first_steps": 2},
+    {"id": "parse-step-outside-scenario", "parse": {"source": "Feature: X\n  Given an orphan step\n", "path": "x.feature"}, "expect": "err", "expect_code": "bad_feature_syntax"},
+    {"id": "parse-scenario-no-name", "parse": {"source": "Feature: X\n\n  Scenario:\n    Given a\n", "path": "x.feature"}, "expect": "err", "expect_code": "bad_feature_syntax"}
+  ]
+}

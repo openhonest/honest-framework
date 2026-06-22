@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 members = [
     "honest-check",
     "honest-errors",
+    "honest-gherkin",
     "honest-observe",
     "honest-parse",
     "honest-persist",
@@ -29,6 +30,17 @@ requires-dist = [{ name = "honest-parse", editable = "honest-parse" }]
 name = "honest-errors"
 version = "0.1.0"
 source = { editable = "honest-errors" }
+dependencies = [
+    { name = "honest-type" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "honest-type", editable = "honest-type" }]
+
+[[package]]
+name = "honest-gherkin"
+version = "0.1.0"
+source = { editable = "honest-gherkin" }
 dependencies = [
     { name = "honest-type" },
 ]
