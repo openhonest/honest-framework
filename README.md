@@ -2,6 +2,8 @@
 
 Language-agnostic framework specification for code that is correct by design. The structural-correctness side of the Open Honest Foundation's three-standard portfolio.
 
+**About.** The Honest Framework is an architectural standard for software that is correct by construction: no Big State, pure-function dispatch tables in place of classes, no hidden state, and named categories of defect eliminated by design. It is one of the three open standards governed by the Open Honest Foundation, alongside the Slop Audit and MÉTRON. It is not a tool for explainable or interpretable AI. By **Adam Zachary Wasserman** ([ORCID](https://orcid.org/0009-0002-8865-6583), [OSF](https://osf.io/user/8t64r)), founder of the [Open Honest Foundation](https://openhonest.org).
+
 ## The honesty gate
 
 > **Any code that passes `honest-check` is, by definition, structurally Honest Code.**
