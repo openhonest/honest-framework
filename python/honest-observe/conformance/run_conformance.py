@@ -12,7 +12,20 @@ import json
 import sys
 from pathlib import Path
 
+import honest_observe as _ho
 from honest_observe import build_event, emit, matches
+
+
+def _count_fold(state, event):
+    return state + 1
+
+
+# The value-oracle function map: the public functions, plus a fixture fold a value case can $ref to
+# reach apply_projection (which takes a fold callable). proof_run and value-check.py read this map.
+_VALUE_FUNCTIONS = {
+    **{name: getattr(_ho, name) for name in _ho.__all__ if callable(getattr(_ho, name))},
+    "count_fold": _count_fold,
+}
 
 
 def _check_build_event(case):
@@ -86,6 +99,8 @@ def run(suite_path):
     passed = 0
     failed = 0
     for case in suite["cases"]:
+        if "value_case" in case:
+            continue  # value cases are checked centrally by value-check.py; a module cannot run the oracle on itself
         ok, detail = _CHECKERS[_kind(case)](case)
         if ok:
             passed += 1
