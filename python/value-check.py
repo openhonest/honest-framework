@@ -3,10 +3,17 @@
 
 Runs every module's suite.json `value_case`s through honest-test's value oracle (honest-test §8.6)
 and fails if any value case is not proved. This is the cross-module counterpart to each module's own
-conformance: a module cannot run the oracle on itself (honest-test depends on it, so importing the
-oracle in the module's own runner would be a cycle), so the value contract is checked here, centrally,
-where honest-test is available. A function with no value case is fine — it is simply not yet backfilled
-(or is exempt / internal, §8.5); only a value case that is wrong or broken fails the gate.
+conformance, and it lives here rather than in each module's runner for a layering reason, not an
+import cycle: honest-test is built on top of the lower modules (it depends on honest-type, honest-parse,
+honest-gherkin), so a lower module must stay testable on its own, before honest-test exists. Were a
+module to run the oracle in its own gate it would have to depend on a higher, later-built layer —
+declaring that dependency is circular at the workspace level, and importing honest-test without
+declaring it hides a dependency the `test-affected` gate reads from the graph. honest-test itself can
+value-check its own functions directly, because there it *is* the oracle (a self-reference within one
+package, not a reach up a layer). So the value contract is enforced here, above every module, where
+importing honest-test and each module is legitimate. A function with no value case is fine — it is
+simply not yet backfilled (or is exempt / internal, §8.5); only a value case that is wrong or broken
+fails the gate.
 
   uv run python value-check.py
 """
