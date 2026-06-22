@@ -623,6 +623,11 @@
       "expected": {
         "diagnostics": []
       }
-    }
+    },
+    {"id": "value-check-source-clean", "value_case": {"function": "check_source", "args": ["x = 1\n", "f.py"], "expected": []}},
+    {"id": "value-check-source-class", "value_case": {"function": "check_source", "args": ["class Foo: pass\n", "f.py"], "expected": [{"rule": "HC-P003", "severity": "error", "path": "f.py", "line": 1, "col": 1, "message": "Class 'Foo' has no declared base. Honest Code permits class definitions only as subclasses of TypedDict, Protocol, ABC, or a declared Exception. Use a TypedDict for data shapes or a pure function."}]}}
+  ],
+  "value_oracle_exempt": [
+    {"function": "startup_check", "reason": "An I/O boundary: reads the given paths and reports through on_error (warn/raise), returning None. Its effect is not a return value; verified by its own conformance."}
   ]
 }

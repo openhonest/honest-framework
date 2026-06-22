@@ -42,6 +42,8 @@ def run(suite_path):
     passed = 0
     failed = 0
     for case in suite["cases"]:
+        if "value_case" in case:
+            continue  # value cases are checked centrally by value-check.py; a module cannot run the oracle on itself
         actual = _triples(check_source(case["input"]["source"], case["id"]))
         expected = case["expected"]["diagnostics"]
         if _case_passes(expected, actual):
