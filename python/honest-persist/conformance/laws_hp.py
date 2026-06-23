@@ -1463,6 +1463,82 @@ def _probe_migrate():
     return asyncio.run(_run())
 
 
+def _probe_abstractions():
+    """The abstraction layer (section 6): expand_schema rewrites a range column into its lower/upper
+    bound columns and a lower<=upper CHECK and leaves a plain schema unchanged; the range predicates
+    build parameterized WHERE conditions over the bounds; and a migrated range schema enforces the
+    bound invariant on real SQLite (the CHECK rejects a row whose lower exceeds its upper)."""
+    from honest_persist import expand_schema, migrate, range_adjacent, range_contains, range_overlaps
+
+    async def _run():
+        bad = []
+
+        # expand_schema rewrites a range column to bound columns + a CHECK; plain columns pass through.
+        schema = {"events": {"columns": {
+            "id": {"type": "integer", "nullable": False},
+            "span": {"type": "range", "bound_type": "integer", "nullable": False},
+        }}}
+        expanded = expand_schema(schema)
+        cols = expanded["events"]["columns"]
+        if set(cols) != {"id", "span_lower", "span_upper"}:
+            bad.append(f"expand_schema should replace the range with bound columns: {cols}")
+        elif cols["span_lower"] != {"type": "integer", "nullable": False} or cols["span_upper"] != {"type": "integer", "nullable": False}:
+            bad.append(f"expand_schema should give each bound the bound_type and nullability: {cols}")
+        check = expanded["events"].get("constraints", {}).get("span_range")
+        if check != {"type": "check", "expression": "span_lower <= span_upper"}:
+            bad.append(f"expand_schema should add the lower<=upper CHECK: {check}")
+        plain = {"t": {"columns": {"a": {"type": "text"}}}}
+        if expand_schema(plain) != plain:
+            bad.append("expand_schema should leave a plain schema unchanged in shape")
+        # A range column without a declared nullability gives bounds without a nullable key.
+        loose = expand_schema({"r": {"columns": {"s": {"type": "range", "bound_type": "text"}}}})
+        if loose["r"]["columns"]["s_lower"] != {"type": "text"}:
+            bad.append(f"a range without nullability should give a plain bound column: {loose}")
+
+        # the predicates build parameterized conditions over the bound columns.
+        if range_overlaps("span", 3, 9) != {"sql": "span_lower <= :span_ub AND span_upper >= :span_lb", "params": {"span_ub": 9, "span_lb": 3}}:
+            bad.append(f"range_overlaps wrong: {range_overlaps('span', 3, 9)}")
+        if range_contains("span", 5) != {"sql": "span_lower <= :span_pt AND span_upper >= :span_pt", "params": {"span_pt": 5}}:
+            bad.append(f"range_contains wrong: {range_contains('span', 5)}")
+        if range_adjacent("span", 3, 9) != {"sql": "span_upper = :span_adj_l OR span_lower = :span_adj_u", "params": {"span_adj_l": 3, "span_adj_u": 9}}:
+            bad.append(f"range_adjacent wrong: {range_adjacent('span', 3, 9)}")
+
+        # _render_create_table renders a CHECK constraint inline; other table-constraint types are
+        # not inline-rendered on create.
+        from honest_persist import to_sql
+
+        mixed = {"op": "create_table", "table": "t", "details": {
+            "columns": {"a": {"type": "text"}},
+            "constraints": {"chk": {"type": "check", "expression": "a <> ''"}, "uq": {"type": "unique", "columns": ["a"]}},
+        }}
+        rendered_sql = to_sql(mixed, "sqlite")
+        if "CONSTRAINT chk CHECK (a <> '')" not in rendered_sql:
+            bad.append(f"_render_create_table should render a CHECK constraint inline: {rendered_sql}")
+        if "CONSTRAINT uq" in rendered_sql:
+            bad.append(f"only CHECK table constraints are rendered inline on create: {rendered_sql}")
+
+        # migrate a range schema to real SQLite: the CHECK enforces lower <= upper.
+        conn = _SqliteConn()
+        applied = await migrate(schema, conn, "sqlite")
+        if "ok" not in applied:
+            bad.append(f"migrate should apply the expanded range schema: {applied}")
+        else:
+            await conn.execute("INSERT INTO events (id, span_lower, span_upper) VALUES (1, 3, 9)")
+            good = await conn.execute("SELECT span_lower, span_upper FROM events")
+            if good["rows"][0]["span_lower"] != 3:
+                bad.append(f"a valid range row should insert: {good}")
+            rejected = False
+            try:
+                await conn.execute("INSERT INTO events (id, span_lower, span_upper) VALUES (2, 9, 3)")
+            except Exception:
+                rejected = True
+            if not rejected:
+                bad.append("the CHECK should reject a row whose lower bound exceeds its upper")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1482,6 +1558,7 @@ def run():
         "connection_pool": _probe_connection_pool(),
         "connect_retry": _probe_connect_retry(),
         "migrate": _probe_migrate(),
+        "abstractions": _probe_abstractions(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

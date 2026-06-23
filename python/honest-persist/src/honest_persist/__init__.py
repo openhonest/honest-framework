@@ -3,6 +3,12 @@
 Schema as data, migrations as a pure diff, queries as data. I/O only at the boundary.
 """
 
+from honest_persist.abstractions import (
+    expand_schema,
+    range_adjacent,
+    range_contains,
+    range_overlaps,
+)
 from honest_persist.apply import apply, reconstruction_sql, requires_reconstruction, to_sql
 from honest_persist.connect import connect_with_retry, open_pool
 from honest_persist.migrate import inspect, migrate
@@ -129,6 +135,10 @@ __all__ = [
     "connect_with_retry",
     "inspect",
     "migrate",
+    "expand_schema",
+    "range_overlaps",
+    "range_contains",
+    "range_adjacent",
     "empty_write_queue",
     "enqueue_write",
     "merge_pending",

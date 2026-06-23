@@ -18,7 +18,7 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
   Scenario: _render_create_table renders a CREATE TABLE statement
     Given a create-table operation and a dialect
     When _render_create_table renders it
-    Then it produces a CREATE TABLE statement with each column rendered as DDL
+    Then it produces a CREATE TABLE statement with each column rendered as DDL, and an inline CONSTRAINT CHECK clause for each declared check constraint
 
   Scenario: _render_drop_table renders a DROP TABLE statement
     Given a drop-table operation and a dialect
@@ -423,3 +423,38 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given a target schema, a connection, and a dialect
     When migrate runs the workflow
     Then it inspects the current schema, diffs against the target, and applies, but refuses with a fault when inspection fails, the target is invalid, or the diff is ambiguous
+
+  Scenario: _expand_range rewrites a range column to bound columns and a CHECK
+    Given a table, a column name, and a range column declaration
+    When _expand_range expands it
+    Then it returns the lower and upper bound columns, each of the bound type and nullability, and a CHECK that the lower bound does not exceed the upper
+
+  Scenario: _abstraction_kind names the abstraction a column declares
+    Given a column declaration
+    When _abstraction_kind reads it
+    Then it returns the abstraction kind when the declared type has an expander, otherwise nothing
+
+  Scenario: _expand_table expands every abstraction column in one table
+    Given a table name and a table definition
+    When _expand_table expands it
+    Then it passes plain columns through, rewrites abstraction columns to their relational form, and collects any tables an abstraction generates
+
+  Scenario: expand_schema expands every abstraction in a schema
+    Given a bare schema
+    When expand_schema expands it
+    Then it returns a schema with each abstraction rewritten and any generated tables added, leaving a schema with no abstractions unchanged in shape
+
+  Scenario: range_overlaps builds an overlap condition over the bound columns
+    Given a column and a query range
+    When range_overlaps builds the condition
+    Then it returns a WHERE condition true when the stored range and the query range each start at or before the other ends, with the bounds as named parameters
+
+  Scenario: range_contains builds a containment condition over the bound columns
+    Given a column and a point
+    When range_contains builds the condition
+    Then it returns a WHERE condition true when the point lies between the stored range's bounds, with the point as a named parameter
+
+  Scenario: range_adjacent builds an adjacency condition over the bound columns
+    Given a column and a query range
+    When range_adjacent builds the condition
+    Then it returns a WHERE condition true when the stored range touches the query range at a bound without overlapping, with the bounds as named parameters

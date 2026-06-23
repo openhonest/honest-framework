@@ -51,9 +51,13 @@ def _column_ddl(name, definition, dialect):
 
 
 def _render_create_table(op, dialect):
-    columns = op["details"].get("columns", {})
-    rendered = ", ".join(_column_ddl(name, columns[name], dialect) for name in columns)
-    return f"CREATE TABLE {op['table']} ({rendered})"
+    table = op["details"]
+    columns = table.get("columns", {})
+    parts = [_column_ddl(name, columns[name], dialect) for name in columns]
+    for name, constraint in table.get("constraints", {}).items():
+        if constraint.get("type") == "check" and constraint.get("expression"):
+            parts.append(f"CONSTRAINT {name} CHECK ({constraint['expression']})")
+    return f"CREATE TABLE {op['table']} ({', '.join(parts)})"
 
 
 def _render_drop_table(op, dialect):

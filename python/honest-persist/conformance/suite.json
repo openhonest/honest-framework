@@ -2760,6 +2760,105 @@
     ],
     "expected": false
    }
+  },
+  {
+   "id": "value-expand-schema-range",
+   "value_case": {
+    "function": "expand_schema",
+    "args": [
+     {
+      "events": {
+       "columns": {
+        "id": {
+         "type": "integer",
+         "nullable": false
+        },
+        "span": {
+         "type": "range",
+         "bound_type": "integer",
+         "nullable": false
+        }
+       }
+      }
+     }
+    ],
+    "expected": {
+     "events": {
+      "columns": {
+       "id": {
+        "type": "integer",
+        "nullable": false
+       },
+       "span_lower": {
+        "type": "integer",
+        "nullable": false
+       },
+       "span_upper": {
+        "type": "integer",
+        "nullable": false
+       }
+      },
+      "constraints": {
+       "span_range": {
+        "type": "check",
+        "expression": "span_lower <= span_upper"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "value-range-overlaps",
+   "value_case": {
+    "function": "range_overlaps",
+    "args": [
+     "span",
+     3,
+     9
+    ],
+    "expected": {
+     "sql": "span_lower <= :span_ub AND span_upper >= :span_lb",
+     "params": {
+      "span_ub": 9,
+      "span_lb": 3
+     }
+    }
+   }
+  },
+  {
+   "id": "value-range-contains",
+   "value_case": {
+    "function": "range_contains",
+    "args": [
+     "span",
+     5
+    ],
+    "expected": {
+     "sql": "span_lower <= :span_pt AND span_upper >= :span_pt",
+     "params": {
+      "span_pt": 5
+     }
+    }
+   }
+  },
+  {
+   "id": "value-range-adjacent",
+   "value_case": {
+    "function": "range_adjacent",
+    "args": [
+     "span",
+     3,
+     9
+    ],
+    "expected": {
+     "sql": "span_upper = :span_adj_l OR span_lower = :span_adj_u",
+     "params": {
+      "span_adj_l": 3,
+      "span_adj_u": 9
+     }
+    }
+   }
   }
  ],
  "value_oracle_exempt": [

@@ -693,6 +693,13 @@ array, a range; honest-persist generates the tables, constraints, and operations
 realize it. Every abstraction reduces to ordinary tables and queries, so nothing
 in the abstraction layer escapes the verification the rest of the library is subject to.
 
+The abstraction expansion is a single pure function, `expand_schema(schema) -> schema`. It rewrites
+every abstraction declaration in a schema into the ordinary tables, columns, and constraints that
+realize it, and runs before the schema is diffed or applied. Nothing downstream sees an abstraction:
+diff, apply, and inspect operate only on the relational expansion, which is therefore subject to
+exactly the same verification as any hand-written schema. A schema that declares no abstraction is
+returned unchanged in shape.
+
 ### 6.1 Enums
 
 `Literal` type annotations on columns generate lookup tables with foreign key
@@ -776,10 +783,20 @@ generation, but the declared structure and its operations are identical across d
 
 ### 6.5 Ranges
 
-A column declared as a range compiles to a **pair of bound columns** (lower, upper) with a
-CHECK enforcing `lower <= upper`, plus overlap, contains, and adjacency predicates as
-generated query terms. This gives range semantics on dialects without a native range type,
-and reduces to the native type where one exists.
+A column declared as a range — `{ "type": "range", "bound_type": "<type>" }` — compiles to a
+**pair of bound columns**, `{column}_lower` and `{column}_upper` (each of `bound_type`, inheriting
+the declared column's nullability), and a CHECK constraint named `{column}_range` enforcing
+`{column}_lower <= {column}_upper`. This gives range semantics on dialects without a native range
+type, and reduces to the native type where one exists. The CHECK is rendered inline in the table's
+`CREATE TABLE`, so the bound invariant is enforced from the moment the table exists.
+
+The expansion is part of the pure `expand_schema` transform (section 6): the application declares the
+range; honest-persist rewrites it to the two bound columns and the CHECK before the schema is diffed
+or applied. Overlap, containment, and adjacency are pure query terms over the bound columns —
+`range_overlaps(column, lower, upper)`, `range_contains(column, point)`, and `range_adjacent(column,
+lower, upper)` each return a parameterized WHERE condition (`{ "sql": ..., "params": ... }`). Two
+ranges overlap when each starts at or before the other ends; a range contains a point when the point
+lies between its bounds; two ranges are adjacent when one's upper bound equals the other's lower.
 
 ---
 
