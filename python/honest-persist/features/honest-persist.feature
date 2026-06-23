@@ -398,3 +398,28 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When connect_with_retry establishes a connection
     Then it retries a transient failure with exponential backoff, emitting retry then ok(connection), and exhausting its attempts emits error and returns err(unresolvable_dsn)
     But a credential_rejected fault fails fast, emitting error and returning the fault without retrying
+
+  Scenario: _column_from_pragma_row resolves one PRAGMA row to a column definition
+    Given a PRAGMA table_info row
+    When _column_from_pragma_row resolves it
+    Then it returns the column's lowered type and nullability, with primary_key and default only when present
+
+  Scenario: _columns_from_pragma resolves a table's PRAGMA rows to its columns
+    Given the PRAGMA table_info rows of one table
+    When _columns_from_pragma resolves them
+    Then it returns a map of column name to column definition
+
+  Scenario: _inspect_sqlite reads the live schema of a SQLite database
+    Given a SQLite connection
+    When _inspect_sqlite reads it
+    Then it lists the user tables from sqlite_master and reads each table's columns through PRAGMA table_info
+
+  Scenario: inspect reads the live database schema for the dialect
+    Given a connection and a dialect
+    When inspect reads the schema
+    Then it dispatches to the dialect's inspector and returns ok(schema), or err(unsupported_dialect) when none is registered
+
+  Scenario: migrate runs the inspect-diff-apply workflow against a live database
+    Given a target schema, a connection, and a dialect
+    When migrate runs the workflow
+    Then it inspects the current schema, diffs against the target, and applies, but refuses with a fault when inspection fails, the target is invalid, or the diff is ambiguous

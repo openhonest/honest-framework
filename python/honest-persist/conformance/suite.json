@@ -2862,6 +2862,14 @@
   {
    "function": "connect_with_retry",
    "reason": "An I/O boundary: connects through the injected connect, catching driver errors to retry or fault, and emits pool events; verified against real SQLite in the connect-retry law probe."
+  },
+  {
+   "function": "inspect",
+   "reason": "An I/O boundary: reads the live database catalog through the injected connection; verified against real SQLite in the migration-workflow law probe."
+  },
+  {
+   "function": "migrate",
+   "reason": "An I/O orchestrator: composes inspect, diff, and apply against a live database; verified against real SQLite in the migration-workflow law probe."
   }
  ]
 }

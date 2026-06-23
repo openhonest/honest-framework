@@ -1396,6 +1396,73 @@ def _probe_connect_retry():
     return asyncio.run(_run())
 
 
+def _probe_migrate():
+    """The migration workflow (section 9): inspect reads the live SQLite schema back, and migrate
+    composes inspect + diff + apply against a real database — creating a table, then adding a column
+    on a second pass — refusing without applying when the diff is ambiguous, surfacing a diff fault
+    for an invalid target, and faulting on an unsupported dialect. Driven end-to-end on real SQLite."""
+    from honest_persist import inspect, migrate
+
+    async def _run():
+        bad = []
+
+        # inspect reads tables and columns back with type, nullability, primary key, and default.
+        rich = _SqliteConn()
+        await rich.execute(
+            "CREATE TABLE rich (id integer PRIMARY KEY, label text NOT NULL, score integer DEFAULT 5, note text)"
+        )
+        read = await inspect(rich, "sqlite")
+        if set(read["ok"]) != {"rich"}:
+            bad.append(f"inspect should read exactly the user tables: {read}")
+        else:
+            cols = read["ok"]["rich"]["columns"]
+            if cols["id"] != {"type": "integer", "nullable": True, "primary_key": True}:
+                bad.append(f"inspect should read the primary key column: {cols.get('id')}")
+            if cols["label"] != {"type": "text", "nullable": False}:
+                bad.append(f"inspect should read a NOT NULL column: {cols.get('label')}")
+            if cols["score"] != {"type": "integer", "nullable": True, "default": "5"}:
+                bad.append(f"inspect should read a column default: {cols.get('score')}")
+            if cols["note"] != {"type": "text", "nullable": True}:
+                bad.append(f"inspect should read a plain nullable column: {cols.get('note')}")
+
+        # migrate creates the table on an empty database, then adds a column on the next pass.
+        conn = _SqliteConn()
+        v1 = {"notes": {"columns": {"body": {"type": "text", "nullable": True}, "ts": {"type": "integer", "nullable": True}}}}
+        first = await migrate(v1, conn, "sqlite")
+        if "ok" not in first or not first["ok"]["success"]:
+            bad.append(f"migrate should create the table on an empty database: {first}")
+        v2 = {"notes": {"columns": {"body": {"type": "text", "nullable": True}, "ts": {"type": "integer", "nullable": True}, "tag": {"type": "text", "nullable": True}}}}
+        second = await migrate(v2, conn, "sqlite")
+        after = await inspect(conn, "sqlite")
+        if "ok" not in second or "tag" not in after["ok"]["notes"]["columns"]:
+            bad.append(f"migrate should add the new column on the second pass: {second}, {after}")
+
+        # An ambiguous diff (a likely rename) is refused — the database is left untouched.
+        amb = _SqliteConn()
+        await amb.execute("CREATE TABLE acct (emial text)")
+        renamed = {"acct": {"columns": {"email": {"type": "text", "nullable": True}}}}
+        refused = await migrate(renamed, amb, "sqlite")
+        still = await inspect(amb, "sqlite")
+        if refused.get("err", {}).get("code") != "migration_ambiguous" or "emial" not in still["ok"]["acct"]["columns"]:
+            bad.append(f"migrate should refuse an ambiguous diff without applying: {refused}, {still}")
+
+        # An invalid target schema fails at the diff, before any apply.
+        broken = _SqliteConn()
+        invalid = {"orders": {"columns": {"id": {"type": "integer", "nullable": True}}, "primary_key": ["missing"]}}
+        rejected = await migrate(invalid, broken, "sqlite")
+        if rejected.get("err", {}).get("code") != "schema_invalid":
+            bad.append(f"migrate should surface a diff fault for an invalid target: {rejected}")
+
+        # An unsupported dialect has no inspector.
+        nodb = _SqliteConn()
+        unknown = await migrate({}, nodb, "oracle")
+        if unknown.get("err", {}).get("code") != "unsupported_dialect":
+            bad.append(f"migrate should fault on an unsupported dialect: {unknown}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1414,6 +1481,7 @@ def run():
         "drain_loop": _probe_drain_loop(),
         "connection_pool": _probe_connection_pool(),
         "connect_retry": _probe_connect_retry(),
+        "migrate": _probe_migrate(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

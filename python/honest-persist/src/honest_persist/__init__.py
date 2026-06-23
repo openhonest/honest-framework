@@ -5,6 +5,7 @@ Schema as data, migrations as a pure diff, queries as data. I/O only at the boun
 
 from honest_persist.apply import apply, reconstruction_sql, requires_reconstruction, to_sql
 from honest_persist.connect import connect_with_retry, open_pool
+from honest_persist.migrate import inspect, migrate
 from honest_persist.check import check_holds, parse_check
 from honest_persist.execute import execute, execute_many, execute_one, execute_scalar
 from honest_persist.instrumented import emit_pool_event, instrumented_execute
@@ -126,6 +127,8 @@ __all__ = [
     "close_pool",
     "should_retry",
     "connect_with_retry",
+    "inspect",
+    "migrate",
     "empty_write_queue",
     "enqueue_write",
     "merge_pending",
