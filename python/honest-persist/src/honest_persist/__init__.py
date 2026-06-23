@@ -13,6 +13,7 @@ from honest_persist.pool import (
     get_pool,
     is_idle,
     reap_idle,
+    recreate_ephemeral,
     resolve_pool_key,
 )
 from honest_persist.query import (
@@ -97,4 +98,5 @@ __all__ = [
     "get_pool",
     "is_idle",
     "reap_idle",
+    "recreate_ephemeral",
 ]

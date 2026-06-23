@@ -11,7 +11,9 @@ an arbitrary database identifier — but that is a lint-time guarantee, not this
 
 from honest_type import err, ok
 
+from honest_persist.apply import apply
 from honest_persist.instrument import pool_fault
+from honest_persist.schema import diff
 
 # Section 8.2: how persist treats a database on first contact and at startup.
 POOL_LIFECYCLES = frozenset({"persistent", "ephemeral", "on_demand"})
@@ -84,3 +86,20 @@ async def reap_idle(registry, now_ns, threshold_ms, close):
         else:
             kept[key] = entry
     return kept
+
+
+async def recreate_ephemeral(config, connect, dialect, now):
+    """Recreate the schema of each ephemeral database at server startup, in configuration order
+    (section 8.2): connect, apply the target schema to the fresh database, and cache the pool. The
+    data does not survive a restart — the schema is rebuilt from the configuration each time, which
+    is what makes ephemeral databases right for test, scratch, and session-scoped storage. The
+    selection and ordering are pure; the connect and apply are I/O. Returns the pool registry holding
+    the recreated ephemeral pools."""
+    registry = empty_pool_registry()
+    for database in config:
+        if database.get("db_lifecycle") != "ephemeral":
+            continue
+        manifest = {"db_id": database["db_id"], "db_lifecycle": "ephemeral"}
+        result, registry = await get_pool(registry, manifest, connect, now)
+        await apply(diff({}, database["schema"]), database["schema"], result["ok"], dialect)
+    return registry

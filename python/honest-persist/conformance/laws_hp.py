@@ -902,6 +902,42 @@ def _probe_lifecycle():
     return asyncio.run(_run())
 
 
+def _probe_ephemeral():
+    """Ephemeral lifecycle (§8.2): recreate_ephemeral connects, applies the target schema, and caches
+    a pool for each ephemeral database in configuration order — exercised against real in-memory
+    SQLite, then the recreated schema is used to insert and read a row, proving the table is real."""
+    from honest_persist import execute, insert, recreate_ephemeral, select
+
+    async def _run():
+        bad = []
+        connected = []
+
+        async def connect(selector):
+            connected.append(selector["database"])
+            return _SqliteConn()
+
+        config = [
+            {"db_id": "keep", "db_lifecycle": "persistent", "schema": {"a": {"columns": {"id": {"type": "integer"}}}}},
+            {"db_id": "scratch", "db_lifecycle": "ephemeral", "schema": {"t": {"columns": {"id": {"type": "integer"}, "name": {"type": "text"}}}}},
+            {"db_id": "session", "db_lifecycle": "ephemeral", "schema": {"s": {"columns": {"k": {"type": "integer"}}}}},
+        ]
+        registry = await recreate_ephemeral(config, connect, "sqlite", 0)
+        if connected != ["scratch", "session"]:
+            bad.append(f"only ephemeral databases are recreated, in configuration order: {connected}")
+        if "scratch:" not in registry or "keep:" in registry:
+            bad.append(f"the registry should hold the ephemeral pools, not the persistent one: {list(registry)}")
+
+        # The recreated schema is real: insert and read a row through the cached connection.
+        conn = registry["scratch:"]["conn"]
+        await execute(insert("t", {"id": 1, "name": "ada"}), conn)
+        rows = await execute(select("t", ["name"]), conn)
+        if rows != [{"name": "ada"}]:
+            bad.append(f"the recreated ephemeral schema should accept and return a row: {rows}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -913,6 +949,7 @@ def run():
         "pool": _probe_pool(),
         "pool_registry": _probe_pool_registry(),
         "lifecycle": _probe_lifecycle(),
+        "ephemeral": _probe_ephemeral(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

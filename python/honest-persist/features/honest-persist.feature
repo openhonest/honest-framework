@@ -254,3 +254,8 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When reap_idle reaps the registry
     Then it closes and evicts each on_demand pool idle past the threshold through close
     But persistent and ephemeral pools, and recently-used on_demand pools, are left in the cache
+
+  Scenario: recreate_ephemeral rebuilds each ephemeral database's schema at startup
+    Given the persist configuration, an injected connect, an engine, and the current time
+    When recreate_ephemeral runs at startup
+    Then it connects, applies the target schema, and caches a pool for each ephemeral database in configuration order, leaving the persistent and on_demand ones alone, so ephemeral data never survives a restart

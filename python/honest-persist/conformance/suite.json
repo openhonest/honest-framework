@@ -135,6 +135,7 @@
     {"function": "reconstruction_sql", "reason": "Takes detailed column specifications; covered by the to_sql / apply reconstruction paths."},
     {"function": "instrumented_execute", "reason": "Async I/O boundary: runs a query against a live connection and emits through an injected emit. Verified by its own conformance probe."},
     {"function": "get_pool", "reason": "Async I/O boundary: creates a connection through the injected connect and threads the pool cache. Verified by its own conformance probe against SQLite."},
-    {"function": "reap_idle", "reason": "Async I/O boundary: closes idle on_demand connections through the injected close and threads the pool cache. Verified by its own conformance probe."}
+    {"function": "reap_idle", "reason": "Async I/O boundary: closes idle on_demand connections through the injected close and threads the pool cache. Verified by its own conformance probe."},
+    {"function": "recreate_ephemeral", "reason": "Async I/O boundary: connects and applies the target schema for each ephemeral database at startup. Verified by its own conformance probe against SQLite."}
   ]
 }
