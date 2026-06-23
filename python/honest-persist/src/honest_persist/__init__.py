@@ -16,6 +16,7 @@ from honest_persist.pool import (
     recreate_ephemeral,
     resolve_pool_key,
 )
+from honest_persist.queue import drain_queue, empty_write_queue, enqueue_write, merge_pending
 from honest_persist.query import (
     checked_delete,
     checked_insert,
@@ -100,4 +101,8 @@ __all__ = [
     "is_idle",
     "reap_idle",
     "recreate_ephemeral",
+    "empty_write_queue",
+    "enqueue_write",
+    "merge_pending",
+    "drain_queue",
 ]

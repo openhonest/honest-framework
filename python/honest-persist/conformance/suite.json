@@ -121,7 +121,11 @@
     {"id": "value-resolve-pool-none", "value_case": {"function": "resolve_pool_key", "args": [{"some": "query data"}], "expected": {"err": {"code": "unknown_database", "message": "manifest carries neither db_id nor tenant_id", "category": "client"}}}},
     {"id": "value-empty-pool-registry", "value_case": {"function": "empty_pool_registry", "args": [], "expected": {}}},
     {"id": "value-is-idle-true", "value_case": {"function": "is_idle", "args": [0, 20000000, 10], "expected": true}},
-    {"id": "value-is-idle-false", "value_case": {"function": "is_idle", "args": [0, 5000000, 10], "expected": false}}
+    {"id": "value-is-idle-false", "value_case": {"function": "is_idle", "args": [0, 5000000, 10], "expected": false}},
+    {"id": "value-empty-write-queue", "value_case": {"function": "empty_write_queue", "args": [], "expected": []}},
+    {"id": "value-enqueue-write", "value_case": {"function": "enqueue_write", "args": [[], "insert", "t", {"id": 1, "name": "a"}], "expected": [{"op": "insert", "table": "t", "row": {"id": 1, "name": "a"}}]}},
+    {"id": "value-merge-pending-insert", "value_case": {"function": "merge_pending", "args": [[{"id": 1, "name": "a"}], [{"op": "insert", "table": "t", "row": {"id": 2, "name": "b"}}], "t", "id"], "expected": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]}},
+    {"id": "value-merge-pending-delete", "value_case": {"function": "merge_pending", "args": [[{"id": 1, "name": "a"}], [{"op": "delete", "table": "t", "row": {"id": 1, "name": "a"}}], "t", "id"], "expected": []}}
   ],
   "value_oracle_exempt": [
     {"function": "diff", "reason": "Its dependency map is keyed by non-string keys, which cannot round-trip a JSON value contract."},
@@ -137,6 +141,7 @@
     {"function": "get_pool", "reason": "Async I/O boundary: creates a connection through the injected connect and threads the pool cache. Verified by its own conformance probe against SQLite."},
     {"function": "reap_idle", "reason": "Async I/O boundary: closes idle on_demand connections through the injected close and threads the pool cache. Verified by its own conformance probe."},
     {"function": "recreate_ephemeral", "reason": "Async I/O boundary: connects and applies the target schema for each ephemeral database at startup. Verified by its own conformance probe against SQLite."},
-    {"function": "emit_pool_event", "reason": "Async I/O boundary: emits a pool lifecycle event through the injected emit, swallowing failures. Verified by its own conformance probe."}
+    {"function": "emit_pool_event", "reason": "Async I/O boundary: emits a pool lifecycle event through the injected emit, swallowing failures. Verified by its own conformance probe."},
+    {"function": "drain_queue", "reason": "Async I/O boundary: persists each pending write to the backend through the injected execute. Verified by its own conformance probe against SQLite."}
   ]
 }

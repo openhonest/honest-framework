@@ -249,6 +249,46 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When emit_pool_event emits it
     Then it sends one hf.persist.pool event keyed by the pool aggregate, but a failing emit is logged and swallowed and no emit means no event
 
+  Scenario: empty_write_queue is an empty write queue
+    Given nothing
+    When empty_write_queue is called
+    Then it returns an empty queue of pending writes, held as a value
+
+  Scenario: enqueue_write appends a pending write to the queue
+    Given a write queue, an operation, a table, and a row
+    When enqueue_write appends the write
+    Then it returns a new queue with the pending write added, never mutating the original
+
+  Scenario: merge_pending folds the pending writes for a table into a read
+    Given the rows from a read, a write queue, the table, and its primary key
+    When merge_pending folds the pending writes in
+    Then a pending insert or update sets the row by primary key and a pending delete removes it, so a write is visible in reads before it reaches the backend, while writes for other tables are ignored
+
+  Scenario: _insert_query builds the query for a pending insert
+    Given a table, a row, and the primary key
+    When _insert_query builds it
+    Then it returns the insert query for the row
+
+  Scenario: _update_query builds the query for a pending update
+    Given a table, a row, and the primary key
+    When _update_query builds it
+    Then it returns the update query setting the non-key columns where the primary key matches
+
+  Scenario: _delete_query builds the query for a pending delete
+    Given a table, a row, and the primary key
+    When _delete_query builds it
+    Then it returns the delete query for the row's primary key
+
+  Scenario: _write_query builds the query for one pending write by its operation
+    Given a pending write and the primary key
+    When _write_query builds the query
+    Then it dispatches by operation to the insert, update, or delete query
+
+  Scenario: drain_queue persists each pending write to the backend
+    Given a write queue, a connection, an injected execute, and the primary key
+    When drain_queue drains the queue
+    Then it persists each pending write to the backend through execute, in order, and returns the empty queue
+
   Scenario: is_idle reports whether a pool has been idle past the threshold
     Given a pool's last-used time, the current time, and an idle threshold
     When is_idle checks it

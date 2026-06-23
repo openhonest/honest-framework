@@ -985,6 +985,45 @@ def _probe_pool_events():
     return asyncio.run(_run())
 
 
+def _probe_write_queue():
+    """The optimistic write queue (§8.6): merge_pending folds the pending writes for a table into a
+    read by primary key (a pending insert appears, an update overrides, a delete vanishes); drain
+    persists the queue to the backend through the injected execute — exercised against real SQLite
+    for insert, update, and delete."""
+    from honest_persist import drain_queue, empty_write_queue, enqueue_write, execute, merge_pending, raw, select
+
+    async def _run():
+        bad = []
+
+        # Read transparency: pending writes fold into a SELECT by primary key; other tables ignored.
+        rows = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+        pending = empty_write_queue()
+        pending = enqueue_write(pending, "insert", "t", {"id": 3, "name": "c"})
+        pending = enqueue_write(pending, "update", "t", {"id": 1, "name": "A"})
+        pending = enqueue_write(pending, "delete", "t", {"id": 2, "name": "b"})
+        pending = enqueue_write(pending, "insert", "other", {"id": 9, "name": "x"})
+        merged = merge_pending(rows, pending, "t", "id")
+        if merged != [{"id": 1, "name": "A"}, {"id": 3, "name": "c"}]:
+            bad.append(f"merge_pending should fold pending writes for the table by primary key: {merged}")
+
+        # Drain against real SQLite: two inserts, then an update and a delete.
+        conn = _SqliteConn()
+        await execute(raw("CREATE TABLE t (id integer primary key, name text)"), conn)
+        inserts = enqueue_write(enqueue_write(empty_write_queue(), "insert", "t", {"id": 1, "name": "a"}), "insert", "t", {"id": 2, "name": "b"})
+        drained = await drain_queue(inserts, conn, execute, "id")
+        if drained != []:
+            bad.append("drain_queue should return the empty queue")
+        if await execute(select("t", ["id", "name"]), conn) != [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]:
+            bad.append("drained inserts should reach the backend")
+        change = enqueue_write(enqueue_write(empty_write_queue(), "update", "t", {"id": 1, "name": "z"}), "delete", "t", {"id": 2, "name": "b"})
+        await drain_queue(change, conn, execute, "id")
+        if await execute(select("t", ["id", "name"]), conn) != [{"id": 1, "name": "z"}]:
+            bad.append("a drained update and delete should reach the backend")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -998,6 +1037,7 @@ def run():
         "lifecycle": _probe_lifecycle(),
         "ephemeral": _probe_ephemeral(),
         "pool_events": _probe_pool_events(),
+        "write_queue": _probe_write_queue(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),
