@@ -93,6 +93,13 @@ async def reap_idle(registry, now_ns, threshold_ms, close, emit=None):
     return kept
 
 
+def should_retry(attempt, retries, code):
+    """Whether a failed connection attempt should be retried (section 8.8). True while attempts remain
+    and the fault is transient; a `credential_rejected` fault is fatal and is never retried — more
+    attempts cannot fix a refused credential. Pure."""
+    return attempt < retries and code != "credential_rejected"
+
+
 def new_pool(connections):
     """A pool of connections, held as a value (section 8.1): the idle connections and how many are in
     use. Pure."""

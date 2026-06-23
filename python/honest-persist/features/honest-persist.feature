@@ -386,3 +386,14 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given a pool, a db_id, an injected close, and an injected emit
     When close_pool closes the pool
     Then it closes every idle connection through close and emits one closed pool event
+
+  Scenario: should_retry decides whether a failed connection attempt is retried
+    Given the attempt number, the retry budget, and the fault code
+    When should_retry decides
+    Then it retries while attempts remain and the fault is transient, but never retries a credential_rejected fault
+
+  Scenario: connect_with_retry retries a transient failure and fails fast on a rejected credential
+    Given a selector, an injected connect, a pure classify, a retry budget, a base delay, an injected sleep, and an injected emit
+    When connect_with_retry establishes a connection
+    Then it retries a transient failure with exponential backoff, emitting retry then ok(connection), and exhausting its attempts emits error and returns err(unresolvable_dsn)
+    But a credential_rejected fault fails fast, emitting error and returning the fault without retrying

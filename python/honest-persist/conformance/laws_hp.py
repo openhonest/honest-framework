@@ -1265,6 +1265,96 @@ def _probe_connection_pool():
     return asyncio.run(_run())
 
 
+def _probe_connect_retry():
+    """Resilient connection establishment (section 8.8, 8.3): connect_with_retry retries a transient
+    failure — emitting a retry event and sleeping the backoff — then connects against a real SQLite
+    database; exhausts its attempts on a persistently unresolvable DSN, emitting error and returning
+    err(unresolvable_dsn); and fails fast on a rejected credential without retrying at all.
+    should_retry is the pure decision underneath."""
+    from honest_persist import connect_with_retry, should_retry
+
+    async def _run():
+        bad = []
+
+        # The pure decision: retry while attempts remain and the fault is transient.
+        if not should_retry(0, 3, "unresolvable_dsn"):
+            bad.append("should_retry should retry a transient fault while attempts remain")
+        if should_retry(3, 3, "unresolvable_dsn"):
+            bad.append("should_retry should stop once the attempts are exhausted")
+        if should_retry(0, 3, "credential_rejected"):
+            bad.append("should_retry should never retry a credential_rejected fault")
+
+        def classify(exc):
+            return "credential_rejected" if "denied" in str(exc) else "unresolvable_dsn"
+
+        # A transient failure retries once, sleeps the backoff, then connects for real.
+        attempts = {"n": 0}
+
+        async def flaky(selector):
+            attempts["n"] += 1
+            if attempts["n"] < 2:
+                raise RuntimeError("connection refused")
+            return _SqliteConn()
+
+        retries_seen = []
+
+        async def emit(event_type, aggregate_type, aggregate_id, payload):
+            retries_seen.append(payload["event"])
+
+        slept = []
+
+        async def sleep(delay_ms):
+            slept.append(delay_ms)
+
+        opened = await connect_with_retry({"database": "main"}, flaky, classify, 3, 10, sleep, emit)
+        if "ok" not in opened or retries_seen != ["retry"] or slept != [20]:
+            bad.append(f"a transient failure should retry once, sleep the backoff, then connect: {opened}, {retries_seen}, {slept}")
+        else:
+            conn = opened["ok"]
+            await conn.execute("CREATE TABLE t (x INTEGER)")
+            await conn.execute("INSERT INTO t (x) VALUES (1)")
+            got = await conn.execute("SELECT x FROM t")
+            if got["rows"][0]["x"] != 1:
+                bad.append(f"connect_with_retry should return a usable connection: {got}")
+
+        # A persistently unresolvable DSN exhausts its retries and emits error.
+        async def down(selector):
+            raise RuntimeError("connection refused")
+
+        down_events = []
+
+        async def emit_down(event_type, aggregate_type, aggregate_id, payload):
+            down_events.append(payload["event"])
+
+        async def sleep_noop(delay_ms):
+            return None
+
+        failed = await connect_with_retry({"database": "main"}, down, classify, 2, 10, sleep_noop, emit_down)
+        if failed.get("err", {}).get("code") != "unresolvable_dsn" or down_events != ["retry", "retry", "error"]:
+            bad.append(f"an unresolvable DSN should exhaust its retries and emit error: {failed}, {down_events}")
+
+        # A rejected credential fails fast: no retry, no sleep.
+        async def denied(selector):
+            raise RuntimeError("access denied")
+
+        denied_events = []
+
+        async def emit_denied(event_type, aggregate_type, aggregate_id, payload):
+            denied_events.append(payload["event"])
+
+        denied_slept = []
+
+        async def sleep_denied(delay_ms):
+            denied_slept.append(delay_ms)
+
+        rejected = await connect_with_retry({"database": "main"}, denied, classify, 3, 10, sleep_denied, emit_denied)
+        if rejected.get("err", {}).get("code") != "credential_rejected" or denied_events != ["error"] or denied_slept != []:
+            bad.append(f"a rejected credential should fail fast without retrying: {rejected}, {denied_events}, {denied_slept}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1282,6 +1372,7 @@ def run():
         "supervisor": _probe_supervisor(),
         "drain_loop": _probe_drain_loop(),
         "connection_pool": _probe_connection_pool(),
+        "connect_retry": _probe_connect_retry(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

@@ -2724,6 +2724,42 @@
      "active": 0
     }
    }
+  },
+  {
+   "id": "value-should-retry-transient",
+   "value_case": {
+    "function": "should_retry",
+    "args": [
+     0,
+     3,
+     "unresolvable_dsn"
+    ],
+    "expected": true
+   }
+  },
+  {
+   "id": "value-should-retry-exhausted",
+   "value_case": {
+    "function": "should_retry",
+    "args": [
+     3,
+     3,
+     "unresolvable_dsn"
+    ],
+    "expected": false
+   }
+  },
+  {
+   "id": "value-should-retry-credential",
+   "value_case": {
+    "function": "should_retry",
+    "args": [
+     0,
+     3,
+     "credential_rejected"
+    ],
+    "expected": false
+   }
   }
  ],
  "value_oracle_exempt": [
@@ -2822,6 +2858,10 @@
   {
    "function": "close_pool",
    "reason": "An I/O boundary: closes each connection through the injected close and emits a closed event; verified against real SQLite in the law probe."
+  },
+  {
+   "function": "connect_with_retry",
+   "reason": "An I/O boundary: connects through the injected connect, catching driver errors to retry or fault, and emits pool events; verified against real SQLite in the connect-retry law probe."
   }
  ]
 }
