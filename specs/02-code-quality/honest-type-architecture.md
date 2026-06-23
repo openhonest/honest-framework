@@ -92,7 +92,7 @@ Each implementation extends the blacklist with its language's full reserved word
 
 The vocabulary constructor must check every Set member against all three layers at construction time. If any member is reserved, construction fails with an explicit error naming the offending token and its reservation layer.
 
-Predicate-based recognizers cannot be checked at construction time (their input space is unbounded). Reserved word violations from predicates are caught at classification time — if a predicate matches a reserved word, the token is rejected with a `reserved_word` reason.
+Predicate-based recognizers cannot be *exhaustively* checked at construction time (their input space is unbounded). Reserved word violations from predicates are caught at classification time — if a predicate matches a reserved word, the token is rejected with a `reserved_word` reason. The one construction-time check a predicate does undergo is the catch-all test (section 13.3): a statistical sample, not an exhaustive enumeration, so it remains feasible at construction.
 
 ---
 
@@ -1409,7 +1409,7 @@ For reference, the rules that originate from honest-type concerns:
 - **HC-SM01–HC-SM05**: state machine rules (see section 7b)
 - **HC-P001–HC-P012**: Honest Code principle rules
 
-Construction-time validation (reserved word rejection, vocabulary overlap detection) is first-class behavior of the `vocabulary()` constructor defined in section 6. Those are not honest-check rules — they are runtime errors that fire at construction time in every invocation mode.
+Construction-time validation (reserved word rejection, vocabulary overlap detection, and catch-all recognizer rejection per section 13.3) is first-class behavior of the `vocabulary()` constructor defined in section 6. Those are not honest-check rules — they are runtime errors that fire at construction time in every invocation mode.
 
 ---
 
@@ -1966,14 +1966,16 @@ A recognizer that accepts all (or nearly all) inputs is not a type — it is the
 
 ```
 FUNCTION check_HC011(recognizer):
-    // For predicates: run against 1000 random strings
+    // For predicates: run against a fixed, diverse sample of 1000 strings
     // If acceptance rate > 95%, it's a catch-all
-    sample ← generate_random_strings(1000)
+    sample ← FIXED_SAMPLE_CORPUS   // 1000 strings, deterministic — see note
     accepted ← COUNT s IN sample WHERE recognizer(s) = true
 
     IF accepted / 1000 > 0.95:
         EMIT error(HC011, "Recognizer accepts nearly all inputs — not a discriminating type")
 ```
+
+The sample is a **fixed, diverse corpus**, not randomly generated: the vocabulary constructor is a pure function, and the framework forbids nondeterminism (a recognizer near the 95% threshold must pass or fail identically on every run, in every invocation mode). The corpus must vary length and character class — digits, lowercase and uppercase letters, punctuation, whitespace, and non-ASCII — so that a genuinely discriminating recognizer accepts only a small fraction of it. A predicate that raises on a sample string counts as *not* accepting that string, the same tolerance classification applies at runtime (section 9.6).
 
 ### 13.4 Set Enumeration
 

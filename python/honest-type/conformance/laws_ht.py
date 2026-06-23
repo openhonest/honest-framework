@@ -201,6 +201,7 @@ CONSTRUCTION_SUBJECTS = [
     ("reserved_crosslang", {"build": lambda: vocabulary({"t": {"class"}}), "expect": "reserved"}),
     ("reserved_python", {"build": lambda: vocabulary({"t": {"lambda"}}), "expect": "reserved"}),
     ("set_overlap", {"build": lambda: vocabulary({"a": {"x"}, "b": {"x"}}), "expect": "share"}),
+    ("catch_all_predicate", {"build": lambda: vocabulary({"anything": predicate(lambda token: True)}), "expect": "nearly all"}),
     (
         "merge_name_collision",
         {"build": lambda: merge(vocabulary({"a": {"x"}}), vocabulary({"a": {"y"}})), "expect": "type name"},

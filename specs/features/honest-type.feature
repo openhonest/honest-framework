@@ -129,6 +129,16 @@ Feature: honest-type — vocabulary, classification, chains, and the boundary
     Then it raises a vocabulary error naming the two types and the shared values
     And it leaves non-overlapping types alone
 
+  Scenario: _accepts samples whether a recognizer accepts a token, tolerating a raise
+    Given a recognizer and a sample token
+    When _accepts applies the recognizer
+    Then it returns whether the token is accepted, counting a predicate that raises as not accepting it
+
+  Scenario: _check_catch_all rejects a predicate that accepts nearly all inputs
+    Given the base types of a vocabulary
+    When _check_catch_all samples each predicate against the fixed corpus
+    Then it raises a vocabulary error when a predicate accepts more than 95 percent of the sample, leaving discriminating recognizers and bounded sets alone
+
   Scenario: _check_composed rejects a composed type referencing an unknown base
     Given the base types and the composed types
     When _check_composed validates each composed type

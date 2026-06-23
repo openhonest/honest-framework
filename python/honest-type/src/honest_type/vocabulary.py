@@ -10,12 +10,23 @@ reserved-word collisions are caught later (by honest-test / at classification).
 
 from itertools import combinations
 
-from honest_type.recognizers import is_bounded, members, normalize
+from honest_type.recognizers import is_bounded, members, normalize, recognize
 from honest_type.reserved import is_reserved, reservation_layer
 
 
 class VocabularyError(Exception):
-    """A vocabulary that cannot be built: reserved-word, overlap, or unknown composed base."""
+    """A vocabulary that cannot be built: reserved-word, overlap, catch-all, or unknown composed base."""
+
+
+# A fixed, diverse corpus for catch-all detection (section 13.3): deterministic, not random — the
+# constructor is pure and a recognizer near the 95% threshold must pass or fail identically every
+# run. It varies length and character class so a genuinely discriminating recognizer accepts only a
+# small fraction of it.
+_CATCH_ALL_ALPHABET = "abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,-_/@#:!?'()[]{}<>=+*éüñλ—\t"
+_CATCH_ALL_SAMPLE = ("",) + tuple(
+    "".join(_CATCH_ALL_ALPHABET[(i * 31 + j * 17) % len(_CATCH_ALL_ALPHABET)] for j in range((i % 16) + 1))
+    for i in range(1, 1000)
+)
 
 
 def maybe(slot: str) -> dict:
@@ -61,6 +72,33 @@ def _check_overlap(base_types: dict) -> None:
             )
 
 
+# honest: disable HC-P002
+def _accepts(recognizer: dict, token: str) -> bool:
+    """Whether a recognizer accepts a token during catch-all sampling (section 13.3). A predicate
+    that raises on a sample string counts as not accepting it — the same tolerance classification
+    applies at runtime (section 9.6) — so a non-total predicate is sampled, not propagated."""
+    try:
+        return bool(recognize(token, recognizer))
+    except Exception:
+        return False
+# honest: enable HC-P002
+
+
+def _check_catch_all(base_types: dict) -> None:
+    """Reject a predicate recognizer that accepts nearly all inputs (section 13.3): not a type but
+    the absence of one. Each predicate is sampled against the fixed corpus; acceptance above 95%
+    fails construction. Bounded Set recognizers are finite and exempt."""
+    for type_name, recognizer in base_types.items():
+        if is_bounded(recognizer):
+            continue
+        accepted = sum(1 for token in _CATCH_ALL_SAMPLE if _accepts(recognizer, token))
+        if accepted / len(_CATCH_ALL_SAMPLE) > 0.95:
+            raise VocabularyError(
+                f"Type '{type_name}' accepts nearly all inputs ({accepted}/{len(_CATCH_ALL_SAMPLE)}) "
+                "— not a discriminating type (HC011)."
+            )
+
+
 def _check_composed(base_types: dict, composed_list: list) -> None:
     base_names = set(base_types)
     for comp in composed_list:
@@ -87,6 +125,7 @@ def vocabulary(base_declarations: dict, composed_types=None) -> dict:
     for type_name, recognizer in base_types.items():
         _check_reserved(type_name, recognizer)
     _check_overlap(base_types)
+    _check_catch_all(base_types)
     composed_list = list(composed_types or [])
     _check_composed(base_types, composed_list)
     return {"base_types": base_types, "composed_types": composed_list}
