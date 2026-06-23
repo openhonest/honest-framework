@@ -83,6 +83,17 @@ dependency of the pure core; an adopter installs `honest-persist[pydantic]` and
 imports the loader from `honest_persist.loader`. A hand-written `Schema` dict
 needs none of it (section 2.2).
 
+A second optional adapter, `load_schema_from_django(*models)` in
+`honest_persist.django_loader` (installed via `honest-persist[django]`), reads
+Django model definitions the same way: each model's `_meta` fields become
+`Column` definitions — field types mapped to abstract SQL types, `null` to
+nullability, `primary_key` and `unique` to flags, `choices` to `literal_values`,
+a `ForeignKey` to a `references`, and a value default to a SQL literal — keyed by
+Django's db column names. Both loaders render a host default value to its SQL
+literal through one shared, dependency-free helper, so a Django codebase and a
+Pydantic codebase reach the same `Schema` shape. Neither framework is imported by
+the pure core.
+
 Other languages have equivalent idiomatic sources:
 
 | Language   | Idiomatic Source                            |

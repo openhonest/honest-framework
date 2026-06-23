@@ -22,8 +22,8 @@ branch = true
 precision = 2
 show_missing = true
 
-# The Pydantic schema loader (section 2) is an optional, Python-specific adapter — not part of the
-# pure core. Pydantic lives in the dev group so the loader's conformance runs under the gate; an
-# adopter opts in via the honest-persist[pydantic] extra. The pure core never imports it.
+# The Pydantic and Django schema loaders (section 2) are optional, Python-specific adapters — not part
+# of the pure core. They live in the dev group so the loaders' conformance runs under the gate; an
+# adopter opts in via the honest-persist[pydantic] or [django] extra. The pure core never imports them.
 [dependency-groups]
-dev = ["pydantic>=2"]
+dev = ["pydantic>=2", "django>=4"]

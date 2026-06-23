@@ -609,10 +609,10 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When _numeric renders it
     Then it returns the number as its string form
 
-  Scenario: _default_sql renders a Python default to its SQL literal
+  Scenario: default_sql renders a Python default to its SQL literal
     Given a Python default value
-    When _default_sql renders it
-    Then it dispatches on the value's type to its SQL literal, or returns nothing for a type with no literal form
+    When default_sql renders it
+    Then it dispatches on the value's type to its SQL literal, or returns nothing for a type with no literal form including a callable
 
   Scenario: _field_meta reads a Pydantic field's declared metadata
     Given a Pydantic field
@@ -673,3 +673,33 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given a query, a source, and a destination
     When mirror_write writes it
     Then it runs the query against both databases and returns the source and destination results
+
+  Scenario: _dj_type maps a Django field to an abstract SQL type
+    Given a Django field
+    When _dj_type maps it
+    Then it returns the abstract SQL type for the field, a foreign key taking its target field's type, defaulting to text when unknown
+
+  Scenario: _dj_choices reads the enum members of a Django field
+    Given a Django field
+    When _dj_choices reads its choices
+    Then it returns the choice values as strings, or empty when the field has no choices
+
+  Scenario: _dj_reference reads the target of a Django foreign key
+    Given a Django foreign-key field
+    When _dj_reference reads it
+    Then it returns the related model's table and primary-key column as a reference
+
+  Scenario: _dj_default reads a Django field's default as a SQL literal
+    Given a Django field
+    When _dj_default reads its default
+    Then it returns the default rendered as a SQL literal, or nothing when there is no value default
+
+  Scenario: _dj_column converts a Django field to a column
+    Given a Django field
+    When _dj_column converts it
+    Then it sets the SQL type, nullability, primary key, uniqueness, enum choices, foreign-key reference, and default
+
+  Scenario: load_schema_from_django reads Django models to a schema
+    Given one or more Django models
+    When load_schema_from_django reads them
+    Then it returns a schema mapping each model's table name to its columns by db column name, purely and with no I/O

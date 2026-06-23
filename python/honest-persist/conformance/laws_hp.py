@@ -1921,6 +1921,69 @@ def _probe_cutover():
     return asyncio.run(_run())
 
 
+def _probe_django_loader():
+    """Django interop (section 2): load_schema_from_django reads Django model definitions to a Schema
+    — field types mapped to abstract SQL types, nullability, primary keys, uniqueness, choices as enum
+    values, foreign-key references by db column, and defaults — and the loaded schema migrates to real
+    SQLite."""
+    import django
+    from django.conf import settings
+
+    if not settings.configured:
+        settings.configure(INSTALLED_APPS=["django.contrib.contenttypes", "django.contrib.auth"], DATABASES={})
+        django.setup()
+    from django.db import models
+
+    from honest_persist import migrate
+    from honest_persist.django_loader import load_schema_from_django
+
+    class Customer(models.Model):
+        name = models.CharField(max_length=50, unique=True)
+
+        class Meta:
+            app_label = "shop"
+
+    class Order(models.Model):
+        status = models.CharField(max_length=20, choices=[("pending", "P"), ("shipped", "S")], default="pending")
+        qty = models.IntegerField(default=5)
+        active = models.BooleanField(default=True)
+        note = models.TextField(null=True)
+        customer = models.ForeignKey(Customer, on_delete=models.CASCADE)
+
+        class Meta:
+            app_label = "shop"
+
+    bad = []
+    order = load_schema_from_django(Customer, Order).get("shop_order", {}).get("columns", {})
+    expected = {
+        "id": {"type": "integer", "nullable": False, "primary_key": True},
+        "status": {"type": "text", "nullable": False, "literal_values": ["pending", "shipped"], "default": "'pending'"},
+        "qty": {"type": "integer", "nullable": False, "default": "5"},
+        "active": {"type": "boolean", "nullable": False, "default": "TRUE"},
+        "note": {"type": "text", "nullable": True},
+        "customer_id": {"type": "integer", "nullable": False, "references": "shop_customer.id"},
+    }
+    if set(order) != set(expected):
+        bad.append(f"load_schema_from_django should map every field by db column: {sorted(order)}")
+    for column_name, exp in expected.items():
+        if order.get(column_name) != exp:
+            bad.append(f"django column {column_name}: got {order.get(column_name)}, expected {exp}")
+
+    async def _run():
+        conn = _SqliteConn()
+        applied = await migrate(load_schema_from_django(Customer), conn, "sqlite")
+        if "ok" not in applied:
+            bad.append(f"a Django-loaded schema should migrate: {applied}")
+        else:
+            await conn.execute("INSERT INTO shop_customer (id, name) VALUES (1, 'acme')")
+            got = await conn.execute("SELECT name FROM shop_customer WHERE id = 1")
+            if got["rows"][0]["name"] != "acme":
+                bad.append(f"the Django-loaded table should accept a row: {got}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1945,6 +2008,7 @@ def run():
         "hierarchy": _probe_hierarchy(),
         "enums": _probe_enums(),
         "loader": _probe_loader(),
+        "django_loader": _probe_django_loader(),
         "cutover": _probe_cutover(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),

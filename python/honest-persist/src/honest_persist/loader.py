@@ -16,6 +16,8 @@ from typing import Literal, get_args, get_origin, get_type_hints
 
 from pydantic_core import PydanticUndefined
 
+from honest_persist.host_defaults import default_sql
+
 # Python type (or its name, for forward-referenced imports) to abstract SQL type (section 2.3). The
 # applier resolves the abstract name to a dialect-specific type at execution time.
 _PY_TO_SQL = {
@@ -74,32 +76,6 @@ def _sql_type(annotation):
     return _PY_TO_SQL.get(getattr(annotation, "__name__", ""), "text")
 
 
-def _quoted(value):
-    """A string default as a quoted SQL literal (section 2.3). Pure."""
-    return "'" + value + "'"
-
-
-def _boolean(value):
-    """A boolean default as a SQL literal (section 2.3). Pure."""
-    return "TRUE" if value else "FALSE"
-
-
-def _numeric(value):
-    """A numeric default as a SQL literal (section 2.3). Pure."""
-    return str(value)
-
-
-# A Python default value rendered to its SQL literal, dispatched by the value's type (section 2.3).
-_DEFAULT_SQL = {"str": _quoted, "bool": _boolean, "int": _numeric, "float": _numeric}
-
-
-def _default_sql(value):
-    """A Python default value as its SQL literal (section 2.3), or None for a type with no literal
-    form. Pure."""
-    renderer = _DEFAULT_SQL.get(type(value).__name__)
-    return renderer(value) if renderer else None
-
-
 def _field_meta(field_info):
     """The column metadata declared on a Pydantic field (section 2.3): the json_schema_extra keys and
     the field's default, when it has one. Pure."""
@@ -128,8 +104,8 @@ def _column_from_field(annotation, field_info):
             column[key] = meta[key]
     if meta.get("default"):
         column["default"] = meta["default"]
-    elif _default_sql(meta.get("_default")) is not None:
-        column["default"] = _default_sql(meta["_default"])
+    elif default_sql(meta.get("_default")) is not None:
+        column["default"] = default_sql(meta["_default"])
     return column
 
 

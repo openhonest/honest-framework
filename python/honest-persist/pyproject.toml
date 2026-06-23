@@ -5,10 +5,11 @@ description = "Schema-first, pure-function persistence: schema as data, migratio
 requires-python = ">=3.11"
 dependencies = ["honest-type"]
 
-# The Pydantic schema loader (section 2) is an optional, Python-specific adapter. The pure core
-# never imports Pydantic; an adopter who wants the loader installs honest-persist[pydantic].
+# The schema loaders (section 2) are optional, Python-specific adapters. The pure core never imports
+# Pydantic or Django; an adopter who wants a loader installs honest-persist[pydantic] or [django].
 [project.optional-dependencies]
 pydantic = ["pydantic>=2"]
+django = ["django>=4"]
 
 [tool.uv.sources]
 honest-type = { workspace = true }
