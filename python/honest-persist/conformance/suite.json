@@ -3119,6 +3119,129 @@
      }
     ]
    }
+  },
+  {
+   "id": "value-expand-schema-enum",
+   "value_case": {
+    "function": "expand_schema",
+    "args": [
+     {
+      "orders": {
+       "columns": {
+        "id": {
+         "type": "integer",
+         "primary_key": true
+        },
+        "status": {
+         "literal_values": [
+          "pending",
+          "confirmed",
+          "shipped"
+         ],
+         "default": "'pending'"
+        }
+       }
+      }
+     }
+    ],
+    "expected": {
+     "orders": {
+      "columns": {
+       "id": {
+        "type": "integer",
+        "primary_key": true
+       },
+       "status": {
+        "type": "text",
+        "references": "_hp_enum_orders_status.value",
+        "default": "'pending'"
+       }
+      }
+     },
+     "_hp_enum_orders_status": {
+      "columns": {
+       "value": {
+        "type": "text",
+        "primary_key": true
+       }
+      },
+      "seed": [
+       {
+        "value": "pending"
+       },
+       {
+        "value": "confirmed"
+       },
+       {
+        "value": "shipped"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "value-enum-seed-queries",
+   "value_case": {
+    "function": "enum_seed_queries",
+    "args": [
+     {
+      "orders": {
+       "columns": {
+        "id": {
+         "type": "integer",
+         "primary_key": true
+        },
+        "status": {
+         "type": "text",
+         "references": "_hp_enum_orders_status.value",
+         "default": "'pending'"
+        }
+       }
+      },
+      "_hp_enum_orders_status": {
+       "columns": {
+        "value": {
+         "type": "text",
+         "primary_key": true
+        }
+       },
+       "seed": [
+        {
+         "value": "pending"
+        },
+        {
+         "value": "confirmed"
+        },
+        {
+         "value": "shipped"
+        }
+       ]
+      }
+     },
+     "sqlite"
+    ],
+    "expected": [
+     {
+      "sql": "INSERT OR IGNORE INTO _hp_enum_orders_status (value) VALUES (:value)",
+      "params": {
+       "value": "pending"
+      }
+     },
+     {
+      "sql": "INSERT OR IGNORE INTO _hp_enum_orders_status (value) VALUES (:value)",
+      "params": {
+       "value": "confirmed"
+      }
+     },
+     {
+      "sql": "INSERT OR IGNORE INTO _hp_enum_orders_status (value) VALUES (:value)",
+      "params": {
+       "value": "shipped"
+      }
+     }
+    ]
+   }
   }
  ],
  "value_oracle_exempt": [

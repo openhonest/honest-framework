@@ -1689,6 +1689,77 @@ def _probe_hierarchy():
     return asyncio.run(_run())
 
 
+def _probe_enums():
+    """Enums (section 6.1): expand_schema rewrites a literal_values column to a seeded lookup table
+    and a foreign-key column; enum_seed_queries builds idempotent inserts; and a migrated enum
+    schema, with foreign keys enforced, accepts a declared value and rejects an undeclared one on
+    real SQLite, the re-seed being idempotent."""
+    from honest_persist import enum_seed_queries, expand_schema, migrate
+
+    async def _run():
+        bad = []
+
+        schema = {"orders": {"columns": {
+            "id": {"type": "integer", "primary_key": True},
+            "status": {"literal_values": ["pending", "confirmed", "shipped"], "default": "'pending'"},
+        }}}
+        expanded = expand_schema(schema)
+        status = expanded["orders"]["columns"]["status"]
+        if status != {"type": "text", "references": "_hp_enum_orders_status.value", "default": "'pending'"}:
+            bad.append(f"expand_schema should make the enum a foreign-key column: {status}")
+        lookup = expanded.get("_hp_enum_orders_status", {})
+        if lookup.get("columns", {}).get("value") != {"type": "text", "primary_key": True} or lookup.get("seed") != [{"value": "pending"}, {"value": "confirmed"}, {"value": "shipped"}]:
+            bad.append(f"expand_schema should generate the seeded lookup table: {lookup}")
+        # An enum with a declared nullability and no default keeps the nullability, omits the default.
+        nullable = expand_schema({"t": {"columns": {"k": {"literal_values": ["a", "b"], "nullable": True}}}})["t"]["columns"]["k"]
+        if nullable != {"type": "text", "references": "_hp_enum_t_k.value", "nullable": True}:
+            bad.append(f"an enum column should keep its nullability and omit an absent default: {nullable}")
+
+        # enum_seed_queries builds idempotent inserts; the dialect sets the ignore form.
+        if enum_seed_queries(expanded, "sqlite")[0] != {"sql": "INSERT OR IGNORE INTO _hp_enum_orders_status (value) VALUES (:value)", "params": {"value": "pending"}}:
+            bad.append(f"enum_seed_queries (sqlite) wrong: {enum_seed_queries(expanded, 'sqlite')}")
+        if enum_seed_queries(expanded, "postgresql")[0]["sql"] != "INSERT INTO _hp_enum_orders_status (value) VALUES (:value) ON CONFLICT DO NOTHING":
+            bad.append(f"enum_seed_queries (postgresql) wrong: {enum_seed_queries(expanded, 'postgresql')}")
+
+        # migrate to real SQLite with foreign keys enforced: declared values pass, others are rejected.
+        conn = _SqliteConn()
+        await conn.execute("PRAGMA foreign_keys = ON")
+        applied = await migrate(schema, conn, "sqlite")
+        if "ok" not in applied:
+            bad.append(f"migrate should create the enum lookup and base tables: {applied}")
+        else:
+            seeded = await conn.execute("SELECT value FROM _hp_enum_orders_status")
+            if sorted(r["value"] for r in seeded["rows"]) != ["confirmed", "pending", "shipped"]:
+                bad.append(f"the lookup table should be seeded with the enum values: {seeded}")
+            await conn.execute("INSERT INTO orders (id, status) VALUES (1, 'confirmed')")
+            kept = await conn.execute("SELECT status FROM orders WHERE id = 1")
+            if kept["rows"][0]["status"] != "confirmed":
+                bad.append(f"a declared enum value should insert: {kept}")
+            rejected = False
+            try:
+                await conn.execute("INSERT INTO orders (id, status) VALUES (2, 'bogus')")
+            except Exception:
+                rejected = True
+            if not rejected:
+                bad.append("an undeclared enum value should be rejected by the foreign key")
+            # Re-seeding is idempotent.
+            for query in enum_seed_queries(expanded, "sqlite"):
+                await conn.execute(query["sql"], query["params"])
+            again = await conn.execute("SELECT count(*) AS n FROM _hp_enum_orders_status")
+            if again["rows"][0]["n"] != 3:
+                bad.append(f"re-seeding should be idempotent: {again}")
+
+        # When apply fails, the workflow returns the failed result and runs no seed.
+        broken = _SqliteConn()
+        bad_schema = {"x": {"columns": {"a": {"type": "text"}}, "constraints": {"c": {"type": "check", "expression": "a a a"}}}}
+        failed = await migrate(bad_schema, broken, "sqlite")
+        if "ok" not in failed or failed["ok"]["success"]:
+            bad.append(f"migrate should return the failed ApplyResult when apply fails, seeding nothing: {failed}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1711,6 +1782,7 @@ def run():
         "abstractions": _probe_abstractions(),
         "arrays_maps": _probe_arrays_maps(),
         "hierarchy": _probe_hierarchy(),
+        "enums": _probe_enums(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

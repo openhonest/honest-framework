@@ -74,6 +74,29 @@ def _expand_map(table_name, table, column_name, column):
     return {}, {}, {_map_table(table_name, column_name): junction}
 
 
+def _enum_table(table, column):
+    """The lookup table name for an enum column (section 6.1). Pure."""
+    return "_hp_enum_" + table + "_" + column
+
+
+def _expand_enum(table_name, table, column_name, column):
+    """A Literal/enum column (section 6.1) to a lookup table seeded with the allowed values and a
+    foreign-key column referencing it. The column becomes text referencing the lookup's value, keeping
+    its nullability and default; the lookup carries the values as seed rows. Returns (columns,
+    constraints, generated_tables). Pure."""
+    lookup = _enum_table(table_name, column_name)
+    base = {"type": "text", "references": lookup + ".value"}
+    if "nullable" in column:
+        base["nullable"] = column["nullable"]
+    if column.get("default") is not None:
+        base["default"] = column["default"]
+    generated = {lookup: {
+        "columns": {"value": {"type": "text", "primary_key": True}},
+        "seed": [{"value": member} for member in column["literal_values"]],
+    }}
+    return {column_name: base}, {}, generated
+
+
 def _closure_table(table):
     """The closure table name for a hierarchy on `table` (section 6.3). Pure."""
     return "_hp_closure_" + table
@@ -96,15 +119,43 @@ def _expand_hierarchy(table_name, table, column_name, column):
 # Each abstraction is recognized by the column's declared `type` and rewritten by its expander
 # (section 6). Expanders return (columns, constraints, generated_tables).
 _EXPANDERS = {
+    "enum": _expand_enum,
     "range": _expand_range,
     "array": _expand_array,
     "map": _expand_map,
     "hierarchy": _expand_hierarchy,
 }
 
+# The idempotent insert form per dialect, so re-seeding adds new enum values without disturbing
+# existing rows (section 6.1).
+_SEED_VERB = {"sqlite": "INSERT OR IGNORE", "turso": "INSERT OR IGNORE", "postgresql": "INSERT"}
+_SEED_SUFFIX = {"postgresql": " ON CONFLICT DO NOTHING"}
+
+
+def enum_seed_queries(schema, dialect):
+    """The idempotent seed inserts for every generated lookup table in an expanded schema (section
+    6.1): one insert-or-ignore per seed row, so the lookup carries exactly the declared enum values
+    and re-running adds new ones without disturbing existing rows. Pure query builder."""
+    verb = _SEED_VERB.get(dialect, "INSERT")
+    suffix = _SEED_SUFFIX.get(dialect, "")
+    queries = []
+    for table_name, table in schema.items():
+        for row in table.get("seed", []):
+            columns = list(row)
+            placeholders = ", ".join(":" + column for column in columns)
+            queries.append({
+                "sql": verb + " INTO " + table_name + " (" + ", ".join(columns) + ") VALUES (" + placeholders + ")" + suffix,
+                "params": dict(row),
+            })
+    return queries
+
 
 def _abstraction_kind(column):
-    """The abstraction a column declares (section 6), or None for a plain column. Pure."""
+    """The abstraction a column declares (section 6), or None for a plain column. A column carrying
+    `literal_values` is an enum (section 6.1); otherwise the declared `type` names the abstraction.
+    Pure."""
+    if column.get("literal_values"):
+        return "enum"
     return column.get("type") if column.get("type") in _EXPANDERS else None
 
 

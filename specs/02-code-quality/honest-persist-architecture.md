@@ -735,6 +735,16 @@ This mechanism is dialect-agnostic. SQLite, PostgreSQL, and Turso all
 support FK constraints. The lookup table approach works identically across all
 three.
 
+A column carries its enum membership as `literal_values`. The pure `expand_schema` transform
+(section 6) rewrites it: the column becomes a text column referencing `_hp_enum_{table}_{column}`
+(keeping its nullability and default), and the lookup table is generated carrying the allowed values
+as seed rows. After applying the schema, the migration workflow runs `enum_seed_queries(schema,
+dialect)` — one idempotent insert-or-ignore per seed row, in the dialect's ignore form
+(`INSERT OR IGNORE` on SQLite and Turso, `ON CONFLICT DO NOTHING` on PostgreSQL) — so the lookup
+holds exactly the declared values and re-running the migration adds new ones without disturbing
+existing rows. Removing a value is a `DELETE` from the lookup, which the foreign key refuses while
+any row still references it.
+
 ### 6.2 CHECK Constraint Enforcement
 
 A `check` declared on a column, or a CHECK `constraint`, must be **enforced** on every

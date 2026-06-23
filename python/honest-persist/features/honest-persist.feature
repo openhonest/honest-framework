@@ -13,7 +13,7 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
   Scenario: _column_ddl renders one column's definition as DDL
     Given a column name, its definition, and a dialect
     When _column_ddl renders it
-    Then it produces the name and dialect type followed by the primary-key, not-null, unique, and default clauses the definition declares
+    Then it produces the name and dialect type followed by the primary-key, not-null, unique, default, and foreign-key reference clauses the definition declares
 
   Scenario: _render_create_table renders a CREATE TABLE statement
     Given a create-table operation and a dialect
@@ -432,7 +432,7 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
   Scenario: _abstraction_kind names the abstraction a column declares
     Given a column declaration
     When _abstraction_kind reads it
-    Then it returns the abstraction kind when the declared type has an expander, otherwise nothing
+    Then it returns enum when the column carries literal values, otherwise the declared type when it has an expander, otherwise nothing
 
   Scenario: _expand_table expands every abstraction column in one table
     Given a table name and a table definition
@@ -548,3 +548,18 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given a table, a node, and a new parent
     When closure_move builds the queries
     Then it returns two steps, detaching the subtree's cross-links to its old ancestors and reconnecting it under every ancestor of the new parent
+
+  Scenario: _enum_table names the lookup table for an enum column
+    Given a table and an enum column name
+    When _enum_table builds the name
+    Then it returns the enum lookup table name for that column
+
+  Scenario: _expand_enum rewrites an enum column to a lookup table and foreign key
+    Given a table, a column name, and a column carrying literal values
+    When _expand_enum expands it
+    Then it makes the column a text foreign key referencing the lookup's value, keeping its nullability and default, and generates a lookup table seeded with the allowed values
+
+  Scenario: enum_seed_queries builds idempotent inserts for the lookup values
+    Given an expanded schema and a dialect
+    When enum_seed_queries builds the inserts
+    Then it returns one insert-or-ignore per seed row in the dialect's ignore form, so re-running adds new values without disturbing existing rows

@@ -15,7 +15,7 @@ PRAGMA row to a column definition is pure; only the catalog reads are I/O.
 
 from honest_type import err, fault, ok
 
-from honest_persist.abstractions import expand_schema
+from honest_persist.abstractions import enum_seed_queries, expand_schema
 from honest_persist.apply import apply
 from honest_persist.schema import diff
 
@@ -69,13 +69,14 @@ async def inspect(conn, dialect):
 async def migrate(schema, conn, dialect):
     """Run the full migration workflow against a live database (section 9): inspect the current
     schema, expand the target's abstractions (section 6), diff it against the live schema, refuse if
-    the diff is ambiguous so a human can decide (section 9 step 4), and otherwise apply. I/O
-    orchestrator. Returns ok(ApplyResult), or err(fault) when inspection fails, the target is
-    invalid, or the diff is ambiguous."""
+    the diff is ambiguous so a human can decide (section 9 step 4), apply, and seed the enum lookup
+    tables idempotently (section 6.1). I/O orchestrator. Returns ok(ApplyResult), or err(fault) when
+    inspection fails, the target is invalid, or the diff is ambiguous."""
     current = await inspect(conn, dialect)
     if "err" in current:
         return current
-    result = diff(current["ok"], expand_schema(schema))
+    expanded = expand_schema(schema)
+    result = diff(current["ok"], expanded)
     if "err" in result:
         return result
     if result["ambiguities"]:
@@ -85,4 +86,8 @@ async def migrate(schema, conn, dialect):
             "server",
             {"ambiguities": result["ambiguities"]},
         ))
-    return ok(await apply(result, schema, conn, dialect))
+    applied = await apply(result, expanded, conn, dialect)
+    if applied["success"]:
+        for query in enum_seed_queries(expanded, dialect):
+            await conn.execute(query["sql"], query["params"])
+    return ok(applied)

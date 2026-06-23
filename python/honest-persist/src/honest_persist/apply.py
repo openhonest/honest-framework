@@ -47,6 +47,9 @@ def _column_ddl(name, definition, dialect):
         parts.append("UNIQUE")
     if definition.get("default") is not None:
         parts.append(f"DEFAULT {definition['default']}")
+    if definition.get("references"):
+        ref_table, ref_column = definition["references"].rsplit(".", 1)
+        parts.append(f"REFERENCES {ref_table}({ref_column})")
     return " ".join(parts)
 
 
