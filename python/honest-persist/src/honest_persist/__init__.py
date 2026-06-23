@@ -7,7 +7,7 @@ from honest_persist.apply import apply, reconstruction_sql, requires_reconstruct
 from honest_persist.check import check_holds, parse_check
 from honest_persist.execute import execute, execute_many, execute_one, execute_scalar
 from honest_persist.instrumented import instrumented_execute
-from honest_persist.pool import POOL_LIFECYCLES, resolve_pool_key
+from honest_persist.pool import POOL_LIFECYCLES, empty_pool_registry, get_pool, resolve_pool_key
 from honest_persist.query import (
     checked_delete,
     checked_insert,
@@ -86,4 +86,6 @@ __all__ = [
     "instrumented_execute",
     "POOL_LIFECYCLES",
     "resolve_pool_key",
+    "empty_pool_registry",
+    "get_pool",
 ]

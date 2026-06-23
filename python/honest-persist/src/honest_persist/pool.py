@@ -34,3 +34,30 @@ def resolve_pool_key(manifest):
             "lifecycle": manifest.get("db_lifecycle", "persistent"),
         }
     )
+
+
+def empty_pool_registry():
+    """An empty pool registry (section 8.1): the cache of pools persist has created, as a value.
+    Pools are an internal concern, so the cache is threaded through `get_pool`, never hidden state."""
+    return {}
+
+
+def _pool_key(selector):
+    """The cache key for a pool selector (section 8.1): one pool per (database, credential variant)."""
+    return selector["database"] + ":" + (selector["credential"] or "")
+
+
+async def get_pool(registry, manifest, connect):
+    """Route a manifest to a connection, creating and caching a pool on first contact and reusing it
+    after (section 8.1). The routing is pure (resolve_pool_key); the one I/O seam is the injected
+    `connect`, which the adopter supplies for their driver. Returns (result, registry): ok(connection)
+    or err(unknown_database) when the manifest names no database; the returned registry carries any
+    newly created pool, so the cache stays a threaded value rather than hidden module state."""
+    routed = resolve_pool_key(manifest)
+    if "err" in routed:
+        return routed, registry
+    key = _pool_key(routed["ok"])
+    if key in registry:
+        return ok(registry[key]), registry
+    connection = await connect(routed["ok"])
+    return ok(connection), {**registry, key: connection}

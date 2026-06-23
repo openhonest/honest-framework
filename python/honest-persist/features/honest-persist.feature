@@ -227,3 +227,19 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When resolve_pool_key resolves it
     Then a db_id selects a registered database and a tenant_id a per-tenant one, carrying the credential and the lifecycle, defaulting the lifecycle to persistent
     But a manifest that names no database returns an unknown-database fault
+
+  Scenario: empty_pool_registry is an empty pool cache
+    Given nothing
+    When empty_pool_registry is called
+    Then it returns an empty cache of pools, held as a value rather than hidden state
+
+  Scenario: _pool_key keys a pool by its database and credential variant
+    Given a pool selector
+    When _pool_key keys it
+    Then it returns one key per database and credential variant, so each variant caches its own pool
+
+  Scenario: get_pool routes a manifest to a cached connection, creating one on first contact
+    Given a pool registry, a manifest, and an injected connect
+    When get_pool routes the manifest
+    Then on first contact it creates a connection through connect and caches it, and a seen database reuses the cached one
+    But a manifest naming no database returns an unknown-database fault and leaves the cache unchanged

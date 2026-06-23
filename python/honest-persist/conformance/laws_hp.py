@@ -15,6 +15,7 @@ apply, build fake connections, and feed deliberately-malformed CHECK strings.
 
 import asyncio
 import copy
+import sqlite3
 
 from honest_test import law, verify_laws
 
@@ -792,6 +793,69 @@ def _probe_pool():
     return bad
 
 
+class _SqliteConn:
+    """A real in-memory SQLite connection adapted to persist's duck-typed boundary (§7.4): await to
+    {rows, rowcount}, named params, dict rows. Conformance is not linted, so a fixture class is fine."""
+
+    def __init__(self):
+        self._conn = sqlite3.connect(":memory:")
+        self._conn.row_factory = sqlite3.Row
+
+    async def execute(self, sql, params=None):
+        cursor = self._conn.execute(sql, params or {})
+        return {"rows": [dict(row) for row in cursor.fetchall()], "rowcount": cursor.rowcount}
+
+
+def _probe_pool_registry():
+    """The pool registry (§8.1): create-on-first-contact, cache, and reuse — the cache threaded as a
+    value with an injected connect — exercised end to end against a real in-memory SQLite database."""
+    from honest_persist import empty_pool_registry, execute, get_pool, insert, raw, select
+
+    async def _run():
+        bad = []
+        created = []
+
+        async def connect(selector):
+            created.append(selector["database"])
+            return _SqliteConn()
+
+        registry = empty_pool_registry()
+        if registry != {}:
+            bad.append("empty_pool_registry should be an empty cache")
+
+        # First contact creates the pool and caches it.
+        result, registry = await get_pool(registry, {"db_id": "main"}, connect)
+        if "ok" not in result or created != ["main"]:
+            bad.append(f"first contact should create and return a connection: {result}, {created}")
+        conn = result["ok"]
+
+        # The same database reuses the cached connection; connect is not called again.
+        result2, registry = await get_pool(registry, {"db_id": "main"}, connect)
+        if result2["ok"] is not conn or created != ["main"]:
+            bad.append(f"a seen database should reuse the cached connection: {created}")
+
+        # A different database, and a different credential variant, are each a new pool.
+        _, registry = await get_pool(registry, {"db_id": "other"}, connect)
+        _, registry = await get_pool(registry, {"db_id": "main", "credential": "replica"}, connect)
+        if created != ["main", "other", "main"]:
+            bad.append(f"an unseen database or credential should create a new pool: {created}")
+
+        # A manifest naming no database errs and does not touch the cache.
+        errored, unchanged = await get_pool(registry, {"q": 1}, connect)
+        if errored.get("err", {}).get("code") != "unknown_database" or unchanged is not registry:
+            bad.append(f"a manifest with no database should err and leave the cache: {errored}")
+
+        # End to end against real SQLite: create, insert, and select through the cached connection.
+        await execute(raw("CREATE TABLE t (x integer)"), conn)
+        await execute(insert("t", {"x": 7}), conn)
+        rows = await execute(select("t", ["x"]), conn)
+        if rows != [{"x": 7}]:
+            bad.append(f"persist should round-trip a row through real SQLite: {rows}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -801,6 +865,7 @@ def run():
         "apply": _probe_apply(),
         "instrumented_apply": _probe_instrumented_apply(),
         "pool": _probe_pool(),
+        "pool_registry": _probe_pool_registry(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),
