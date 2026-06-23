@@ -458,3 +458,58 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given a column and a query range
     When range_adjacent builds the condition
     Then it returns a WHERE condition true when the stored range touches the query range at a bound without overlapping, with the bounds as named parameters
+
+  Scenario: _array_table names the junction table for an array column
+    Given a table and an array column name
+    When _array_table builds the name
+    Then it returns the array junction table name for that column
+
+  Scenario: _map_table names the junction table for a map column
+    Given a table and a map column name
+    When _map_table builds the name
+    Then it returns the map junction table name for that column
+
+  Scenario: _owner_type reads the base table's primary-key type
+    Given a table definition
+    When _owner_type reads it
+    Then it returns the primary-key column's type, whether declared on a column or at the table level, falling back to integer when none is declared
+
+  Scenario: _expand_array rewrites an array column to a junction table
+    Given a table, a column name, and an array column declaration
+    When _expand_array expands it
+    Then it removes the base column and generates a junction table of owner_id, ordinal, and value
+
+  Scenario: _expand_map rewrites a map column to a junction table
+    Given a table, a column name, and a map column declaration
+    When _expand_map expands it
+    Then it removes the base column and generates a junction table of owner_id, key, and value
+
+  Scenario: array_append builds an insert into an array junction table
+    Given a table, an array column, an owner, an ordinal, and a value
+    When array_append builds the query
+    Then it returns an INSERT of the owner, ordinal, and value into the array junction table
+
+  Scenario: array_set builds an update of an array junction row
+    Given a table, an array column, an owner, an ordinal, and a value
+    When array_set builds the query
+    Then it returns an UPDATE of the value where the owner and ordinal match
+
+  Scenario: array_remove builds a delete of an array junction row
+    Given a table, an array column, an owner, and an ordinal
+    When array_remove builds the query
+    Then it returns a DELETE of the junction row where the owner and ordinal match
+
+  Scenario: array_reindex closes the gap left by an array removal
+    Given a table, an array column, an owner, and the removed ordinal
+    When array_reindex builds the query
+    Then it returns an UPDATE decrementing the ordinals above the removed position for that owner
+
+  Scenario: map_put builds an insert into a map junction table
+    Given a table, a map column, an owner, a key, and a value
+    When map_put builds the query
+    Then it returns an INSERT of the owner, key, and value into the map junction table
+
+  Scenario: map_remove builds a delete of a map junction row
+    Given a table, a map column, an owner, and a key
+    When map_remove builds the query
+    Then it returns a DELETE of the junction row where the owner and key match

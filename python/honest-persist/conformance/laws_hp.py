@@ -1539,6 +1539,83 @@ def _probe_abstractions():
     return asyncio.run(_run())
 
 
+def _probe_arrays_maps():
+    """Arrays and maps (section 6.4): expand_schema removes an array or map column and generates its
+    junction table — owner_id typed from the base primary key — and the element operations build
+    queries over the junction; a migrated array schema round-trips on real SQLite."""
+    from honest_persist import (
+        array_append,
+        array_reindex,
+        array_remove,
+        array_set,
+        expand_schema,
+        map_put,
+        map_remove,
+        migrate,
+    )
+
+    async def _run():
+        bad = []
+
+        # An array column becomes a junction table; the base column is removed. owner_id takes the
+        # base table's primary-key type (here a text id).
+        schema = {"posts": {"columns": {
+            "id": {"type": "text", "primary_key": True},
+            "tags": {"type": "array", "element_type": "text"},
+        }}}
+        expanded = expand_schema(schema)
+        if set(expanded["posts"]["columns"]) != {"id"}:
+            bad.append(f"expand_schema should remove the array column from the base table: {expanded['posts']}")
+        junction = expanded.get("_hp_array_posts_tags", {}).get("columns", {})
+        if junction.get("owner_id") != {"type": "text", "nullable": False} or junction.get("ordinal") != {"type": "integer", "nullable": False} or junction.get("value") != {"type": "text", "nullable": False}:
+            bad.append(f"expand_schema should generate the array junction table: {junction}")
+
+        # A map column becomes a junction with key/value; owner_id from a table-level primary key.
+        mapped = expand_schema({"u": {"columns": {"uid": {"type": "integer"}, "prefs": {"type": "map", "key_type": "text", "value_type": "text"}}, "primary_key": ["uid"]}})
+        mj = mapped.get("_hp_map_u_prefs", {}).get("columns", {})
+        if mj.get("owner_id") != {"type": "integer", "nullable": False} or mj.get("key") != {"type": "text", "nullable": False}:
+            bad.append(f"expand_schema should generate the map junction from the table primary-key owner type: {mj}")
+
+        # No declared primary key falls back to an integer owner_id.
+        noid = expand_schema({"t": {"columns": {"xs": {"type": "array", "element_type": "integer"}}}})
+        if noid["_hp_array_t_xs"]["columns"]["owner_id"] != {"type": "integer", "nullable": False}:
+            bad.append(f"a junction owner should default to integer with no primary key: {noid}")
+        # A table-level primary key naming no real column also falls back to integer.
+        ghost = expand_schema({"g": {"columns": {"xs": {"type": "array", "element_type": "text"}}, "primary_key": ["ghost"]}})
+        if ghost["_hp_array_g_xs"]["columns"]["owner_id"] != {"type": "integer", "nullable": False}:
+            bad.append(f"a junction owner should default to integer when the primary key names no column: {ghost}")
+
+        # The element operations build queries over the junction table.
+        if array_append("posts", "tags", "p1", 0, "x") != {"sql": "INSERT INTO _hp_array_posts_tags (owner_id, ordinal, value) VALUES (:owner_id, :ordinal, :value)", "params": {"owner_id": "p1", "ordinal": 0, "value": "x"}}:
+            bad.append(f"array_append wrong: {array_append('posts', 'tags', 'p1', 0, 'x')}")
+        if "SET value = :set_value" not in array_set("posts", "tags", "p1", 0, "y")["sql"]:
+            bad.append(f"array_set wrong: {array_set('posts', 'tags', 'p1', 0, 'y')}")
+        if array_remove("posts", "tags", "p1", 0)["sql"] != "DELETE FROM _hp_array_posts_tags WHERE owner_id = :owner_id AND ordinal = :ordinal":
+            bad.append(f"array_remove wrong: {array_remove('posts', 'tags', 'p1', 0)}")
+        if array_reindex("posts", "tags", "p1", 0) != {"sql": "UPDATE _hp_array_posts_tags SET ordinal = ordinal - 1 WHERE owner_id = :owner_id AND ordinal > :removed", "params": {"owner_id": "p1", "removed": 0}}:
+            bad.append(f"array_reindex wrong: {array_reindex('posts', 'tags', 'p1', 0)}")
+        if map_put("posts", "meta", "p1", "k", "v")["sql"] != "INSERT INTO _hp_map_posts_meta (owner_id, key, value) VALUES (:owner_id, :key, :value)":
+            bad.append(f"map_put wrong: {map_put('posts', 'meta', 'p1', 'k', 'v')}")
+        if map_remove("posts", "meta", "p1", "k")["sql"] != "DELETE FROM _hp_map_posts_meta WHERE owner_id = :owner_id AND key = :key":
+            bad.append(f"map_remove wrong: {map_remove('posts', 'meta', 'p1', 'k')}")
+
+        # migrate an array schema to real SQLite: base table + junction created, an element round-trips.
+        conn = _SqliteConn()
+        applied = await migrate(schema, conn, "sqlite")
+        if "ok" not in applied:
+            bad.append(f"migrate should create the base and junction tables: {applied}")
+        else:
+            await conn.execute("INSERT INTO posts (id) VALUES ('p1')")
+            op = array_append("posts", "tags", "p1", 0, "urgent")
+            await conn.execute(op["sql"], op["params"])
+            got = await conn.execute("SELECT value FROM _hp_array_posts_tags WHERE owner_id = 'p1'")
+            if got["rows"][0]["value"] != "urgent":
+                bad.append(f"an appended array element should round-trip: {got}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1559,6 +1636,7 @@ def run():
         "connect_retry": _probe_connect_retry(),
         "migrate": _probe_migrate(),
         "abstractions": _probe_abstractions(),
+        "arrays_maps": _probe_arrays_maps(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

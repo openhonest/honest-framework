@@ -9,8 +9,10 @@ same verification as any hand-written schema. A column's abstraction is recogniz
 ranges (section 6.5); each further abstraction adds an expander to the same table.
 """
 
+from honest_persist.query import delete, insert, update
 
-def _expand_range(table_name, column_name, column):
+
+def _expand_range(table_name, table, column_name, column):
     """A range column (section 6.5) to its `{column}_lower` / `{column}_upper` bound columns and the
     `{column}_lower <= {column}_upper` CHECK. Each bound takes the declared `bound_type` and inherits
     the column's nullability. Returns (columns, constraints, generated_tables). Pure."""
@@ -27,9 +29,54 @@ def _expand_range(table_name, column_name, column):
     return columns, constraints, {}
 
 
+def _array_table(table, column):
+    """The junction table name for an array column (section 6.4). Pure."""
+    return "_hp_array_" + table + "_" + column
+
+
+def _map_table(table, column):
+    """The junction table name for a map column (section 6.4). Pure."""
+    return "_hp_map_" + table + "_" + column
+
+
+def _owner_type(table):
+    """The base table's primary-key type, for a junction's owner reference (section 6.4); integer
+    (the implicit rowid) when no primary key is declared. Pure."""
+    columns = table.get("columns", {})
+    for column in columns.values():
+        if column.get("primary_key"):
+            return column.get("type", "integer")
+    for name in table.get("primary_key", []):
+        if name in columns:
+            return columns[name].get("type", "integer")
+    return "integer"
+
+
+def _expand_array(table_name, table, column_name, column):
+    """An array column (section 6.4) to a junction table of (owner_id, ordinal, value); the base
+    column is removed. Returns (columns, constraints, generated_tables). Pure."""
+    junction = {"columns": {
+        "owner_id": {"type": _owner_type(table), "nullable": False},
+        "ordinal": {"type": "integer", "nullable": False},
+        "value": {"type": column.get("element_type", "text"), "nullable": False},
+    }}
+    return {}, {}, {_array_table(table_name, column_name): junction}
+
+
+def _expand_map(table_name, table, column_name, column):
+    """A map column (section 6.4) to a junction table of (owner_id, key, value); the base column is
+    removed. Returns (columns, constraints, generated_tables). Pure."""
+    junction = {"columns": {
+        "owner_id": {"type": _owner_type(table), "nullable": False},
+        "key": {"type": column.get("key_type", "text"), "nullable": False},
+        "value": {"type": column.get("value_type", "text"), "nullable": False},
+    }}
+    return {}, {}, {_map_table(table_name, column_name): junction}
+
+
 # Each abstraction is recognized by the column's declared `type` and rewritten by its expander
 # (section 6). Expanders return (columns, constraints, generated_tables).
-_EXPANDERS = {"range": _expand_range}
+_EXPANDERS = {"range": _expand_range, "array": _expand_array, "map": _expand_map}
 
 
 def _abstraction_kind(column):
@@ -49,7 +96,7 @@ def _expand_table(table_name, table):
         if kind is None:
             columns[column_name] = column
             continue
-        new_columns, new_constraints, new_tables = _EXPANDERS[kind](table_name, column_name, column)
+        new_columns, new_constraints, new_tables = _EXPANDERS[kind](table_name, table, column_name, column)
         columns.update(new_columns)
         constraints.update(new_constraints)
         generated.update(new_tables)
@@ -99,3 +146,43 @@ def range_adjacent(column, lower, upper):
         "sql": column + "_upper = :" + column + "_adj_l OR " + column + "_lower = :" + column + "_adj_u",
         "params": {column + "_adj_l": lower, column + "_adj_u": upper},
     }
+
+
+def array_append(table, column, owner_id, ordinal, value):
+    """Append an element at `ordinal` to an array column (section 6.4): an INSERT into the junction
+    table. Pure query builder."""
+    return insert(_array_table(table, column), {"owner_id": owner_id, "ordinal": ordinal, "value": value})
+
+
+def array_set(table, column, owner_id, ordinal, value):
+    """Set the element at `ordinal` of an array column (section 6.4): an UPDATE of the junction row.
+    Pure query builder."""
+    return update(_array_table(table, column), {"value": value}, {"owner_id": owner_id, "ordinal": ordinal})
+
+
+def array_remove(table, column, owner_id, ordinal):
+    """Remove the element at `ordinal` of an array column (section 6.4): a DELETE of the junction row.
+    Pair with array_reindex to close the gap. Pure query builder."""
+    return delete(_array_table(table, column), {"owner_id": owner_id, "ordinal": ordinal})
+
+
+def array_reindex(table, column, owner_id, removed_ordinal):
+    """Close the gap a removal leaves in an array column (section 6.4): decrement the ordinals above
+    the removed position. Pure query builder."""
+    junction = _array_table(table, column)
+    return {
+        "sql": "UPDATE " + junction + " SET ordinal = ordinal - 1 WHERE owner_id = :owner_id AND ordinal > :removed",
+        "params": {"owner_id": owner_id, "removed": removed_ordinal},
+    }
+
+
+def map_put(table, column, owner_id, key, value):
+    """Put a key/value entry into a map column (section 6.4): an INSERT into the junction table. Pure
+    query builder."""
+    return insert(_map_table(table, column), {"owner_id": owner_id, "key": key, "value": value})
+
+
+def map_remove(table, column, owner_id, key):
+    """Remove a key from a map column (section 6.4): a DELETE of the junction row. Pure query
+    builder."""
+    return delete(_map_table(table, column), {"owner_id": owner_id, "key": key})

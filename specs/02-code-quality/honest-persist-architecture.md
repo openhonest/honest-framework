@@ -772,14 +772,25 @@ application sees a hierarchy declaration; the relational expansion is honest-per
 
 ### 6.4 Arrays and Maps
 
-A column declared as an array or a map compiles to a **junction table** — one row per
-element (arrays: ordinal + value; maps: key + value) — keyed back to the owning row. This
-keeps the data in first normal form and queryable on every dialect, rather than relying on a
-dialect-specific array or JSON type.
+A column declared as an array — `{ "type": "array", "element_type": "<type>" }` — or a map —
+`{ "type": "map", "key_type": "<type>", "value_type": "<type>" }` — compiles to a **junction
+table**, one row per element, keyed back to the owning row. The column is removed from the base
+table and a generated table takes its place:
 
-honest-persist generates the junction table and the element operations (append, set, remove,
-reindex) as ordinary queries. Dialects with native array or JSON support may specialize the
-generation, but the declared structure and its operations are identical across dialects.
+- Array: `_hp_array_{table}_{column}` with `owner_id` (the owning row's key), `ordinal` (integer
+  position), and `value` (the element type).
+- Map: `_hp_map_{table}_{column}` with `owner_id`, `key` (the key type), and `value` (the value
+  type).
+
+The `owner_id` takes the base table's primary-key type, falling back to integer (the implicit
+rowid) when no primary key is declared. This keeps the data in first normal form and queryable on
+every dialect, rather than relying on a dialect-specific array or JSON type.
+
+The element operations are pure query builders over the junction table, composing the ordinary query
+layer (section 7): `array_append`, `array_set`, `array_remove`, and `array_reindex` for arrays;
+`map_put` and `map_remove` for maps. `array_reindex` closes the gap a removal leaves, decrementing
+the ordinals above the removed position. Dialects with native array or JSON support may specialize
+the generation, but the declared structure and its operations are identical across dialects.
 
 ### 6.5 Ranges
 

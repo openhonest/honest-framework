@@ -4,7 +4,13 @@ Schema as data, migrations as a pure diff, queries as data. I/O only at the boun
 """
 
 from honest_persist.abstractions import (
+    array_append,
+    array_reindex,
+    array_remove,
+    array_set,
     expand_schema,
+    map_put,
+    map_remove,
     range_adjacent,
     range_contains,
     range_overlaps,
@@ -139,6 +145,12 @@ __all__ = [
     "range_overlaps",
     "range_contains",
     "range_adjacent",
+    "array_append",
+    "array_set",
+    "array_remove",
+    "array_reindex",
+    "map_put",
+    "map_remove",
     "empty_write_queue",
     "enqueue_write",
     "merge_pending",

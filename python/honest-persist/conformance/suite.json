@@ -2859,6 +2859,174 @@
      }
     }
    }
+  },
+  {
+   "id": "value-array-append",
+   "value_case": {
+    "function": "array_append",
+    "args": [
+     "posts",
+     "tags",
+     "p1",
+     0,
+     "x"
+    ],
+    "expected": {
+     "sql": "INSERT INTO _hp_array_posts_tags (owner_id, ordinal, value) VALUES (:owner_id, :ordinal, :value)",
+     "params": {
+      "owner_id": "p1",
+      "ordinal": 0,
+      "value": "x"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-array-set",
+   "value_case": {
+    "function": "array_set",
+    "args": [
+     "posts",
+     "tags",
+     "p1",
+     0,
+     "y"
+    ],
+    "expected": {
+     "sql": "UPDATE _hp_array_posts_tags SET value = :set_value WHERE owner_id = :owner_id AND ordinal = :ordinal",
+     "params": {
+      "set_value": "y",
+      "owner_id": "p1",
+      "ordinal": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "value-array-remove",
+   "value_case": {
+    "function": "array_remove",
+    "args": [
+     "posts",
+     "tags",
+     "p1",
+     0
+    ],
+    "expected": {
+     "sql": "DELETE FROM _hp_array_posts_tags WHERE owner_id = :owner_id AND ordinal = :ordinal",
+     "params": {
+      "owner_id": "p1",
+      "ordinal": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "value-array-reindex",
+   "value_case": {
+    "function": "array_reindex",
+    "args": [
+     "posts",
+     "tags",
+     "p1",
+     0
+    ],
+    "expected": {
+     "sql": "UPDATE _hp_array_posts_tags SET ordinal = ordinal - 1 WHERE owner_id = :owner_id AND ordinal > :removed",
+     "params": {
+      "owner_id": "p1",
+      "removed": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "value-map-put",
+   "value_case": {
+    "function": "map_put",
+    "args": [
+     "posts",
+     "meta",
+     "p1",
+     "k",
+     "v"
+    ],
+    "expected": {
+     "sql": "INSERT INTO _hp_map_posts_meta (owner_id, key, value) VALUES (:owner_id, :key, :value)",
+     "params": {
+      "owner_id": "p1",
+      "key": "k",
+      "value": "v"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-map-remove",
+   "value_case": {
+    "function": "map_remove",
+    "args": [
+     "posts",
+     "meta",
+     "p1",
+     "k"
+    ],
+    "expected": {
+     "sql": "DELETE FROM _hp_map_posts_meta WHERE owner_id = :owner_id AND key = :key",
+     "params": {
+      "owner_id": "p1",
+      "key": "k"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-expand-schema-array",
+   "value_case": {
+    "function": "expand_schema",
+    "args": [
+     {
+      "posts": {
+       "columns": {
+        "id": {
+         "type": "text",
+         "primary_key": true
+        },
+        "tags": {
+         "type": "array",
+         "element_type": "text"
+        }
+       }
+      }
+     }
+    ],
+    "expected": {
+     "posts": {
+      "columns": {
+       "id": {
+        "type": "text",
+        "primary_key": true
+       }
+      }
+     },
+     "_hp_array_posts_tags": {
+      "columns": {
+       "owner_id": {
+        "type": "text",
+        "nullable": false
+       },
+       "ordinal": {
+        "type": "integer",
+        "nullable": false
+       },
+       "value": {
+        "type": "text",
+        "nullable": false
+       }
+      }
+     }
+    }
+   }
   }
  ],
  "value_oracle_exempt": [
