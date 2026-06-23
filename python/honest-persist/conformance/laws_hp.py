@@ -1098,6 +1098,90 @@ def _probe_supervisor():
     return asyncio.run(_run())
 
 
+def _probe_drain_loop():
+    """The supervisor's drain loop and durable enqueue (§8.6): enqueue_durable persists the queue on
+    every write so it survives a restart; run_drain_loop retries a failing backend with exponential
+    backoff until it drains, and raises once it has stalled past the limit — driven with an injected
+    clock and sleep against real SQLite and a real temp file."""
+    import tempfile
+
+    from honest_persist import (
+        empty_write_queue,
+        enqueue_durable,
+        enqueue_write,
+        execute,
+        load_queue,
+        raw,
+        run_drain_loop,
+        select,
+    )
+
+    hour = 3600 * 1_000_000_000
+
+    async def _run():
+        bad = []
+
+        # Durable enqueue: every write is persisted, so the queue survives a restart.
+        with tempfile.TemporaryDirectory() as directory:
+            path = directory + "/queue.jsonl"
+            queue = enqueue_durable(empty_write_queue(), "insert", "t", {"id": 1, "name": "a"}, path)
+            if queue != [{"op": "insert", "table": "t", "row": {"id": 1, "name": "a"}}]:
+                bad.append(f"enqueue_durable should return the new queue: {queue}")
+            if load_queue(path) != queue:
+                bad.append("enqueue_durable should persist the queue so it survives a restart")
+
+        conn = _SqliteConn()
+        await execute(raw("CREATE TABLE t (id integer primary key, name text)"), conn)
+        queue = enqueue_write(empty_write_queue(), "insert", "t", {"id": 1, "name": "a"})
+
+        # run_drain_loop retries a failing-then-succeeding backend, sleeping the exponential backoff.
+        attempts = {"n": 0}
+
+        async def flaky(query, connection):
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise RuntimeError("transient")
+            await execute(query, connection)
+
+        slept = []
+
+        async def sleep(milliseconds):
+            slept.append(milliseconds)
+
+        ticks = {"t": 0}
+
+        def now():
+            ticks["t"] += 1
+            return ticks["t"]
+
+        drained = await run_drain_loop(queue, conn, flaky, "id", 10, now, sleep, None)
+        if drained != [] or attempts["n"] != 3 or slept != [20, 40]:
+            bad.append(f"run_drain_loop should retry with exponential backoff until it drains: {attempts}, {slept}")
+        if await execute(select("t", ["id", "name"]), conn) != [{"id": 1, "name": "a"}]:
+            bad.append("the write should reach the backend once the loop drains")
+
+        # A perpetually failing backend, with the clock past the limit, stalls and raises.
+        async def always_fail(query, connection):
+            raise RuntimeError("backend down")
+
+        jumps = {"t": 0}
+
+        def jump_now():
+            jumps["t"] += 7 * hour
+            return jumps["t"]
+
+        raised = False
+        try:
+            await run_drain_loop(queue, conn, always_fail, "id", 10, jump_now, sleep, None)
+        except RuntimeError:
+            raised = True
+        if not raised:
+            bad.append("a perpetually failing drain loop should eventually stall and raise")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1113,6 +1197,7 @@ def run():
         "pool_events": _probe_pool_events(),
         "write_queue": _probe_write_queue(),
         "supervisor": _probe_supervisor(),
+        "drain_loop": _probe_drain_loop(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

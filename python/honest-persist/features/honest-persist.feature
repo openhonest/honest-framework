@@ -330,6 +330,17 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Then a successful drain clears the queue and resets the failure clock, and a failure keeps the queue and starts the clock
     But once it has been failing past the limit it emits queue_stalled and raises the fault, never discarding the writes
 
+  Scenario: enqueue_durable appends a write and persists the queue
+    Given a write queue, an operation, a table, a row, and the queue's file path
+    When enqueue_durable appends the write
+    Then it returns the new queue and persists it to the file, so the write survives a restart before it reaches the backend
+
+  Scenario: run_drain_loop drains the queue in the background, retrying with backoff
+    Given a write queue, a connection, an injected execute, the primary key, a base delay, an injected clock and sleep, and an injected emit
+    When run_drain_loop drains the queue
+    Then it retries a failing backend, sleeping the exponential backoff between attempts, until the queue drains
+    But a queue that keeps failing past the limit stalls and raises the fault
+
   Scenario: is_idle reports whether a pool has been idle past the threshold
     Given a pool's last-used time, the current time, and an idle threshold
     When is_idle checks it

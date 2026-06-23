@@ -15,7 +15,7 @@ logging a swallowed emit are boundary behaviours, so HC-P004/P002 are disabled f
 import sys
 from pathlib import Path
 
-from honest_persist.queue import drain_queue, is_stalled, queue_from_jsonl, queue_to_jsonl
+from honest_persist.queue import backoff_delay, drain_queue, enqueue_write, is_stalled, queue_from_jsonl, queue_to_jsonl
 
 
 def save_queue(queue, path):
@@ -59,3 +59,26 @@ async def supervise_drain(queue, conn, execute, primary_key, now_ns, first_failu
             raise
         return queue, started, False
     return drained, None, True
+
+
+def enqueue_durable(queue, op, table, row, path):
+    """Append a pending write and persist the queue to its JSONL file (section 8.6), so the write
+    survives a restart before it has reached the backend. Returns the new queue. I/O."""
+    new_queue = enqueue_write(queue, op, table, row)
+    save_queue(new_queue, path)
+    return new_queue
+
+
+async def run_drain_loop(queue, conn, execute, primary_key, base_ms, now, sleep, emit):
+    """Drain the queue in the background, retrying a failing backend with exponential backoff until it
+    drains or stalls (section 8.6). `now` reads the clock and `sleep` waits, both injected so the loop
+    is testable; supervise_drain raises once the queue has failed past the limit. Returns the drained
+    (empty) queue. I/O."""
+    first_failure = None
+    attempt = 0
+    while True:
+        queue, first_failure, drained = await supervise_drain(queue, conn, execute, primary_key, now(), first_failure, emit)
+        if drained:
+            return queue
+        attempt += 1
+        await sleep(backoff_delay(attempt, base_ms))

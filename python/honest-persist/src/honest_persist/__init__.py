@@ -26,7 +26,7 @@ from honest_persist.queue import (
     queue_from_jsonl,
     queue_to_jsonl,
 )
-from honest_persist.supervisor import load_queue, save_queue, supervise_drain
+from honest_persist.supervisor import enqueue_durable, load_queue, run_drain_loop, save_queue, supervise_drain
 from honest_persist.query import (
     checked_delete,
     checked_insert,
@@ -122,4 +122,6 @@ __all__ = [
     "save_queue",
     "load_queue",
     "supervise_drain",
+    "enqueue_durable",
+    "run_drain_loop",
 ]

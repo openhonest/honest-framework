@@ -150,6 +150,8 @@
     {"function": "drain_queue", "reason": "Async I/O boundary: persists each pending write to the backend through the injected execute. Verified by its own conformance probe against SQLite."},
     {"function": "save_queue", "reason": "I/O boundary: writes the queue's JSONL form to its file. Verified by its own conformance probe."},
     {"function": "load_queue", "reason": "I/O boundary: reads the queue from its JSONL file. Verified by its own conformance probe."},
-    {"function": "supervise_drain", "reason": "Async I/O boundary: drains the queue through the injected execute, emits and raises on stall. Verified by its own conformance probe."}
+    {"function": "supervise_drain", "reason": "Async I/O boundary: drains the queue through the injected execute, emits and raises on stall. Verified by its own conformance probe."},
+    {"function": "enqueue_durable", "reason": "I/O boundary: appends a write and persists the queue to its JSONL file. Verified by its own conformance probe."},
+    {"function": "run_drain_loop", "reason": "Async I/O boundary: drains the queue in the background, retrying with backoff through the injected clock and sleep. Verified by its own conformance probe."}
   ]
 }
