@@ -289,6 +289,47 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When drain_queue drains the queue
     Then it persists each pending write to the backend through execute, in order, and returns the empty queue
 
+  Scenario: queue_to_jsonl renders the write queue to its durable JSONL form
+    Given a write queue
+    When queue_to_jsonl renders it
+    Then it returns one JSON object per pending write, the form that survives a restart
+
+  Scenario: queue_from_jsonl parses a write queue from its JSONL form
+    Given the JSONL form of a write queue
+    When queue_from_jsonl parses it
+    Then it returns the pending writes, ignoring blank lines
+
+  Scenario: backoff_delay computes the exponential backoff before the next retry
+    Given an attempt number and a base delay
+    When backoff_delay computes the delay
+    Then it returns the base delay doubled per attempt
+
+  Scenario: is_stalled reports whether the queue has been failing past the limit
+    Given the time of the first failure and the current time
+    When is_stalled checks it
+    Then it is true once the queue has been failing past the six-hour limit
+
+  Scenario: save_queue persists the write queue to its JSONL file
+    Given a write queue and a file path
+    When save_queue saves it
+    Then it writes the queue's JSONL form to the file so pending writes survive a restart
+
+  Scenario: load_queue loads the write queue from its JSONL file
+    Given a file path
+    When load_queue loads it
+    Then it returns the queue parsed from the file, or an empty queue when the file does not exist
+
+  Scenario: _emit_queue_stalled emits the queue-stalled event through the injected emit
+    Given the injected emit, the queue depth, and how long it has stalled
+    When _emit_queue_stalled emits it
+    Then it sends one hf.persist.queue_stalled event, but a failing emit is logged and swallowed and no emit means no event
+
+  Scenario: supervise_drain drains the queue with retry, stalling past the limit
+    Given a write queue, a connection, an injected execute, the primary key, the times, and an injected emit
+    When supervise_drain attempts the drain
+    Then a successful drain clears the queue and resets the failure clock, and a failure keeps the queue and starts the clock
+    But once it has been failing past the limit it emits queue_stalled and raises the fault, never discarding the writes
+
   Scenario: is_idle reports whether a pool has been idle past the threshold
     Given a pool's last-used time, the current time, and an idle threshold
     When is_idle checks it

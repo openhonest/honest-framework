@@ -125,7 +125,12 @@
     {"id": "value-empty-write-queue", "value_case": {"function": "empty_write_queue", "args": [], "expected": []}},
     {"id": "value-enqueue-write", "value_case": {"function": "enqueue_write", "args": [[], "insert", "t", {"id": 1, "name": "a"}], "expected": [{"op": "insert", "table": "t", "row": {"id": 1, "name": "a"}}]}},
     {"id": "value-merge-pending-insert", "value_case": {"function": "merge_pending", "args": [[{"id": 1, "name": "a"}], [{"op": "insert", "table": "t", "row": {"id": 2, "name": "b"}}], "t", "id"], "expected": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]}},
-    {"id": "value-merge-pending-delete", "value_case": {"function": "merge_pending", "args": [[{"id": 1, "name": "a"}], [{"op": "delete", "table": "t", "row": {"id": 1, "name": "a"}}], "t", "id"], "expected": []}}
+    {"id": "value-merge-pending-delete", "value_case": {"function": "merge_pending", "args": [[{"id": 1, "name": "a"}], [{"op": "delete", "table": "t", "row": {"id": 1, "name": "a"}}], "t", "id"], "expected": []}},
+    {"id": "value-queue-to-jsonl", "value_case": {"function": "queue_to_jsonl", "args": [[{"op": "insert", "table": "t", "row": {"id": 1}}]], "expected": "{\"op\": \"insert\", \"table\": \"t\", \"row\": {\"id\": 1}}"}},
+    {"id": "value-queue-from-jsonl", "value_case": {"function": "queue_from_jsonl", "args": ["{\"op\": \"insert\", \"table\": \"t\", \"row\": {\"id\": 1}}"], "expected": [{"op": "insert", "table": "t", "row": {"id": 1}}]}},
+    {"id": "value-backoff-delay", "value_case": {"function": "backoff_delay", "args": [3, 100], "expected": 800}},
+    {"id": "value-is-stalled-true", "value_case": {"function": "is_stalled", "args": [0, 25200000000000], "expected": true}},
+    {"id": "value-is-stalled-false", "value_case": {"function": "is_stalled", "args": [0, 3600000000000], "expected": false}}
   ],
   "value_oracle_exempt": [
     {"function": "diff", "reason": "Its dependency map is keyed by non-string keys, which cannot round-trip a JSON value contract."},
@@ -142,6 +147,9 @@
     {"function": "reap_idle", "reason": "Async I/O boundary: closes idle on_demand connections through the injected close and threads the pool cache. Verified by its own conformance probe."},
     {"function": "recreate_ephemeral", "reason": "Async I/O boundary: connects and applies the target schema for each ephemeral database at startup. Verified by its own conformance probe against SQLite."},
     {"function": "emit_pool_event", "reason": "Async I/O boundary: emits a pool lifecycle event through the injected emit, swallowing failures. Verified by its own conformance probe."},
-    {"function": "drain_queue", "reason": "Async I/O boundary: persists each pending write to the backend through the injected execute. Verified by its own conformance probe against SQLite."}
+    {"function": "drain_queue", "reason": "Async I/O boundary: persists each pending write to the backend through the injected execute. Verified by its own conformance probe against SQLite."},
+    {"function": "save_queue", "reason": "I/O boundary: writes the queue's JSONL form to its file. Verified by its own conformance probe."},
+    {"function": "load_queue", "reason": "I/O boundary: reads the queue from its JSONL file. Verified by its own conformance probe."},
+    {"function": "supervise_drain", "reason": "Async I/O boundary: drains the queue through the injected execute, emits and raises on stall. Verified by its own conformance probe."}
   ]
 }

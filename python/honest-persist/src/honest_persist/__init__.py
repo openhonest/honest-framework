@@ -16,7 +16,17 @@ from honest_persist.pool import (
     recreate_ephemeral,
     resolve_pool_key,
 )
-from honest_persist.queue import drain_queue, empty_write_queue, enqueue_write, merge_pending
+from honest_persist.queue import (
+    backoff_delay,
+    drain_queue,
+    empty_write_queue,
+    enqueue_write,
+    is_stalled,
+    merge_pending,
+    queue_from_jsonl,
+    queue_to_jsonl,
+)
+from honest_persist.supervisor import load_queue, save_queue, supervise_drain
 from honest_persist.query import (
     checked_delete,
     checked_insert,
@@ -105,4 +115,11 @@ __all__ = [
     "enqueue_write",
     "merge_pending",
     "drain_queue",
+    "queue_to_jsonl",
+    "queue_from_jsonl",
+    "backoff_delay",
+    "is_stalled",
+    "save_queue",
+    "load_queue",
+    "supervise_drain",
 ]

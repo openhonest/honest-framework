@@ -1024,6 +1024,80 @@ def _probe_write_queue():
     return asyncio.run(_run())
 
 
+def _probe_supervisor():
+    """Durability + the supervised drain (§8.6): the queue survives a restart through its JSONL file,
+    and supervise_drain drains with retry, raising and emitting queue_stalled only once it has been
+    failing past the six-hour limit — driven against a real temp file and real SQLite."""
+    import tempfile
+
+    from honest_persist import (
+        backoff_delay,
+        empty_write_queue,
+        enqueue_write,
+        execute,
+        load_queue,
+        raw,
+        save_queue,
+        supervise_drain,
+    )
+
+    hour = 3600 * 1_000_000_000
+
+    async def _run():
+        bad = []
+        if backoff_delay(0, 100) != 100 or backoff_delay(3, 100) != 800:
+            bad.append("backoff_delay should double the base per attempt")
+
+        # Durability: a missing file is empty; save then load round-trips the queue through JSONL.
+        writes = enqueue_write(enqueue_write(empty_write_queue(), "insert", "t", {"id": 1, "name": "a"}), "delete", "t", {"id": 2, "name": "b"})
+        with tempfile.TemporaryDirectory() as directory:
+            path = directory + "/queue.jsonl"
+            if load_queue(path) != []:
+                bad.append("loading a missing queue file should give an empty queue")
+            save_queue(writes, path)
+            if load_queue(path) != writes:
+                bad.append("the queue should survive a save/load round-trip through JSONL")
+
+        # A successful supervised drain against SQLite clears the queue and resets the failure clock.
+        conn = _SqliteConn()
+        await execute(raw("CREATE TABLE t (id integer primary key, name text)"), conn)
+        insert_only = enqueue_write(empty_write_queue(), "insert", "t", {"id": 1, "name": "a"})
+        drained, failure, ok_first = await supervise_drain(insert_only, conn, execute, "id", 0, None, None)
+        if not ok_first or drained != [] or failure is not None:
+            bad.append(f"a successful drain should clear the queue and reset the clock: {drained}, {failure}, {ok_first}")
+
+        async def boom(query, connection):
+            raise RuntimeError("backend down")
+
+        # A failing drain keeps the queue and starts the failure clock, not yet stalled.
+        kept, started, ok_fail = await supervise_drain(insert_only, conn, boom, "id", 100, None, None)
+        if ok_fail or kept != insert_only or started != 100:
+            bad.append(f"a failed drain should keep the queue and start the clock: {kept}, {started}, {ok_fail}")
+
+        # Past six hours it emits queue_stalled and raises; a no-op emit and a failing emit are both fine.
+        events = []
+
+        async def emit(event_type, aggregate_type, aggregate_id, payload):
+            events.append(event_type)
+
+        async def emit_down(event_type, aggregate_type, aggregate_id, payload):
+            raise ValueError("emit is down")
+
+        for sink, label in ((emit, "emit"), (None, "no emit"), (emit_down, "failing emit")):
+            raised = False
+            try:
+                await supervise_drain(insert_only, conn, boom, "id", 7 * hour, 0, sink)
+            except RuntimeError:
+                raised = True
+            if not raised:
+                bad.append(f"a stalled queue should still raise the fault with {label}")
+        if "hf.persist.queue_stalled" not in events:
+            bad.append("a stalled queue should emit hf.persist.queue_stalled")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1038,6 +1112,7 @@ def run():
         "ephemeral": _probe_ephemeral(),
         "pool_events": _probe_pool_events(),
         "write_queue": _probe_write_queue(),
+        "supervisor": _probe_supervisor(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

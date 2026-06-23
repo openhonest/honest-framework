@@ -10,12 +10,39 @@ detection are the I/O layer on top; everything here is the pure data core plus t
 so this file needs no linter directives.
 """
 
+import json
+
 from honest_persist.query import delete, insert, update
+
+# Six hours: the limit a stalled queue may fail for before its fault is raised (section 8.6).
+STALL_NS = 6 * 3600 * 1_000_000_000
 
 
 def empty_write_queue():
     """An empty write queue (section 8.6): the pending writes, held as a value."""
     return []
+
+
+def queue_to_jsonl(queue):
+    """The write queue as JSONL (section 8.6): one JSON object per pending write — the durable form
+    that survives a restart. Pure."""
+    return "\n".join(json.dumps(write) for write in queue)
+
+
+def queue_from_jsonl(text):
+    """Parse a write queue from its JSONL form (section 8.6). Pure; blank lines are ignored."""
+    return [json.loads(line) for line in text.splitlines() if line]
+
+
+def backoff_delay(attempt, base_ms):
+    """The exponential backoff before the next retry (section 8.6): the base delay doubled per
+    attempt. Pure."""
+    return base_ms * (2 ** attempt)
+
+
+def is_stalled(first_failure_ns, now_ns):
+    """True once the write queue has been failing past the six-hour limit (section 8.6). Pure."""
+    return (now_ns - first_failure_ns) >= STALL_NS
 
 
 def enqueue_write(queue, op, table, row):
