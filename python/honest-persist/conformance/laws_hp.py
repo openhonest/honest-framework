@@ -1760,6 +1760,98 @@ def _probe_enums():
     return asyncio.run(_run())
 
 
+def _probe_loader():
+    """The Pydantic schema loader (section 2): @table-decorated BaseModel subclasses load to a Schema
+    — field types mapped to abstract SQL types, Optional to nullability, Literal to enum values, Field
+    metadata and defaults to column attributes, and a Meta inner class to a composite primary key,
+    indexes, and constraints — and the loaded schema migrates to real SQLite."""
+    from datetime import datetime
+    from pathlib import Path
+    from typing import Literal
+
+    from pydantic import BaseModel, Field
+
+    from honest_persist import migrate
+    from honest_persist.loader import load_schema_from_models, table
+
+    @table("items")
+    class Item(BaseModel):
+        id: int = Field(json_schema_extra={"primary": True})
+        name: str = Field(json_schema_extra={"unique": True})
+        owner: str = Field(json_schema_extra={"references": "users.value", "on_delete": "cascade"})
+        status: Literal["a", "b"] = Field(json_schema_extra={"check": "status <> ''"})
+        qty: int = Field(default=5)
+        label: str = Field(default="x")
+        active: bool = Field(default=True)
+        ratio: float = Field(default=1.5)
+        note: str | None = None
+        flag: bool = Field(json_schema_extra={"nullable": True})
+        when: datetime | None = None
+        loc: Path | None = None
+        tag: str = Field(json_schema_extra={"default": "'none'"})
+        _internal: int = 0
+
+    @table("memberships")
+    class Membership(BaseModel):
+        user_id: int = Field(json_schema_extra={"primary": True})
+        group_id: int = Field(json_schema_extra={"primary": True})
+
+        class Meta:
+            primary_key = ["user_id", "group_id"]
+            indexes = {"by_group": {"columns": ["group_id"]}}
+            constraints = {"uniq": {"type": "unique", "columns": ["user_id", "group_id"]}}
+
+    @table("widgets")
+    class Widget(BaseModel):
+        id: int = Field(json_schema_extra={"primary": True})
+        label: str = Field(default="hi")
+
+    bad = []
+    cols = load_schema_from_models(Item)["items"]["columns"]
+    expected = {
+        "id": {"type": "integer", "nullable": False, "primary_key": True},
+        "name": {"type": "text", "nullable": False, "unique": True},
+        "owner": {"type": "text", "nullable": False, "references": "users.value", "on_delete": "cascade"},
+        "status": {"type": "text", "nullable": False, "literal_values": ["a", "b"], "check": "status <> ''"},
+        "qty": {"type": "integer", "nullable": False, "default": "5"},
+        "label": {"type": "text", "nullable": False, "default": "'x'"},
+        "active": {"type": "boolean", "nullable": False, "default": "TRUE"},
+        "ratio": {"type": "real", "nullable": False, "default": "1.5"},
+        "note": {"type": "text", "nullable": True},
+        "flag": {"type": "boolean", "nullable": True},
+        "when": {"type": "timestamptz", "nullable": True},
+        "loc": {"type": "text", "nullable": True},
+        "tag": {"type": "text", "nullable": False, "default": "'none'"},
+    }
+    if set(cols) != set(expected):
+        bad.append(f"loader should map every public field and skip private ones: {sorted(cols)}")
+    for field_name, exp in expected.items():
+        if cols.get(field_name) != exp:
+            bad.append(f"loader column {field_name}: got {cols.get(field_name)}, expected {exp}")
+
+    membership = load_schema_from_models(Membership)["memberships"]
+    if membership.get("primary_key") != ["user_id", "group_id"]:
+        bad.append(f"a Meta composite primary key should become the table primary key: {membership}")
+    if "primary_key" in membership["columns"]["user_id"]:
+        bad.append("a composite primary key should clear the per-column primary_key flags")
+    if membership.get("indexes") != {"by_group": {"columns": ["group_id"]}} or membership.get("constraints") != {"uniq": {"type": "unique", "columns": ["user_id", "group_id"]}}:
+        bad.append(f"a Meta should carry indexes and constraints: {membership}")
+
+    async def _run():
+        conn = _SqliteConn()
+        applied = await migrate(load_schema_from_models(Widget), conn, "sqlite")
+        if "ok" not in applied:
+            bad.append(f"a loaded schema should migrate: {applied}")
+        else:
+            await conn.execute("INSERT INTO widgets (id) VALUES (1)")
+            got = await conn.execute("SELECT label FROM widgets WHERE id = 1")
+            if got["rows"][0]["label"] != "hi":
+                bad.append(f"the loaded column default should apply on migrate: {got}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1783,6 +1875,7 @@ def run():
         "arrays_maps": _probe_arrays_maps(),
         "hierarchy": _probe_hierarchy(),
         "enums": _probe_enums(),
+        "loader": _probe_loader(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

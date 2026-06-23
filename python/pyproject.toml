@@ -21,3 +21,9 @@ branch = true
 [tool.coverage.report]
 precision = 2
 show_missing = true
+
+# The Pydantic schema loader (section 2) is an optional, Python-specific adapter — not part of the
+# pure core. Pydantic lives in the dev group so the loader's conformance runs under the gate; an
+# adopter opts in via the honest-persist[pydantic] extra. The pure core never imports it.
+[dependency-groups]
+dev = ["pydantic>=2"]

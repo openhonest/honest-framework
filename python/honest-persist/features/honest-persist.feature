@@ -563,3 +563,78 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given an expanded schema and a dialect
     When enum_seed_queries builds the inserts
     Then it returns one insert-or-ignore per seed row in the dialect's ignore form, so re-running adds new values without disturbing existing rows
+
+  Scenario: table marks a Pydantic model as a named table
+    Given a table name
+    When table decorates a model
+    Then it sets the model's table name and returns the model unchanged
+
+  Scenario: _is_optional detects an Optional annotation
+    Given a type annotation
+    When _is_optional checks it
+    Then it is true when the annotation is a union that includes None
+
+  Scenario: _unwrap_optional returns the non-None member of an Optional
+    Given a type annotation
+    When _unwrap_optional unwraps it
+    Then it returns the non-None member of an Optional, or the annotation unchanged
+
+  Scenario: _is_literal detects a Literal annotation
+    Given a type annotation
+    When _is_literal checks it
+    Then it is true when the annotation is a Literal
+
+  Scenario: _literal_values reads the members of a Literal
+    Given a Literal annotation
+    When _literal_values reads it
+    Then it returns the Literal's members as strings
+
+  Scenario: _sql_type maps a Python annotation to an abstract SQL type
+    Given a Python type annotation
+    When _sql_type maps it
+    Then it returns the abstract SQL type for the Python type or its name, defaulting to text when unknown
+
+  Scenario: _quoted renders a string default as a SQL literal
+    Given a string default value
+    When _quoted renders it
+    Then it returns the value as a quoted SQL string literal
+
+  Scenario: _boolean renders a boolean default as a SQL literal
+    Given a boolean default value
+    When _boolean renders it
+    Then it returns TRUE or FALSE
+
+  Scenario: _numeric renders a numeric default as a SQL literal
+    Given a numeric default value
+    When _numeric renders it
+    Then it returns the number as its string form
+
+  Scenario: _default_sql renders a Python default to its SQL literal
+    Given a Python default value
+    When _default_sql renders it
+    Then it dispatches on the value's type to its SQL literal, or returns nothing for a type with no literal form
+
+  Scenario: _field_meta reads a Pydantic field's declared metadata
+    Given a Pydantic field
+    When _field_meta reads it
+    Then it returns the json_schema_extra keys and the field's default when it has one
+
+  Scenario: _column_from_field builds a column from a Pydantic field
+    Given a field annotation and its field info
+    When _column_from_field builds the column
+    Then it sets the SQL type, nullability, Literal values, and the declared metadata and default
+
+  Scenario: _table_extras reads a model's Meta inner class
+    Given a model and its columns
+    When _table_extras reads the Meta
+    Then it adds a composite primary key clearing the per-column flags, and any indexes and constraints
+
+  Scenario: _model_to_table converts a Pydantic model to a table
+    Given a table-decorated Pydantic model
+    When _model_to_table converts it
+    Then it returns the table name and a table of columns from the model's public fields, with string annotations resolved
+
+  Scenario: load_schema_from_models reads Pydantic models to a schema
+    Given one or more table-decorated Pydantic models
+    When load_schema_from_models reads them
+    Then it returns a schema mapping each table name to its table definition, purely and with no I/O

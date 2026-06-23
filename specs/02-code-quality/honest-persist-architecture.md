@@ -74,9 +74,14 @@ the idiomatic type or model system of the host language and produces a
 integrates naturally into each language's existing ecosystem.
 
 **Python:** The reference implementation reads from Pydantic `BaseModel`
-subclasses decorated with `@table`. Field types, `Literal` annotations,
-and `field()` metadata translate directly to `Column` definitions. The
-loader is `load_schema_from_models()`.
+subclasses decorated with `@table(name)`. Field types, `Literal` annotations,
+and `Field(json_schema_extra=...)` metadata translate directly to `Column`
+definitions; an inner `Meta` class carries a composite primary key, indexes, and
+constraints. The loader is `load_schema_from_models(*models)`, a pure function
+taking the model classes. It is an **optional adapter** — Pydantic is never a
+dependency of the pure core; an adopter installs `honest-persist[pydantic]` and
+imports the loader from `honest_persist.loader`. A hand-written `Schema` dict
+needs none of it (section 2.2).
 
 Other languages have equivalent idiomatic sources:
 
