@@ -984,6 +984,53 @@ On receiving a manifest with a `db_id` or `tenant_id` it has not seen before,
 persist creates the pool, caches it, and serves the request. No caller action
 required.
 
+### 8.1.1 Why this is worth pausing on: a pool with no hidden state
+
+A connection pool is the textbook case of hidden, shared, mutable state. The
+usual version is a long-lived object that everything reaches into: it keeps a
+private cache of open connections, its methods quietly change that cache, and no
+caller can see what is inside or in what order things happened. That is precisely
+the shape the Honest Framework forbids: no Big State, no hidden mutation, no
+object whose methods rewrite their own innards. So an honest connection pool
+looks, at first, impossible.
+
+It is not, and the way out is instructive. The pool is split into three plain
+pieces:
+
+- **The routing is a pure function.** Deciding which pool a manifest wants is
+  data in, data out (section 8.1). No state is touched and no I/O is performed.
+- **The cache is an ordinary value, passed in and handed back.** It is not a
+  field on an object or a module-level global. It is a plain map the caller
+  passes in and receives back, updated, next to the result. The state is visible
+  and explicit at every step, never lurking out of sight.
+- **The only real I/O is a single injected function.** Opening a connection is
+  the one impure act, and the framework never performs it: the adopter supplies a
+  `connect` function for their driver. The framework imports no database driver
+  at all.
+
+Two things follow, and they are the point.
+
+First, there is nothing hidden to corrupt. This is the bug category the design
+eliminates, and it is the worst one a pool can have: two requests stepping on a
+shared cache, a connection handed out twice, behaviour that depends on invisible
+history. When the cache is a value you hold and pass forward, there is no shared,
+hidden thing for one code path to mutate behind another's back. The state is
+yours, named, on every line.
+
+Second, it is testable against a real database with no mocks. Because the one I/O
+seam is the injected `connect`, you can hand in a real driver, even a small
+in-memory database such as SQLite, and drive the whole pool and the query path
+above it against a genuine database: create a table, insert a row, read it back,
+and check the actual value returned. There are no mock connections to write and
+no fakes to drift from how the real thing behaves.
+
+The lesson reaches past pools. Anything that seems to require a stateful,
+I/O-heavy object, a pool or a cache or a session store, can be built the same
+way: a pure decision in the middle, the state threaded through as a value, and
+the I/O pushed to one injected seam at the edge. The pool is just the sharpest
+example, because it is the component everyone expects to be impossible to do
+honestly.
+
 ### 8.2 Pool Lifecycle Variants
 
 A manifest key named `db_lifecycle` controls how persist treats the database

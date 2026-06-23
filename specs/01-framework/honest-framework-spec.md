@@ -38,6 +38,8 @@ This led to Honest Code, the second pillar of the Honest Framework.
 
 Every layer (HTTP boundary, type system, persistence, UI) is built on the same principle: pure functions in, data out, state only where it is declared, owned, and visible. No hidden state. No undifferentiated state. No duplicate truth.
 
+For a worked example of this principle taken to its hardest case — the connection pool, the textbook home of hidden, shared, mutable state — see honest-persist §8.1.1. The pattern it shows is general: a pure decision in the middle, the state threaded through as a plain value, and the I/O pushed to a single injected seam at the edge. The payoff is that even the component everyone expects to require hidden state becomes readable, race-free, and testable against a real database with no mocks.
+
 ---
 
 ## The Third Pillar: Architecture-First IDE
