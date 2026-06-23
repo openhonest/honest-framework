@@ -130,17 +130,6 @@ async def lease_connection(pool, db_id, emit):
     return result, pool
 
 
-async def open_pool(db_id, connect, size, emit):
-    """Open a pool of `size` connections through the injected `connect`, emitting a `created` event
-    (section 8.1, 8.8). I/O."""
-    connections = []
-    for _ in range(size):
-        connections.append(await connect({"database": db_id}))
-    pool = new_pool(connections)
-    await emit_pool_event(emit, db_id, "created", size, 0, 0, None, None, None)
-    return pool
-
-
 async def close_pool(pool, db_id, close, emit):
     """Close every idle connection in the pool through the injected `close`, emitting a `closed`
     event (section 8.8). I/O."""

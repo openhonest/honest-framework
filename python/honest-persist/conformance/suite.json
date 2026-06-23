@@ -2853,7 +2853,7 @@
   },
   {
    "function": "open_pool",
-   "reason": "An I/O boundary: connects N times through the injected connect and emits a created event; verified against real SQLite in the law probe."
+   "reason": "An I/O boundary: establishes each connection through connect_with_retry, closing any already opened if a later one fails, and emits a created event; verified against real SQLite in the connection-pool law probe."
   },
   {
    "function": "close_pool",

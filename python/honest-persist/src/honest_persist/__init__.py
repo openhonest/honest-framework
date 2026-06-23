@@ -4,7 +4,7 @@ Schema as data, migrations as a pure diff, queries as data. I/O only at the boun
 """
 
 from honest_persist.apply import apply, reconstruction_sql, requires_reconstruction, to_sql
-from honest_persist.connect import connect_with_retry
+from honest_persist.connect import connect_with_retry, open_pool
 from honest_persist.check import check_holds, parse_check
 from honest_persist.execute import execute, execute_many, execute_one, execute_scalar
 from honest_persist.instrumented import emit_pool_event, instrumented_execute
@@ -17,7 +17,6 @@ from honest_persist.pool import (
     is_idle,
     lease_connection,
     new_pool,
-    open_pool,
     reap_idle,
     recreate_ephemeral,
     release_connection,

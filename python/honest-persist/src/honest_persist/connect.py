@@ -21,7 +21,7 @@ from honest_type import err, ok
 
 from honest_persist.instrument import pool_fault
 from honest_persist.instrumented import emit_pool_event
-from honest_persist.pool import should_retry
+from honest_persist.pool import new_pool, should_retry
 from honest_persist.queue import backoff_delay
 
 
@@ -46,3 +46,21 @@ async def connect_with_retry(selector, connect, classify, retries, base_ms, slee
             else:
                 await emit_pool_event(emit, db_id, "error", 0, 0, 0, None, code, str(exc))
                 return err(pool_fault(code, str(exc)))
+
+
+async def open_pool(db_id, connect, classify, close, size, retries, base_ms, sleep, emit):
+    """Open a pool of `size` connections, each established resiliently through `connect_with_retry`
+    (section 8.1, 8.8). A `created` event fires once every connection is open. If any connection
+    cannot be established, the connections already opened are closed through the injected `close` so
+    none leak, and the establishment fault is returned. Returns ok(pool) or err(fault). I/O."""
+    opened = []
+    for _ in range(size):
+        result = await connect_with_retry({"database": db_id}, connect, classify, retries, base_ms, sleep, emit)
+        if "err" in result:
+            for connection in opened:
+                await close(connection)
+            return result
+        opened.append(result["ok"])
+    pool = new_pool(opened)
+    await emit_pool_event(emit, db_id, "created", size, 0, 0, None, None, None)
+    return ok(pool)

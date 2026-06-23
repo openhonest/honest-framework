@@ -377,10 +377,11 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When lease_connection leases a connection
     Then it returns the acquire result, emitting one exhausted pool event only when every connection is in use
 
-  Scenario: open_pool opens N connections and emits created
-    Given a db_id, an injected connect, a size, and an injected emit
+  Scenario: open_pool opens N connections resiliently and emits created
+    Given a db_id, an injected connect, a pure classify, an injected close, a size, a retry budget, a base delay, an injected sleep, and an injected emit
     When open_pool opens the pool
-    Then it connects size times through connect and emits one created pool event
+    Then it establishes each connection through connect_with_retry and emits one created pool event once the whole pool is open
+    But if a connection cannot be established it closes the ones already opened, so none leak, and returns the establishment fault
 
   Scenario: close_pool closes the idle connections and emits closed
     Given a pool, a db_id, an injected close, and an injected emit

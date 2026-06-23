@@ -1184,9 +1184,10 @@ def _probe_drain_loop():
 
 def _probe_connection_pool():
     """The multi-connection pool (§8.1, 8.3, 8.8): new_pool / acquire / release manage N connections
-    as a value — acquire faults pool_exhausted when every one is in use; open_pool connects N and
-    emits created, lease emits exhausted on a full pool, close emits closed — open and close driven
-    against real SQLite connections."""
+    as a value — acquire faults pool_exhausted when every one is in use; open_pool establishes each
+    connection resiliently through connect_with_retry and emits created, closing the ones already
+    opened if a later one cannot be established; lease emits exhausted on a full pool, close emits
+    closed — open and close driven against real SQLite connections."""
     from honest_persist import (
         acquire_connection,
         close_pool,
@@ -1214,18 +1215,58 @@ def _probe_connection_pool():
         if pool["active"] != 1 or "c1" not in pool["idle"]:
             bad.append(f"release should return the connection to idle: {pool}")
 
-        # open_pool against real SQLite, emitting created.
+        # open_pool against real SQLite: each connection is established resiliently through
+        # connect_with_retry, so a transient failure retries, and a created event fires once the
+        # whole pool is open.
         created = []
 
         async def emit_created(event_type, aggregate_type, aggregate_id, payload):
             created.append(payload["event"])
 
-        async def connect(selector):
+        def classify(exc):
+            return "unresolvable_dsn"
+
+        async def sleep(delay_ms):
+            return None
+
+        attempts = {"n": 0}
+
+        async def flaky_connect(selector):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise RuntimeError("connection refused")
             return _SqliteConn()
 
-        opened = await open_pool("main", connect, 2, emit_created)
-        if opened["size"] != 2 or created != ["created"]:
-            bad.append(f"open_pool should connect N and emit created: {opened}, {created}")
+        async def close_unused(conn):
+            conn.close()
+
+        opened = await open_pool("main", flaky_connect, classify, close_unused, 2, 3, 10, sleep, emit_created)
+        if "ok" not in opened or opened["ok"]["size"] != 2 or created != ["retry", "created"]:
+            bad.append(f"open_pool should establish each connection resiliently and emit created: {opened}, {created}")
+
+        # A connection that cannot be established closes the ones already opened — none leak — and
+        # returns the establishment fault.
+        made = []
+
+        async def first_then_down(selector):
+            if not made:
+                conn = _SqliteConn()
+                made.append(conn)
+                return conn
+            raise RuntimeError("connection refused")
+
+        cleaned = []
+
+        async def close_partial(conn):
+            conn.close()
+            cleaned.append(conn)
+
+        async def emit_partial(event_type, aggregate_type, aggregate_id, payload):
+            return None
+
+        partial = await open_pool("main", first_then_down, classify, close_partial, 2, 1, 1, sleep, emit_partial)
+        if partial.get("err", {}).get("code") != "unresolvable_dsn" or cleaned != made:
+            bad.append(f"open_pool should close the connections it opened when a later one fails: {partial}, {cleaned}, {made}")
 
         # lease emits exhausted on a full pool, and stays quiet when a connection is free.
         exhausted = []
@@ -1257,7 +1298,7 @@ def _probe_connection_pool():
         async def emit_closed(event_type, aggregate_type, aggregate_id, payload):
             closed_events.append(payload["event"])
 
-        await close_pool(opened, "main", close, emit_closed)
+        await close_pool(opened["ok"], "main", close, emit_closed)
         if len(closed_conns) != 2 or closed_events != ["closed"]:
             bad.append(f"close_pool should close the idle connections and emit closed: {closed_conns}, {closed_events}")
         return bad
