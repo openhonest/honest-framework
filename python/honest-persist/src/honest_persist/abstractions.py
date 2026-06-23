@@ -74,9 +74,33 @@ def _expand_map(table_name, table, column_name, column):
     return {}, {}, {_map_table(table_name, column_name): junction}
 
 
+def _closure_table(table):
+    """The closure table name for a hierarchy on `table` (section 6.3). Pure."""
+    return "_hp_closure_" + table
+
+
+def _expand_hierarchy(table_name, table, column_name, column):
+    """A hierarchy column (section 6.3) to a nullable self-referential parent column plus a closure
+    table of (ancestor, descendant, depth). The node-id type is the base table's primary-key type.
+    Returns (columns, constraints, generated_tables). Pure."""
+    node_type = _owner_type(table)
+    parent = {"type": node_type, "nullable": True}
+    closure = {"columns": {
+        "ancestor": {"type": node_type, "nullable": False},
+        "descendant": {"type": node_type, "nullable": False},
+        "depth": {"type": "integer", "nullable": False},
+    }}
+    return {column_name: parent}, {}, {_closure_table(table_name): closure}
+
+
 # Each abstraction is recognized by the column's declared `type` and rewritten by its expander
 # (section 6). Expanders return (columns, constraints, generated_tables).
-_EXPANDERS = {"range": _expand_range, "array": _expand_array, "map": _expand_map}
+_EXPANDERS = {
+    "range": _expand_range,
+    "array": _expand_array,
+    "map": _expand_map,
+    "hierarchy": _expand_hierarchy,
+}
 
 
 def _abstraction_kind(column):
@@ -186,3 +210,69 @@ def map_remove(table, column, owner_id, key):
     """Remove a key from a map column (section 6.4): a DELETE of the junction row. Pure query
     builder."""
     return delete(_map_table(table, column), {"owner_id": owner_id, "key": key})
+
+
+def closure_insert(table, node, parent):
+    """Insert a node under `parent` into a hierarchy's closure (section 6.3): the node's self-pair at
+    depth 0, plus a pair from every ancestor of the parent. A root (parent None) gets only its
+    self-pair. Pure query builder."""
+    closure = _closure_table(table)
+    return {
+        "sql": (
+            "INSERT INTO " + closure + " (ancestor, descendant, depth) "
+            "SELECT ancestor, :node, depth + 1 FROM " + closure + " WHERE descendant = :parent "
+            "UNION ALL SELECT :node, :node, 0"
+        ),
+        "params": {"node": node, "parent": parent},
+    }
+
+
+def closure_descendants(table, node):
+    """The descendants of a node, itself included (section 6.3): one read of the closure. Pure query
+    builder."""
+    closure = _closure_table(table)
+    return {"sql": "SELECT descendant FROM " + closure + " WHERE ancestor = :node", "params": {"node": node}}
+
+
+def closure_ancestors(table, node):
+    """The ancestors of a node, itself included (section 6.3): one read of the closure. Pure query
+    builder."""
+    closure = _closure_table(table)
+    return {"sql": "SELECT ancestor FROM " + closure + " WHERE descendant = :node", "params": {"node": node}}
+
+
+def closure_delete(table, node):
+    """Remove a node and its whole subtree from the closure (section 6.3). Pure query builder."""
+    closure = _closure_table(table)
+    return {
+        "sql": (
+            "DELETE FROM " + closure + " WHERE descendant IN "
+            "(SELECT descendant FROM " + closure + " WHERE ancestor = :node)"
+        ),
+        "params": {"node": node},
+    }
+
+
+def closure_move(table, node, new_parent):
+    """Relocate a subtree under `new_parent` (section 6.3), as two steps run in order: detach the
+    subtree's cross-links to its old ancestors (keeping the links inside the subtree), then reconnect
+    it under every ancestor of the new parent. Returns the two query builders. Pure."""
+    closure = _closure_table(table)
+    detach = {
+        "sql": (
+            "DELETE FROM " + closure + " WHERE descendant IN "
+            "(SELECT descendant FROM " + closure + " WHERE ancestor = :node) "
+            "AND ancestor NOT IN (SELECT descendant FROM " + closure + " WHERE ancestor = :node)"
+        ),
+        "params": {"node": node},
+    }
+    reconnect = {
+        "sql": (
+            "INSERT INTO " + closure + " (ancestor, descendant, depth) "
+            "SELECT super.ancestor, sub.descendant, super.depth + sub.depth + 1 "
+            "FROM " + closure + " super CROSS JOIN " + closure + " sub "
+            "WHERE super.descendant = :new_parent AND sub.ancestor = :node"
+        ),
+        "params": {"node": node, "new_parent": new_parent},
+    }
+    return [detach, reconnect]

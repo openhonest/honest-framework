@@ -513,3 +513,38 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given a table, a map column, an owner, and a key
     When map_remove builds the query
     Then it returns a DELETE of the junction row where the owner and key match
+
+  Scenario: _closure_table names the closure table for a hierarchy
+    Given a table with a hierarchy column
+    When _closure_table builds the name
+    Then it returns the closure table name for that table
+
+  Scenario: _expand_hierarchy rewrites a hierarchy column to a parent and closure table
+    Given a table, a column name, and a hierarchy column declaration
+    When _expand_hierarchy expands it
+    Then it makes the column a nullable parent reference and generates a closure table of ancestor, descendant, and depth
+
+  Scenario: closure_insert adds a node and its ancestor pairs to the closure
+    Given a table, a node, and its parent
+    When closure_insert builds the query
+    Then it inserts the node's self-pair at depth zero and a pair from every ancestor of the parent, a root getting only its self-pair
+
+  Scenario: closure_descendants reads a node's subtree in one query
+    Given a table and a node
+    When closure_descendants builds the query
+    Then it returns a SELECT of every descendant of the node, the node included
+
+  Scenario: closure_ancestors reads a node's ancestor chain in one query
+    Given a table and a node
+    When closure_ancestors builds the query
+    Then it returns a SELECT of every ancestor of the node, the node included
+
+  Scenario: closure_delete removes a node and its whole subtree
+    Given a table and a node
+    When closure_delete builds the query
+    Then it returns a DELETE of every closure row whose descendant is in the node's subtree
+
+  Scenario: closure_move relocates a subtree under a new parent
+    Given a table, a node, and a new parent
+    When closure_move builds the queries
+    Then it returns two steps, detaching the subtree's cross-links to its old ancestors and reconnecting it under every ancestor of the new parent

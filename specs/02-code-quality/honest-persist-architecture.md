@@ -761,13 +761,19 @@ guarantee.
 
 ### 6.3 Hierarchy
 
-A column declared as a hierarchy (a self-referential parent relationship) compiles to a
-**closure table** — a relation storing every ancestor/descendant pair with its depth —
-alongside the base table. The closure table turns subtree, ancestor, and descendant queries
-into a single indexed read instead of a recursive walk, on every dialect.
+A column declared as a hierarchy — `{ "type": "hierarchy" }`, a self-referential parent reference —
+compiles to a **closure table** alongside the base table. The column becomes a nullable parent
+reference of the base table's primary-key type (a root has no parent), and a generated
+`_hp_closure_{table}` stores every ancestor/descendant pair with its depth: `ancestor`, `descendant`
+(both the node-id type), and `depth` (integer). The closure turns subtree, ancestor, and descendant
+queries into a single indexed read instead of a recursive walk, on every dialect.
 
-honest-persist generates the closure table, its indexes, and the maintenance logic (insert,
-move, or delete of a node updates the closure) as ordinary tables and queries. The
+The maintenance and query logic are pure query builders over the closure (section 7):
+`closure_insert(table, node, parent)` adds a node — its self-pair at depth 0 plus a pair from every
+ancestor of the parent; `closure_descendants(table, node)` and `closure_ancestors(table, node)` read
+a subtree or an ancestor chain in one query; `closure_delete(table, node)` removes a node and its
+whole subtree; and `closure_move(table, node, new_parent)` relocates a subtree as two steps — detach
+its cross-links to the old ancestors, then reconnect it under the new parent's ancestors. The
 application sees a hierarchy declaration; the relational expansion is honest-persist's.
 
 ### 6.4 Arrays and Maps

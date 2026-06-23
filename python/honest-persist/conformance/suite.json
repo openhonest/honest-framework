@@ -3027,6 +3027,98 @@
      }
     }
    }
+  },
+  {
+   "id": "value-closure-insert",
+   "value_case": {
+    "function": "closure_insert",
+    "args": [
+     "nodes",
+     "C",
+     "B"
+    ],
+    "expected": {
+     "sql": "INSERT INTO _hp_closure_nodes (ancestor, descendant, depth) SELECT ancestor, :node, depth + 1 FROM _hp_closure_nodes WHERE descendant = :parent UNION ALL SELECT :node, :node, 0",
+     "params": {
+      "node": "C",
+      "parent": "B"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-closure-descendants",
+   "value_case": {
+    "function": "closure_descendants",
+    "args": [
+     "nodes",
+     "A"
+    ],
+    "expected": {
+     "sql": "SELECT descendant FROM _hp_closure_nodes WHERE ancestor = :node",
+     "params": {
+      "node": "A"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-closure-ancestors",
+   "value_case": {
+    "function": "closure_ancestors",
+    "args": [
+     "nodes",
+     "C"
+    ],
+    "expected": {
+     "sql": "SELECT ancestor FROM _hp_closure_nodes WHERE descendant = :node",
+     "params": {
+      "node": "C"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-closure-delete",
+   "value_case": {
+    "function": "closure_delete",
+    "args": [
+     "nodes",
+     "D"
+    ],
+    "expected": {
+     "sql": "DELETE FROM _hp_closure_nodes WHERE descendant IN (SELECT descendant FROM _hp_closure_nodes WHERE ancestor = :node)",
+     "params": {
+      "node": "D"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-closure-move",
+   "value_case": {
+    "function": "closure_move",
+    "args": [
+     "nodes",
+     "B",
+     "D"
+    ],
+    "expected": [
+     {
+      "sql": "DELETE FROM _hp_closure_nodes WHERE descendant IN (SELECT descendant FROM _hp_closure_nodes WHERE ancestor = :node) AND ancestor NOT IN (SELECT descendant FROM _hp_closure_nodes WHERE ancestor = :node)",
+      "params": {
+       "node": "B"
+      }
+     },
+     {
+      "sql": "INSERT INTO _hp_closure_nodes (ancestor, descendant, depth) SELECT super.ancestor, sub.descendant, super.depth + sub.depth + 1 FROM _hp_closure_nodes super CROSS JOIN _hp_closure_nodes sub WHERE super.descendant = :new_parent AND sub.ancestor = :node",
+      "params": {
+       "node": "B",
+       "new_parent": "D"
+      }
+     }
+    ]
+   }
   }
  ],
  "value_oracle_exempt": [

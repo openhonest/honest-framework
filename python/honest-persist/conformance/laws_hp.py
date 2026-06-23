@@ -1616,6 +1616,79 @@ def _probe_arrays_maps():
     return asyncio.run(_run())
 
 
+def _probe_hierarchy():
+    """Hierarchy (section 6.3): expand_schema rewrites a hierarchy column to a nullable parent plus a
+    closure table; the maintenance builders insert nodes, read ancestors and descendants in one
+    query, move a subtree, and delete a subtree — all proven on a real SQLite tree."""
+    from honest_persist import (
+        closure_ancestors,
+        closure_delete,
+        closure_descendants,
+        closure_insert,
+        closure_move,
+        expand_schema,
+        migrate,
+    )
+
+    async def _run():
+        bad = []
+
+        # expand_schema rewrites the hierarchy column to a nullable parent and a closure table.
+        schema = {"nodes": {"columns": {
+            "id": {"type": "text", "primary_key": True},
+            "parent": {"type": "hierarchy"},
+        }}}
+        expanded = expand_schema(schema)
+        if expanded["nodes"]["columns"]["parent"] != {"type": "text", "nullable": True}:
+            bad.append(f"expand_schema should make the hierarchy column a nullable parent: {expanded['nodes']}")
+        closure = expanded.get("_hp_closure_nodes", {}).get("columns", {})
+        if closure.get("ancestor") != {"type": "text", "nullable": False} or closure.get("depth") != {"type": "integer", "nullable": False}:
+            bad.append(f"expand_schema should generate the closure table: {closure}")
+
+        # build a real tree on SQLite: A root, B under A, C under B, D root.
+        conn = _SqliteConn()
+        applied = await migrate(schema, conn, "sqlite")
+        if "ok" not in applied:
+            bad.append(f"migrate should create the base and closure tables: {applied}")
+            return bad
+
+        async def add(node, parent):
+            await conn.execute("INSERT INTO nodes (id, parent) VALUES (:id, :p)", {"id": node, "p": parent})
+            op = closure_insert("nodes", node, parent)
+            await conn.execute(op["sql"], op["params"])
+
+        await add("A", None)
+        await add("B", "A")
+        await add("C", "B")
+        await add("D", None)
+
+        async def ids(op, field):
+            rows = (await conn.execute(op["sql"], op["params"]))["rows"]
+            return sorted(row[field] for row in rows)
+
+        if await ids(closure_descendants("nodes", "A"), "descendant") != ["A", "B", "C"]:
+            bad.append("closure_descendants(A) should be the subtree {A, B, C}")
+        if await ids(closure_ancestors("nodes", "C"), "ancestor") != ["A", "B", "C"]:
+            bad.append("closure_ancestors(C) should be the chain {A, B, C}")
+
+        # move subtree B under D: C's ancestors become {B, C, D}, no longer including A.
+        for step in closure_move("nodes", "B", "D"):
+            await conn.execute(step["sql"], step["params"])
+        if await ids(closure_ancestors("nodes", "C"), "ancestor") != ["B", "C", "D"]:
+            bad.append("after moving B under D, closure_ancestors(C) should be {B, C, D}")
+        if await ids(closure_descendants("nodes", "D"), "descendant") != ["B", "C", "D"]:
+            bad.append("after the move, D's subtree should be {B, C, D}")
+
+        # delete subtree D: its whole subtree leaves the closure.
+        d = closure_delete("nodes", "D")
+        await conn.execute(d["sql"], d["params"])
+        if await ids(closure_descendants("nodes", "D"), "descendant") != []:
+            bad.append("after closure_delete(D), D's subtree should be empty")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1637,6 +1710,7 @@ def run():
         "migrate": _probe_migrate(),
         "abstractions": _probe_abstractions(),
         "arrays_maps": _probe_arrays_maps(),
+        "hierarchy": _probe_hierarchy(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),
