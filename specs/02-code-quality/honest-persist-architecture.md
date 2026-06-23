@@ -1360,6 +1360,15 @@ query and transaction layer as ordinary writes (section 7), so the destination i
 written by a path that bypasses the library. Cutover is an operational workflow, not a schema
 primitive: it composes the diff/apply and query layers, it does not replace them.
 
+The phases, their ordering, the read target of each, and the batch query are pure decisions —
+`cutover_phases()`, `cutover_advance(phase)`, `cutover_read_target(phase)` (the source until
+promotion, the destination after), `cutover_plan(schema)` (the tables in foreign-key order so a
+referenced table is copied before its referrers, falling back to declared order on a cycle), and
+`copy_batch_query(table, primary_key, after, limit)` (the next resumable batch). The only I/O is
+`bulk_copy_table(...)`, which copies a table in primary-key batches resumable from the last key, and
+`mirror_write(query, source, dest)`, which dual-writes a built query to both databases. Both go
+through the ordinary query layer.
+
 ---
 
 ## 10. What honest-persist Forbids

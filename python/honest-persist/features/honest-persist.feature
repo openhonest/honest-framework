@@ -638,3 +638,38 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given one or more table-decorated Pydantic models
     When load_schema_from_models reads them
     Then it returns a schema mapping each table name to its table definition, purely and with no I/O
+
+  Scenario: cutover_phases lists the cutover phases in order
+    Given a cutover
+    When cutover_phases lists them
+    Then it returns bulk transfer, mirror, promote, and detach in order
+
+  Scenario: cutover_advance steps to the next cutover phase
+    Given a cutover phase
+    When cutover_advance steps it
+    Then it returns the next phase, with detach terminal
+
+  Scenario: cutover_read_target routes reads for a cutover phase
+    Given a cutover phase
+    When cutover_read_target routes reads
+    Then it reads the source until promotion and the destination from promotion onward
+
+  Scenario: cutover_plan orders tables by foreign key for bulk transfer
+    Given a schema
+    When cutover_plan orders it
+    Then it returns the tables with each referenced table before its referrers, falling back to declared order on a cycle
+
+  Scenario: copy_batch_query reads the next resumable batch
+    Given a table, its primary key, the last-copied key, and a batch size
+    When copy_batch_query builds it
+    Then it returns a SELECT of the rows after the last key, ordered and limited, or from the start when there is no last key
+
+  Scenario: bulk_copy_table copies a table between databases in batches
+    Given a table, its columns, its primary key, a source, a destination, and a batch size
+    When bulk_copy_table copies it
+    Then it copies every row from the source to the destination in primary-key batches, resumable from the last key, and returns the count
+
+  Scenario: mirror_write dual-writes a query to both databases
+    Given a query, a source, and a destination
+    When mirror_write writes it
+    Then it runs the query against both databases and returns the source and destination results

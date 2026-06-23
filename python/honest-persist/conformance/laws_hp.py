@@ -1852,6 +1852,75 @@ def _probe_loader():
     return asyncio.run(_run())
 
 
+def _probe_cutover():
+    """Zero-downtime cutover (section 9.1): the phases advance in order with reads switching at
+    promotion; cutover_plan orders tables by foreign key; copy_batch_query reads a resumable batch;
+    and a bulk transfer plus a mirror write are driven between two real SQLite databases."""
+    from honest_persist import (
+        bulk_copy_table,
+        copy_batch_query,
+        cutover_advance,
+        cutover_phases,
+        cutover_plan,
+        cutover_read_target,
+        mirror_write,
+    )
+
+    async def _run():
+        bad = []
+
+        # The phase machine: ordered phases, advance to terminal, reads switch at promotion.
+        if cutover_phases() != ["bulk_transfer", "mirror", "promote", "detach"]:
+            bad.append(f"cutover_phases wrong: {cutover_phases()}")
+        if [cutover_advance(p) for p in ("bulk_transfer", "mirror", "promote", "detach")] != ["mirror", "promote", "detach", "detach"]:
+            bad.append("cutover_advance should step through the phases, detach terminal")
+        if [cutover_read_target(p) for p in ("bulk_transfer", "mirror", "promote", "detach")] != ["source", "source", "destination", "destination"]:
+            bad.append("cutover_read_target should read the source until promotion, the destination after")
+
+        # cutover_plan orders referenced tables before their referrers; a cycle falls back to order.
+        schema = {"orders": {"columns": {"id": {"type": "integer"}, "buyer": {"references": "users.id"}}}, "users": {"columns": {"id": {"type": "integer"}}}}
+        if cutover_plan(schema) != ["users", "orders"]:
+            bad.append(f"cutover_plan should copy referenced tables first: {cutover_plan(schema)}")
+        cyclic = {"a": {"columns": {"x": {"references": "b.y"}}}, "b": {"columns": {"y": {"references": "a.x"}}}}
+        if cutover_plan(cyclic) != ["a", "b"]:
+            bad.append(f"cutover_plan should fall back to declared order on a cycle: {cutover_plan(cyclic)}")
+        # A reference to a table outside the schema is not an ordering constraint.
+        external = {"t": {"columns": {"id": {"type": "integer"}, "ref": {"references": "outside.id"}}}}
+        if cutover_plan(external) != ["t"]:
+            bad.append(f"cutover_plan should ignore a reference to a table outside the schema: {cutover_plan(external)}")
+
+        # copy_batch_query: first batch has no cursor, later batches read past the last key.
+        if copy_batch_query("t", "id", None, 100) != {"sql": "SELECT * FROM t ORDER BY id LIMIT :limit", "params": {"limit": 100}}:
+            bad.append(f"copy_batch_query (first) wrong: {copy_batch_query('t', 'id', None, 100)}")
+        if copy_batch_query("t", "id", 42, 100) != {"sql": "SELECT * FROM t WHERE id > :after ORDER BY id LIMIT :limit", "params": {"after": 42, "limit": 100}}:
+            bad.append(f"copy_batch_query (resume) wrong: {copy_batch_query('t', 'id', 42, 100)}")
+
+        # bulk transfer between two real SQLite databases, in resumable batches.
+        source = _SqliteConn()
+        dest = _SqliteConn()
+        await source.execute("CREATE TABLE nums (id INTEGER PRIMARY KEY, v TEXT)")
+        await dest.execute("CREATE TABLE nums (id INTEGER PRIMARY KEY, v TEXT)")
+        for n in (1, 2, 3):
+            await source.execute("INSERT INTO nums (id, v) VALUES (:id, :v)", {"id": n, "v": "r" + str(n)})
+        copied = await bulk_copy_table("nums", ["id", "v"], "id", source, dest, 2)
+        moved = await dest.execute("SELECT id, v FROM nums ORDER BY id")
+        if copied != 3 or [row["v"] for row in moved["rows"]] != ["r1", "r2", "r3"]:
+            bad.append(f"bulk_copy_table should copy every row in batches: copied={copied}, dest={moved}")
+
+        # mirror write reaches both databases.
+        write = {"sql": "INSERT INTO nums (id, v) VALUES (:id, :v)", "params": {"id": 9, "v": "mir"}}
+        results = await mirror_write(write, source, dest)
+        both = []
+        for conn in (source, dest):
+            got = await conn.execute("SELECT v FROM nums WHERE id = 9")
+            both.append(got["rows"][0]["v"] if got["rows"] else None)
+        if "source" not in results or both != ["mir", "mir"]:
+            bad.append(f"mirror_write should write both databases: {results}, {both}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1876,6 +1945,7 @@ def run():
         "hierarchy": _probe_hierarchy(),
         "enums": _probe_enums(),
         "loader": _probe_loader(),
+        "cutover": _probe_cutover(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

@@ -23,6 +23,15 @@ from honest_persist.abstractions import (
 )
 from honest_persist.apply import apply, reconstruction_sql, requires_reconstruction, to_sql
 from honest_persist.connect import connect_with_retry, open_pool
+from honest_persist.cutover import (
+    bulk_copy_table,
+    copy_batch_query,
+    cutover_advance,
+    cutover_phases,
+    cutover_plan,
+    cutover_read_target,
+    mirror_write,
+)
 from honest_persist.migrate import inspect, migrate
 from honest_persist.check import check_holds, parse_check
 from honest_persist.execute import execute, execute_many, execute_one, execute_scalar
@@ -147,6 +156,13 @@ __all__ = [
     "connect_with_retry",
     "inspect",
     "migrate",
+    "cutover_phases",
+    "cutover_advance",
+    "cutover_read_target",
+    "cutover_plan",
+    "copy_batch_query",
+    "bulk_copy_table",
+    "mirror_write",
     "expand_schema",
     "range_overlaps",
     "range_contains",

@@ -3242,6 +3242,89 @@
      }
     ]
    }
+  },
+  {
+   "id": "value-cutover-phases",
+   "value_case": {
+    "function": "cutover_phases",
+    "args": [],
+    "expected": [
+     "bulk_transfer",
+     "mirror",
+     "promote",
+     "detach"
+    ]
+   }
+  },
+  {
+   "id": "value-cutover-advance",
+   "value_case": {
+    "function": "cutover_advance",
+    "args": [
+     "mirror"
+    ],
+    "expected": "promote"
+   }
+  },
+  {
+   "id": "value-cutover-read-target",
+   "value_case": {
+    "function": "cutover_read_target",
+    "args": [
+     "promote"
+    ],
+    "expected": "destination"
+   }
+  },
+  {
+   "id": "value-cutover-plan",
+   "value_case": {
+    "function": "cutover_plan",
+    "args": [
+     {
+      "orders": {
+       "columns": {
+        "id": {
+         "type": "integer"
+        },
+        "buyer": {
+         "references": "users.id"
+        }
+       }
+      },
+      "users": {
+       "columns": {
+        "id": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    ],
+    "expected": [
+     "users",
+     "orders"
+    ]
+   }
+  },
+  {
+   "id": "value-copy-batch-query",
+   "value_case": {
+    "function": "copy_batch_query",
+    "args": [
+     "t",
+     "id",
+     42,
+     100
+    ],
+    "expected": {
+     "sql": "SELECT * FROM t WHERE id > :after ORDER BY id LIMIT :limit",
+     "params": {
+      "after": 42,
+      "limit": 100
+     }
+    }
+   }
   }
  ],
  "value_oracle_exempt": [
@@ -3352,6 +3435,14 @@
   {
    "function": "migrate",
    "reason": "An I/O orchestrator: composes inspect, diff, and apply against a live database; verified against real SQLite in the migration-workflow law probe."
+  },
+  {
+   "function": "bulk_copy_table",
+   "reason": "An I/O boundary: reads batches from the source and writes rows to the destination; verified between two real SQLite databases in the cutover law probe."
+  },
+  {
+   "function": "mirror_write",
+   "reason": "An I/O boundary: dual-writes a query to the source and destination connections; verified between two real SQLite databases in the cutover law probe."
   }
  ]
 }
