@@ -805,6 +805,9 @@ class _SqliteConn:
         cursor = self._conn.execute(sql, params or {})
         return {"rows": [dict(row) for row in cursor.fetchall()], "rowcount": cursor.rowcount}
 
+    def close(self):
+        self._conn.close()
+
 
 def _probe_pool_registry():
     """The pool registry (§8.1): create-on-first-contact, cache, and reuse — the cache threaded as a
@@ -824,24 +827,24 @@ def _probe_pool_registry():
             bad.append("empty_pool_registry should be an empty cache")
 
         # First contact creates the pool and caches it.
-        result, registry = await get_pool(registry, {"db_id": "main"}, connect)
+        result, registry = await get_pool(registry, {"db_id": "main"}, connect, 0)
         if "ok" not in result or created != ["main"]:
             bad.append(f"first contact should create and return a connection: {result}, {created}")
         conn = result["ok"]
 
         # The same database reuses the cached connection; connect is not called again.
-        result2, registry = await get_pool(registry, {"db_id": "main"}, connect)
+        result2, registry = await get_pool(registry, {"db_id": "main"}, connect, 1)
         if result2["ok"] is not conn or created != ["main"]:
             bad.append(f"a seen database should reuse the cached connection: {created}")
 
         # A different database, and a different credential variant, are each a new pool.
-        _, registry = await get_pool(registry, {"db_id": "other"}, connect)
-        _, registry = await get_pool(registry, {"db_id": "main", "credential": "replica"}, connect)
+        _, registry = await get_pool(registry, {"db_id": "other"}, connect, 2)
+        _, registry = await get_pool(registry, {"db_id": "main", "credential": "replica"}, connect, 3)
         if created != ["main", "other", "main"]:
             bad.append(f"an unseen database or credential should create a new pool: {created}")
 
         # A manifest naming no database errs and does not touch the cache.
-        errored, unchanged = await get_pool(registry, {"q": 1}, connect)
+        errored, unchanged = await get_pool(registry, {"q": 1}, connect, 4)
         if errored.get("err", {}).get("code") != "unknown_database" or unchanged is not registry:
             bad.append(f"a manifest with no database should err and leave the cache: {errored}")
 
@@ -851,6 +854,49 @@ def _probe_pool_registry():
         rows = await execute(select("t", ["x"]), conn)
         if rows != [{"x": 7}]:
             bad.append(f"persist should round-trip a row through real SQLite: {rows}")
+        return bad
+
+    return asyncio.run(_run())
+
+
+def _probe_lifecycle():
+    """Pool lifecycle execution (§8.2): is_idle is a pure threshold check; reap_idle closes and
+    evicts on_demand pools idle past the threshold, leaving persistent and ephemeral pools and
+    recently-used on_demand pools alone — closing real SQLite connections through the injected close."""
+    from honest_persist import empty_pool_registry, get_pool, is_idle, reap_idle
+
+    ms = 1_000_000  # nanoseconds per millisecond
+
+    async def _run():
+        bad = []
+        if is_idle(0, 5 * ms, 10) or not is_idle(0, 20 * ms, 10):
+            bad.append("is_idle should be true only once the idle time exceeds the threshold")
+
+        closed = []
+
+        async def close(conn):
+            conn.close()
+            closed.append(conn)
+
+        async def connect(selector):
+            return _SqliteConn()
+
+        registry = empty_pool_registry()
+        _, registry = await get_pool(registry, {"db_id": "scratch", "db_lifecycle": "on_demand"}, connect, 0)
+        _, registry = await get_pool(registry, {"db_id": "main"}, connect, 0)
+        # At t = 20ms with a 10ms threshold the on_demand pool is idle; the persistent one is never reaped.
+        registry = await reap_idle(registry, 20 * ms, 10, close)
+        if len(closed) != 1:
+            bad.append(f"reap_idle should close exactly the idle on_demand pool: {closed}")
+        if "main:" not in registry or "scratch:" in registry:
+            bad.append(f"reap_idle should evict the on_demand pool and keep the persistent one: {list(registry)}")
+
+        # A recently-used on_demand pool is not reaped.
+        fresh = empty_pool_registry()
+        _, fresh = await get_pool(fresh, {"db_id": "scratch", "db_lifecycle": "on_demand"}, connect, 100 * ms)
+        fresh = await reap_idle(fresh, 105 * ms, 10, close)
+        if "scratch:" not in fresh:
+            bad.append("a recently-used on_demand pool should not be reaped")
         return bad
 
     return asyncio.run(_run())
@@ -866,6 +912,7 @@ def run():
         "instrumented_apply": _probe_instrumented_apply(),
         "pool": _probe_pool(),
         "pool_registry": _probe_pool_registry(),
+        "lifecycle": _probe_lifecycle(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

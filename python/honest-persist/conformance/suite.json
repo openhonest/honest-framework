@@ -119,7 +119,9 @@
     {"id": "value-resolve-pool-db", "value_case": {"function": "resolve_pool_key", "args": [{"db_id": "users_db", "id": 1}], "expected": {"ok": {"database": "users_db", "kind": "db_id", "credential": null, "lifecycle": "persistent"}}}},
     {"id": "value-resolve-pool-tenant", "value_case": {"function": "resolve_pool_key", "args": [{"tenant_id": "acme", "credential": "read_replica", "db_lifecycle": "ephemeral"}], "expected": {"ok": {"database": "acme", "kind": "tenant_id", "credential": "read_replica", "lifecycle": "ephemeral"}}}},
     {"id": "value-resolve-pool-none", "value_case": {"function": "resolve_pool_key", "args": [{"some": "query data"}], "expected": {"err": {"code": "unknown_database", "message": "manifest carries neither db_id nor tenant_id", "category": "client"}}}},
-    {"id": "value-empty-pool-registry", "value_case": {"function": "empty_pool_registry", "args": [], "expected": {}}}
+    {"id": "value-empty-pool-registry", "value_case": {"function": "empty_pool_registry", "args": [], "expected": {}}},
+    {"id": "value-is-idle-true", "value_case": {"function": "is_idle", "args": [0, 20000000, 10], "expected": true}},
+    {"id": "value-is-idle-false", "value_case": {"function": "is_idle", "args": [0, 5000000, 10], "expected": false}}
   ],
   "value_oracle_exempt": [
     {"function": "diff", "reason": "Its dependency map is keyed by non-string keys, which cannot round-trip a JSON value contract."},
@@ -132,6 +134,7 @@
     {"function": "transaction", "reason": "Async I/O boundary: runs writes in a transaction against a live connection."},
     {"function": "reconstruction_sql", "reason": "Takes detailed column specifications; covered by the to_sql / apply reconstruction paths."},
     {"function": "instrumented_execute", "reason": "Async I/O boundary: runs a query against a live connection and emits through an injected emit. Verified by its own conformance probe."},
-    {"function": "get_pool", "reason": "Async I/O boundary: creates a connection through the injected connect and threads the pool cache. Verified by its own conformance probe against SQLite."}
+    {"function": "get_pool", "reason": "Async I/O boundary: creates a connection through the injected connect and threads the pool cache. Verified by its own conformance probe against SQLite."},
+    {"function": "reap_idle", "reason": "Async I/O boundary: closes idle on_demand connections through the injected close and threads the pool cache. Verified by its own conformance probe."}
   ]
 }
