@@ -93,6 +93,56 @@ async def reap_idle(registry, now_ns, threshold_ms, close, emit=None):
     return kept
 
 
+def new_pool(connections):
+    """A pool of connections, held as a value (section 8.1): the idle connections and how many are in
+    use. Pure."""
+    return {"size": len(connections), "idle": list(connections), "active": 0}
+
+
+def acquire_connection(pool):
+    """Take an idle connection from the pool (section 8.1). Returns (result, pool): ok(connection)
+    with the connection moved to active, or err(pool_exhausted) when every connection is in use, the
+    pool unchanged. Pure."""
+    if not pool["idle"]:
+        return err(pool_fault("pool_exhausted", "every connection in the pool is in use")), pool
+    connection = pool["idle"][0]
+    return ok(connection), {"size": pool["size"], "idle": pool["idle"][1:], "active": pool["active"] + 1}
+
+
+def release_connection(pool, connection):
+    """Return a connection to the pool's idle set (section 8.1). Returns the new pool. Pure."""
+    return {"size": pool["size"], "idle": [*pool["idle"], connection], "active": pool["active"] - 1}
+
+
+async def lease_connection(pool, db_id, emit):
+    """Acquire a connection, emitting a pool `exhausted` event when every connection is in use
+    (section 8.8). Returns (result, pool). The acquire is pure; the one I/O is the injected emit."""
+    result, pool = acquire_connection(pool)
+    if "err" in result:
+        await emit_pool_event(emit, db_id, "exhausted", pool["size"], pool["active"], 1, None, "pool_exhausted", None)
+    return result, pool
+
+
+async def open_pool(db_id, connect, size, emit):
+    """Open a pool of `size` connections through the injected `connect`, emitting a `created` event
+    (section 8.1, 8.8). I/O."""
+    connections = []
+    for _ in range(size):
+        connections.append(await connect({"database": db_id}))
+    pool = new_pool(connections)
+    await emit_pool_event(emit, db_id, "created", size, 0, 0, None, None, None)
+    return pool
+
+
+async def close_pool(pool, db_id, close, emit):
+    """Close every idle connection in the pool through the injected `close`, emitting a `closed`
+    event (section 8.8). I/O."""
+    for connection in pool["idle"]:
+        await close(connection)
+    await emit_pool_event(emit, db_id, "closed", pool["size"], pool["active"], 0, None, None, None)
+    return pool
+
+
 async def recreate_ephemeral(config, connect, dialect, now):
     """Recreate the schema of each ephemeral database at server startup, in configuration order
     (section 8.2): connect, apply the target schema to the fresh database, and cache the pool. The

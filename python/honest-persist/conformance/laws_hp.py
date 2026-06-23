@@ -1182,6 +1182,89 @@ def _probe_drain_loop():
     return asyncio.run(_run())
 
 
+def _probe_connection_pool():
+    """The multi-connection pool (§8.1, 8.3, 8.8): new_pool / acquire / release manage N connections
+    as a value — acquire faults pool_exhausted when every one is in use; open_pool connects N and
+    emits created, lease emits exhausted on a full pool, close emits closed — open and close driven
+    against real SQLite connections."""
+    from honest_persist import (
+        acquire_connection,
+        close_pool,
+        lease_connection,
+        new_pool,
+        open_pool,
+        release_connection,
+    )
+
+    async def _run():
+        bad = []
+
+        # Pure mechanics: acquire hands out idle connections, faults when full, release returns one.
+        pool = new_pool(["c1", "c2"])
+        if pool != {"size": 2, "idle": ["c1", "c2"], "active": 0}:
+            bad.append(f"new_pool should hold the connections idle: {pool}")
+        first, pool = acquire_connection(pool)
+        second, pool = acquire_connection(pool)
+        if first["ok"] != "c1" or second["ok"] != "c2" or pool["active"] != 2:
+            bad.append(f"acquire should hand out idle connections and count them active: {first}, {second}, {pool}")
+        miss, pool = acquire_connection(pool)
+        if miss.get("err", {}).get("code") != "pool_exhausted":
+            bad.append(f"acquire on a full pool should fault pool_exhausted: {miss}")
+        pool = release_connection(pool, "c1")
+        if pool["active"] != 1 or "c1" not in pool["idle"]:
+            bad.append(f"release should return the connection to idle: {pool}")
+
+        # open_pool against real SQLite, emitting created.
+        created = []
+
+        async def emit_created(event_type, aggregate_type, aggregate_id, payload):
+            created.append(payload["event"])
+
+        async def connect(selector):
+            return _SqliteConn()
+
+        opened = await open_pool("main", connect, 2, emit_created)
+        if opened["size"] != 2 or created != ["created"]:
+            bad.append(f"open_pool should connect N and emit created: {opened}, {created}")
+
+        # lease emits exhausted on a full pool, and stays quiet when a connection is free.
+        exhausted = []
+
+        async def emit_exhausted(event_type, aggregate_type, aggregate_id, payload):
+            exhausted.append(payload["event"])
+
+        result, _ = await lease_connection(new_pool([]), "main", emit_exhausted)
+        if result.get("err", {}).get("code") != "pool_exhausted" or exhausted != ["exhausted"]:
+            bad.append(f"lease on a full pool should fault and emit exhausted: {result}, {exhausted}")
+        quiet = []
+
+        async def emit_quiet(event_type, aggregate_type, aggregate_id, payload):
+            quiet.append(payload["event"])
+
+        leased, _ = await lease_connection(new_pool(["c1"]), "main", emit_quiet)
+        if "ok" not in leased or quiet != []:
+            bad.append(f"lease with a free connection should not emit exhausted: {leased}, {quiet}")
+
+        # close_pool closes the idle connections and emits closed.
+        closed_conns = []
+
+        async def close(conn):
+            conn.close()
+            closed_conns.append(conn)
+
+        closed_events = []
+
+        async def emit_closed(event_type, aggregate_type, aggregate_id, payload):
+            closed_events.append(payload["event"])
+
+        await close_pool(opened, "main", close, emit_closed)
+        if len(closed_conns) != 2 or closed_events != ["closed"]:
+            bad.append(f"close_pool should close the idle connections and emit closed: {closed_conns}, {closed_events}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -1198,6 +1281,7 @@ def run():
         "write_queue": _probe_write_queue(),
         "supervisor": _probe_supervisor(),
         "drain_loop": _probe_drain_loop(),
+        "connection_pool": _probe_connection_pool(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

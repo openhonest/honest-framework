@@ -356,3 +356,33 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given the persist configuration, an injected connect, an engine, and the current time
     When recreate_ephemeral runs at startup
     Then it connects, applies the target schema, and caches a pool for each ephemeral database in configuration order, leaving the persistent and on_demand ones alone, so ephemeral data never survives a restart
+
+  Scenario: new_pool holds N connections as a value
+    Given a list of connections
+    When new_pool builds the pool
+    Then it returns a pool recording the size, the idle connections, and zero active
+
+  Scenario: acquire_connection takes an idle connection or faults when full
+    Given a connection pool
+    When acquire_connection takes a connection
+    Then it returns ok(connection) with the connection moved to active, but err(pool_exhausted) and the unchanged pool when every connection is in use
+
+  Scenario: release_connection returns a connection to the idle set
+    Given a pool and a connection taken from it
+    When release_connection returns it
+    Then the connection is idle again and the active count drops by one
+
+  Scenario: lease_connection acquires a connection, emitting exhausted when full
+    Given a pool, a db_id, and an injected emit
+    When lease_connection leases a connection
+    Then it returns the acquire result, emitting one exhausted pool event only when every connection is in use
+
+  Scenario: open_pool opens N connections and emits created
+    Given a db_id, an injected connect, a size, and an injected emit
+    When open_pool opens the pool
+    Then it connects size times through connect and emits one created pool event
+
+  Scenario: close_pool closes the idle connections and emits closed
+    Given a pool, a db_id, an injected close, and an injected emit
+    When close_pool closes the pool
+    Then it closes every idle connection through close and emits one closed pool event

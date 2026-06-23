@@ -9,11 +9,17 @@ from honest_persist.execute import execute, execute_many, execute_one, execute_s
 from honest_persist.instrumented import emit_pool_event, instrumented_execute
 from honest_persist.pool import (
     POOL_LIFECYCLES,
+    acquire_connection,
+    close_pool,
     empty_pool_registry,
     get_pool,
     is_idle,
+    lease_connection,
+    new_pool,
+    open_pool,
     reap_idle,
     recreate_ephemeral,
+    release_connection,
     resolve_pool_key,
 )
 from honest_persist.queue import (
@@ -111,6 +117,12 @@ __all__ = [
     "is_idle",
     "reap_idle",
     "recreate_ephemeral",
+    "new_pool",
+    "acquire_connection",
+    "release_connection",
+    "lease_connection",
+    "open_pool",
+    "close_pool",
     "empty_write_queue",
     "enqueue_write",
     "merge_pending",
