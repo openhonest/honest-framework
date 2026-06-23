@@ -1065,6 +1065,42 @@ def _recognizer_identity(recognizer):
     return None  # predicates are opaque — treat each as unique, no reuse detection
 
 
+# Manifest keys that route to a database and so must be bounded Set recognizers, never predicates
+# (honest-persist section 8.4 — the vocabulary is the whitelist).
+_ROUTING_KEYS = frozenset({"db_id", "tenant_id", "credential"})
+
+
+def check_hc_p013(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P013 — a database routing key (db_id/tenant_id/credential) is bound to a predicate
+    recognizer rather than a bounded Set, so an arbitrary identifier can reach the pool layer."""
+    aliases = resolve_aliases(root, source)
+    vocabularies = extract_vocabularies(root, source, aliases)
+    bindings = extract_bindings(root, source, aliases)
+    out: list[Diagnostic] = []
+    seen: set = set()
+    for vocab_var, binding_var in vocab_binding_pairings(root, source, aliases):
+        if vocab_var not in vocabularies or binding_var not in bindings:
+            continue
+        vocab = vocabularies[vocab_var]
+        binding = bindings[binding_var]
+        line, col = binding["location"]
+        for type_name, slot in binding["table"].items():
+            if slot not in _ROUTING_KEYS:
+                continue
+            recognizer = vocab["base"].get(type_name)
+            if recognizer is None or recognizer[0] != "predicate":
+                continue
+            key = (vocab_var, binding_var, type_name, slot)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(diagnostic("HC-P013", "error", path, line, col,
+                f"Routing key '{slot}' is bound to predicate recognizer '{type_name}'. A database "
+                "routing key must be a bounded Set recognizer: the vocabulary is the whitelist, and "
+                "a predicate lets an arbitrary database identifier reach the pool layer."))
+    return out
+
+
 def check_hc_p014(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC-P014 — one recognizer is shared by types bound to different slots (field-swap risk)."""
     aliases = resolve_aliases(root, source)
@@ -1420,6 +1456,7 @@ _ALL_CHECKS = (
     check_hc007,
     check_hc008,
     check_hc010,
+    check_hc_p013,
     check_hc_p014,
     check_hc009,
     check_hc011,

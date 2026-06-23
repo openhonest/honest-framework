@@ -232,6 +232,11 @@ Feature: honest-check — the static honesty gate
     When check_hc005 inspects it
     Then it flags the stray binding as HC005
 
+  Scenario: check_hc_p013 flags a database routing key bound to a predicate recognizer
+    Given a binding where db_id, tenant_id, or credential is backed by a predicate recognizer rather than a bounded Set
+    When check_hc_p013 inspects it
+    Then it flags the routing key as HC-P013 because an unbounded predicate lets an arbitrary database identifier reach the pool
+
   Scenario: check_hc_p014 flags one recognizer shared across distinct slots
     Given a vocabulary where one recognizer is shared by types bound to different slots
     When check_hc_p014 inspects it

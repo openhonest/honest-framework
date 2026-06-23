@@ -27,6 +27,7 @@ Every HC rule is a precondition for auto-generation. Each rule, when it fires, n
 | HC-P003, HC-P010 | Cannot verify purity — no classes (inheritance), non-serializable data |
 | HC-P002 | Cannot verify the caught path — catching in business logic hides faults from the manifest |
 | HC-P004, HC008 | Cannot verify boundary isolation — I/O outside declared boundaries |
+| HC-P013 | Cannot enumerate the routing key's value space — a predicate behind a database routing key is unbounded |
 | HC-P014 | Cannot distinguish slots — recognizer reuse collapses semantic roles |
 | HC-P016 | Cannot verify purity — closure carries mutable state |
 | HC-P017 | Cannot generate serialization tests — HTTP output function has no declared vocabulary |
@@ -417,6 +418,7 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-P007 | Warning | ✓ | Instance state in constructor |
 | HC-P010 | Error | ✓ | Non-serializable return value |
 | HC-P011 | Error | ✓ | Framework lifecycle hook |
+| HC-P013 | Error | ✓ | Unbounded database routing key |
 | HC-P014 | Error | ✓ | Recognizer reused across slots |
 | HC-P016 | Error | ✓ | Nonlocal closure over mutable state |
 | HC-P017 | Error | ✓ | Serializer not declared as chain link |
@@ -823,6 +825,25 @@ FUNCTION check_HC_P011(ast):
                 f"Lifecycle hook '{call.name}'. "
                 "Use HTMX attributes or server-rendered HTML.")
 ```
+
+#### HC-P013 — Unbounded database routing key
+
+A manifest key that routes to a database — `db_id`, `tenant_id`, or `credential` — bound to a predicate recognizer rather than a bounded Set lets an arbitrary identifier reach the pool layer. The vocabulary is the whitelist; a predicate bypasses it. The rule is specified by honest-persist section 8.4 and reproduced here as the canonical HC reference.
+
+```
+FUNCTION check_HC_P013(vocabulary, binding):
+    routing_keys = {"db_id", "tenant_id", "credential"}
+
+    FOR EACH (type_name, slot) IN binding:
+        IF slot IN routing_keys:
+            recognizer = vocabulary.base_types.get(type_name)
+            IF recognizer is a predicate:
+                EMIT error(HC-P013, type_name,
+                    f"Routing key '{slot}' is bound to predicate recognizer "
+                    f"'{type_name}' — use a bounded Set recognizer instead")
+```
+
+**Why this matters.** A connection pool routes on whatever the manifest carries. If the routing key is validated by a predicate (any string the predicate accepts), a caller can name a database the application never declared, and the pool will try to reach it. A bounded Set makes the set of reachable databases a closed, declared list — the type system becomes the access-control list. A ref recognizer is not flagged at the binding site: it names a recognizer defined elsewhere, and resolving it is out of scope for this structural check.
 
 #### HC-P014 — Recognizer reused across slots
 
@@ -1291,6 +1312,7 @@ This ensures suppressions are visible in CI and do not silently accumulate.
 | HC-P009 | Warning | Test | — | Chain missing .feature file (honest-test) |
 | HC-P010 | Error | Static | — | Non-serializable return value |
 | HC-P011 | Error | Static | — | Framework lifecycle hook |
+| HC-P013 | Error | Static | — | Unbounded database routing key |
 | HC-P014 | Error | Static | — | Recognizer reused across slots |
 | HC-P016 | Error | Static | — | Nonlocal closure over mutable state |
 | HC-P017 | Error | Static | — | Serializer not declared as chain link |

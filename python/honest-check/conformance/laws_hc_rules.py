@@ -596,6 +596,91 @@ _case(
 )
 
 
+# ----------------------------------------------------------------- HC-P013 unbounded routing key
+
+# A database routing key (db_id/tenant_id/credential) bound to a predicate recognizer is unbounded:
+# an arbitrary identifier reaches the pool layer. The vocabulary must be the whitelist (a bounded Set).
+_case(
+    "p013_predicate_db_id",
+    "from honest_type import vocabulary, binding, link, predicate\n"
+    "V = vocabulary({'db': predicate(p)})\n"
+    "B = binding({'db': 'db_id'})\n"
+    "@link(accepts=V, binds=B)\n"
+    "def f(x):\n    return x\n",
+    must_fire=("HC-P013",),
+)
+# tenant_id and credential are routing keys too; a predicate behind either fires.
+_case(
+    "p013_predicate_tenant_and_credential",
+    "from honest_type import vocabulary, binding, link, predicate\n"
+    "V = vocabulary({'t': predicate(p), 'c': predicate(q)})\n"
+    "B = binding({'t': 'tenant_id', 'c': 'credential'})\n"
+    "@link(accepts=V, binds=B)\n"
+    "def f(x):\n    return x\n",
+    must_fire=("HC-P013",),
+)
+# A bounded Set behind a routing key is the whitelist — clean.
+_case(
+    "p013_bounded_set_clean",
+    "from honest_type import vocabulary, binding, link\n"
+    "V = vocabulary({'db': {'users_db', 'orders_db'}})\n"
+    "B = binding({'db': 'db_id'})\n"
+    "@link(accepts=V, binds=B)\n"
+    "def f(x):\n    return x\n",
+    must_not_fire=("HC-P013",),
+)
+# A predicate behind a NON-routing slot is fine — only routing keys are whitelisted.
+_case(
+    "p013_predicate_non_routing_slot_clean",
+    "from honest_type import vocabulary, binding, link, predicate\n"
+    "V = vocabulary({'amt': predicate(p)})\n"
+    "B = binding({'amt': 'amount'})\n"
+    "@link(accepts=V, binds=B)\n"
+    "def f(x):\n    return x\n",
+    must_not_fire=("HC-P013",),
+)
+# A ref recognizer behind a routing key is not a predicate at this site — not flagged here.
+_case(
+    "p013_ref_routing_key_clean",
+    "from honest_type import vocabulary, binding, link\n"
+    "V = vocabulary({'db': other_recognizer})\n"
+    "B = binding({'db': 'db_id'})\n"
+    "@link(accepts=V, binds=B)\n"
+    "def f(x):\n    return x\n",
+    must_not_fire=("HC-P013",),
+)
+# A routing slot bound to a type absent from the vocabulary has no recognizer to inspect — no fire.
+_case(
+    "p013_routing_key_unknown_type_clean",
+    "from honest_type import vocabulary, binding, link\n"
+    "V = vocabulary({'db': {'x'}})\n"
+    "B = binding({'ghost': 'db_id'})\n"
+    "@link(accepts=V, binds=B)\n"
+    "def f(x):\n    return x\n",
+    must_not_fire=("HC-P013",),
+)
+# Two links pairing the SAME vocabulary and binding exercise the seen-dedup continue.
+_case(
+    "p013_duplicate_pairing_dedup",
+    "from honest_type import vocabulary, binding, link, predicate\n"
+    "V = vocabulary({'db': predicate(p)})\n"
+    "B = binding({'db': 'db_id'})\n"
+    "@link(accepts=V, binds=B)\n"
+    "def f(x):\n    return x\n"
+    "@link(accepts=V, binds=B)\n"
+    "def g(x):\n    return x\n",
+    must_fire=("HC-P013",),
+)
+# A pairing whose vocabulary and binding are undefined misses the dicts — the not-found continue.
+_case(
+    "p013_undefined_pairing_clean",
+    "from honest_type import link\n"
+    "@link(accepts=NoVocab, binds=NoBinding)\n"
+    "def f(x):\n    return x\n",
+    must_not_fire=("HC-P013",),
+)
+
+
 # ----------------------------------------------------------------- HC-P014 shared recognizer
 
 _case(
