@@ -938,6 +938,53 @@ def _probe_ephemeral():
     return asyncio.run(_run())
 
 
+def _probe_pool_events():
+    """Pool events (§8.8): get_pool emits hf.persist.pool 'created' on first contact (not on reuse),
+    reap_idle emits 'closed' on eviction, both through the injected emit and keyed by the pool
+    aggregate; emit_pool_event swallows a failing emit, and no emit means no event."""
+    from honest_persist import emit_pool_event, empty_pool_registry, get_pool, reap_idle
+
+    ms = 1_000_000
+
+    async def _run():
+        bad = []
+        events = []
+
+        async def emit(event_type, aggregate_type, aggregate_id, payload):
+            events.append((event_type, aggregate_type, aggregate_id, payload))
+
+        async def connect(selector):
+            return _SqliteConn()
+
+        async def close(conn):
+            conn.close()
+
+        registry = empty_pool_registry()
+        _, registry = await get_pool(registry, {"db_id": "main", "db_lifecycle": "on_demand"}, connect, 0, emit)
+        if len(events) != 1 or events[0][:3] != ("hf.persist.pool", "pool", "main") or events[0][3]["event"] != "created":
+            bad.append(f"first contact should emit a pool created event: {events}")
+
+        # Reuse does not re-emit created.
+        _, registry = await get_pool(registry, {"db_id": "main", "db_lifecycle": "on_demand"}, connect, 1, emit)
+        if len(events) != 1:
+            bad.append("reusing a cached pool should not emit a created event")
+
+        # Reaping emits closed.
+        registry = await reap_idle(registry, 20 * ms, 10, close, emit)
+        if len(events) != 2 or events[1][2] != "main" or events[1][3]["event"] != "closed":
+            bad.append(f"reaping a pool should emit a closed event: {events}")
+
+        # A failing emit is swallowed; no emit is a no-op.
+        async def emit_down(event_type, aggregate_type, aggregate_id, payload):
+            raise ValueError("emit is down")
+
+        await emit_pool_event(emit_down, "x", "error", 1, 0, 1, None, "pool_exhausted", "saturated")
+        await emit_pool_event(None, "x", "created", 1, 1, 0, None, None, None)
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -950,6 +997,7 @@ def run():
         "pool_registry": _probe_pool_registry(),
         "lifecycle": _probe_lifecycle(),
         "ephemeral": _probe_ephemeral(),
+        "pool_events": _probe_pool_events(),
         "check": _probe_check(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),

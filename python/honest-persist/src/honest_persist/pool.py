@@ -13,6 +13,7 @@ from honest_type import err, ok
 
 from honest_persist.apply import apply
 from honest_persist.instrument import pool_fault
+from honest_persist.instrumented import emit_pool_event
 from honest_persist.schema import diff
 
 # Section 8.2: how persist treats a database on first contact and at startup.
@@ -49,12 +50,13 @@ def _pool_key(selector):
     return selector["database"] + ":" + (selector["credential"] or "")
 
 
-async def get_pool(registry, manifest, connect, now):
+async def get_pool(registry, manifest, connect, now, emit=None):
     """Route a manifest to a connection, creating and caching a pool on first contact and reusing it
     after (section 8.1). The routing is pure (resolve_pool_key); the one I/O seam is the injected
     `connect`, which the adopter supplies for their driver. Each cache entry records the connection,
     its lifecycle, and the time `now` it was last used (the caller reads the clock; this stays a
-    value), so an on_demand pool can later be reaped (section 8.2). Returns (result, registry):
+    value), so an on_demand pool can later be reaped (section 8.2). On first contact it emits a
+    `created` pool event through the injected `emit` (section 8.8). Returns (result, registry):
     ok(connection) or err(unknown_database) when the manifest names no database; the returned
     registry carries the newly created or touched pool, keeping the cache a threaded value."""
     routed = resolve_pool_key(manifest)
@@ -67,6 +69,7 @@ async def get_pool(registry, manifest, connect, now):
         return ok(entry["conn"]), {**registry, key: {**entry, "last_used": now}}
     connection = await connect(selector)
     entry = {"conn": connection, "lifecycle": selector["lifecycle"], "last_used": now}
+    await emit_pool_event(emit, selector["database"], "created", 1, 1, 0, None, None, None)
     return ok(connection), {**registry, key: entry}
 
 
@@ -75,14 +78,16 @@ def is_idle(last_used_ns, now_ns, threshold_ms):
     return (now_ns - last_used_ns) > threshold_ms * 1_000_000
 
 
-async def reap_idle(registry, now_ns, threshold_ms, close):
+async def reap_idle(registry, now_ns, threshold_ms, close, emit=None):
     """Close and evict the on_demand pools idle past the threshold (section 8.2); persistent and
-    ephemeral pools are never reaped. `close` is the injected I/O that closes each connection.
-    Returns the registry with the reaped pools removed — the cache stays a threaded value."""
+    ephemeral pools are never reaped. `close` is the injected I/O that closes each connection, and a
+    `closed` pool event is emitted for each through the injected `emit` (section 8.8). Returns the
+    registry with the reaped pools removed — the cache stays a threaded value."""
     kept = {}
     for key, entry in registry.items():
         if entry["lifecycle"] == "on_demand" and is_idle(entry["last_used"], now_ns, threshold_ms):
             await close(entry["conn"])
+            await emit_pool_event(emit, key.split(":", 1)[0], "closed", 1, 0, 0, None, None, None)
         else:
             kept[key] = entry
     return kept

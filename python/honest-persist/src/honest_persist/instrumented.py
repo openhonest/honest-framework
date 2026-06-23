@@ -19,7 +19,7 @@ import sys
 import time
 
 from honest_persist.execute import execute
-from honest_persist.instrument import build_query_event, extract_table
+from honest_persist.instrument import build_pool_event, build_query_event, extract_table
 
 
 async def _safe_emit(emit, aggregate_id, payload):
@@ -29,6 +29,19 @@ async def _safe_emit(emit, aggregate_id, payload):
         await emit("hf.persist.query", "persist", aggregate_id, payload)
     except Exception as exc:
         print(f"honest-persist: query event emit failed: {exc}", file=sys.stderr)
+
+
+async def emit_pool_event(emit, db_id, event, pool_size, active, waiting, duration_ns, fault_code, message):
+    """Emit one hf.persist.pool through the injected emit on a pool lifecycle transition (section
+    8.8) — created, exhausted, retry, closed, or error — so pool health is in the same queryable log.
+    Swallows a failing emit, and is a no-op when no emit is wired in. I/O."""
+    if emit is None:
+        return
+    payload = build_pool_event(db_id, event, pool_size, active, waiting, duration_ns, fault_code, message)
+    try:
+        await emit("hf.persist.pool", "pool", db_id, payload)
+    except Exception as exc:
+        print(f"honest-persist: pool event emit failed: {exc}", file=sys.stderr)
 
 
 async def instrumented_execute(query, conn, emit, db_id, op, request_id, development_mode):

@@ -239,10 +239,15 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Then it returns one key per database and credential variant, so each variant caches its own pool
 
   Scenario: get_pool routes a manifest to a cached connection, creating one on first contact
-    Given a pool registry, a manifest, an injected connect, and the current time
+    Given a pool registry, a manifest, an injected connect, the current time, and an optional injected emit
     When get_pool routes the manifest
-    Then on first contact it creates a connection through connect and caches it with its lifecycle and last-used time, and a seen database reuses the cached one and refreshes its last-used time
+    Then on first contact it creates a connection through connect, caches it with its lifecycle and last-used time, and emits a created pool event, while a seen database reuses the cached one and refreshes its last-used time without re-emitting
     But a manifest naming no database returns an unknown-database fault and leaves the cache unchanged
+
+  Scenario: emit_pool_event emits a pool lifecycle event through the injected emit
+    Given the injected emit and the facts of a pool lifecycle transition
+    When emit_pool_event emits it
+    Then it sends one hf.persist.pool event keyed by the pool aggregate, but a failing emit is logged and swallowed and no emit means no event
 
   Scenario: is_idle reports whether a pool has been idle past the threshold
     Given a pool's last-used time, the current time, and an idle threshold
@@ -250,9 +255,9 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Then it is true only once the idle time exceeds the threshold
 
   Scenario: reap_idle closes and evicts the on_demand pools idle past the threshold
-    Given a pool registry, the current time, a threshold, and an injected close
+    Given a pool registry, the current time, a threshold, an injected close, and an optional injected emit
     When reap_idle reaps the registry
-    Then it closes and evicts each on_demand pool idle past the threshold through close
+    Then it closes and evicts each on_demand pool idle past the threshold through close, emitting a closed pool event for each
     But persistent and ephemeral pools, and recently-used on_demand pools, are left in the cache
 
   Scenario: recreate_ephemeral rebuilds each ephemeral database's schema at startup

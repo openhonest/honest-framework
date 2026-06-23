@@ -6,7 +6,7 @@ Schema as data, migrations as a pure diff, queries as data. I/O only at the boun
 from honest_persist.apply import apply, reconstruction_sql, requires_reconstruction, to_sql
 from honest_persist.check import check_holds, parse_check
 from honest_persist.execute import execute, execute_many, execute_one, execute_scalar
-from honest_persist.instrumented import instrumented_execute
+from honest_persist.instrumented import emit_pool_event, instrumented_execute
 from honest_persist.pool import (
     POOL_LIFECYCLES,
     empty_pool_registry,
@@ -92,6 +92,7 @@ __all__ = [
     "build_migration_event",
     "build_pool_event",
     "instrumented_execute",
+    "emit_pool_event",
     "POOL_LIFECYCLES",
     "resolve_pool_key",
     "empty_pool_registry",
