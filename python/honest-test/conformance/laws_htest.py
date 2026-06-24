@@ -302,6 +302,55 @@ def _probe_auth_honesty():
     return bad
 
 
+def _probe_coverage_data():
+    """Coverage data format (§9.5): the four coverage-dimension records (§9.1-9.4), the assembled
+    coverage.json document, and the injected write. honest-check reads this file back for HC-P009."""
+    import json as _json
+
+    from honest_test import build_coverage, chain_coverage, honesty_coverage, state_machine_coverage, vocabulary_coverage, write_coverage
+
+    bad = []
+
+    # The four coverage dimensions, each part-of-whole as a whole-number percentage.
+    if vocabulary_coverage(5, 5) != {"total": 5, "exercised": 5, "pct": 100}:
+        bad.append("vocabulary_coverage of a fully exercised vocabulary should be 100")
+    if vocabulary_coverage(3, 2) != {"total": 3, "exercised": 2, "pct": 67}:
+        bad.append(f"vocabulary_coverage should report the rounded percentage: {vocabulary_coverage(3, 2)}")
+    if vocabulary_coverage(0, 0)["pct"] != 100:
+        bad.append("an empty vocabulary is vacuously fully covered")
+    if chain_coverage(3, 3) != {"fault_paths": 3, "exercised": 3, "pct": 100}:
+        bad.append(f"chain_coverage wrong: {chain_coverage(3, 3)}")
+    if honesty_coverage(3, 3, 1) != {"total": 3, "honest": 3, "boundary": 1, "pct": 100}:
+        bad.append(f"honesty_coverage should report honest, boundary, and the percentage: {honesty_coverage(3, 3, 1)}")
+    if state_machine_coverage(5, 5) != {"transitions": 5, "exercised": 5, "pct": 100}:
+        bad.append(f"state_machine_coverage wrong: {state_machine_coverage(5, 5)}")
+
+    # The assembled document mirrors the §9.5 shape.
+    document = build_coverage(
+        {"format_vocab": vocabulary_coverage(5, 5)},
+        {"format_pipeline": chain_coverage(3, 3)},
+        {"format_pipeline": honesty_coverage(3, 3, 1)},
+        {"order_machine": state_machine_coverage(5, 5)},
+        "2026-03-15T00:00:00Z",
+    )
+    if document["version"] != "1.0" or document["timestamp"] != "2026-03-15T00:00:00Z":
+        bad.append(f"the coverage document should carry the version and injected timestamp: {document}")
+    if set(document) != {"version", "timestamp", "vocabularies", "chains", "honesty", "state_machines"}:
+        bad.append(f"the coverage document should carry the four coverage maps: {set(document)}")
+
+    # write_coverage serializes and writes through the injected writer; honest-check reads it back.
+    captured = {}
+
+    def fake_write(path, text):
+        captured["path"] = path
+        captured["text"] = text
+
+    write_coverage(document, "coverage.json", fake_write)
+    if captured.get("path") != "coverage.json" or _json.loads(captured["text"]) != document:
+        bad.append(f"write_coverage should write coverage.json as the document round-trips: {captured}")
+    return bad
+
+
 def _probe_supplied():
     bad = []
     if load_config("/no/such/honest-test.toml") != {}:
@@ -472,6 +521,7 @@ def run():
         "honesty": _probe_honesty(),
         "determinism": _probe_determinism(),
         "auth_honesty": _probe_auth_honesty(),
+        "coverage_data": _probe_coverage_data(),
         "supplied": _probe_supplied(),
         "statemachine": _probe_statemachine(),
         "runner": _probe_runner(),

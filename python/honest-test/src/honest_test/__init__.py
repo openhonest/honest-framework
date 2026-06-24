@@ -21,6 +21,14 @@ from honest_test.authhonesty import (
     map_fault_to_http,
     test_auth_honesty,
 )
+from honest_test.coverage_data import (
+    build_coverage,
+    chain_coverage,
+    honesty_coverage,
+    state_machine_coverage,
+    vocabulary_coverage,
+    write_coverage,
+)
 from honest_test.determinism import (
     call_monitor,
     nondeterminism_finding,
@@ -80,6 +88,12 @@ __all__ = [
     "auth_expected_status",
     "auth_honesty_finding",
     "test_auth_honesty",
+    "vocabulary_coverage",
+    "chain_coverage",
+    "honesty_coverage",
+    "state_machine_coverage",
+    "build_coverage",
+    "write_coverage",
     "enumerate_test_cases",
     "test_chain_contracts",
     "test_valid_transitions",

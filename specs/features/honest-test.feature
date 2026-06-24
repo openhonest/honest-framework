@@ -291,3 +291,38 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given an authorizing link, an injected provider, and a chain run
     When test_auth_honesty runs the seven classes
     Then it returns a finding for each class that behaved dishonestly, and nothing for a non-authorizing link or when no provider is registered
+
+  Scenario: _pct gives a coverage percentage as a whole number
+    Given a part and a whole
+    When _pct computes the percentage
+    Then it returns the rounded part-of-whole percentage, or 100 when there is nothing to cover
+
+  Scenario: vocabulary_coverage reports a vocabulary's exercised members
+    Given a total and exercised member count
+    When vocabulary_coverage reports it
+    Then it returns the total, exercised, and percentage
+
+  Scenario: chain_coverage reports a chain's exercised fault paths
+    Given a fault-path total and exercised count
+    When chain_coverage reports it
+    Then it returns the fault paths, exercised, and percentage
+
+  Scenario: honesty_coverage reports a chain's honest links
+    Given the link total, honest count, and boundary count
+    When honesty_coverage reports it
+    Then it returns the total, honest, boundary, and percentage
+
+  Scenario: state_machine_coverage reports a machine's exercised transitions
+    Given a transition total and exercised count
+    When state_machine_coverage reports it
+    Then it returns the transitions, exercised, and percentage
+
+  Scenario: build_coverage assembles the coverage document
+    Given the four coverage maps and a timestamp
+    When build_coverage assembles them
+    Then it returns the document with the version, timestamp, and the vocabulary, chain, honesty, and state-machine maps
+
+  Scenario: write_coverage writes coverage.json through the injected writer
+    Given a coverage document, a path, and an injected write
+    When write_coverage writes it
+    Then it serializes the document and writes it to the path so honest-check can read it back
