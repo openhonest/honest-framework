@@ -15,6 +15,8 @@ which is the boundary. Method dispatch is a table, not a branch.
 import json
 import sys
 
+from honest_parse import node_text, parse_python, walk
+
 from honest_check.diagnostics import Diagnostic
 from honest_check.rules import check_source
 
@@ -63,6 +65,7 @@ def _on_initialize(store, msg_id, params):
                 "capabilities": {
                     "textDocumentSync": 1,  # 1 = full document sync
                     "hoverProvider": True,
+                    "definitionProvider": True,
                 },
                 "serverInfo": {"name": "honest-check", "version": "0.1"},
             },
@@ -113,6 +116,54 @@ def _on_hover(store, msg_id, params):
     return store, [_response(msg_id, {"contents": contents} if contents is not None else None)]
 
 
+def _node_at(root, line: int, col: int):
+    """The identifier node whose span covers the 0-based (line, col), or None (section 2.2). Pure."""
+    for node in walk(root):
+        if node.type != "identifier":
+            continue
+        if node.start_point <= (line, col) < node.end_point:
+            return node
+    return None
+
+
+def _definition_of(root, source: bytes, name: str):
+    """The node where `name` is defined in the document — an assignment target or a function
+    definition name (section 2.2) — or None. Pure."""
+    for node in walk(root):
+        if node.type == "assignment" and node_text(node.child_by_field_name("left"), source) == name:
+            return node.child_by_field_name("left")
+        if node.type == "function_definition" and node_text(node.child_by_field_name("name"), source) == name:
+            return node.child_by_field_name("name")
+    return None
+
+
+def _definition_location(text: str, uri: str, position: dict):
+    """The go-to-definition location for the identifier at an LSP position (section 2.2): where it is
+    defined in the same document, or None when the position is not an identifier or has no definition.
+    Pure."""
+    source = text.encode("utf-8")
+    root = parse_python(source).root_node
+    identifier = _node_at(root, position.get("line", 0), position.get("character", 0))
+    if identifier is None:
+        return None
+    target = _definition_of(root, source, node_text(identifier, source))
+    if target is None:
+        return None
+    return {
+        "uri": uri,
+        "range": {
+            "start": {"line": target.start_point[0], "character": target.start_point[1]},
+            "end": {"line": target.end_point[0], "character": target.end_point[1]},
+        },
+    }
+
+
+def _on_definition(store, msg_id, params):
+    doc = params.get("textDocument", {})
+    uri = doc.get("uri", "")
+    return store, [_response(msg_id, _definition_location(store.get(uri, ""), uri, params.get("position", {})))]
+
+
 def _on_shutdown(store, msg_id, params):
     return store, [_response(msg_id, None)]
 
@@ -129,6 +180,7 @@ _HANDLERS = {
     "textDocument/didSave": _noop,
     "textDocument/didClose": _on_did_close,
     "textDocument/hover": _on_hover,
+    "textDocument/definition": _on_definition,
     "shutdown": _on_shutdown,
 }
 

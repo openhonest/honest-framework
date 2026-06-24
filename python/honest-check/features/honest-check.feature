@@ -453,6 +453,26 @@ Feature: honest-check — Python supplement
     When _on_hover handles it
     Then it returns the hover documentation for the position from the stored text, or a null result when nothing is flagged there
 
+  Scenario: _node_at finds the identifier at a position
+    Given a parse tree and a zero-based line and column
+    When _node_at searches it
+    Then it returns the identifier node whose span covers the position, or nothing when the position is not on an identifier
+
+  Scenario: _definition_of finds where a name is defined
+    Given a parse tree, the source, and a name
+    When _definition_of searches it
+    Then it returns the assignment target or function definition that binds the name, or nothing when the name is undefined
+
+  Scenario: _definition_location resolves the definition at a position
+    Given a document's text, its uri, and a position
+    When _definition_location resolves it
+    Then it returns the location where the identifier at that position is defined, or nothing when the position is not an identifier or has no definition
+
+  Scenario: _on_definition answers a go-to-definition request from the store
+    Given a definition request and the document store
+    When _on_definition handles it
+    Then it returns the definition location for the position from the stored text, or a null result
+
   Scenario: _on_did_change publishes diagnostics for the changed document
     Given a document-changed notification carrying the full new text
     When _on_did_change handles it

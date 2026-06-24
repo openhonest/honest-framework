@@ -44,6 +44,8 @@ from honest_check.watchlists import IO_WATCH_LIST, matches_watchlist
 
 _CLEAN = "def add(a, b):\n    return a + b\n"
 _VIOLATION = "class Widget:\n    pass\n"  # HC-P003: class declaration
+# A go-to-definition fixture: make (def, line 0), V (assignment, line 2), ghost (undefined, line 4).
+_DEFN_DOC = "def make():\n    return 1\nV = make()\nx = V\nz = ghost\n"
 _SYNTAX_ERROR = "def (:\n    pass\n"  # HC-SYN: unparseable — a startup-eligible rule
 
 
@@ -233,6 +235,20 @@ def _probe_lsp():
     hover_miss = dispatch(opened, "textDocument/hover", 3, {"textDocument": {"uri": "f.py"}, "position": {"line": 99, "character": 0}})[1][0]
     if hover_miss["result"] is not None:
         bad.append("hover over an unflagged line should return null")
+    # Go-to-definition resolves an identifier to its assignment or function definition in the file.
+    defn_store, _ = dispatch(empty, "textDocument/didOpen", None, {"textDocument": {"uri": "d.py", "text": _DEFN_DOC}})
+
+    def _definition(line, char):
+        return dispatch(defn_store, "textDocument/definition", 1, {"textDocument": {"uri": "d.py"}, "position": {"line": line, "character": char}})[1][0]["result"]
+
+    if (_definition(3, 4) or {}).get("range", {}).get("start", {}).get("line") != 2:
+        bad.append(f"definition of V's use should point at its assignment on line 2: {_definition(3, 4)}")
+    if (_definition(2, 4) or {}).get("range", {}).get("start", {}).get("line") != 0:
+        bad.append(f"definition of make's use should point at its def on line 0: {_definition(2, 4)}")
+    if _definition(4, 4) is not None:
+        bad.append("definition of an undefined name should be null")
+    if _definition(0, 3) is not None:
+        bad.append("definition at a non-identifier position should be null")
     lsp = to_lsp_diagnostic(diagnostic("HC003", "error", "f.py", 1, 1, "m"))
     if lsp["severity"] != 1:
         bad.append("error should map to LSP severity 1")
