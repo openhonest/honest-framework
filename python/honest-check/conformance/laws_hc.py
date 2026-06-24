@@ -46,6 +46,16 @@ _CLEAN = "def add(a, b):\n    return a + b\n"
 _VIOLATION = "class Widget:\n    pass\n"  # HC-P003: class declaration
 # A go-to-definition fixture: make (def, line 0), V (assignment, line 2), ghost (undefined, line 4).
 _DEFN_DOC = "def make():\n    return 1\nV = make()\nx = V\nz = ghost\n"
+# A workspace-symbol fixture: a vocabulary, a binding, a chain, plus non-symbol assignments.
+_SYMBOL_DOC = (
+    "from honest_type import vocabulary, binding, chain\n"
+    "Colors = vocabulary({'a': {'x'}})\n"
+    "Bind = binding({'a': 's'})\n"
+    "Flow = chain(f, g)\n"
+    "n = 1\n"
+    "m = other()\n"
+    "d = mod.thing()\n"
+)
 _SYNTAX_ERROR = "def (:\n    pass\n"  # HC-SYN: unparseable — a startup-eligible rule
 
 
@@ -249,6 +259,15 @@ def _probe_lsp():
         bad.append("definition of an undefined name should be null")
     if _definition(0, 3) is not None:
         bad.append("definition at a non-identifier position should be null")
+    # workspace/symbol lists the vocabulary, binding, and chain declarations across open documents.
+    sym_store, _ = dispatch(empty, "textDocument/didOpen", None, {"textDocument": {"uri": "s.py", "text": _SYMBOL_DOC}})
+    all_symbols = dispatch(sym_store, "workspace/symbol", 7, {"query": ""})[1][0]["result"]
+    names = sorted(s["name"] for s in all_symbols)
+    if names != ["Bind", "Colors", "Flow"]:
+        bad.append(f"workspace/symbol should list the vocabulary, binding, and chain declarations: {names}")
+    filtered = dispatch(sym_store, "workspace/symbol", 8, {"query": "col"})[1][0]["result"]
+    if [s["name"] for s in filtered] != ["Colors"]:
+        bad.append(f"workspace/symbol should filter by the query substring: {filtered}")
     lsp = to_lsp_diagnostic(diagnostic("HC003", "error", "f.py", 1, 1, "m"))
     if lsp["severity"] != 1:
         bad.append("error should map to LSP severity 1")

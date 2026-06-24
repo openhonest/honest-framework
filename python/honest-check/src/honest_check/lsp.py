@@ -66,6 +66,7 @@ def _on_initialize(store, msg_id, params):
                     "textDocumentSync": 1,  # 1 = full document sync
                     "hoverProvider": True,
                     "definitionProvider": True,
+                    "workspaceSymbolProvider": True,
                 },
                 "serverInfo": {"name": "honest-check", "version": "0.1"},
             },
@@ -164,6 +165,55 @@ def _on_definition(store, msg_id, params):
     return store, [_response(msg_id, _definition_location(store.get(uri, ""), uri, params.get("position", {})))]
 
 
+# The declaration constructors that workspace/symbol surfaces, mapped to their LSP SymbolKind
+# (5 Class, 8 Field, 12 Function) — section 2.2.
+_SYMBOL_KINDS = {"vocabulary": 5, "binding": 8, "chain": 12, "validate_all": 12}
+
+
+def _document_symbols(text: str, uri: str) -> list:
+    """The vocabulary, binding, and chain declarations in one document as LSP symbols (section 2.2):
+    a top-level assignment whose value constructs one of them, named by the assignment target. Pure."""
+    source = text.encode("utf-8")
+    root = parse_python(source).root_node
+    symbols = []
+    for node in walk(root):
+        if node.type != "assignment":
+            continue
+        right = node.child_by_field_name("right")
+        if right.type != "call":
+            continue
+        function = right.child_by_field_name("function")
+        if function.type != "identifier":
+            continue
+        kind = _SYMBOL_KINDS.get(node_text(function, source))
+        if kind is None:
+            continue
+        target = node.child_by_field_name("left")
+        symbols.append({
+            "name": node_text(target, source),
+            "kind": kind,
+            "location": {
+                "uri": uri,
+                "range": {
+                    "start": {"line": target.start_point[0], "character": target.start_point[1]},
+                    "end": {"line": target.end_point[0], "character": target.end_point[1]},
+                },
+            },
+        })
+    return symbols
+
+
+def _on_workspace_symbol(store, msg_id, params):
+    query = params.get("query", "").lower()
+    symbols = [
+        symbol
+        for uri, text in store.items()
+        for symbol in _document_symbols(text, uri)
+        if query in symbol["name"].lower()
+    ]
+    return store, [_response(msg_id, symbols)]
+
+
 def _on_shutdown(store, msg_id, params):
     return store, [_response(msg_id, None)]
 
@@ -181,6 +231,7 @@ _HANDLERS = {
     "textDocument/didClose": _on_did_close,
     "textDocument/hover": _on_hover,
     "textDocument/definition": _on_definition,
+    "workspace/symbol": _on_workspace_symbol,
     "shutdown": _on_shutdown,
 }
 

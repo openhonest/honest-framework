@@ -473,6 +473,16 @@ Feature: honest-check — Python supplement
     When _on_definition handles it
     Then it returns the definition location for the position from the stored text, or a null result
 
+  Scenario: _document_symbols lists a document's declarations as symbols
+    Given a document's text and its uri
+    When _document_symbols scans it
+    Then it returns a symbol for each top-level assignment whose value constructs a vocabulary, binding, or chain, with its kind and location
+
+  Scenario: _on_workspace_symbol answers a workspace symbol query
+    Given a workspace symbol request and the document store
+    When _on_workspace_symbol handles it
+    Then it returns the declarations across every open document whose name contains the query substring
+
   Scenario: _on_did_change publishes diagnostics for the changed document
     Given a document-changed notification carrying the full new text
     When _on_did_change handles it
