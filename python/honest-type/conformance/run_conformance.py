@@ -139,11 +139,17 @@ def _composed(spec):
 
 
 def _check_construction(case):
+    caught = None
     try:
         vocabulary({name: set(members) for name, members in case["declarations"].items()})
         result, message = "ok", ""
     except VocabularyError as exc:
-        result, message = "error", str(exc)
+        result, message, caught = "error", str(exc), exc
+    if "expect_fault" in case:
+        got = getattr(caught, "fault", None) or {}
+        expected = case["expect_fault"]
+        ok = all(got.get(field) == value for field, value in expected.items())
+        return ok, f"got {result} fault={getattr(caught, 'fault', None)}"
     ok = result == case["expect"] and case.get("error_contains", "") in message
     return ok, f"got {result} ({message[:50]})"
 

@@ -12,10 +12,20 @@ from itertools import combinations
 
 from honest_type.recognizers import is_bounded, members, normalize, recognize
 from honest_type.reserved import is_reserved, reservation_layer
+from honest_type.types import fault
 
 
 class VocabularyError(Exception):
-    """A vocabulary that cannot be built: reserved-word, overlap, catch-all, or unknown composed base."""
+    """A vocabulary that cannot be built: reserved-word, overlap, catch-all, or unknown composed base.
+
+    A construction error is a runtime error that fires when the vocabulary is built (section 1.1), so it
+    is raised — but it carries the framework fault as data on `.fault` (the `{code, category, detail}`
+    a language-agnostic conformance runner compares, section 14.5), so the error shape is portable, not
+    just a message string. `.fault` is None for the checks that do not yet carry one."""
+
+    def __init__(self, message, fault=None):
+        super().__init__(message)
+        self.fault = fault
 
 
 # A fixed, diverse corpus for catch-all detection (section 13.3): deterministic, not random — the
@@ -55,9 +65,10 @@ def _check_reserved(type_name: str, recognizer: dict) -> None:
         return
     for member in members(recognizer):
         if is_reserved(member):
+            layer = reservation_layer(member)
             raise VocabularyError(
-                f"Type '{type_name}' uses reserved word '{member}' "
-                f"(reserved at the {reservation_layer(member)} layer)."
+                f"Type '{type_name}' uses reserved word '{member}' (reserved at the {layer} layer).",
+                fault("reserved_word_in_vocabulary", f"Set member '{member}' is a reserved word at the {layer} layer", "server", {"word": member, "layer": layer}),
             )
 
 

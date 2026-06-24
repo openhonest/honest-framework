@@ -70,7 +70,14 @@
     ]
    },
    "expect": "error",
-   "error_contains": "framework"
+   "expect_fault": {
+    "code": "reserved_word_in_vocabulary",
+    "category": "server",
+    "detail": {
+     "word": "manifest",
+     "layer": "framework"
+    }
+   }
   },
   {
    "id": "vocab-overlap",
