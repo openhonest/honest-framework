@@ -483,6 +483,16 @@ Feature: honest-check — Python supplement
     When _on_workspace_symbol handles it
     Then it returns the declarations across every open document whose name contains the query substring
 
+  Scenario: _code_actions offers a suppression directive for diagnostics in a range
+    Given a document's text, its uri, and an LSP range
+    When _code_actions builds the actions
+    Then it returns a quick-fix for each diagnostic on a line in the range, whose edit appends an ignore directive to that line
+
+  Scenario: _on_code_action answers a code-action request from the store
+    Given a code-action request and the document store
+    When _on_code_action handles it
+    Then it returns the suppression quick-fixes for the requested range from the stored text
+
   Scenario: _on_did_change publishes diagnostics for the changed document
     Given a document-changed notification carrying the full new text
     When _on_did_change handles it

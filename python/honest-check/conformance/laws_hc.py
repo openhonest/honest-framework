@@ -268,6 +268,13 @@ def _probe_lsp():
     filtered = dispatch(sym_store, "workspace/symbol", 8, {"query": "col"})[1][0]["result"]
     if [s["name"] for s in filtered] != ["Colors"]:
         bad.append(f"workspace/symbol should filter by the query substring: {filtered}")
+    # codeAction offers a suppression directive for each diagnostic in the requested range.
+    action_in = dispatch(opened, "textDocument/codeAction", 9, {"textDocument": {"uri": "f.py"}, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}})[1][0]["result"]
+    if len(action_in) != 1 or "HC-P003" not in action_in[0]["title"] or "honest: ignore HC-P003" not in action_in[0]["edit"]["changes"]["f.py"][0]["newText"]:
+        bad.append(f"codeAction should offer a suppression directive for the violation: {action_in}")
+    action_out = dispatch(opened, "textDocument/codeAction", 10, {"textDocument": {"uri": "f.py"}, "range": {"start": {"line": 5, "character": 0}, "end": {"line": 5, "character": 0}}})[1][0]["result"]
+    if action_out != []:
+        bad.append("codeAction outside a violation's line should offer nothing")
     lsp = to_lsp_diagnostic(diagnostic("HC003", "error", "f.py", 1, 1, "m"))
     if lsp["severity"] != 1:
         bad.append("error should map to LSP severity 1")

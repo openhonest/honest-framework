@@ -1,13 +1,15 @@
 """Language Server Protocol server (section 2.2).
 
-`honest-check --lsp` speaks JSON-RPC 2.0 over stdio and publishes honest-check
-diagnostics live as the developer edits: open/change a document, get inline
-violations. Full-text sync, so each change carries the whole document and the
-handlers need no document state.
+`honest-check --lsp` speaks JSON-RPC 2.0 over stdio. It publishes diagnostics live
+as the developer edits and answers the section 2.2 "Complete" requests — hover,
+go-to-definition, workspace symbols, and code actions. Full-text sync keeps an open-
+document store current (uri -> text); the store is threaded through every handler as
+a value (section 8.1.1 pattern), never module state, so a request that carries only
+a position can still be answered against the document's current text.
 
-Split: the method handlers are PURE (a message in, a list of outgoing messages out;
-they call the pure `check_source`). The only I/O is the read/write framing loop,
-which is the boundary. Method dispatch is a table, not a branch.
+Split: the method handlers are PURE — (store, msg_id, params) -> (store, outgoing
+messages) — calling the pure `check_source` and parse helpers. The only I/O is the
+read/write framing loop, which is the boundary. Method dispatch is a table, not a branch.
 
 # honest: disable HC-P004
 """
@@ -67,6 +69,7 @@ def _on_initialize(store, msg_id, params):
                     "hoverProvider": True,
                     "definitionProvider": True,
                     "workspaceSymbolProvider": True,
+                    "codeActionProvider": True,
                 },
                 "serverInfo": {"name": "honest-check", "version": "0.1"},
             },
@@ -214,6 +217,38 @@ def _on_workspace_symbol(store, msg_id, params):
     return store, [_response(msg_id, symbols)]
 
 
+def _code_actions(text: str, uri: str, lsp_range: dict) -> list:
+    """Quick-fix code actions for the diagnostics in an LSP range (section 2.2): a suppression
+    directive for each diagnostic whose line falls in the range. The edit appends a
+    `# honest: ignore HC-XXXX` comment to that line, the one fix every rule supports. Pure."""
+    lines = text.split("\n")
+    start_line = lsp_range.get("start", {}).get("line", 0)
+    end_line = lsp_range.get("end", {}).get("line", start_line)
+    actions = []
+    for d in check_source(text, uri):
+        diagnostic_line = d["line"] - 1  # honest-check is 1-based, LSP 0-based
+        if start_line <= diagnostic_line <= end_line:
+            end_char = len(lines[diagnostic_line])
+            actions.append({
+                "title": f"Suppress {d['rule']} with a directive",
+                "kind": "quickfix",
+                "edit": {"changes": {uri: [{
+                    "range": {
+                        "start": {"line": diagnostic_line, "character": end_char},
+                        "end": {"line": diagnostic_line, "character": end_char},
+                    },
+                    "newText": f"  # honest: ignore {d['rule']}",
+                }]}},
+            })
+    return actions
+
+
+def _on_code_action(store, msg_id, params):
+    doc = params.get("textDocument", {})
+    uri = doc.get("uri", "")
+    return store, [_response(msg_id, _code_actions(store.get(uri, ""), uri, params.get("range", {})))]
+
+
 def _on_shutdown(store, msg_id, params):
     return store, [_response(msg_id, None)]
 
@@ -232,6 +267,7 @@ _HANDLERS = {
     "textDocument/hover": _on_hover,
     "textDocument/definition": _on_definition,
     "workspace/symbol": _on_workspace_symbol,
+    "textDocument/codeAction": _on_code_action,
     "shutdown": _on_shutdown,
 }
 
