@@ -1295,6 +1295,7 @@ All framework-defined fault codes, their category, and their HTTP mapping:
 | `non_result_return` | server | 500 | Link returned neither ok nor err |
 | `unbound_type` | server | 500 | Token classified but no binding exists for its type |
 | `reserved_word` | server | 500 | Predicate matched a reserved word at runtime |
+| `vocabulary_overlap` | server | 500 | Token matched two recognizers at classification (a predicate overlap not caught at construction) |
 
 Application code may define additional fault codes. Application fault codes must specify their category. The HTTP mapping for unknown codes defaults to 422 (client) or 500 (server) based on category.
 

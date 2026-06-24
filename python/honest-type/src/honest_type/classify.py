@@ -46,6 +46,13 @@ def _classify_token(token, vocab):
             continue
         if recognizer["kind"] == "predicate" and is_reserved(token):
             return rejection(token, "reserved_word", type_name)
+        if matched_type is not None:
+            return fault(
+                "vocabulary_overlap",
+                f"Token '{token}' matches both '{matched_type}' and '{type_name}'",
+                "server",
+                {"token": token, "types": [matched_type, type_name]},
+            )
         matched_type = type_name
     if matched_type is None:
         return rejection(token, "unrecognized")

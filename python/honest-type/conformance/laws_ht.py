@@ -240,6 +240,14 @@ EDGE_SUBJECTS = [
     ("reserved_word", {"vocab": vocabulary({"word": predicate(str.isalpha)}), "tokens": ["class"], "reasons": ["reserved_word"]}),
     ("predicate_error", {"vocab": vocabulary({"boom": predicate(_raiser)}), "tokens": ["x"], "fault": "predicate_error"}),
     (
+        "vocabulary_overlap",
+        {
+            "vocab": vocabulary({"starts_a": predicate(lambda t: t.startswith("a")), "ends_z": predicate(lambda t: t.endswith("z"))}),
+            "tokens": ["az"],
+            "fault": "vocabulary_overlap",
+        },
+    ),
+    (
         "unbound_type",
         {"vocab": vocabulary({"a": {"x"}, "b": {"y"}}), "bind": {"a": "a"}, "tokens": ["y"], "reasons": ["unbound_type"]},
     ),
