@@ -903,6 +903,22 @@
    }
   },
   {
+   "id": "value-condition-met-gt",
+   "value_case": {"function": "condition_met", "args": [0.06, {"operator": "gt", "value": 0.05}], "expected": true}
+  },
+  {
+   "id": "value-condition-met-lt",
+   "value_case": {"function": "condition_met", "args": [3, {"operator": "lt", "value": 5}], "expected": true}
+  },
+  {
+   "id": "value-condition-met-gte",
+   "value_case": {"function": "condition_met", "args": [5, {"operator": "gte", "value": 5}], "expected": true}
+  },
+  {
+   "id": "value-condition-met-lte",
+   "value_case": {"function": "condition_met", "args": [5, {"operator": "lte", "value": 5}], "expected": true}
+  },
+  {
    "id": "value-format-inspect",
    "value_case": {
     "function": "format_inspect",
@@ -935,6 +951,14 @@
   {
    "function": "run_named_projection",
    "reason": "Resolves a projection from a registry whose declarations carry fold functions, so its inputs are not JSON-encodable as a value case. The resolve-and-fold path and the unknown-name fault are proved by the query probe in laws_ho."
+  },
+  {
+   "function": "custom_metric",
+   "reason": "A metric declaration carrying the fold and value functions unchanged; callable arguments are not JSON-encodable as a value case. Its shape is proved by the threshold-engine probe in laws_ho."
+  },
+  {
+   "function": "compute_metric",
+   "reason": "Folds the log through a metric whose fold and value are functions, so its inputs are not JSON-encodable as a value case. The fold-then-extract path, including the empty-log case, is proved by the threshold-engine probe in laws_ho."
   }
  ]
 }

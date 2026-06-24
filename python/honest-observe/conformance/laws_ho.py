@@ -641,6 +641,53 @@ def _probe_query():
     return bad
 
 
+def _probe_threshold_engine():
+    """The threshold metric engine (section 8b): a metric is a fold plus a value over the log
+    (custom_metric / compute_metric), and a condition is the threshold-crossing decision
+    (condition_met). All pure; sending the alert, storing the rule, and the cooldown are other modules."""
+    from honest_observe import compute_metric, condition_met, custom_metric
+
+    bad = []
+
+    # condition_met is the threshold comparator (section 8b.4 ConditionSpec operator/value).
+    checks = [
+        ("gt over", condition_met(0.06, {"operator": "gt", "value": 0.05}), True),
+        ("gt under", condition_met(0.04, {"operator": "gt", "value": 0.05}), False),
+        ("lt under", condition_met(3, {"operator": "lt", "value": 5}), True),
+        ("lt over", condition_met(7, {"operator": "lt", "value": 5}), False),
+        ("gte equal", condition_met(5, {"operator": "gte", "value": 5}), True),
+        ("lte equal", condition_met(5, {"operator": "lte", "value": 5}), True),
+    ]
+    for label, got, want in checks:
+        if got != want:
+            bad.append(f"condition_met({label}) should be {want}, got {got}")
+
+    # A metric is a fold accumulating state plus a value extracting the number (the section 8b.5 pattern).
+    def fold(state, event):
+        return {"total": state["total"] + 1, "failed": state["failed"] + (1 if event["payload"]["result"] == "failure" else 0)}
+
+    def value(state):
+        return state["failed"] / state["total"] if state["total"] else 0.0
+
+    metric = custom_metric("payment.failure_rate", ["app.payment.api_called"], fold, value, {"total": 0, "failed": 0})
+    if metric["name"] != "payment.failure_rate" or metric["fold"] is not fold or metric["value"] is not value:
+        bad.append(f"custom_metric should carry the name, fold, and value: {metric}")
+
+    events = [
+        {"event_type": "app.payment.api_called", "timestamp": "2026-01-01T00:00:00Z", "payload": {"result": "success"}},
+        {"event_type": "app.payment.api_called", "timestamp": "2026-01-01T00:00:01Z", "payload": {"result": "failure"}},
+        {"event_type": "app.payment.api_called", "timestamp": "2026-01-01T00:00:02Z", "payload": {"result": "success"}},
+        {"event_type": "app.other", "timestamp": "2026-01-01T00:00:03Z", "payload": {}},
+    ]
+    # compute_metric folds only the metric's event types, then extracts the value: one failure in three.
+    if compute_metric(metric, events) != 1 / 3:
+        bad.append(f"compute_metric should fold the metric's events and extract the value: {compute_metric(metric, events)}")
+    # Empty log: the value function's empty-state path (no division by zero).
+    if compute_metric(metric, []) != 0.0:
+        bad.append("compute_metric over an empty log should return the metric's empty value")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -657,6 +704,7 @@ def run():
         "tail": _probe_tail(),
         "inspect": _probe_inspect(),
         "query": _probe_query(),
+        "threshold_engine": _probe_threshold_engine(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

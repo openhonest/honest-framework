@@ -253,3 +253,18 @@ Feature: honest-observe — event envelope, recording, and projection
     Given a projection registry, a name, and the events
     When run_named_projection runs it
     Then it returns ok of the folded state for a known name, or an unknown_projection fault for one not registered
+
+  Scenario: custom_metric declares a metric as a fold and a value over the log
+    Given a name, event types, fold, value, and initial state
+    When custom_metric declares the metric
+    Then it returns a declaration carrying the events it folds, the fold, the value, and the initial state
+
+  Scenario: compute_metric computes a metric's current value over the log
+    Given a metric and the events
+    When compute_metric runs it
+    Then it folds the metric's events from the initial state and extracts the value
+
+  Scenario: condition_met decides whether a value crosses a threshold
+    Given a metric value and a condition operator and bound
+    When condition_met decides
+    Then it returns whether the value crosses the bound under the operator

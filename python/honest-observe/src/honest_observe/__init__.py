@@ -28,6 +28,7 @@ from honest_observe.framework_events import (
 from honest_observe.otel import otel_attributes, otel_signal, otel_signal_kind
 from honest_observe.projections import apply_projection, matches
 from honest_observe.snapshot import build_snapshot, declare_projection, resume_from_snapshot, should_snapshot
+from honest_observe.thresholds import compute_metric, condition_met, custom_metric
 
 __all__ = [
     "Event",
@@ -66,4 +67,7 @@ __all__ = [
     "format_tail_line",
     "format_inspect",
     "run_named_projection",
+    "custom_metric",
+    "compute_metric",
+    "condition_met",
 ]
