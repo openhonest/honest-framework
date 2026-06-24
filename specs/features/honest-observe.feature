@@ -248,3 +248,8 @@ Feature: honest-observe — event envelope, recording, and projection
     Given a millisecond quantity
     When _whole_ms renders it
     Then it returns the rounded whole-millisecond display string
+
+  Scenario: run_named_projection resolves and runs a projection by name
+    Given a projection registry, a name, and the events
+    When run_named_projection runs it
+    Then it returns ok of the folded state for a known name, or an unknown_projection fault for one not registered

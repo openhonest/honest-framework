@@ -8,7 +8,14 @@ has nothing to say that the event log does not already know.
 `format_tail_line` renders one event as the structured time/source/type/fields line of section 9.2. The
 per-event-type field rendering is a dispatch table — the type system, not an if/elif chain — and an
 event type with no entry still renders its time, source, and type with an empty field tail.
+
+`run_named_projection` (section 9.4) resolves a projection by name from a registry and runs it over the
+events; this is what `honest-observe query` calls once the CLI has read the log.
 """
+
+from honest_type import err, fault, ok
+
+from honest_observe.projections import apply_projection
 
 _NS_PER_MS = 1_000_000
 
@@ -130,3 +137,22 @@ def format_inspect(request_id: str, events: list) -> str:
     header = f"Request: {request_id}\n{payload['http_method']} {payload['http_path']} → {payload['http_status']}  total: {_whole_ms(total_ms)}"
     footer = f"Total: {_whole_ms(total_ms)}  (server: {_whole_ms(server_ms)}  network: {_whole_ms(network_ms)}  browser: {_whole_ms(browser_ms)})"
     return header + "\n\n" + "\n\n".join(sections) + "\n\n" + footer
+
+
+def run_named_projection(registry: dict, name: str, events: list):
+    """Run a projection resolved by name from a registry (section 9.4). Pure: look up the declared
+    projection (a declare_projection result), then fold the events through it with its filters and
+    initial state. Returns ok(state), or err(fault 'unknown_projection') when the name is not
+    registered — the events are passed in, so reading the log stays the CLI's concern."""
+    declaration = registry.get(name)
+    if declaration is None:
+        return err(fault("unknown_projection", f"No projection named '{name}' in the registry", "client", {"name": name}))
+    state = apply_projection(
+        events,
+        declaration["fold"],
+        declaration["initial_state"],
+        event_types=declaration.get("event_types"),
+        aggregate_type=declaration.get("aggregate_type"),
+        aggregate_id=declaration.get("aggregate_id"),
+    )
+    return ok(state)

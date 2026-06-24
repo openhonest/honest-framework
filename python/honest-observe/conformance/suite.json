@@ -931,6 +931,10 @@
   {
    "function": "resume_from_snapshot",
    "reason": "Takes the fold function as an argument, so its inputs are not JSON-encodable as a value case. The strictly-after-snapshot replay onto the snapshot state is proved by the snapshot probe in laws_ho."
+  },
+  {
+   "function": "run_named_projection",
+   "reason": "Resolves a projection from a registry whose declarations carry fold functions, so its inputs are not JSON-encodable as a value case. The resolve-and-fold path and the unknown-name fault are proved by the query probe in laws_ho."
   }
  ]
 }

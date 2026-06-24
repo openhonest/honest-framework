@@ -615,6 +615,32 @@ def _probe_inspect():
     return bad
 
 
+def _probe_query():
+    """The named-projection runner (section 9.4): resolve a projection by name from a registry and run
+    it over the events. An unknown name is a fault as data; a known one folds and returns ok(state)."""
+    from honest_observe import declare_projection, run_named_projection
+
+    bad = []
+
+    def count(state, event):
+        return {"n": state["n"] + 1}
+
+    registry = {"clicks": declare_projection("clicks", ["click"], count, {"n": 0})}
+    events = [
+        {"event_type": "click", "timestamp": "2026-01-01T00:00:00Z", "payload": {}},
+        {"event_type": "view", "timestamp": "2026-01-01T00:00:01Z", "payload": {}},
+        {"event_type": "click", "timestamp": "2026-01-01T00:00:02Z", "payload": {}},
+    ]
+    result = run_named_projection(registry, "clicks", events)
+    if result != {"ok": {"n": 2}}:
+        bad.append(f"a known projection should run its fold over the filtered events: {result}")
+
+    missing = run_named_projection(registry, "nope", events)
+    if missing.get("err", {}).get("code") != "unknown_projection" or missing["err"]["detail"]["name"] != "nope":
+        bad.append(f"an unknown projection name should be a fault as data: {missing}")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -630,6 +656,7 @@ def run():
         "browser": _probe_browser(),
         "tail": _probe_tail(),
         "inspect": _probe_inspect(),
+        "query": _probe_query(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:
