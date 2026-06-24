@@ -272,6 +272,12 @@ So honest-check is **complete on the thing that decides checkability** (limited 
 
 Source is read with tree-sitter — the framework's only parser, chosen because the framework is one standard meant to run across many languages, and a single parser family lets the same rule shapes run on Python, Rust, C, and the rest. tree-sitter keeps going when it meets something it cannot read, marking those spots rather than dropping them; honest-check stops at the first such spot (HC-SYN). The gate never passes code it could not fully read.
 
+### The input boundary is closed
+
+Conventional web frameworks treat a request as an open channel — a browser running arbitrary JavaScript could send anything — so the server validates defensively against an unknown input space. The honest framework does not. The page is HTML the server rendered; HTMX sends only what the template's own attributes declare (`hx-post`, `hx-vals`, `hx-include`, and the form fields). The developer authored every one of those, so the complete set of tokens that can reach intake is fixed by the templates and readable statically at build time. And JavaScript is not an escape hatch: if a developer shapes a request with JavaScript rather than HTML attributes alone, that JavaScript is itself source they authored — read by the same parser as the templates and the server code, so the request it builds is equally knowable. No input surface escapes inspection; the single parser over every language the application touches — Python, the HTML/HTMX templates, and JavaScript — is exactly why no channel into the application is opaque.
+
+The input space is therefore closed, just as a Set-based vocabulary is closed at definition time — there is no "unknown input" category. The contract for what enters a chain is **derived, never separately declared**: it is the manifest `classify()` produces at intake (Layer 2, below) from the tokens the templates — and any developer-authored client code — targeting that chain's route send. Requests from outside the application's own UI — third-party webhooks, partner systems — are equally closed: they enter through a declared translator (honest-observe §8c) that converts a known external shape into the canonical manifest. Either way, what reaches a chain's first link is statically knowable, so a tool can check the first link against it without running the application.
+
 ---
 
 ## Bootstrapping a New Language Implementation

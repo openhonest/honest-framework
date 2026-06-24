@@ -456,7 +456,7 @@ FUNCTION check_HC002(chain):
                 f"Accepts types not provided by previous link: {missing}")
 ```
 
-For the first link in a chain, `accepts` is checked against the boundary vocabulary. If no boundary vocabulary is declared, HC002 is skipped for the first link and HC001 is emitted instead.
+The first link has no predecessor, but its input is not unknown: it receives the manifest `classify()` produces at intake from the request the templates send — the closed, statically-inspectable input boundary (see honest-framework-spec.md, "The input boundary is closed"). So the first link's `accepts` is checked against that **derived** boundary vocabulary — the types reachable at the chain's intake — not a separately declared one. A first link declared `boundary=True` is itself the intake boundary and is exempt (it receives the raw request, by design). A first link that declares no vocabulary at all is HC001's concern, exactly as for any other link. (Deriving the boundary vocabulary from the templates that target a chain's route is a template-analysis capability; until it lands, HC002 checks the adjacent-pair hand-offs and the `boundary=True` exemption, and HC001 covers a first link missing its vocabulary.)
 
 #### HC004 — Dead vocabulary type
 
