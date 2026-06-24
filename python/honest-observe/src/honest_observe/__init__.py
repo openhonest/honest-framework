@@ -24,6 +24,7 @@ from honest_observe.framework_events import (
     state_transitioned,
 )
 from honest_observe.projections import apply_projection, matches
+from honest_observe.snapshot import build_snapshot, declare_projection, resume_from_snapshot, should_snapshot
 
 __all__ = [
     "Event",
@@ -47,4 +48,8 @@ __all__ = [
     "app_error",
     "event_log_schema",
     "event_log_manifest",
+    "build_snapshot",
+    "should_snapshot",
+    "declare_projection",
+    "resume_from_snapshot",
 ]

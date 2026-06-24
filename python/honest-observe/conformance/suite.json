@@ -801,12 +801,40 @@
      }
     }
    }
+  },
+  {
+   "id": "value-build-snapshot",
+   "value_case": {
+    "function": "build_snapshot",
+    "args": ["sub_summary", "2026-03-15T00:00:00Z", {"count": 1000}],
+    "expected": {"projection_id": "sub_summary", "snapshot_at": "2026-03-15T00:00:00Z", "state": {"count": 1000}}
+   }
+  },
+  {
+   "id": "value-should-snapshot-reached",
+   "value_case": {"function": "should_snapshot", "args": [1000, 1000], "expected": true}
+  },
+  {
+   "id": "value-should-snapshot-below",
+   "value_case": {"function": "should_snapshot", "args": [999, 1000], "expected": false}
+  },
+  {
+   "id": "value-should-snapshot-no-interval",
+   "value_case": {"function": "should_snapshot", "args": [5000, null], "expected": false}
   }
  ],
  "value_oracle_exempt": [
   {
    "function": "emit",
    "reason": "The emit boundary: async, and its effect is the event it appends through the injected runtime (clock, sequence, append callables), not a pure return value. Verified by its own conformance."
+  },
+  {
+   "function": "declare_projection",
+   "reason": "A projection declaration carrying the fold function unchanged; a callable argument is not JSON-encodable as a value case. Its shape (config plus the fold, optional aggregate filters only when set) is proved by the snapshot probe in laws_ho."
+  },
+  {
+   "function": "resume_from_snapshot",
+   "reason": "Takes the fold function as an argument, so its inputs are not JSON-encodable as a value case. The strictly-after-snapshot replay onto the snapshot state is proved by the snapshot probe in laws_ho."
   }
  ]
 }

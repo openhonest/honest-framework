@@ -108,3 +108,23 @@ Feature: honest-observe — event envelope, recording, and projection
     Given the event-log table
     When event_log_manifest wraps it
     Then it returns the honest_event_log manifest with append_only true and the embedded schema
+
+  Scenario: build_snapshot records a projection's state at a log position
+    Given a projection id, a log position, and the folded state
+    When build_snapshot records them
+    Then it returns a snapshot with the projection id, the position it covers, and the state
+
+  Scenario: should_snapshot fires only when the interval is reached
+    Given an event count since the last snapshot and a snapshot interval
+    When should_snapshot decides
+    Then it is true once the count reaches a positive interval, and never when there is no interval
+
+  Scenario: declare_projection bundles the projection config and fold
+    Given a projection id, filters, fold, initial state, and snapshot interval
+    When declare_projection bundles them
+    Then it returns a declaration carrying the id, fold, and interval, with the aggregate filters present only when set
+
+  Scenario: resume_from_snapshot replays only the events after the snapshot
+    Given a snapshot and the events around its position
+    When resume_from_snapshot replays from it
+    Then it folds only the strictly-later matching events onto the snapshot state, leaving the position's own event already counted

@@ -350,6 +350,58 @@ def _probe_event_log():
     return bad
 
 
+def _probe_snapshot():
+    """Snapshot projections (section 6.3): a snapshot record, the snapshot-interval decision, the
+    declared-projection API, and the resume that replays only the events after a snapshot onto its
+    state rather than from the beginning. All pure; persisting/loading the snapshot is the boundary's."""
+    from honest_observe import build_snapshot, declare_projection, resume_from_snapshot, should_snapshot
+
+    bad = []
+
+    # The snapshot record is exactly the three documented fields.
+    snap = build_snapshot("sub_summary", "2026-03-15T00:00:00Z", {"count": 1000})
+    if snap != {"projection_id": "sub_summary", "snapshot_at": "2026-03-15T00:00:00Z", "state": {"count": 1000}}:
+        bad.append(f"build_snapshot wrong: {snap}")
+
+    # should_snapshot: take one once the interval is reached; never when there is no interval.
+    if should_snapshot(1000, 1000) is not True or should_snapshot(1500, 1000) is not True:
+        bad.append("should_snapshot should fire at or past the interval")
+    if should_snapshot(999, 1000) is not False:
+        bad.append("should_snapshot should not fire below the interval")
+    if should_snapshot(5000, None) is not False or should_snapshot(5000, 0) is not False:
+        bad.append("should_snapshot should never fire without a positive interval")
+
+    # A counting fold over the post-snapshot events.
+    def fold(state, event):
+        return {"count": state["count"] + 1}
+
+    events = [
+        {"event_type": "app.x", "aggregate_type": "a", "aggregate_id": "1", "timestamp": "2026-03-15T00:00:00Z"},  # at snapshot — already counted
+        {"event_type": "app.x", "aggregate_type": "a", "aggregate_id": "1", "timestamp": "2026-03-15T01:00:00Z"},  # after
+        {"event_type": "app.y", "aggregate_type": "a", "aggregate_id": "1", "timestamp": "2026-03-15T02:00:00Z"},  # after, filtered out
+    ]
+    # Resume from the snapshot: only strictly-later events fold, the type filter still applies, and the
+    # starting state is the snapshot's — so the count continues from 1000, not from zero.
+    resumed = resume_from_snapshot(snap, events, fold, event_types=["app.x"])
+    if resumed != {"count": 1001}:
+        bad.append(f"resume_from_snapshot should fold only later, matching events onto the snapshot state: {resumed}")
+    # No snapshot_at boundary skipped: an event exactly at snapshot_at is treated as already-included.
+    only_at = resume_from_snapshot(snap, [events[0]], fold)
+    if only_at != {"count": 1000}:
+        bad.append(f"an event at the snapshot position must not be re-folded: {only_at}")
+
+    # declare_projection bundles the config and fold; optional aggregate filters appear only when set.
+    declared = declare_projection("sub_summary", ["app.x"], fold, {"count": 0}, snapshot_interval=1000)
+    if declared["projection_id"] != "sub_summary" or declared["fold"] is not fold or declared["snapshot_interval"] != 1000:
+        bad.append(f"declare_projection should carry id/fold/interval: {declared}")
+    if "aggregate_type" in declared or "aggregate_id" in declared:
+        bad.append("declare_projection should omit unset aggregate filters")
+    scoped = declare_projection("p", ["e"], fold, {}, aggregate_type="order", aggregate_id="o1")
+    if scoped.get("aggregate_type") != "order" or scoped.get("aggregate_id") != "o1" or scoped["snapshot_interval"] is not None:
+        bad.append(f"declare_projection should carry set filters and a None default interval: {scoped}")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -360,6 +412,7 @@ def run():
         "framework_events": _probe_framework_events(),
         "canonical_app_events": _probe_canonical_app_events(),
         "event_log": _probe_event_log(),
+        "snapshot": _probe_snapshot(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:
