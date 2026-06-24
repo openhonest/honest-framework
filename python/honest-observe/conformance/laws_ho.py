@@ -468,6 +468,55 @@ def _probe_otel():
     return bad
 
 
+def _probe_browser():
+    """Browser instrumentation (section 8): the browser event envelope (§8.2) and the four automatic
+    browser event payloads (§8.4), as pure data contracts. The beacon and the ingest endpoint that
+    receives them are boundary I/O; the shapes here are what that endpoint validates and appends."""
+    from honest_observe import browser_classify, browser_request, browser_response, build_browser_event, dom_changed
+
+    bad = []
+
+    # §8.2 envelope: source is always "browser"; request_id attaches only when supplied; required
+    # fields are validated exactly as the server envelope is.
+    ok_event = build_browser_event("hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "sess-1", {"changed_keys": ["filters"]}, "uuid-v4-1", request_id="req_abc")
+    if "ok" not in ok_event:
+        bad.append(f"a complete browser event should be ok: {ok_event}")
+    else:
+        env = ok_event["ok"]
+        if env["source"] != "browser" or env["session_id"] != "sess-1" or env["request_id"] != "req_abc":
+            bad.append(f"browser envelope wrong: {env}")
+        if "aggregate_type" in env or "sequence" in env:
+            bad.append("a browser event has no aggregate or sequence fields")
+    no_req = build_browser_event("hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "sess-1", {}, "uuid-v4-2")
+    if "request_id" in no_req["ok"]:
+        bad.append("request_id must be absent when not supplied")
+    bad_event = build_browser_event("hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "", {}, "uuid-v4-3")
+    if bad_event.get("err", {}).get("code") != "invalid_event":
+        bad.append(f"an empty required field (session_id) should fault invalid_event: {bad_event}")
+
+    # §8.4 the four automatic browser events.
+    classify = browser_classify("#row-1", "hf-format", ["currency", "usd"], {"format": "currency"}, 1200, request_id="req_abc")
+    if classify != {"event_type": "hf.browser.classify", "payload": {"element": "#row-1", "attribute": "hf-format", "tokens": ["currency", "usd"], "manifest": {"format": "currency"}, "duration_ns": 1200, "request_id": "req_abc"}}:
+        bad.append(f"browser_classify wrong: {classify}")
+    if "request_id" in browser_classify("#x", "hf-y", [], {}, 1)["payload"]:
+        bad.append("browser_classify should omit request_id when not supplied")
+
+    request = browser_request("POST", "/api/items", "change", "#content", ["filters", "page"], "req_abc")
+    if request != {"event_type": "hf.browser.request", "payload": {"method": "POST", "url": "/api/items", "trigger": "change", "target": "#content", "manifest_keys": ["filters", "page"], "request_id": "req_abc"}}:
+        bad.append(f"browser_request wrong: {request}")
+
+    response = browser_response("req_abc", 200, "#content-area", 163)
+    if response != {"event_type": "hf.browser.response", "payload": {"request_id": "req_abc", "status": 200, "swap_target": "#content-area", "duration_ms": 163}}:
+        bad.append(f"browser_response wrong: {response}")
+
+    changed = dom_changed(["filters"], {"filters": []}, {"filters": ["active"]}, request_id="req_abc")
+    if changed != {"event_type": "hf.dom.changed", "payload": {"changed_keys": ["filters"], "from": {"filters": []}, "to": {"filters": ["active"]}, "request_id": "req_abc"}}:
+        bad.append(f"dom_changed wrong: {changed}")
+    if "request_id" in dom_changed(["x"], {"x": 1}, {"x": 2})["payload"]:
+        bad.append("dom_changed should omit request_id outside a request context")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -480,6 +529,7 @@ def run():
         "event_log": _probe_event_log(),
         "snapshot": _probe_snapshot(),
         "otel": _probe_otel(),
+        "browser": _probe_browser(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

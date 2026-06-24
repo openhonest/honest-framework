@@ -845,6 +845,54 @@
     "args": [{"event_type": "hf.state.transitioned", "payload": {"machine_name": "order_sm", "entity_id": "o1", "from_state": "pending", "event": "pay", "to_state": "paid", "duration_ns": 4}}],
     "expected": {"event_type": "hf.state.transitioned", "kind": "span_event", "attributes": {"hf.state.machine": "order_sm", "hf.state.from": "pending", "hf.state.event": "pay", "hf.state.to": "paid"}}
    }
+  },
+  {
+   "id": "value-build-browser-event-ok",
+   "value_case": {
+    "function": "build_browser_event",
+    "args": ["hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "sess-1", {"changed_keys": ["filters"]}, "uuid-v4-1", "req_abc"],
+    "expected": {"ok": {"event_id": "uuid-v4-1", "event_type": "hf.dom.changed", "event_version": "1.0", "timestamp": "2026-03-15T14:23:07.001Z", "source": "browser", "session_id": "sess-1", "payload": {"changed_keys": ["filters"]}, "request_id": "req_abc"}}
+   }
+  },
+  {
+   "id": "value-build-browser-event-invalid",
+   "value_case": {
+    "function": "build_browser_event",
+    "args": ["hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "", {}, "uuid-v4-3"],
+    "expected": {"err": {"code": "invalid_event", "message": "Browser event is missing required field(s): ['session_id']", "category": "client", "detail": {"missing": ["session_id"]}}}
+   }
+  },
+  {
+   "id": "value-browser-classify",
+   "value_case": {
+    "function": "browser_classify",
+    "args": ["#row-1", "hf-format", ["currency", "usd"], {"format": "currency"}, 1200, "req_abc"],
+    "expected": {"event_type": "hf.browser.classify", "payload": {"element": "#row-1", "attribute": "hf-format", "tokens": ["currency", "usd"], "manifest": {"format": "currency"}, "duration_ns": 1200, "request_id": "req_abc"}}
+   }
+  },
+  {
+   "id": "value-browser-request",
+   "value_case": {
+    "function": "browser_request",
+    "args": ["POST", "/api/items", "change", "#content", ["filters", "page"], "req_abc"],
+    "expected": {"event_type": "hf.browser.request", "payload": {"method": "POST", "url": "/api/items", "trigger": "change", "target": "#content", "manifest_keys": ["filters", "page"], "request_id": "req_abc"}}
+   }
+  },
+  {
+   "id": "value-browser-response",
+   "value_case": {
+    "function": "browser_response",
+    "args": ["req_abc", 200, "#content-area", 163],
+    "expected": {"event_type": "hf.browser.response", "payload": {"request_id": "req_abc", "status": 200, "swap_target": "#content-area", "duration_ms": 163}}
+   }
+  },
+  {
+   "id": "value-dom-changed",
+   "value_case": {
+    "function": "dom_changed",
+    "args": [["filters"], {"filters": []}, {"filters": ["active"]}, "req_abc"],
+    "expected": {"event_type": "hf.dom.changed", "payload": {"changed_keys": ["filters"], "from": {"filters": []}, "to": {"filters": ["active"]}, "request_id": "req_abc"}}
+   }
   }
  ],
  "value_oracle_exempt": [

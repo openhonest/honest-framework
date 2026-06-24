@@ -6,6 +6,7 @@ world — id, clock, sequence, and the log writer — only through an injected r
 stored by persist without importing it. The log storage itself is the runtime's concern.
 """
 
+from honest_observe.browser import browser_classify, browser_request, browser_response, build_browser_event, dom_changed
 from honest_observe.emit import emit
 from honest_observe.event_log import event_log_manifest, event_log_schema
 from honest_observe.events import Event, build_event, extract_auth, extract_meta
@@ -56,4 +57,9 @@ __all__ = [
     "otel_signal_kind",
     "otel_attributes",
     "otel_signal",
+    "build_browser_event",
+    "browser_classify",
+    "browser_request",
+    "browser_response",
+    "dom_changed",
 ]

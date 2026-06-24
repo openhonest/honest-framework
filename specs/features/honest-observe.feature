@@ -173,3 +173,28 @@ Feature: honest-observe — event envelope, recording, and projection
     Given a state-transitioned payload
     When _state_attrs reads it
     Then it returns the hf state machine, from state, event, and to state
+
+  Scenario: build_browser_event assembles a validated browser envelope
+    Given a browser event type, version, timestamp, session, payload, and event id
+    When build_browser_event assembles them
+    Then it returns an ok browser event with source browser and the request id only when supplied, or an invalid_event fault naming any empty required field
+
+  Scenario: browser_classify builds the attribute-classification event payload
+    Given an element, attribute, tokens, manifest, and duration
+    When browser_classify builds the payload
+    Then it returns the hf.browser.classify event with the request id only within a request context
+
+  Scenario: browser_request builds the HTMX-request event payload
+    Given an HTMX method, url, trigger, target, manifest keys, and request id
+    When browser_request builds the payload
+    Then it returns the hf.browser.request event carrying the request id it sent
+
+  Scenario: browser_response builds the HTMX-response event payload
+    Given a request id, status, swap target, and round-trip duration
+    When browser_response builds the payload
+    Then it returns the hf.browser.response event joined to its request by request id
+
+  Scenario: dom_changed builds the manifest-state-change event payload
+    Given the changed keys with their previous and new values
+    When dom_changed builds the payload
+    Then it returns the hf.dom.changed event with the request id only within a request context
