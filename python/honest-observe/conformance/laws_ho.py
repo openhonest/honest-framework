@@ -747,6 +747,40 @@ def _probe_builtin_metrics():
     return bad
 
 
+def _probe_threshold_projection():
+    """The threshold projection (section 8b.2) and its firing decision: declare what to watch and the
+    line to cross (threshold_projection), then decide whether it fires now (evaluate_threshold). Pure;
+    the cooldown timing, the alert send, and the remediation chain are the boundary's."""
+    from honest_observe import builtin_metrics, evaluate_threshold, threshold_projection
+
+    bad = []
+
+    alert = {"message_type": "hf.alert.high_error_rate", "recipient": {"type": "role", "id": "on_call"}, "dom_surface": "banner"}
+    declared = threshold_projection("high_error_rate", "request.error_rate", {"operator": "gt", "value": 0.05}, "5m", "10m", alert, remediation="investigate", enabled=True)
+    if declared["projection_id"] != "high_error_rate" or declared["metric"] != "request.error_rate" or declared["remediation"] != "investigate":
+        bad.append(f"threshold_projection should carry the id, metric name, and remediation: {declared}")
+    if "remediation" in threshold_projection("p", "m", {"operator": "gt", "value": 1}, "1m", "1m", alert):
+        bad.append("threshold_projection should omit remediation when not supplied")
+
+    metric = builtin_metrics()["request.error_rate"]
+    over = [
+        {"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:00Z", "payload": {"result": "err", "duration_ns": 1}},
+        {"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:01Z", "payload": {"result": "ok", "duration_ns": 1}},
+    ]
+    fired = evaluate_threshold(declared, metric, over)
+    if fired != {"fired": True, "value": 0.5}:
+        bad.append(f"an enabled threshold over its line should fire with the value: {fired}")
+
+    under = [{"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:00Z", "payload": {"result": "ok", "duration_ns": 1}}]
+    if evaluate_threshold(declared, metric, under) != {"fired": False, "value": 0.0}:
+        bad.append("an enabled threshold under its line should not fire")
+
+    disabled = threshold_projection("off", "request.error_rate", {"operator": "gt", "value": 0.05}, "5m", "10m", alert, enabled=False)
+    if evaluate_threshold(disabled, metric, over) != {"fired": False, "value": None}:
+        bad.append("a disabled threshold never fires and reports no value")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -765,6 +799,7 @@ def run():
         "query": _probe_query(),
         "threshold_engine": _probe_threshold_engine(),
         "builtin_metrics": _probe_builtin_metrics(),
+        "threshold_projection": _probe_threshold_projection(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

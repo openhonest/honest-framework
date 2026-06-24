@@ -903,6 +903,14 @@
    }
   },
   {
+   "id": "value-threshold-projection",
+   "value_case": {
+    "function": "threshold_projection",
+    "args": ["high_error_rate", "request.error_rate", {"operator": "gt", "value": 0.05}, "5m", "10m", {"message_type": "hf.alert.high_error_rate", "recipient": {"type": "role", "id": "on_call"}, "dom_surface": "banner"}, "investigate"],
+    "expected": {"projection_id": "high_error_rate", "metric": "request.error_rate", "condition": {"operator": "gt", "value": 0.05}, "window": "5m", "cooldown": "10m", "alert": {"message_type": "hf.alert.high_error_rate", "recipient": {"type": "role", "id": "on_call"}, "dom_surface": "banner"}, "enabled": true, "remediation": "investigate"}
+   }
+  },
+  {
    "id": "value-condition-met-gt",
    "value_case": {"function": "condition_met", "args": [0.06, {"operator": "gt", "value": 0.05}], "expected": true}
   },
@@ -963,6 +971,10 @@
   {
    "function": "builtin_metrics",
    "reason": "Returns metric declarations carrying fold and value functions, which are not JSON-encodable as a value case. Each built-in metric's fold and value are computed and asserted by the builtin-metrics probe in laws_ho."
+  },
+  {
+   "function": "evaluate_threshold",
+   "reason": "Takes a metric whose fold and value are functions, so its inputs are not JSON-encodable as a value case. The enabled-and-crossed, enabled-and-under, and disabled paths are proved by the threshold-projection probe in laws_ho."
   }
  ]
 }

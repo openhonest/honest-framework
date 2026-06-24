@@ -111,3 +111,33 @@ def builtin_metrics() -> dict:
     projection can watch without custom projection code. Pure — a fresh mapping of name to metric
     declaration."""
     return dict(_BUILTIN_METRICS)
+
+
+def threshold_projection(projection_id, metric, condition, window, cooldown, alert, remediation=None, enabled=True) -> dict:
+    """Declare a threshold projection (section 8b.2): the metric to watch (by name), the condition that
+    fires it, the window and cooldown, the alert to send, an optional remediation chain, and whether it
+    is enabled. The remediation appears only when supplied. Pure data — the declaration is stored as a
+    honest-persist record and toggled at runtime, so it carries no behaviour."""
+    projection = {
+        "projection_id": projection_id,
+        "metric": metric,
+        "condition": condition,
+        "window": window,
+        "cooldown": cooldown,
+        "alert": alert,
+        "enabled": enabled,
+    }
+    if remediation is not None:
+        projection["remediation"] = remediation
+    return projection
+
+
+def evaluate_threshold(threshold, metric, events) -> dict:
+    """Decide whether a threshold projection fires now (section 8b): when enabled, compute its metric
+    over the events and test the condition, returning {fired, value}; a disabled projection never fires
+    and reports no value. Pure. The cooldown timing, the alert send, and the remediation chain are the
+    boundary's — this is only the crossing decision."""
+    if not threshold["enabled"]:
+        return {"fired": False, "value": None}
+    value = compute_metric(metric, events)
+    return {"fired": condition_met(value, threshold["condition"]), "value": value}

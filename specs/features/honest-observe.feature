@@ -278,3 +278,13 @@ Feature: honest-observe — event envelope, recording, and projection
     Given a list of numbers and a percentile
     When _percentile takes it
     Then it returns the nearest-rank value, and zero for no values
+
+  Scenario: threshold_projection declares what to watch and the line to cross
+    Given a metric name, condition, window, cooldown, alert, and optional remediation
+    When threshold_projection declares it
+    Then it returns the declaration carrying them, with the remediation present only when supplied
+
+  Scenario: evaluate_threshold decides whether a threshold fires now
+    Given a threshold projection, its metric, and the events
+    When evaluate_threshold decides
+    Then an enabled projection fires with its value when the condition is crossed, and a disabled one never fires
