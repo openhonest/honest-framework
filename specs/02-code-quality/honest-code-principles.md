@@ -31,7 +31,7 @@ Before adding a cache, profile the query. A single SQL join with proper indexes 
 `assert f(input) == expected_output` — that's the whole test. If you need 9 mocks to test a function, the function has 9 hidden dependencies. Extract the pure logic; test it directly. Test the wiring separately with integration tests that hit real services.
 
 ## Type Declarations Over Imperative Validation
-Instead of writing `if not isinstance(x, str)`, `if len(x) > 255`, `if not re.match(...)` — declare a Pydantic schema, a TypedDict, a SQL column constraint, or an `<input type="email">`. The runtime, type checker, database, or browser enforces the constraint. The programmer declares it; the machinery enforces it.
+Instead of writing `if not isinstance(x, str)`, `if len(x) > 255`, `if not re.match(...)` — declare a schema in your language's validation layer, a TypedDict, a SQL column constraint, or an `<input type="email">`. The runtime, type checker, database, or browser enforces the constraint. The programmer declares it; the machinery enforces it.
 
 ## Context Managers Over Instance State
 Instead of `self._connection = await connect()` stored on a class, use `async with create_connection(config) as conn:`. The connection opens and closes within the scope. No persistent state leaks into the caller. Crash recovery is trivial because there's nothing to clean up.

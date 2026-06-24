@@ -11,7 +11,7 @@
 
 Two ground truths govern everything in honest-state.
 
-**1. There is no such thing as "the state."** There are many *kinds* of state, and each kind deserves its own treatment, store, and handling. The DOM is the store for *individual user* state — one kind among many, not "the" store. Login/session state that must be visible to every instance in a horizontally-scaled deployment lives in a shared store (Redis). Persisted domain state lives in the database. Conflating these — the mistake every general-purpose "state manager" makes — is the disease.
+**1. There is no such thing as "the state."** There are many *kinds* of state, and each kind deserves its own treatment, store, and handling. The DOM is the store for *individual user* state — one kind among many, not "the" store. Login/session state that must be visible to every instance in a horizontally-scaled deployment lives in a shared store (a network-accessible store shared across instances). Persisted domain state lives in the database. Conflating these — the mistake every general-purpose "state manager" makes — is the disease.
 
 **2. Freely changeable state is the enemy.** When anything can change state from anywhere, the number of states the program can reach explodes beyond what anyone can follow, and that is exactly what makes software impossible to check — the very thing this framework exists to defeat. Hence the law:
 
@@ -38,7 +38,7 @@ Every piece of state belongs to exactly one kind, and every kind names exactly o
 |---|---|---|
 | Individual user state | manifest-declared regions of the DOM | the user (any user-initiated action) |
 | Server (SSE) state | non-declared regions of the DOM (alerts/notifications) | the server / alert source (honest-alerts) |
-| Shared session / login | a shared store — Redis (scale-out) | the auth provider |
+| Shared session / login | a shared store (scale-out) | the auth provider |
 | Persisted domain state | the database | an ordinary boundary write (honest-persist update/insert/delete executed at the I/O boundary, §7.4) |
 | Cache | at / preferably across an I/O boundary | refresh-from-source (only write) |
 | Transient request state | the chain (the manifest), in-memory | a link's return value (functional threading) |

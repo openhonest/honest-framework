@@ -545,7 +545,7 @@ The flag does not need to be removed immediately on conclusion. Setting global s
 A/B testing requires no changes to honest-features. It requires:
 
 - A multi-state flag in `FEATURES` (standard)
-- `ABMiddleware` installed in the FastAPI application
+- `ABMiddleware` installed in the application's request pipeline
 - `feature_state_for_request()` used in place of `feature_state()` in request handlers
 - `ab_assigned: true` added to `hf.features.evaluated` events by the middleware
 - A query against the honest-observe event log for measurement

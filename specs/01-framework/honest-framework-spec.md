@@ -140,7 +140,7 @@ The Honest Framework did not begin as a framework. It began as a series of artic
 
 Writing the book forced a reckoning: the author had already built most of the framework. Across several independent repositories, each solving one piece of the puzzle in isolation, the same principles kept reappearing. A type system here. A persistence layer there. A component model. A client-side attribute library. A linter. A test harness. None of them knew about each other, but all of them were expressions of the same idea.
 
-The Honest Framework is the convergence of those repositories into a single coherent whole, unified around FastAPI and HTMX, and grounded in the Honest Code principles the book articulates.
+The Honest Framework is the convergence of those repositories into a single coherent whole, unified around HTMX and a server-rendered, DOM-as-state model, and grounded in the Honest Code principles the book articulates.
 
 | Repository | What it was |
 |---|---|

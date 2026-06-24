@@ -69,7 +69,7 @@ The rationale: banners appear above the header because they are page-level alert
 
 `honest-alerts-banners`, `honest-alerts-toasts`, and `honest-alerts-modal` are honest-alerts SSE targets. They must carry the SSE wiring described in section 4. They must not contain static content at page load time; honest-alerts populates them at runtime.
 
-`honest-header`, `honest-main`, and `honest-footer` are Jinja2 blocks. They must be overridable by child templates.
+`honest-header`, `honest-main`, and `honest-footer` are template blocks. They must be overridable by child templates.
 
 ---
 
@@ -177,7 +177,7 @@ The application manifest declares which DOM elements constitute user state. domx
 
 ### 5.1 Declaration Contract
 
-The manifest must be declared as a global JavaScript variable named `appManifest` before any HTMX requests fire. The recommended placement is in a `{% block manifest %}` Jinja2 block immediately after domx loads.
+The manifest must be declared as a global JavaScript variable named `appManifest` before any HTMX requests fire. The recommended placement is in a template block named `manifest` immediately after the domx client library loads.
 
 ```javascript
 const appManifest = {
@@ -349,7 +349,7 @@ body {
 
 ---
 
-## 8. Jinja2 Block Contract
+## 8. Template Block Contract
 
 A conformant base template must define these blocks. Child templates extend base.html and override blocks as needed.
 
@@ -428,7 +428,7 @@ Token priority on collision: `_state` wins over query parameters; query paramete
 | Level | Requirement |
 |---|---|
 | **Core** | All six surfaces present with correct IDs and document order; HTMX and domx loaded in correct sequence; `appManifest` declared; all required CSS tokens present using `light-dark()` |
-| **Full** | Core + honest-alerts SSE wiring on all three notification surfaces; dark mode switching via `data-theme`; localStorage theme preference restoration; Jinja2 blocks all declared |
+| **Full** | Core + honest-alerts SSE wiring on all three notification surfaces; dark mode switching via `data-theme`; localStorage theme preference restoration; template blocks all declared |
 | **Complete** | Full + honest-py intake middleware integrating `_state`; `request_id` header forwarding; fragment route handlers returning non-base templates |
 
 ### 10.2 Conformance Suite

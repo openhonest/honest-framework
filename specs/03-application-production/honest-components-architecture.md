@@ -102,7 +102,7 @@ The key insight is that the tiers have two distinct mounting behaviors, not thre
 | Molecule | Static asset | No | No | Declared by convention |
 | Organism | Component package | Yes | Yes | Enforced at mount time |
 
-Atoms and molecules are global citizens. They are mounted exactly like CSS and JavaScript: placed in well-known directories, added to the Jinja2 search path at startup, available everywhere in every template. They have no registration function, no entry point, no discovery mechanism. They are simply there.
+Atoms and molecules are global citizens. They are mounted exactly like CSS and JavaScript: placed in well-known directories, added to the template engine's search path at startup, available everywhere in every template. They have no registration function, no entry point, no discovery mechanism. They are simply there.
 
 Organisms are packaged components. They have a `register()` function, a route handler, a declared namespace, and mount-time namespace enforcement. Each organism is a self-contained unit that owns its URL prefix, its database interactions, and its CSS namespace. The component runtime is the host application that discovers, registers, and enforces all of this.
 
@@ -162,7 +162,7 @@ atoms/
         label.css
 ```
 
-At application startup, the `atoms/` directory is added to the Jinja2 template search path. No manifest. No registration function. No entry point declaration. The atom is available in any template via `{% include 'button/button.html' %}` from that point forward.
+At application startup, the `atoms/` directory is added to the template engine's search path. No manifest. No registration function. No entry point declaration. The atom is available in any template via `{% include 'button/button.html' %}` from that point forward.
 
 ### 3.2 Rules
 
@@ -210,7 +210,7 @@ molecules/
         search-input.css
 ```
 
-At application startup, the `molecules/` directory is added to the Jinja2 template search path alongside `atoms/`. No manifest. No registration function.
+At application startup, the `molecules/` directory is added to the template engine's search path alongside `atoms/`. No manifest. No registration function.
 
 ### 4.2 Rules
 
