@@ -439,9 +439,19 @@ Feature: honest-check — Python supplement
     Then it returns a response advertising full-document sync and the server's identity
 
   Scenario: _on_did_open publishes diagnostics for a newly opened document
-    Given a document-opened notification
+    Given a document-opened notification and the document store
     When _on_did_open handles it
-    Then it returns a publish-diagnostics notification for the opened document's text
+    Then it records the opened document's text in the store and returns a publish-diagnostics notification for it
+
+  Scenario: _hover_contents builds the hover documentation at a position
+    Given a document's text, its uri, and a position
+    When _hover_contents reads it
+    Then it returns the rule and message of a diagnostic on that line as markdown, or nothing when the line is unflagged
+
+  Scenario: _on_hover answers a hover request from the document store
+    Given a hover request and the document store
+    When _on_hover handles it
+    Then it returns the hover documentation for the position from the stored text, or a null result when nothing is flagged there
 
   Scenario: _on_did_change publishes diagnostics for the changed document
     Given a document-changed notification carrying the full new text
@@ -464,9 +474,9 @@ Feature: honest-check — Python supplement
     Then it returns no outgoing messages
 
   Scenario: dispatch routes a request to its handler
-    Given a method name, a message id, and parameters
+    Given the document store, a method name, a message id, and parameters
     When dispatch routes them
-    Then it calls the matching handler, or the no-op handler for an unknown method
+    Then it calls the matching handler (or the no-op handler for an unknown method) and returns the updated store and its outgoing messages
 
   Scenario: _read_message reads one framed message from a stream
     Given a binary input stream

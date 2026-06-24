@@ -52,33 +52,41 @@ def _response(msg_id, result) -> dict:
     return {"jsonrpc": "2.0", "id": msg_id, "result": result}
 
 
-def _on_initialize(msg_id, params) -> list[dict]:
-    return [
+# The open documents, mapped uri -> current text. Threaded through every handler as a value (section
+# 8.1.1 pattern), never hidden state: full-text sync keeps each entry current, and the request
+# handlers (hover and friends) read it to answer questions about a position the request does not carry.
+def _on_initialize(store, msg_id, params):
+    return store, [
         _response(
             msg_id,
             {
-                "capabilities": {"textDocumentSync": 1},  # 1 = full document sync
+                "capabilities": {
+                    "textDocumentSync": 1,  # 1 = full document sync
+                    "hoverProvider": True,
+                },
                 "serverInfo": {"name": "honest-check", "version": "0.1"},
             },
         )
     ]
 
 
-def _on_did_open(msg_id, params) -> list[dict]:
+def _on_did_open(store, msg_id, params):
     doc = params.get("textDocument", {})
-    return [_publish(doc.get("uri", ""), doc.get("text", ""))]
+    uri, text = doc.get("uri", ""), doc.get("text", "")
+    return {**store, uri: text}, [_publish(uri, text)]
 
 
-def _on_did_change(msg_id, params) -> list[dict]:
+def _on_did_change(store, msg_id, params):
     uri = params.get("textDocument", {}).get("uri", "")
     changes = params.get("contentChanges", [])
     text = changes[-1].get("text", "") if changes else ""
-    return [_publish(uri, text)]
+    return {**store, uri: text}, [_publish(uri, text)]
 
 
-def _on_did_close(msg_id, params) -> list[dict]:
+def _on_did_close(store, msg_id, params):
     uri = params.get("textDocument", {}).get("uri", "")
-    return [
+    kept = {key: value for key, value in store.items() if key != uri}
+    return kept, [
         {
             "jsonrpc": "2.0",
             "method": "textDocument/publishDiagnostics",
@@ -87,12 +95,30 @@ def _on_did_close(msg_id, params) -> list[dict]:
     ]
 
 
-def _on_shutdown(msg_id, params) -> list[dict]:
-    return [_response(msg_id, None)]
+def _hover_contents(text: str, uri: str, position: dict):
+    """The hover documentation at an LSP position (section 2.2): the rule and message of a diagnostic
+    on that line, or None when nothing is flagged there. The diagnostic message is the rule's
+    documentation. Pure."""
+    line = position.get("line", 0) + 1  # LSP is 0-based, honest-check diagnostics 1-based
+    for d in check_source(text, uri):
+        if d["line"] == line:
+            return {"kind": "markdown", "value": f"**{d['rule']}**: {d['message']}"}
+    return None
 
 
-def _noop(msg_id, params) -> list[dict]:
-    return []
+def _on_hover(store, msg_id, params):
+    doc = params.get("textDocument", {})
+    uri = doc.get("uri", "")
+    contents = _hover_contents(store.get(uri, ""), uri, params.get("position", {}))
+    return store, [_response(msg_id, {"contents": contents} if contents is not None else None)]
+
+
+def _on_shutdown(store, msg_id, params):
+    return store, [_response(msg_id, None)]
+
+
+def _noop(store, msg_id, params):
+    return store, []
 
 
 _HANDLERS = {
@@ -102,13 +128,15 @@ _HANDLERS = {
     "textDocument/didChange": _on_did_change,
     "textDocument/didSave": _noop,
     "textDocument/didClose": _on_did_close,
+    "textDocument/hover": _on_hover,
     "shutdown": _on_shutdown,
 }
 
 
-def dispatch(method: str, msg_id, params: dict) -> list[dict]:
-    """Route a request/notification to its handler (table dispatch). Pure."""
-    return _HANDLERS.get(method, _noop)(msg_id, params)
+def dispatch(store: dict, method: str, msg_id, params: dict):
+    """Route a request/notification to its handler (table dispatch); returns (store, outgoing). The
+    document store is threaded in and back out, never held as module state. Pure."""
+    return _HANDLERS.get(method, _noop)(store, msg_id, params)
 
 
 def _read_message(stream):
@@ -140,11 +168,13 @@ def serve(stdin=None, stdout=None) -> int:
     """Run the stdio JSON-RPC loop until `exit` or EOF. The boundary."""
     source = sys.stdin.buffer if stdin is None else stdin
     sink = sys.stdout.buffer if stdout is None else stdout
+    store: dict = {}
     while True:
         message = _read_message(source)
         if message is None:
             return 0
         if message.get("method", "") == "exit":
             return 0
-        for outgoing in dispatch(message.get("method", ""), message.get("id"), message.get("params", {})):
-            _write_message(sink, outgoing)
+        store, outgoing = dispatch(store, message.get("method", ""), message.get("id"), message.get("params", {}))
+        for response in outgoing:
+            _write_message(sink, response)

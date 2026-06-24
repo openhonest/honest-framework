@@ -208,17 +208,31 @@ def _probe_lsp():
     # _read_message of a bare stream is None.
     if _read_message(io.BytesIO(b"")) is not None:
         bad.append("_read_message of EOF should be None")
-    # Every handler routes (didChange with and without changes, didClose, shutdown, noop methods).
-    dispatch("initialized", None, {})
-    dispatch("textDocument/didChange", None, {"textDocument": {"uri": "f.py"}, "contentChanges": [{"text": _CLEAN}]})
-    dispatch("textDocument/didChange", None, {"textDocument": {"uri": "f.py"}, "contentChanges": []})
-    dispatch("textDocument/didSave", None, {})
-    if not dispatch("textDocument/didClose", None, {"textDocument": {"uri": "f.py"}}):
-        bad.append("didClose should publish an empty diagnostic set")
-    if dispatch("shutdown", 9, {})[0]["id"] != 9:
+    # Every handler routes; the document store threads through (didOpen records text, hover reads it).
+    empty = {}
+    dispatch(empty, "initialized", None, {})
+    opened, _ = dispatch(empty, "textDocument/didOpen", None, {"textDocument": {"uri": "f.py", "text": _VIOLATION}})
+    if opened.get("f.py") != _VIOLATION:
+        bad.append("didOpen should record the document text in the store")
+    changed, _ = dispatch(empty, "textDocument/didChange", None, {"textDocument": {"uri": "f.py"}, "contentChanges": [{"text": _CLEAN}]})
+    if changed.get("f.py") != _CLEAN:
+        bad.append("didChange should update the document text in the store")
+    dispatch(empty, "textDocument/didChange", None, {"textDocument": {"uri": "f.py"}, "contentChanges": []})
+    dispatch(empty, "textDocument/didSave", None, {})
+    closed, close_msgs = dispatch(opened, "textDocument/didClose", None, {"textDocument": {"uri": "f.py"}})
+    if not close_msgs or "f.py" in closed:
+        bad.append("didClose should publish an empty diagnostic set and drop the document")
+    if dispatch(empty, "shutdown", 9, {})[1][0]["id"] != 9:
         bad.append("shutdown should respond to its id")
-    if dispatch("totally/unknown", None, {}) != []:
+    if dispatch(empty, "totally/unknown", None, {})[1] != []:
         bad.append("an unknown method should be a no-op")
+    # Hover over a violating line returns the rule and message; an unflagged line returns null.
+    hover_hit = dispatch(opened, "textDocument/hover", 2, {"textDocument": {"uri": "f.py"}, "position": {"line": 0, "character": 0}})[1][0]
+    if "HC-P003" not in (hover_hit["result"]["contents"]["value"] if hover_hit["result"] else ""):
+        bad.append(f"hover over a violation should return its rule documentation: {hover_hit}")
+    hover_miss = dispatch(opened, "textDocument/hover", 3, {"textDocument": {"uri": "f.py"}, "position": {"line": 99, "character": 0}})[1][0]
+    if hover_miss["result"] is not None:
+        bad.append("hover over an unflagged line should return null")
     lsp = to_lsp_diagnostic(diagnostic("HC003", "error", "f.py", 1, 1, "m"))
     if lsp["severity"] != 1:
         bad.append("error should map to LSP severity 1")
