@@ -893,6 +893,14 @@
     "args": [["filters"], {"filters": []}, {"filters": ["active"]}, "req_abc"],
     "expected": {"event_type": "hf.dom.changed", "payload": {"changed_keys": ["filters"], "from": {"filters": []}, "to": {"filters": ["active"]}, "request_id": "req_abc"}}
    }
+  },
+  {
+   "id": "value-format-tail-line",
+   "value_case": {
+    "function": "format_tail_line",
+    "args": [{"event_type": "hf.link.executed", "source": "server", "timestamp": "2026-03-15T14:23:07.006Z", "payload": {"link_name": "validate_filters", "chain_name": "fetch_items", "result": "ok", "duration_ns": 800000}}],
+    "expected": "14:23:07.006 server  hf.link.executed  link=validate_filters chain=fetch_items result=ok duration=0.8ms"
+   }
   }
  ],
  "value_oracle_exempt": [

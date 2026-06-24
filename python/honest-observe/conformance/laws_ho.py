@@ -517,6 +517,47 @@ def _probe_browser():
     return bad
 
 
+def _probe_tail():
+    """The tail line formatter (section 9.2): one event rendered as a structured time/source/type/fields
+    line. A pure projection — the CLI that streams the log and prints is the boundary; this is the format
+    it prints. Field rendering is dict-dispatched per event type, with an empty tail for an unmapped one."""
+    from honest_observe import format_tail_line
+
+    bad = []
+
+    link = {"event_type": "hf.link.executed", "source": "server", "timestamp": "2026-03-15T14:23:07.006Z", "payload": {"link_name": "validate_filters", "chain_name": "fetch_items", "result": "ok", "duration_ns": 800000}}
+    if format_tail_line(link) != "14:23:07.006 server  hf.link.executed  link=validate_filters chain=fetch_items result=ok duration=0.8ms":
+        bad.append(f"link tail line wrong: {format_tail_line(link)!r}")
+
+    # source defaults to "server" when absent (server events carry no source field); a browser event names its source.
+    canonical = {"event_type": "hf.request.canonical", "timestamp": "2026-03-15T14:23:07.023Z", "payload": {"http_method": "POST", "http_path": "/api/items", "http_status": 200, "duration_ns": 16000000}}
+    if format_tail_line(canonical) != "14:23:07.023 server  hf.request.canonical  method=POST path=/api/items status=200 duration=16.0ms":
+        bad.append(f"canonical tail line wrong: {format_tail_line(canonical)!r}")
+    resp = {"event_type": "hf.browser.response", "source": "browser", "timestamp": "2026-03-15T14:23:07.166Z", "payload": {"request_id": "req_abc", "status": 200, "swap_target": "#x", "duration_ms": 163}}
+    if format_tail_line(resp) != "14:23:07.166 browser hf.browser.response  status=200 duration=163ms req=req_abc":
+        bad.append(f"browser response tail line wrong: {format_tail_line(resp)!r}")
+
+    # Every mapped event type renders a non-empty field tail; cover each renderer.
+    cases = [
+        ({"event_type": "hf.chain.started", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"chain_name": "c", "link_count": 3}}, "chain=c links=3"),
+        ({"event_type": "hf.chain.completed", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"chain_name": "c", "result": "ok", "duration_ns": 16000000}}, "chain=c result=ok duration=16.0ms"),
+        ({"event_type": "hf.classify.completed", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"token_count": 3, "rejection_count": 0}}, "tokens=3 rejected=0"),
+        ({"event_type": "hf.state.transitioned", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"machine_name": "sm", "from_state": "a", "to_state": "b"}}, "machine=sm a->b"),
+        ({"event_type": "hf.browser.request", "source": "browser", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"method": "POST", "url": "/x"}}, "method=POST url=/x"),
+        ({"event_type": "hf.dom.changed", "source": "browser", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"changed_keys": ["filters"]}}, "keys=['filters']"),
+        ({"event_type": "hf.browser.classify", "source": "browser", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"element": "#r", "attribute": "hf-format"}}, "element=#r attribute=hf-format"),
+    ]
+    for event, tail in cases:
+        if not format_tail_line(event).endswith(tail):
+            bad.append(f"{event['event_type']} tail line should end with {tail!r}: {format_tail_line(event)!r}")
+
+    # An unmapped event type still renders time/source/type, with an empty field tail.
+    unmapped = {"event_type": "app.custom", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"x": 1}}
+    if format_tail_line(unmapped) != "00:00:00.000 server  app.custom  ":
+        bad.append(f"an unmapped event should render an empty field tail: {format_tail_line(unmapped)!r}")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -530,6 +571,7 @@ def run():
         "snapshot": _probe_snapshot(),
         "otel": _probe_otel(),
         "browser": _probe_browser(),
+        "tail": _probe_tail(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

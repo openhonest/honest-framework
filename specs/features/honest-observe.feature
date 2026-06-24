@@ -198,3 +198,23 @@ Feature: honest-observe — event envelope, recording, and projection
     Given the changed keys with their previous and new values
     When dom_changed builds the payload
     Then it returns the hf.dom.changed event with the request id only within a request context
+
+  Scenario: format_tail_line renders one event as a structured tail line
+    Given a logged event
+    When format_tail_line renders it
+    Then it returns the clock time, source defaulting to server, event type, and the event-type-specific field tail
+
+  Scenario: _ms renders a nanosecond duration in milliseconds
+    Given a duration in nanoseconds
+    When _ms renders it
+    Then it returns the millisecond display string to one decimal place
+
+  Scenario: _short_time takes the clock portion of a timestamp
+    Given an ISO timestamp
+    When _short_time takes its clock portion
+    Then it returns the time to millisecond precision
+
+  Scenario: _tail_fields renders the field tail for an event type
+    Given an event with a mapped or unmapped type
+    When _tail_fields renders it
+    Then it returns the event-type-specific key=value fields, or empty for an unmapped type
