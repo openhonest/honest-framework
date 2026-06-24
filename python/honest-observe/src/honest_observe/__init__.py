@@ -9,11 +9,16 @@ stored by persist without importing it. The log storage itself is the runtime's 
 from honest_observe.emit import emit
 from honest_observe.events import Event, build_event, extract_auth, extract_meta
 from honest_observe.framework_events import (
+    app_error,
+    app_started,
+    app_stopped,
     chain_completed,
     chain_started,
     classify_completed,
     link_executed,
     link_faulted,
+    link_summary,
+    request_canonical,
     state_rejected,
     state_transitioned,
 )
@@ -34,4 +39,9 @@ __all__ = [
     "classify_completed",
     "state_transitioned",
     "state_rejected",
+    "link_summary",
+    "request_canonical",
+    "app_started",
+    "app_stopped",
+    "app_error",
 ]

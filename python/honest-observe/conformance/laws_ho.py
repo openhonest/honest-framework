@@ -256,6 +256,48 @@ def _probe_framework_events():
     return bad
 
 
+def _probe_canonical_app_events():
+    """The canonical request event (section 4.6) and application lifecycle events (section 4.7): pure
+    builders, with optional identity/chain/fault and release/traceback fields present only when set."""
+    from honest_observe import app_error, app_started, app_stopped, link_summary, request_canonical
+
+    bad = []
+    if link_summary("validate", 200, "ok") != {"link_name": "validate", "duration_ns": 200, "result": "ok"}:
+        bad.append(f"link_summary wrong: {link_summary('validate', 200, 'ok')}")
+    if link_summary("pay", 50, "err", fault_code="declined").get("fault_code") != "declined":
+        bad.append("link_summary should carry a fault code when given")
+
+    canonical = request_canonical(
+        "req-1", "POST", "/api/orders", 200, 2, [link_summary("validate", 200, "ok")],
+        3, 0, 4, 9000, "ok", 12000, caller_id="u1", chain_name="checkout",
+    )
+    if canonical["event_type"] != "hf.request.canonical" or canonical["aggregate_id"] != "req-1":
+        bad.append(f"request_canonical envelope wrong: {canonical}")
+    payload = canonical["payload"]
+    if payload["source"] != "server" or payload["request_id"] != "req-1" or payload["caller_id"] != "u1" or payload["chain_name"] != "checkout":
+        bad.append(f"request_canonical payload wrong: {payload}")
+    if "session_id" in payload or "fault_code" in payload:
+        bad.append("request_canonical should omit absent optional fields")
+    errored = request_canonical("req-2", "GET", "/x", 500, 0, [], 0, 0, 0, 0, "err", 5, fault_code="boom", fault_category="server")
+    if errored["payload"].get("fault_code") != "boom" or errored["payload"].get("fault_category") != "server":
+        bad.append(f"request_canonical should carry the fault on error: {errored}")
+
+    started = app_started("shop", "production", 5, 12, 3, release="r1")
+    if started["event_type"] != "hf.app.started" or started["aggregate_id"] != "shop" or started["payload"].get("release") != "r1":
+        bad.append(f"app_started wrong: {started}")
+    if "release" in app_started("shop", "dev", 1, 1, 1)["payload"]:
+        bad.append("app_started should omit release when not given")
+    stopped = app_stopped("shop", 60000, "graceful")
+    if stopped["event_type"] != "hf.app.stopped" or stopped["payload"]["reason"] != "graceful":
+        bad.append(f"app_stopped wrong: {stopped}")
+    error = app_error("shop", "ValueError", "boom", traceback="tb", context="startup")
+    if error["event_type"] != "hf.app.error" or error["payload"].get("traceback") != "tb" or error["payload"].get("context") != "startup":
+        bad.append(f"app_error wrong: {error}")
+    if "traceback" in app_error("shop", "ValueError", "boom")["payload"]:
+        bad.append("app_error should omit traceback when not given")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -264,6 +306,7 @@ def run():
         "projection": _probe_projection(),
         "emit": _probe_emit(),
         "framework_events": _probe_framework_events(),
+        "canonical_app_events": _probe_canonical_app_events(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

@@ -120,3 +120,72 @@ def state_rejected(machine_name: str, entity_id: str, current_state: str, event:
             "fault_code": fault_code,
         },
     }
+
+
+def link_summary(link_name: str, duration_ns: int, result: str, fault_code=None) -> dict:
+    """One link's entry in a canonical request event's link_sequence (section 4.6); the fault code
+    appears only on error. Pure."""
+    summary = {"link_name": link_name, "duration_ns": duration_ns, "result": result}
+    if fault_code is not None:
+        summary["fault_code"] = fault_code
+    return summary
+
+
+def request_canonical(request_id: str, http_method: str, http_path: str, http_status: int, link_count: int, link_sequence: list, token_count: int, rejection_count: int, query_count: int, query_duration_ns: int, result: str, duration_ns: int, caller_id=None, session_id=None, chain_name=None, fault_code=None, fault_category=None) -> dict:
+    """The hf.request.canonical event (section 4.6): every meaningful fact about a request in one
+    record, so an operational question needs no join. Optional identity, chain, and fault fields
+    appear only when supplied. Pure — the boundary assembles the arguments from the request's events."""
+    payload = {
+        "http_method": http_method,
+        "http_path": http_path,
+        "http_status": http_status,
+        "link_count": link_count,
+        "link_sequence": list(link_sequence),
+        "token_count": token_count,
+        "rejection_count": rejection_count,
+        "query_count": query_count,
+        "query_duration_ns": query_duration_ns,
+        "result": result,
+        "duration_ns": duration_ns,
+        "request_id": request_id,
+        "source": "server",
+    }
+    for key, value in (("caller_id", caller_id), ("session_id", session_id), ("chain_name", chain_name), ("fault_code", fault_code), ("fault_category", fault_category)):
+        if value is not None:
+            payload[key] = value
+    return {"event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": request_id, "payload": payload}
+
+
+def app_started(app_name: str, environment: str, chains_loaded: int, links_loaded: int, vocabs_loaded: int, release=None) -> dict:
+    """The hf.app.started event (section 4.7); the release appears when supplied. Pure."""
+    payload = {
+        "app_name": app_name,
+        "environment": environment,
+        "chains_loaded": chains_loaded,
+        "links_loaded": links_loaded,
+        "vocabs_loaded": vocabs_loaded,
+    }
+    if release is not None:
+        payload["release"] = release
+    return {"event_type": "hf.app.started", "aggregate_type": "app", "aggregate_id": app_name, "payload": payload}
+
+
+def app_stopped(app_name: str, uptime_ns: int, reason: str) -> dict:
+    """The hf.app.stopped event (section 4.7): how long the app ran and why it stopped. Pure."""
+    return {
+        "event_type": "hf.app.stopped",
+        "aggregate_type": "app",
+        "aggregate_id": app_name,
+        "payload": {"app_name": app_name, "uptime_ns": uptime_ns, "reason": reason},
+    }
+
+
+def app_error(app_name: str, error_type: str, message: str, traceback=None, context=None) -> dict:
+    """The hf.app.error event (section 4.7): an exception escaping the boundary or occurring outside a
+    chain. The traceback and context appear when supplied (traceback in development only). Pure."""
+    payload = {"error_type": error_type, "message": message}
+    if traceback is not None:
+        payload["traceback"] = traceback
+    if context is not None:
+        payload["context"] = context
+    return {"event_type": "hf.app.error", "aggregate_type": "app", "aggregate_id": app_name, "payload": payload}

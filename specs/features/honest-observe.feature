@@ -73,3 +73,28 @@ Feature: honest-observe — event envelope, recording, and projection
     Given a machine, entity, current state, event, and fault code
     When state_rejected builds the event
     Then it returns the hf.state.rejected event keyed by machine and entity with the fault code
+
+  Scenario: link_summary builds one link's entry for a canonical request
+    Given a link's name, duration, and result
+    When link_summary builds the entry
+    Then it returns the link summary, including the fault code only on error
+
+  Scenario: request_canonical builds the canonical request event
+    Given the HTTP, identity, chain, classification, persistence, outcome, and timing facts of a request
+    When request_canonical builds the event
+    Then it returns the hf.request.canonical event keyed by request id, with source server and the optional identity, chain, and fault fields present only when supplied
+
+  Scenario: app_started builds the application-started event
+    Given an app name, environment, and loaded counts
+    When app_started builds the event
+    Then it returns the hf.app.started event for the app, including the release only when supplied
+
+  Scenario: app_stopped builds the application-stopped event
+    Given an app name, uptime, and reason
+    When app_stopped builds the event
+    Then it returns the hf.app.stopped event with the uptime and reason
+
+  Scenario: app_error builds the application-error event
+    Given an app name, error type, and message
+    When app_error builds the event
+    Then it returns the hf.app.error event, including the traceback and context only when supplied
