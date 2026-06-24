@@ -8,6 +8,15 @@ stored by persist without importing it. The log storage itself is the runtime's 
 
 from honest_observe.emit import emit
 from honest_observe.events import Event, build_event, extract_auth, extract_meta
+from honest_observe.framework_events import (
+    chain_completed,
+    chain_started,
+    classify_completed,
+    link_executed,
+    link_faulted,
+    state_rejected,
+    state_transitioned,
+)
 from honest_observe.projections import apply_projection, matches
 
 __all__ = [
@@ -18,4 +27,11 @@ __all__ = [
     "emit",
     "apply_projection",
     "matches",
+    "chain_started",
+    "chain_completed",
+    "link_executed",
+    "link_faulted",
+    "classify_completed",
+    "state_transitioned",
+    "state_rejected",
 ]

@@ -203,6 +203,59 @@ def _probe_emit():
     return asyncio.run(_run())
 
 
+def _probe_framework_events():
+    """The framework event catalogue (section 4.1-4.4): pure builders for chain, link, classification,
+    and state-machine events, each returning {event_type, aggregate_type, aggregate_id, payload}."""
+    from honest_observe import (
+        chain_completed,
+        chain_started,
+        classify_completed,
+        link_executed,
+        link_faulted,
+        state_rejected,
+        state_transitioned,
+    )
+
+    bad = []
+    if chain_started("checkout", 3, ["order_id", "items"]) != {
+        "event_type": "hf.chain.started", "aggregate_type": "chain", "aggregate_id": "checkout",
+        "payload": {"chain_name": "checkout", "link_count": 3, "input_types": ["order_id", "items"]},
+    }:
+        bad.append(f"chain_started wrong: {chain_started('checkout', 3, ['order_id', 'items'])}")
+    ok_done = chain_completed("checkout", 3, 1500, "ok")
+    if ok_done["payload"] != {"chain_name": "checkout", "duration_ns": 1500, "link_count": 3, "result": "ok"} or ok_done["event_type"] != "hf.chain.completed":
+        bad.append(f"chain_completed (ok) wrong: {ok_done}")
+    err_done = chain_completed("checkout", 3, 1500, "err", fault_code="invalid_email", fault_category="client")
+    if err_done["payload"].get("fault_code") != "invalid_email" or err_done["payload"].get("fault_category") != "client":
+        bad.append(f"chain_completed (err) should carry the fault: {err_done}")
+
+    executed = link_executed("validate", "checkout", 200, "ok", boundary=False, mutations=0, singletons=0, nondeterminism=False, io_calls=0)
+    if executed["aggregate_type"] != "link" or executed["aggregate_id"] != "validate" or executed["payload"]["mutations"] != 0 or "fault_code" in executed["payload"]:
+        bad.append(f"link_executed wrong: {executed}")
+    executed_err = link_executed("validate", "checkout", 200, "err", boundary=True, mutations=1, singletons=2, nondeterminism=True, io_calls=3, fault_code="bad")
+    if executed_err["payload"].get("fault_code") != "bad" or executed_err["payload"]["io_calls"] != 3:
+        bad.append(f"link_executed (err) should carry the fault code: {executed_err}")
+
+    faulted = link_faulted("validate", "checkout", "invalid_email", "client", "Bad email")
+    if faulted["event_type"] != "hf.link.faulted" or "input_manifest" in faulted["payload"]:
+        bad.append(f"link_faulted wrong: {faulted}")
+    faulted_ctx = link_faulted("validate", "checkout", "invalid_email", "client", "Bad email", input_manifest={"email": "x"})
+    if faulted_ctx["payload"].get("input_manifest") != {"email": "x"}:
+        bad.append(f"link_faulted should carry the input manifest when given: {faulted_ctx}")
+
+    classified = classify_completed("order_vocab", 5, 1, 300, {"unrecognized": 1})
+    if classified["event_type"] != "hf.classify.completed" or classified["aggregate_id"] != "order_vocab" or classified["payload"]["rejection_reasons"] != {"unrecognized": 1}:
+        bad.append(f"classify_completed wrong: {classified}")
+
+    transitioned = state_transitioned("order_sm", "o1", "pending", "pay", "paid", 400)
+    if transitioned["aggregate_id"] != "order_sm:o1" or transitioned["payload"]["to_state"] != "paid":
+        bad.append(f"state_transitioned wrong: {transitioned}")
+    rejected = state_rejected("order_sm", "o1", "paid", "pay", "no_transition")
+    if rejected["event_type"] != "hf.state.rejected" or rejected["aggregate_id"] != "order_sm:o1" or rejected["payload"]["fault_code"] != "no_transition":
+        bad.append(f"state_rejected wrong: {rejected}")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -210,6 +263,7 @@ def run():
         "matches": _probe_matches(),
         "projection": _probe_projection(),
         "emit": _probe_emit(),
+        "framework_events": _probe_framework_events(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

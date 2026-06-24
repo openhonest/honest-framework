@@ -1,27 +1,605 @@
 {
-  "version": "0.1",
-  "module": "honest-observe",
-  "cases": [
-    {"id": "ho-build-ok", "build_event": {"args": {"event_type": "hf.chain.completed", "event_version": "1.0", "aggregate_type": "chain", "aggregate_id": "create_user", "payload": {"result": "ok"}, "event_id": "019x2k", "timestamp": "2026-03-15T14:23:07.441832Z", "sequence": 0}}, "expect": "ok", "expect_event": {"event_id": "019x2k", "event_type": "hf.chain.completed", "event_version": "1.0", "timestamp": "2026-03-15T14:23:07.441832Z", "sequence": 0, "aggregate_type": "chain", "aggregate_id": "create_user", "payload": {"result": "ok"}}},
-    {"id": "ho-build-auth-meta", "build_event": {"args": {"event_type": "order.placed", "event_version": "1.0", "aggregate_type": "order", "aggregate_id": "o1", "payload": {"total": 50}, "event_id": "019aaa", "timestamp": "2026-03-15T14:23:07.000001Z", "sequence": 7, "auth": {"caller_id": "u1"}, "meta": {"release": "r1"}}}, "expect": "ok", "expect_event": {"event_id": "019aaa", "event_type": "order.placed", "event_version": "1.0", "timestamp": "2026-03-15T14:23:07.000001Z", "sequence": 7, "aggregate_type": "order", "aggregate_id": "o1", "payload": {"total": 50}, "auth": {"caller_id": "u1"}, "meta": {"release": "r1"}}},
-    {"id": "ho-build-missing-type", "build_event": {"args": {"event_type": "", "event_version": "1.0", "aggregate_type": "order", "aggregate_id": "o1", "payload": {}, "event_id": "019bbb", "timestamp": "2026-03-15T14:23:07.000002Z", "sequence": 1}}, "expect": "err", "expect_code": "invalid_event"},
-    {"id": "ho-build-missing-aggregate-id", "build_event": {"args": {"event_type": "order.placed", "event_version": "1.0", "aggregate_type": "order", "aggregate_id": "", "payload": {}, "event_id": "019ccc", "timestamp": "2026-03-15T14:23:07.000003Z", "sequence": 1}}, "expect": "err", "expect_code": "invalid_event"},
-    {"id": "ho-match-none", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}}, "expect": true},
-    {"id": "ho-match-type-hit", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"event_types": ["a.b", "c.d"]}}, "expect": true},
-    {"id": "ho-match-type-miss", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"event_types": ["x.y"]}}, "expect": false},
-    {"id": "ho-match-window-in", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"from_ts": "2026-03-15T00:00:00Z", "to_ts": "2026-03-16T00:00:00Z"}}, "expect": true},
-    {"id": "ho-match-window-before", "matches": {"event": {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}, "filters": {"from_ts": "2026-03-16T00:00:00Z"}}, "expect": false},
-    {"id": "ho-emit-ok", "emit": {"event_type": "hf.chain.completed", "aggregate_type": "chain", "aggregate_id": "c1", "payload": {"result": "ok"}, "context": {}, "event_id": "019x2k", "timestamp": "2026-03-15T14:23:07.441832Z", "sequence": 0, "version": "1.0", "append_ok": true}, "expect": "ok", "expect_event_id": "019x2k"},
-    {"id": "ho-emit-build-err", "emit": {"event_type": "", "aggregate_type": "chain", "aggregate_id": "c1", "payload": {}, "context": {}, "event_id": "019x2k", "timestamp": "2026-03-15T14:23:07.441832Z", "sequence": 0, "version": "1.0", "append_ok": true}, "expect": "err", "expect_code": "invalid_event"},
-    {"id": "ho-emit-append-err", "emit": {"event_type": "order.placed", "aggregate_type": "order", "aggregate_id": "o1", "payload": {"total": 5}, "context": {}, "event_id": "019aaa", "timestamp": "2026-03-15T14:23:07.000001Z", "sequence": 3, "version": "1.0", "append_ok": false}, "expect": "err", "expect_code": "emit_failed"},
-    {"id": "value-build-event", "value_case": {"function": "build_event", "args": ["hf.chain.completed", "1.0", "chain", "create_user", {"result": "ok"}, "019x2k", "2026-03-15T14:23:07Z", 0], "expected": {"ok": {"event_id": "019x2k", "event_type": "hf.chain.completed", "event_version": "1.0", "timestamp": "2026-03-15T14:23:07Z", "sequence": 0, "aggregate_type": "chain", "aggregate_id": "create_user", "payload": {"result": "ok"}}}}},
-    {"id": "value-extract-auth", "value_case": {"function": "extract_auth", "args": [{"caller_id": "u1", "role": "admin", "x": "y"}, ["caller_id", "role"]], "expected": {"caller_id": "u1", "role": "admin"}}},
-    {"id": "value-extract-meta", "value_case": {"function": "extract_meta", "args": [{"request_id": "r1", "trace": "t", "x": "y"}, ["request_id", "trace"]], "expected": {"request_id": "r1", "trace": "t"}}},
-    {"id": "value-matches-true", "value_case": {"function": "matches", "args": [{"event_id": "019x2k", "event_type": "hf.chain.completed", "event_version": "1.0", "timestamp": "2026-03-15T14:23:07Z", "sequence": 0, "aggregate_type": "chain", "aggregate_id": "create_user", "payload": {"result": "ok"}}, ["hf.chain.completed"]], "expected": true}},
-    {"id": "value-matches-false", "value_case": {"function": "matches", "args": [{"event_id": "019x2k", "event_type": "hf.chain.completed", "event_version": "1.0", "timestamp": "2026-03-15T14:23:07Z", "sequence": 0, "aggregate_type": "chain", "aggregate_id": "create_user", "payload": {"result": "ok"}}, ["other.type"]], "expected": false}},
-    {"id": "value-apply-projection", "value_case": {"function": "apply_projection", "args": [[{"event_id": "019x2k", "event_type": "hf.chain.completed", "event_version": "1.0", "timestamp": "2026-03-15T14:23:07Z", "sequence": 0, "aggregate_type": "chain", "aggregate_id": "create_user", "payload": {"result": "ok"}}, {"event_id": "019x2k", "event_type": "hf.chain.completed", "event_version": "1.0", "timestamp": "2026-03-15T14:23:07Z", "sequence": 0, "aggregate_type": "chain", "aggregate_id": "create_user", "payload": {"result": "ok"}}], {"$ref": "count_fold"}, 0], "expected": 2}}
-  ],
-  "value_oracle_exempt": [
-    {"function": "emit", "reason": "The emit boundary: async, and its effect is the event it appends through the injected runtime (clock, sequence, append callables), not a pure return value. Verified by its own conformance."}
-  ]
+ "version": "0.1",
+ "module": "honest-observe",
+ "cases": [
+  {
+   "id": "ho-build-ok",
+   "build_event": {
+    "args": {
+     "event_type": "hf.chain.completed",
+     "event_version": "1.0",
+     "aggregate_type": "chain",
+     "aggregate_id": "create_user",
+     "payload": {
+      "result": "ok"
+     },
+     "event_id": "019x2k",
+     "timestamp": "2026-03-15T14:23:07.441832Z",
+     "sequence": 0
+    }
+   },
+   "expect": "ok",
+   "expect_event": {
+    "event_id": "019x2k",
+    "event_type": "hf.chain.completed",
+    "event_version": "1.0",
+    "timestamp": "2026-03-15T14:23:07.441832Z",
+    "sequence": 0,
+    "aggregate_type": "chain",
+    "aggregate_id": "create_user",
+    "payload": {
+     "result": "ok"
+    }
+   }
+  },
+  {
+   "id": "ho-build-auth-meta",
+   "build_event": {
+    "args": {
+     "event_type": "order.placed",
+     "event_version": "1.0",
+     "aggregate_type": "order",
+     "aggregate_id": "o1",
+     "payload": {
+      "total": 50
+     },
+     "event_id": "019aaa",
+     "timestamp": "2026-03-15T14:23:07.000001Z",
+     "sequence": 7,
+     "auth": {
+      "caller_id": "u1"
+     },
+     "meta": {
+      "release": "r1"
+     }
+    }
+   },
+   "expect": "ok",
+   "expect_event": {
+    "event_id": "019aaa",
+    "event_type": "order.placed",
+    "event_version": "1.0",
+    "timestamp": "2026-03-15T14:23:07.000001Z",
+    "sequence": 7,
+    "aggregate_type": "order",
+    "aggregate_id": "o1",
+    "payload": {
+     "total": 50
+    },
+    "auth": {
+     "caller_id": "u1"
+    },
+    "meta": {
+     "release": "r1"
+    }
+   }
+  },
+  {
+   "id": "ho-build-missing-type",
+   "build_event": {
+    "args": {
+     "event_type": "",
+     "event_version": "1.0",
+     "aggregate_type": "order",
+     "aggregate_id": "o1",
+     "payload": {},
+     "event_id": "019bbb",
+     "timestamp": "2026-03-15T14:23:07.000002Z",
+     "sequence": 1
+    }
+   },
+   "expect": "err",
+   "expect_code": "invalid_event"
+  },
+  {
+   "id": "ho-build-missing-aggregate-id",
+   "build_event": {
+    "args": {
+     "event_type": "order.placed",
+     "event_version": "1.0",
+     "aggregate_type": "order",
+     "aggregate_id": "",
+     "payload": {},
+     "event_id": "019ccc",
+     "timestamp": "2026-03-15T14:23:07.000003Z",
+     "sequence": 1
+    }
+   },
+   "expect": "err",
+   "expect_code": "invalid_event"
+  },
+  {
+   "id": "ho-match-none",
+   "matches": {
+    "event": {
+     "event_type": "a.b",
+     "aggregate_type": "order",
+     "aggregate_id": "o1",
+     "timestamp": "2026-03-15T12:00:00Z"
+    }
+   },
+   "expect": true
+  },
+  {
+   "id": "ho-match-type-hit",
+   "matches": {
+    "event": {
+     "event_type": "a.b",
+     "aggregate_type": "order",
+     "aggregate_id": "o1",
+     "timestamp": "2026-03-15T12:00:00Z"
+    },
+    "filters": {
+     "event_types": [
+      "a.b",
+      "c.d"
+     ]
+    }
+   },
+   "expect": true
+  },
+  {
+   "id": "ho-match-type-miss",
+   "matches": {
+    "event": {
+     "event_type": "a.b",
+     "aggregate_type": "order",
+     "aggregate_id": "o1",
+     "timestamp": "2026-03-15T12:00:00Z"
+    },
+    "filters": {
+     "event_types": [
+      "x.y"
+     ]
+    }
+   },
+   "expect": false
+  },
+  {
+   "id": "ho-match-window-in",
+   "matches": {
+    "event": {
+     "event_type": "a.b",
+     "aggregate_type": "order",
+     "aggregate_id": "o1",
+     "timestamp": "2026-03-15T12:00:00Z"
+    },
+    "filters": {
+     "from_ts": "2026-03-15T00:00:00Z",
+     "to_ts": "2026-03-16T00:00:00Z"
+    }
+   },
+   "expect": true
+  },
+  {
+   "id": "ho-match-window-before",
+   "matches": {
+    "event": {
+     "event_type": "a.b",
+     "aggregate_type": "order",
+     "aggregate_id": "o1",
+     "timestamp": "2026-03-15T12:00:00Z"
+    },
+    "filters": {
+     "from_ts": "2026-03-16T00:00:00Z"
+    }
+   },
+   "expect": false
+  },
+  {
+   "id": "ho-emit-ok",
+   "emit": {
+    "event_type": "hf.chain.completed",
+    "aggregate_type": "chain",
+    "aggregate_id": "c1",
+    "payload": {
+     "result": "ok"
+    },
+    "context": {},
+    "event_id": "019x2k",
+    "timestamp": "2026-03-15T14:23:07.441832Z",
+    "sequence": 0,
+    "version": "1.0",
+    "append_ok": true
+   },
+   "expect": "ok",
+   "expect_event_id": "019x2k"
+  },
+  {
+   "id": "ho-emit-build-err",
+   "emit": {
+    "event_type": "",
+    "aggregate_type": "chain",
+    "aggregate_id": "c1",
+    "payload": {},
+    "context": {},
+    "event_id": "019x2k",
+    "timestamp": "2026-03-15T14:23:07.441832Z",
+    "sequence": 0,
+    "version": "1.0",
+    "append_ok": true
+   },
+   "expect": "err",
+   "expect_code": "invalid_event"
+  },
+  {
+   "id": "ho-emit-append-err",
+   "emit": {
+    "event_type": "order.placed",
+    "aggregate_type": "order",
+    "aggregate_id": "o1",
+    "payload": {
+     "total": 5
+    },
+    "context": {},
+    "event_id": "019aaa",
+    "timestamp": "2026-03-15T14:23:07.000001Z",
+    "sequence": 3,
+    "version": "1.0",
+    "append_ok": false
+   },
+   "expect": "err",
+   "expect_code": "emit_failed"
+  },
+  {
+   "id": "value-build-event",
+   "value_case": {
+    "function": "build_event",
+    "args": [
+     "hf.chain.completed",
+     "1.0",
+     "chain",
+     "create_user",
+     {
+      "result": "ok"
+     },
+     "019x2k",
+     "2026-03-15T14:23:07Z",
+     0
+    ],
+    "expected": {
+     "ok": {
+      "event_id": "019x2k",
+      "event_type": "hf.chain.completed",
+      "event_version": "1.0",
+      "timestamp": "2026-03-15T14:23:07Z",
+      "sequence": 0,
+      "aggregate_type": "chain",
+      "aggregate_id": "create_user",
+      "payload": {
+       "result": "ok"
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "value-extract-auth",
+   "value_case": {
+    "function": "extract_auth",
+    "args": [
+     {
+      "caller_id": "u1",
+      "role": "admin",
+      "x": "y"
+     },
+     [
+      "caller_id",
+      "role"
+     ]
+    ],
+    "expected": {
+     "caller_id": "u1",
+     "role": "admin"
+    }
+   }
+  },
+  {
+   "id": "value-extract-meta",
+   "value_case": {
+    "function": "extract_meta",
+    "args": [
+     {
+      "request_id": "r1",
+      "trace": "t",
+      "x": "y"
+     },
+     [
+      "request_id",
+      "trace"
+     ]
+    ],
+    "expected": {
+     "request_id": "r1",
+     "trace": "t"
+    }
+   }
+  },
+  {
+   "id": "value-matches-true",
+   "value_case": {
+    "function": "matches",
+    "args": [
+     {
+      "event_id": "019x2k",
+      "event_type": "hf.chain.completed",
+      "event_version": "1.0",
+      "timestamp": "2026-03-15T14:23:07Z",
+      "sequence": 0,
+      "aggregate_type": "chain",
+      "aggregate_id": "create_user",
+      "payload": {
+       "result": "ok"
+      }
+     },
+     [
+      "hf.chain.completed"
+     ]
+    ],
+    "expected": true
+   }
+  },
+  {
+   "id": "value-matches-false",
+   "value_case": {
+    "function": "matches",
+    "args": [
+     {
+      "event_id": "019x2k",
+      "event_type": "hf.chain.completed",
+      "event_version": "1.0",
+      "timestamp": "2026-03-15T14:23:07Z",
+      "sequence": 0,
+      "aggregate_type": "chain",
+      "aggregate_id": "create_user",
+      "payload": {
+       "result": "ok"
+      }
+     },
+     [
+      "other.type"
+     ]
+    ],
+    "expected": false
+   }
+  },
+  {
+   "id": "value-apply-projection",
+   "value_case": {
+    "function": "apply_projection",
+    "args": [
+     [
+      {
+       "event_id": "019x2k",
+       "event_type": "hf.chain.completed",
+       "event_version": "1.0",
+       "timestamp": "2026-03-15T14:23:07Z",
+       "sequence": 0,
+       "aggregate_type": "chain",
+       "aggregate_id": "create_user",
+       "payload": {
+        "result": "ok"
+       }
+      },
+      {
+       "event_id": "019x2k",
+       "event_type": "hf.chain.completed",
+       "event_version": "1.0",
+       "timestamp": "2026-03-15T14:23:07Z",
+       "sequence": 0,
+       "aggregate_type": "chain",
+       "aggregate_id": "create_user",
+       "payload": {
+        "result": "ok"
+       }
+      }
+     ],
+     {
+      "$ref": "count_fold"
+     },
+     0
+    ],
+    "expected": 2
+   }
+  },
+  {
+   "id": "value-chain-started",
+   "value_case": {
+    "function": "chain_started",
+    "args": [
+     "checkout",
+     3,
+     [
+      "order_id",
+      "items"
+     ]
+    ],
+    "expected": {
+     "event_type": "hf.chain.started",
+     "aggregate_type": "chain",
+     "aggregate_id": "checkout",
+     "payload": {
+      "chain_name": "checkout",
+      "link_count": 3,
+      "input_types": [
+       "order_id",
+       "items"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "value-chain-completed",
+   "value_case": {
+    "function": "chain_completed",
+    "args": [
+     "checkout",
+     3,
+     1500,
+     "err",
+     "invalid_email",
+     "client"
+    ],
+    "expected": {
+     "event_type": "hf.chain.completed",
+     "aggregate_type": "chain",
+     "aggregate_id": "checkout",
+     "payload": {
+      "chain_name": "checkout",
+      "duration_ns": 1500,
+      "link_count": 3,
+      "result": "err",
+      "fault_code": "invalid_email",
+      "fault_category": "client"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-link-executed",
+   "value_case": {
+    "function": "link_executed",
+    "args": [
+     "validate",
+     "checkout",
+     200,
+     "ok",
+     false,
+     0,
+     0,
+     false,
+     0
+    ],
+    "expected": {
+     "event_type": "hf.link.executed",
+     "aggregate_type": "link",
+     "aggregate_id": "validate",
+     "payload": {
+      "link_name": "validate",
+      "chain_name": "checkout",
+      "duration_ns": 200,
+      "result": "ok",
+      "boundary": false,
+      "mutations": 0,
+      "singletons": 0,
+      "nondeterminism": false,
+      "io_calls": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "value-link-faulted",
+   "value_case": {
+    "function": "link_faulted",
+    "args": [
+     "validate",
+     "checkout",
+     "invalid_email",
+     "client",
+     "Bad email"
+    ],
+    "expected": {
+     "event_type": "hf.link.faulted",
+     "aggregate_type": "link",
+     "aggregate_id": "validate",
+     "payload": {
+      "link_name": "validate",
+      "chain_name": "checkout",
+      "fault_code": "invalid_email",
+      "fault_category": "client",
+      "fault_message": "Bad email"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-classify-completed",
+   "value_case": {
+    "function": "classify_completed",
+    "args": [
+     "order_vocab",
+     5,
+     1,
+     300,
+     {
+      "unrecognized": 1
+     }
+    ],
+    "expected": {
+     "event_type": "hf.classify.completed",
+     "aggregate_type": "classify",
+     "aggregate_id": "order_vocab",
+     "payload": {
+      "vocabulary_name": "order_vocab",
+      "token_count": 5,
+      "rejection_count": 1,
+      "duration_ns": 300,
+      "rejection_reasons": {
+       "unrecognized": 1
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "value-state-transitioned",
+   "value_case": {
+    "function": "state_transitioned",
+    "args": [
+     "order_sm",
+     "o1",
+     "pending",
+     "pay",
+     "paid",
+     400
+    ],
+    "expected": {
+     "event_type": "hf.state.transitioned",
+     "aggregate_type": "state_machine",
+     "aggregate_id": "order_sm:o1",
+     "payload": {
+      "machine_name": "order_sm",
+      "entity_id": "o1",
+      "from_state": "pending",
+      "event": "pay",
+      "to_state": "paid",
+      "duration_ns": 400
+     }
+    }
+   }
+  },
+  {
+   "id": "value-state-rejected",
+   "value_case": {
+    "function": "state_rejected",
+    "args": [
+     "order_sm",
+     "o1",
+     "paid",
+     "pay",
+     "no_transition"
+    ],
+    "expected": {
+     "event_type": "hf.state.rejected",
+     "aggregate_type": "state_machine",
+     "aggregate_id": "order_sm:o1",
+     "payload": {
+      "machine_name": "order_sm",
+      "entity_id": "o1",
+      "current_state": "paid",
+      "event": "pay",
+      "fault_code": "no_transition"
+     }
+    }
+   }
+  }
+ ],
+ "value_oracle_exempt": [
+  {
+   "function": "emit",
+   "reason": "The emit boundary: async, and its effect is the event it appends through the injected runtime (clock, sequence, append callables), not a pure return value. Verified by its own conformance."
+  }
+ ]
 }
