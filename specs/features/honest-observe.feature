@@ -268,3 +268,13 @@ Feature: honest-observe — event envelope, recording, and projection
     Given a metric value and a condition operator and bound
     When condition_met decides
     Then it returns whether the value crosses the bound under the operator
+
+  Scenario: builtin_metrics provides the ready-made threshold metrics by name
+    Given the framework's own events
+    When builtin_metrics is asked for the metrics
+    Then it returns the self-contained built-in metrics over observe's events, each a fold and a value
+
+  Scenario: _percentile takes the nearest-rank percentile of a list
+    Given a list of numbers and a percentile
+    When _percentile takes it
+    Then it returns the nearest-rank value, and zero for no values

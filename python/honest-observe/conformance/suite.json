@@ -959,6 +959,10 @@
   {
    "function": "compute_metric",
    "reason": "Folds the log through a metric whose fold and value are functions, so its inputs are not JSON-encodable as a value case. The fold-then-extract path, including the empty-log case, is proved by the threshold-engine probe in laws_ho."
+  },
+  {
+   "function": "builtin_metrics",
+   "reason": "Returns metric declarations carrying fold and value functions, which are not JSON-encodable as a value case. Each built-in metric's fold and value are computed and asserted by the builtin-metrics probe in laws_ho."
   }
  ]
 }

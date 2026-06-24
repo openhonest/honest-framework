@@ -688,6 +688,65 @@ def _probe_threshold_engine():
     return bad
 
 
+def _probe_builtin_metrics():
+    """The built-in threshold metrics (section 8b.3): ready-made metrics over the framework's own events,
+    each a fold and a value the engine runs. Covers the self-contained metrics over observe-owned events;
+    the persist-sourced and per-link metrics are deferred (see thresholds.py)."""
+    from honest_observe import builtin_metrics, compute_metric
+    from honest_observe.thresholds import _percentile
+
+    bad = []
+
+    # Percentile by nearest rank: empty is zero, a single value is itself, p99 of 1..100 is 99.
+    if _percentile([], 99) != 0:
+        bad.append("the percentile of no values should be zero")
+    if _percentile([42], 99) != 42:
+        bad.append("the percentile of one value should be that value")
+    if _percentile(list(range(1, 101)), 99) != 99:
+        bad.append(f"p99 of 1..100 should be 99: {_percentile(list(range(1, 101)), 99)}")
+
+    metrics = builtin_metrics()
+    canonical = [
+        {"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:00Z", "payload": {"result": "ok", "duration_ns": 100}},
+        {"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:01Z", "payload": {"result": "err", "duration_ns": 300}},
+    ]
+    if compute_metric(metrics["request.error_rate"], canonical) != 0.5:
+        bad.append(f"request.error_rate should be the err fraction: {compute_metric(metrics['request.error_rate'], canonical)}")
+    if compute_metric(metrics["request.rate_per_minute"], canonical) != 2:
+        bad.append("request.rate_per_minute should count the requests")
+    if compute_metric(metrics["request.p99_duration_ns"], canonical) != 300:
+        bad.append("request.p99_duration_ns should be the 99th-percentile duration")
+    # The empty-log path of the rate value (the no-division branch).
+    if compute_metric(metrics["request.error_rate"], []) != 0.0:
+        bad.append("request.error_rate over an empty log should be zero")
+
+    classify = [
+        {"event_type": "hf.classify.completed", "timestamp": "2026-01-01T00:00:00Z", "payload": {"token_count": 7, "rejection_count": 1}},
+        {"event_type": "hf.classify.completed", "timestamp": "2026-01-01T00:00:01Z", "payload": {"token_count": 3, "rejection_count": 1}},
+    ]
+    if compute_metric(metrics["classify.rejection_rate"], classify) != 0.2:
+        bad.append(f"classify.rejection_rate should be rejected over tokens: {compute_metric(metrics['classify.rejection_rate'], classify)}")
+    if compute_metric(metrics["classify.rejection_rate"], []) != 0.0:
+        bad.append("classify.rejection_rate over an empty log should be zero")
+
+    links = [
+        {"event_type": "hf.link.executed", "timestamp": "2026-01-01T00:00:00Z", "payload": {"mutations": 1, "nondeterminism": True}},
+        {"event_type": "hf.link.executed", "timestamp": "2026-01-01T00:00:01Z", "payload": {"mutations": 2, "nondeterminism": False}},
+    ]
+    if compute_metric(metrics["honesty.mutation_count"], links) != 3:
+        bad.append("honesty.mutation_count should sum the mutations")
+    if compute_metric(metrics["honesty.nondeterminism_count"], links) != 1:
+        bad.append("honesty.nondeterminism_count should count the nondeterministic links")
+
+    responses = [
+        {"event_type": "hf.browser.response", "timestamp": "2026-01-01T00:00:00Z", "payload": {"duration_ms": 100}},
+        {"event_type": "hf.browser.response", "timestamp": "2026-01-01T00:00:01Z", "payload": {"duration_ms": 200}},
+    ]
+    if compute_metric(metrics["browser.response.p99_duration_ms"], responses) != 200:
+        bad.append("browser.response.p99_duration_ms should be the 99th-percentile round trip")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -705,6 +764,7 @@ def run():
         "inspect": _probe_inspect(),
         "query": _probe_query(),
         "threshold_engine": _probe_threshold_engine(),
+        "builtin_metrics": _probe_builtin_metrics(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:
