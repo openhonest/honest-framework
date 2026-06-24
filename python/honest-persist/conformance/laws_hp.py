@@ -695,6 +695,39 @@ def _probe_transaction():
         r = await transaction([w1, w2], middle)
         if r["err"]["detail"]["failed_at"] != 1 or middle.log[-1] != "rollback" or "commit" in middle.log:
             bad.append(f"mid-transaction failure should roll back at index 1: {r} log={middle.log}")
+
+        # req 14 (§8): a transaction emits one hf.persist.transaction through the injected emit.
+        events = []
+
+        async def rec_emit(event_type, aggregate_type, aggregate_id, payload):
+            events.append((event_type, aggregate_type, aggregate_id, payload))
+
+        await transaction([w1, w2], _TxConn(None), rec_emit, "users_db", "req-1")
+        if len(events) != 1 or events[0][0] != "hf.persist.transaction" or events[0][1] != "transaction" or events[0][2] != "users_db":
+            bad.append(f"a committed transaction should emit one hf.persist.transaction for the db: {events}")
+        else:
+            payload = events[0][3]
+            if payload["write_count"] != 2 or payload["outcome"] != "ok" or payload["failed_at"] is not None or payload["request_id"] != "req-1" or payload["duration_ns"] < 0:
+                bad.append(f"committed transaction event payload wrong: {payload}")
+
+        # A failed transaction emits outcome constraint_violation with the failing write's index.
+        fail_events = []
+
+        async def rec_fail(event_type, aggregate_type, aggregate_id, payload):
+            fail_events.append(payload)
+
+        failed = await transaction([w1, w2], _TxConn(1), rec_fail, "users_db", "req-2")
+        if failed.get("err", {}).get("code") != "write_failed":
+            bad.append("a failing transaction still returns write_failed")
+        if not fail_events or fail_events[0]["outcome"] != "constraint_violation" or fail_events[0]["failed_at"] != 1:
+            bad.append(f"a failed transaction should emit constraint_violation with failed_at: {fail_events}")
+
+        # A failing emit is swallowed — the transaction result is unaffected (instrumentation never breaks a write).
+        async def down_emit(event_type, aggregate_type, aggregate_id, payload):
+            raise RuntimeError("emit is down")
+
+        if await transaction([w1], _TxConn(None), down_emit, "users_db", "req-3") != {"ok": {"results": [1]}}:
+            bad.append("a failing transaction-event emit must not break the transaction")
         return bad
 
     return asyncio.run(_run())

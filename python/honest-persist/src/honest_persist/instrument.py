@@ -82,6 +82,15 @@ class PoolEvent(TypedDict):
     message: Any
 
 
+class TransactionEvent(TypedDict):
+    db_id: str
+    write_count: int
+    outcome: str         # ok | constraint_violation
+    failed_at: Any       # the failing write's index when the transaction rolled back, else None
+    duration_ns: int
+    request_id: Any      # the join key to the canonical request event, or None
+
+
 def pool_fault(code, message) -> PoolFault:
     """A typed pool-layer fault (section 8.3). The category distinguishes a caller error from a
     capacity or configuration error. Pure; never raised."""
@@ -130,6 +139,22 @@ def build_migration_event(db_id, op, table, detail, duration_ns, sql, success, f
         "sql": sql,
         "success": success,
         "fault_code": fault_code,
+    }
+
+
+def build_transaction_event(db_id, write_count, outcome, failed_at, duration_ns, request_id) -> TransactionEvent:
+    """The `hf.persist.transaction` payload (req 14, section 8), built for every transaction: how many
+    writes it grouped, its outcome (`ok` on commit, `constraint_violation` when a write failed and it
+    rolled back), the failing write's index (`failed_at`, None on success), the duration, and the
+    request_id join key. This is the surface the boundary uses to map a fault code to an HTTP response.
+    Pure."""
+    return {
+        "db_id": db_id,
+        "write_count": write_count,
+        "outcome": outcome,
+        "failed_at": failed_at,
+        "duration_ns": duration_ns,
+        "request_id": request_id,
     }
 
 

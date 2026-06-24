@@ -331,3 +331,13 @@ Feature: honest-persist — schema diffing, query building, and the write bounda
     Given a schema, table, row, and dialect
     When enforce_checks validates the row
     Then on a native dialect it trusts the database, and otherwise it compiles each CHECK and returns a check_violation for a failing row or an uncompilable_check for one that cannot be compiled
+
+  Scenario: build_transaction_event builds the hf.persist.transaction payload
+    Given a db id, write count, outcome, failed-at index, duration, and request id
+    When build_transaction_event builds the payload
+    Then it returns the transaction event with the write count, outcome, failing index, duration, and request id
+
+  Scenario: _emit_transaction emits the transaction event through the injected emit
+    Given an injected emit, db id, and the transaction outcome
+    When _emit_transaction emits the event
+    Then it emits one hf.persist.transaction keyed by the db, swallows a failing emit, and is a no-op when no emit is wired in
