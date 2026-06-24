@@ -19,7 +19,10 @@ _DEFAULT_SEVERITY = "warning"
 
 
 def normalize_config(raw: dict) -> dict:
-    """Extract the supported keys from a parsed honest-check.toml, with defaults."""
+    """Extract the supported keys from a parsed honest-check.toml, with defaults (section 3.1). Beyond
+    [check] and the [rules].disable list, this keeps each per-rule sub-table (e.g. [rules.HC-OR003]
+    min_run) in `rule_config` and the [startup] on_error in `startup_on_error`, so no declared key is
+    silently dropped."""
     check = raw.get("check", {})
     rules = raw.get("rules", {})
     return {
@@ -27,6 +30,8 @@ def normalize_config(raw: dict) -> dict:
         "exclude": list(check.get("exclude", [])),
         "severity": check.get("severity", _DEFAULT_SEVERITY),
         "disable": list(rules.get("disable", [])),
+        "rule_config": {name: dict(value) for name, value in rules.items() if name != "disable" and hasattr(value, "items")},
+        "startup_on_error": raw.get("startup", {}).get("on_error"),
     }
 
 

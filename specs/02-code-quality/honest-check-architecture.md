@@ -1288,8 +1288,8 @@ This ensures suppressions are visible in CI and do not silently accumulate.
 
 | Rule | Severity | Firing time | Startup | Description |
 |---|---|---|---|---|
-| HC001 | Error | Static | — | Link missing vocabulary |
-| HC002 | Error | Static | — | Chain type mismatch |
+| HC001 | Error | Static | ✓ | Link missing vocabulary |
+| HC002 | Error | Static | ✓ | Chain type mismatch |
 | HC003 | Error/Warning/Info | Construction | ✓ | Recognizer overlap |
 | HC004 | Warning | Static | — | Dead vocabulary type |
 | HC005 | Warning | Static | — | Unused binding |

@@ -88,6 +88,11 @@ def _probe_config():
         bad.append(f"normalize_config wrong: {full}")
     if empty_config()["severity"] != "warning":
         bad.append("empty_config default severity wrong")
+    configured = normalize_config({"rules": {"disable": ["HC003"], "HC-OR003": {"min_run": 4}}, "startup": {"on_error": "halt"}})
+    if configured["rule_config"] != {"HC-OR003": {"min_run": 4}} or configured["startup_on_error"] != "halt":
+        bad.append(f"normalize_config should keep per-rule config and startup on_error: {configured}")
+    if empty_config()["rule_config"] != {} or empty_config()["startup_on_error"] is not None:
+        bad.append("empty_config should have no rule config and no startup on_error")
     if not is_excluded("a/migrations/x.py", ["**/migrations/**"]) or is_excluded("a/x.py", ["**/migrations/**"]):
         bad.append("is_excluded wrong")
     if resolve_severity("error", "warning") != "error" or resolve_severity(None, "info") != "info" or resolve_severity(None, None) != "warning":
