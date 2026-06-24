@@ -79,7 +79,39 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--severity", choices=["error", "warning", "info"], default=None)
     parser.add_argument("--rule", action="append", default=[], help="run only this rule (repeatable)")
     parser.add_argument("--no-rule", action="append", default=[], dest="no_rule", help="suppress this rule (repeatable)")
+    parser.add_argument("--fix", action="store_true", help="apply auto-fixable corrections (conservative subset only)")
+    parser.add_argument("--watch", action="store_true", help="re-run on each trigger line from stdin")
     return parser.parse_args(argv)
+
+
+def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str) -> int:
+    """Check the paths once and print the rendered report; return the exit code (1 on errors, 2 on a
+    read failure, else 0). The single-pass core that both a plain run and --watch repeat."""
+    diagnostics: list[Diagnostic] = []
+    try:
+        for file in _discover_files(paths, exclude):
+            diagnostics.extend(check_source(file.read_text(encoding="utf-8"), str(file)))
+    except OSError as exc:
+        print(f"honest-check: cannot read source: {exc}", file=sys.stderr)
+        return 2
+    diagnostics = filter_by_rule(diagnostics, only, suppress)
+    blocking = has_errors(diagnostics)
+    rendered = render(filter_by_severity(diagnostics, severity), fmt)
+    if rendered:
+        print(rendered)
+    return 1 if blocking else 0
+
+
+def watch(run, stdin=None) -> int:
+    """Re-run the check on each trigger line read from `stdin`, returning the last exit code at EOF
+    (section 2.1). honest-check bundles no filesystem watcher, keeping it dependency-free; an external
+    watch tool pipes one trigger per change. The trigger stream is injected so the loop is testable,
+    defaulting to stdin exactly as the LSP server does."""
+    source = sys.stdin.buffer if stdin is None else stdin
+    code = run()
+    while source.readline():
+        code = run()
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,23 +130,21 @@ def main(argv: list[str] | None = None) -> int:
     paths = resolve_paths(args.paths, config["paths"])
     severity = resolve_severity(args.severity, config["severity"])
     suppress = frozenset(args.no_rule) | frozenset(config["disable"])
+    only = frozenset(args.rule)
 
-    diagnostics: list[Diagnostic] = []
-    try:
-        for file in _discover_files(paths, config["exclude"]):
-            diagnostics.extend(check_source(file.read_text(encoding="utf-8"), str(file)))
-    except OSError as exc:
-        print(f"honest-check: cannot read source: {exc}", file=sys.stderr)
-        return 2
+    if args.fix:
+        print(
+            "honest-check: no auto-fixable corrections — its rules flag dishonesty that needs "
+            "restructuring, not a mechanical fix.",
+            file=sys.stderr,
+        )
 
-    diagnostics = filter_by_rule(diagnostics, frozenset(args.rule), suppress)
-    blocking = has_errors(diagnostics)
-    shown = filter_by_severity(diagnostics, severity)
+    def run() -> int:
+        return _run_once(paths, config["exclude"], severity, suppress, only, args.format)
 
-    rendered = render(shown, args.format)
-    if rendered:
-        print(rendered)
-    return 1 if blocking else 0
+    if args.watch:
+        return watch(run)
+    return run()
 
 
 if __name__ == "__main__":

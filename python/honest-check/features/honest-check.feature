@@ -388,6 +388,22 @@ Feature: honest-check — Python supplement
     When main runs the check
     Then it discovers, checks, filters, and renders the violations
     And returns zero when nothing blocks, one when an error is found, and two on a usage or read failure
+    But with --fix it reports that nothing is auto-fixable, and with --watch it re-runs on each trigger
+
+  Scenario: _run_once checks the paths once and returns the exit code
+    Given the resolved paths, severity, suppressed and selected rules, and format
+    When _run_once runs the check once
+    Then it discovers, checks, filters, and renders, returning one on errors, two on a read failure, else zero
+
+  Scenario: watch re-runs the check on each trigger from the stream
+    Given a run thunk and a trigger stream
+    When watch reads the stream
+    Then it runs the check once and again for each trigger line, returning the last exit code at end of stream
+
+  Scenario: is_fixable reports whether a rule has a conservative automatic fix
+    Given a rule identifier
+    When is_fixable checks it
+    Then it is true only for a rule with a provably-safe fix, of which honest-check's structural rules have none
 
   # startup.py — the startup integration boundary
 

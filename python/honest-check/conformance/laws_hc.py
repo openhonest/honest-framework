@@ -22,7 +22,8 @@ import tempfile
 from pathlib import Path
 
 from honest_check import HonestCheckError, check_source, startup_check
-from honest_check.cli import _find_config, _load_config, main as cli_main
+from honest_check.cli import _find_config, _load_config, main as cli_main, watch
+from honest_check.rules import is_fixable
 from honest_check.config import (
     empty_config,
     is_excluded,
@@ -158,6 +159,29 @@ def _probe_cli():
         code, _, _ = _run_cli([str(Path(tmp) / "does_not_exist.py")])
         if code != 2:
             bad.append(f"missing source file should exit 2, got {code}")
+        # --fix reports that nothing is auto-fixable (honest-check's rules need restructuring).
+        code, _, err = _run_cli([str(dirty), "--fix"])
+        if code != 1 or "auto-fixable" not in err:
+            bad.append(f"--fix should run and report no auto-fixable corrections: {code} {err[:60]}")
+        # --watch runs the check; with no trigger stream (EOF) it runs once and returns its code.
+        code, _, _ = _run_cli([str(clean), "--watch"])
+        if code != 0:
+            bad.append(f"--watch on a clean tree should run once and exit 0, got {code}")
+        # The JSON fixable field is computed (false for every structural rule), not hardcoded.
+        _, out, _ = _run_cli([str(dirty), "--format", "json"])
+        if '"fixable": false' not in out:
+            bad.append("json output should carry a computed fixable field")
+    # The watch loop re-runs once per trigger line and returns the last code at EOF.
+    runs = {"n": 0}
+
+    def _count():
+        runs["n"] += 1
+        return runs["n"]
+
+    if watch(_count, io.BytesIO(b"\n\n")) != 3 or runs["n"] != 3:
+        bad.append("watch should run once plus once per trigger line")
+    if is_fixable("HC-NOPE"):
+        bad.append("is_fixable should be false for a structural rule with no conservative fix")
 
     # The ancestor config search: chdir into a tree that carries honest-check.toml.
     with tempfile.TemporaryDirectory() as tmp:

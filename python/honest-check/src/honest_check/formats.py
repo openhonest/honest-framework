@@ -9,6 +9,7 @@ testable as `assert render(filter(...), fmt) == expected`.
 import json
 
 from honest_check.diagnostics import Diagnostic
+from honest_check.rules import is_fixable
 
 # Reporting order / threshold for --severity (section 2.1). Higher = more severe.
 _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
@@ -68,7 +69,7 @@ def render_json(diagnostics: list[Diagnostic]) -> str:
                 "line": d["line"],
                 "col": d["col"],
                 "message": d["message"],
-                "fixable": False,
+                "fixable": is_fixable(d["rule"]),
             }
             for d in diagnostics
         ],

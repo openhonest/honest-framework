@@ -1530,6 +1530,18 @@ _ALL_CHECKS = (
 )
 
 
+# Rules with a conservative, provably-safe automatic fix (section 2.1 --fix, section 6.2 fixable).
+# honest-check's rules flag structural dishonesty that requires a human to restructure the code — a
+# class is not mechanically a set of pure functions, and auto-inserting a suppression would defeat the
+# linter — so there is none. A future rule whose fix is unambiguously safe would be listed here.
+FIXABLE_RULES: frozenset = frozenset()
+
+
+def is_fixable(rule: str) -> bool:
+    """Whether a rule has a conservative automatic fix (section 2.1, 6.2). Pure."""
+    return rule in FIXABLE_RULES
+
+
 def check_source(source: str, path: str) -> list[Diagnostic]:
     """Parse `source`, run every registered rule, then apply suppressions (section 1, 7)."""
     src_bytes = source.encode("utf-8")
