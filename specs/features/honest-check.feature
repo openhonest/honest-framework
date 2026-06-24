@@ -237,6 +237,16 @@ Feature: honest-check — the static honesty gate
     When check_hc_p013 inspects it
     Then it flags the routing key as HC-P013 because an unbounded predicate lets an arbitrary database identifier reach the pool
 
+  Scenario: _typeddict_names collects the TypedDict classes declared in a file
+    Given the parsed source of a file
+    When _typeddict_names scans its class declarations
+    Then it returns the names of the classes that subclass TypedDict, whose instances are dicts
+
+  Scenario: check_hc_p010 flags a return of a non-serializable class instance
+    Given a return statement whose value constructs a class
+    When check_hc_p010 inspects it
+    Then it flags the return as HC-P010 when the constructor is a class that is not an in-file TypedDict, leaving dicts, lowercase calls, method calls, and TypedDict instances alone
+
   Scenario: check_hc_p014 flags one recognizer shared across distinct slots
     Given a vocabulary where one recognizer is shared by types bound to different slots
     When check_hc_p014 inspects it

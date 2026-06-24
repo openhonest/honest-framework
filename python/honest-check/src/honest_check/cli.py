@@ -11,7 +11,7 @@ Boundary). Once honest-type ships the @boundary decorator these functions will c
 it; until then the boundary is declared here (section 7.2).
 """
 
-# honest: disable HC-P004, HC-P002
+# honest: disable HC-P004, HC-P002, HC-P010
 
 import argparse
 import sys

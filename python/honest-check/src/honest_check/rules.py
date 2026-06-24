@@ -129,6 +129,43 @@ def check_hc_p003(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+def _typeddict_names(root, source: bytes) -> set:
+    """The names of TypedDict classes declared in this file (section 4.2). An instance of one of these
+    is a dict, so returning it is serializable and fine; any other class instance is not."""
+    names: set = set()
+    for node in walk(root):
+        if node.type != "class_definition":
+            continue
+        if any(_simple_base_name(base) == "TypedDict" for base in _class_base_names(node, source)):
+            names.add(node_text(node.child_by_field_name("name"), source))
+    return names
+
+
+def check_hc_p010(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P010 — a function returns a non-serializable class instance (section 4.2). A return whose
+    value constructs a class (a PascalCase constructor call) that is not a TypedDict declared in this
+    file is flagged: pure functions return serializable data — a dict or TypedDict — not an object."""
+    typeddicts = _typeddict_names(root, source)
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "return_statement":
+            continue
+        values = node.named_children
+        if not values or values[0].type != "call":
+            continue
+        function = values[0].child_by_field_name("function")
+        if function is None or function.type != "identifier":
+            continue
+        name = node_text(function, source)
+        if not name[:1].isupper() or name in typeddicts:
+            continue
+        line, col = line_col(node)
+        out.append(diagnostic("HC-P010", "error", path, line, col,
+            f"Return value constructs '{name}', a non-serializable object. A pure function returns "
+            "a dict or TypedDict, not a class instance."))
+    return out
+
+
 def _equality_target(condition, source: bytes) -> str | None:
     """If `condition` is `IDENT == value`, return IDENT's text; else None."""
     if condition.type != "comparison_operator":
@@ -1456,6 +1493,7 @@ _ALL_CHECKS = (
     check_hc007,
     check_hc008,
     check_hc010,
+    check_hc_p010,
     check_hc_p013,
     check_hc_p014,
     check_hc009,

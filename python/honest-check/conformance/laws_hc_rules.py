@@ -126,6 +126,48 @@ _case(
 )
 
 
+# ----------------------------------------------------------------- HC-P010 non-serializable return
+
+# Returning a class instance (a PascalCase constructor that is not an in-file TypedDict) is a
+# non-serializable return — the framework returns dicts/TypedDicts, not objects.
+_case(
+    "p010_returns_class_instance",
+    "def f():\n    return Widget(1)\n",
+    must_fire=("HC-P010",),
+)
+_case(
+    "p010_returns_typeddict_clean",
+    "from typing import TypedDict\nclass Row(TypedDict):\n    a: int\ndef f():\n    return Row(a=1)\n",
+    must_not_fire=("HC-P010",),
+)
+_case(
+    "p010_returns_lowercase_call_clean",
+    "def f():\n    return make_row(1)\n",
+    must_not_fire=("HC-P010",),
+)
+_case(
+    "p010_returns_dict_literal_clean",
+    "def f():\n    return {'a': 1}\n",
+    must_not_fire=("HC-P010",),
+)
+_case(
+    "p010_returns_method_call_clean",
+    "def f(obj):\n    return obj.build(1)\n",
+    must_not_fire=("HC-P010",),
+)
+_case(
+    "p010_bare_return_clean",
+    "def f():\n    return\n",
+    must_not_fire=("HC-P010",),
+)
+# A non-TypedDict approved class (Protocol) exercises the non-TypedDict branch of the typeddict scan.
+_case(
+    "p010_protocol_class_clean",
+    "from typing import Protocol\nclass P(Protocol):\n    pass\ndef f():\n    return make_row(1)\n",
+    must_not_fire=("HC-P010", "HC-P003"),
+)
+
+
 # ----------------------------------------------------------------- HC-P001 dispatch shapes
 
 _case(
