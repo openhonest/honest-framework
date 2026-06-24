@@ -552,7 +552,9 @@
    ],
    "initial": {},
    "expect": "err",
-   "expect_code": "non_result_return"
+   "expect_code": "non_result_return",
+   "expect_fault_input": true,
+   "expect_fault_link": true
   },
   {
    "id": "validate-all-ok",
@@ -578,7 +580,8 @@
    ],
    "initial": {},
    "expect": "err",
-   "expect_code": "validation_failed"
+   "expect_code": "validation_failed",
+   "expect_fault_results": true
   },
   {
    "id": "boundary-ok-success-output",
@@ -704,7 +707,8 @@
    ],
    "initial": {},
    "expect": "err",
-   "expect_code": "non_result_return"
+   "expect_code": "non_result_return",
+   "expect_fault_input": true
   },
   {
    "id": "validate-all-async-ok",
@@ -730,7 +734,8 @@
    ],
    "initial": {},
    "expect": "err",
-   "expect_code": "validation_failed"
+   "expect_code": "validation_failed",
+   "expect_fault_results": true
   },
   {
    "id": "sm-construct-valid",

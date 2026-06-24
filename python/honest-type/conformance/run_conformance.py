@@ -185,7 +185,11 @@ def _check_chainrun(case):
     if asyncio.iscoroutine(result):
         result = asyncio.run(result)
     if case["expect"] == "err":
-        matched = "err" in result and result["err"]["code"] == case["expect_code"]
+        failure = result.get("err", {})
+        matched = "err" in result and failure.get("code") == case["expect_code"]
+        for field in ("input", "results", "link"):
+            if case.get(f"expect_fault_{field}") and field not in failure:
+                matched = False
         return matched, f"got {result}"
     manifest = result.get("ok", {})
     matched = "ok" in result and all(

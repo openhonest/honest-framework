@@ -55,14 +55,8 @@ def execute_chain(links, initial_manifest) -> dict:
         if "err" in result:
             return result
         if "ok" not in result:
-            return err(
-                fault(
-                    "non_result_return",
-                    "Link returned neither ok nor err",
-                    "server",
-                    {"input": current},
-                )
-            )
+            return err(fault("non_result_return", "Link returned neither ok nor err", "server",
+                             link=getattr(link, "__name__", None), input=current))
         current = result["ok"]
     return ok(current)
 
@@ -79,7 +73,8 @@ async def execute_chain_async(links, initial_manifest) -> dict:
         if "err" in result:
             return result
         if "ok" not in result:
-            return err(fault("non_result_return", "Link returned neither ok nor err", "server", {"input": current}))
+            return err(fault("non_result_return", "Link returned neither ok nor err", "server",
+                             link=getattr(link, "__name__", None), input=current))
         current = result["ok"]
     return ok(current)
 
@@ -105,14 +100,7 @@ def _run_validate_all(links, manifest) -> dict:
     the whole a validation_failed fault carrying every result, ok and err alike."""
     results = [link(manifest) for link in links]
     if any("err" in result for result in results):
-        return err(
-            fault(
-                "validation_failed",
-                "One or more validation checks failed",
-                "client",
-                {"results": results},
-            )
-        )
+        return err(fault("validation_failed", "One or more validation checks failed", "client", results=results))
     return ok(manifest)
 
 
@@ -126,7 +114,7 @@ async def _run_validate_all_async(links, manifest) -> dict:
             result = await result
         results.append(result)
     if any("err" in result for result in results):
-        return err(fault("validation_failed", "One or more validation checks failed", "client", {"results": results}))
+        return err(fault("validation_failed", "One or more validation checks failed", "client", results=results))
     return ok(manifest)
 
 

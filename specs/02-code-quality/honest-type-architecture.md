@@ -1270,8 +1270,11 @@ fault = {
     link:     String?         — chain link that produced the fault
     input:    dict?           — manifest passed to the failing link
     results:  [Result]?       — present only for "validation_failed" (validate_all)
+    detail:   dict?           — any other fault-specific context outside the chain
 }
 ```
+
+`link`, `input`, and `results` are the named chain-fault fields and are present only when set. `detail` carries fault-specific context outside the chain context — the rejected token of a `non_string_token` fault, the state and event of a state-machine fault, the blocking rejections of a boundary fault — so a fault never has to overload the chain fields for non-chain data.
 
 `fault()` constructor always requires `category`. It is not optional. A fault without a category is itself a server error.
 
