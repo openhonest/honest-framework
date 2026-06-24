@@ -222,11 +222,18 @@
     {"id": "value-nd-watch-list", "value_case": {"function": "nondeterministic_watch_list", "args": [], "expected": ["random.random", "uuid.uuid1", "uuid.uuid4", "os.getpid", "os.getppid", "os.getcwd", "time.time", "time.time_ns", "time.monotonic", "time.perf_counter", "time.process_time", "threading.get_ident"]}},
     {"id": "value-nd-finding-warn", "value_case": {"function": "nondeterminism_finding", "args": ["validate", false, ["time.time"]], "expected": {"code": "nondeterminism_detected", "subject": "validate", "message": "Link called ['time.time']; non-deterministic calls belong at boundaries"}}},
     {"id": "value-nd-finding-boundary", "value_case": {"function": "nondeterminism_finding", "args": ["record", true, ["time.time"]], "expected": null}},
-    {"id": "value-nd-finding-none", "value_case": {"function": "nondeterminism_finding", "args": ["validate", false, []], "expected": null}}
+    {"id": "value-nd-finding-none", "value_case": {"function": "nondeterminism_finding", "args": ["validate", false, []], "expected": null}},
+    {"id": "value-auth-token-classes", "value_case": {"function": "auth_token_classes", "args": [], "expected": ["valid_authorized", "valid_unauthorized", "revoked", "expired", "malformed", "missing", "forged"]}},
+    {"id": "value-auth-map-http", "value_case": {"function": "map_fault_to_http", "args": [{"category": "unauthenticated"}], "expected": 401}},
+    {"id": "value-auth-expected-ok", "value_case": {"function": "auth_expected_status", "args": ["valid_authorized"], "expected": "ok"}},
+    {"id": "value-auth-expected-status", "value_case": {"function": "auth_expected_status", "args": ["revoked"], "expected": 401}},
+    {"id": "value-auth-finding-fail", "value_case": {"function": "auth_honesty_finding", "args": ["guard", "expired", {"ok": {}}, 401], "expected": {"code": "auth_honesty", "subject": "guard", "message": "Link did not fault correctly for token class 'expired': expected 401, got {'ok': {}}"}}},
+    {"id": "value-auth-finding-ok", "value_case": {"function": "auth_honesty_finding", "args": ["guard", "revoked", {"err": {"code": "guard_failed", "message": "no", "category": "unauthenticated"}}, 401], "expected": null}}
   ],
   "value_oracle_exempt": [
     {"function": "call_monitor", "reason": "Section 4.5 runtime trap: a context manager that monkeypatches module attributes and records calls — a side effect, not a returned value. Its trapping of every watch-list symbol is proved by the determinism probe in laws_htest."},
     {"function": "verify_determinism", "reason": "Section 4.5: runs the link under the call monitor (I/O — it executes arbitrary link code under instrumentation), so its input is a live callable and its effect is the run. The boundary/exempt/pure outcomes are proved by the determinism probe."},
+    {"function": "test_auth_honesty", "reason": "Section 4.7: takes an injected provider (a token generator) and a chain-run callable, so its inputs are live callables, not JSON values. The seven-class orchestration, the honest and broken links, and the no-provider/non-authorizing no-ops are proved by the auth-honesty probe in laws_htest."},
     {"function": "adversarial_neighbours", "reason": "Combinatorial generator: ~229 neighbours, ~1.2 MB, aggregating the giant length-extension strings. Its correctness is property-based (the laws), not an exact-list value."},
     {"function": "length_extensions", "reason": "Generates boundary-length repeats — multi-hundred-KB strings. No portable value to assert; the laws prove the lengths."},
     {"function": "extract_length_bounds", "reason": "Returns a tuple (min, max), which cannot round-trip a JSON value contract (a tuple reloads as a list)."},

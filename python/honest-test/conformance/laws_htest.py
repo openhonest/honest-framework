@@ -238,6 +238,70 @@ def _probe_determinism():
     return bad
 
 
+def _probe_auth_honesty():
+    """Auth honesty (§4.7): for an authorizing link, the seven token classes must each produce their
+    declared outcome. The class set, the fault-to-HTTP map, the default expectations, and the per-class
+    decision are pure; the token generator and chain run are injected."""
+    from honest_test import auth_expected_status, auth_honesty_finding, auth_token_classes, map_fault_to_http, test_auth_honesty
+
+    bad = []
+
+    classes = auth_token_classes()
+    if classes[0] != "valid_authorized" or len(classes) != 7 or "forged" not in classes:
+        bad.append(f"the seven token classes are the smallest contract probe: {classes}")
+
+    # A fault maps to its HTTP status by category (§4.7).
+    if map_fault_to_http({"category": "forbidden"}) != 403 or map_fault_to_http({"category": "unauthenticated"}) != 401 or map_fault_to_http({"category": "client"}) != 400:
+        bad.append("map_fault_to_http should map auth categories to statuses")
+
+    # Default expectations, overridable by the provider's fault_mapping.
+    if auth_expected_status("valid_authorized") != "ok" or auth_expected_status("revoked") != 401 or auth_expected_status("valid_unauthorized") != 403:
+        bad.append("default auth expectations wrong")
+    if auth_expected_status("malformed", {"malformed": 401}) != 401:
+        bad.append("a provider fault_mapping should override the default expectation")
+
+    # The per-class decision.
+    if auth_honesty_finding("g", "valid_authorized", ok({}), "ok") is not None:
+        bad.append("an accepted valid authorized token is honest")
+    if auth_honesty_finding("g", "valid_authorized", {"err": fault("x", "y", "client")}, "ok") is None:
+        bad.append("rejecting a valid authorized token is a failure")
+    if auth_honesty_finding("g", "revoked", {"err": fault("guard_failed", "no", "unauthenticated")}, 401) is not None:
+        bad.append("a revoked token faulting 401 is honest")
+    if auth_honesty_finding("g", "expired", ok({}), 401) is None:
+        bad.append("accepting an expired token (expected 401) is a failure")
+    if auth_honesty_finding("g", "forged", {"err": fault("guard_failed", "no", "forbidden")}, 401) is None:
+        bad.append("a forged token faulting the wrong status is a failure")
+
+    # Orchestration over the seven classes with an injected provider and chain run.
+    @link(authorizes=True)
+    def guarded(manifest):
+        return ok(manifest)
+
+    @link()
+    def open_link(manifest):
+        return ok(manifest)
+
+    category = {"valid_unauthorized": "forbidden", "revoked": "unauthenticated", "expired": "unauthenticated", "malformed": "client", "missing": "unauthenticated", "forged": "unauthenticated"}
+
+    def run_correct(token):
+        return ok({}) if token == "valid_authorized" else {"err": fault("guard_failed", "no", category[token])}
+
+    provider = {"generate": lambda class_name: class_name, "fault_mapping": {}}
+    if test_auth_honesty(guarded, provider, run_correct):
+        bad.append(f"an honest authorizing link should report no auth findings: {test_auth_honesty(guarded, provider, run_correct)}")
+
+    def run_broken(token):
+        return ok({}) if token in ("valid_authorized", "expired") else {"err": fault("guard_failed", "no", category[token])}
+
+    if not test_auth_honesty(guarded, provider, run_broken):
+        bad.append("a link that accepts an expired token should fail auth honesty")
+    if test_auth_honesty(open_link, provider, run_correct) != []:
+        bad.append("a non-authorizing link has no auth honesty test")
+    if test_auth_honesty(guarded, None, run_correct) != []:
+        bad.append("no registered provider means no auth honesty test")
+    return bad
+
+
 def _probe_supplied():
     bad = []
     if load_config("/no/such/honest-test.toml") != {}:
@@ -407,6 +471,7 @@ def run():
         "length": _probe_length(),
         "honesty": _probe_honesty(),
         "determinism": _probe_determinism(),
+        "auth_honesty": _probe_auth_honesty(),
         "supplied": _probe_supplied(),
         "statemachine": _probe_statemachine(),
         "runner": _probe_runner(),

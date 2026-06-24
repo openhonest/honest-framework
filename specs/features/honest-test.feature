@@ -266,3 +266,28 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given a link and a manifest
     When verify_determinism runs the link under the monitor
     Then it warns for a non-boundary link that touched a source, and is silent for a boundary link or a link that touched none
+
+  Scenario: auth_token_classes lists the seven token classes
+    Given an authorization contract
+    When auth_token_classes is asked
+    Then it returns the seven token classes that probe the contract, beginning with the valid authorized one
+
+  Scenario: map_fault_to_http maps a fault to its HTTP status
+    Given a fault with a category
+    When map_fault_to_http maps it
+    Then a forbidden guard fault is 403, an unauthenticated one 401, a client fault 400, and anything else 500
+
+  Scenario: auth_expected_status gives the expected outcome for a token class
+    Given a token class and an optional provider fault mapping
+    When auth_expected_status is asked
+    Then it returns ok for a valid authorized token and the expected HTTP status otherwise, with the provider mapping overriding the default
+
+  Scenario: auth_honesty_finding decides whether a class outcome is honest
+    Given a token class, the chain result, and the expected outcome
+    When auth_honesty_finding decides
+    Then a valid authorized token must be accepted and every other class must fault with the expected status, returning a finding otherwise
+
+  Scenario: test_auth_honesty runs the auth honesty test over an authorizing link
+    Given an authorizing link, an injected provider, and a chain run
+    When test_auth_honesty runs the seven classes
+    Then it returns a finding for each class that behaved dishonestly, and nothing for a non-authorizing link or when no provider is registered

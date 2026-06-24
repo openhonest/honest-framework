@@ -14,6 +14,13 @@ from honest_test.adversarial import (
     length_extensions,
     unicode_confusables,
 )
+from honest_test.authhonesty import (
+    auth_expected_status,
+    auth_honesty_finding,
+    auth_token_classes,
+    map_fault_to_http,
+    test_auth_honesty,
+)
 from honest_test.determinism import (
     call_monitor,
     nondeterminism_finding,
@@ -68,6 +75,11 @@ __all__ = [
     "nondeterminism_finding",
     "call_monitor",
     "verify_determinism",
+    "auth_token_classes",
+    "map_fault_to_http",
+    "auth_expected_status",
+    "auth_honesty_finding",
+    "test_auth_honesty",
     "enumerate_test_cases",
     "test_chain_contracts",
     "test_valid_transitions",
