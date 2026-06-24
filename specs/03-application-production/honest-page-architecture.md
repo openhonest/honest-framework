@@ -368,9 +368,19 @@ A conformant base template must define these blocks. Child templates extend base
 
 ---
 
-## 9. honest-py Integration
+## 9. Route Map
 
-### 9.1 Template Registration
+A chain runs in response to an HTTP request, but the binding between request and chain must be a declaration a tool can read without running the application — not logic buried in a handler body. Every application declares a **route map**: a statically-readable mapping from a `(method, path)` pair to the chain that route runs.
+
+One declaration serves two readers. At runtime, the framework registers a handler per entry: intake classifies the request (§5.3, §10.3) and the named chain receives the manifest. Statically, honest-check follows the route map to derive a chain's boundary vocabulary (honest-check-architecture.md §4.2, HC002): a template's `hx-post`/`hx-get` names a path, the route map names the chain that path runs, and the chain's first link is checked against the fields the templates targeting that path send — the closed-input boundary (honest-framework-spec.md, "The input boundary is closed").
+
+The route map is data, not behaviour: each entry pairs exactly one method and path with one chain, named by a reference a parser can resolve. The realization is the spoke's idiom — a declared mapping value in one language, a routing table in another — but it must be statically inspectable, so a tool reads it by parsing, never by running the app. The honest-py realization is a declared mapping (§10.2).
+
+---
+
+## 10. honest-py Integration
+
+### 10.1 Template Registration
 
 The template directory must be registered with the Jinja2 environment at application startup. The recommended pattern uses FastAPI's `Jinja2Templates`:
 
@@ -381,9 +391,18 @@ from pathlib import Path
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ```
 
-### 9.2 Route Handler Contract
+### 10.2 Route Handler Contract
 
-Route handlers that return full pages pass the standard context variables:
+The honest-py realization of the route map (§9) is a declared mapping from `(method, path)` to chain:
+
+```python
+ROUTES = {
+    ("POST", "/api/orders"): create_order_chain,
+    ("GET",  "/api/items"):  fetch_items_chain,
+}
+```
+
+honest-py registers a handler for each entry — intake classifies the request (§10.3) and the named chain receives the manifest — and honest-check reads the same `ROUTES` declaration to map each path to its chain. Route handlers that return full pages pass the standard context variables:
 
 ```python
 @app.get("/", response_class=HTMLResponse)
@@ -397,7 +416,7 @@ async def index(request: Request):
 
 Route handlers that return HTMX fragments do not use honest-page templates. They return minimal HTML fragments that HTMX swaps into `honest-main` or any other target. Fragment templates do not extend base.html.
 
-### 9.3 Intake Middleware and _state
+### 10.3 Intake Middleware and _state
 
 The honest-py intake middleware classifies both route parameters and the `_state` body parameter submitted by domx. The merged manifest is available as `request.state.manifest`.
 
@@ -421,9 +440,9 @@ Token priority on collision: `_state` wins over query parameters; query paramete
 
 ---
 
-## 10. Conformance
+## 11. Conformance
 
-### 10.1 Conformance Levels
+### 11.1 Conformance Levels
 
 | Level | Requirement |
 |---|---|
@@ -431,7 +450,7 @@ Token priority on collision: `_state` wins over query parameters; query paramete
 | **Full** | Core + honest-alerts SSE wiring on all three notification surfaces; dark mode switching via `data-theme`; localStorage theme preference restoration; template blocks all declared |
 | **Complete** | Full + honest-py intake middleware integrating `_state`; `request_id` header forwarding; fragment route handlers returning non-base templates |
 
-### 10.2 Conformance Suite
+### 11.2 Conformance Suite
 
 A conformant implementation passes these checks:
 
