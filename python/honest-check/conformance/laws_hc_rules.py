@@ -525,6 +525,13 @@ _case(
     "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p1), 'b': predicate(p2)})\n",
     must_fire=("HC003",),
 )
+# A Set type beside a predicate type may overlap on a Set value, but the static linter cannot
+# evaluate the predicate; it emits an info pointing to honest-test (section 1.1, 4.1).
+_case(
+    "hc003_set_predicate_info",
+    "from honest_type import vocabulary, predicate\nV = vocabulary({'a': {'x'}, 'b': predicate(p)})\n",
+    must_fire=("HC003",),
+)
 
 
 # ----------------------------------------------------------------- HC004 / HC005 binding pairings

@@ -321,16 +321,19 @@ FUNCTION check_HC003(vocabulary):
                     f"Types '{A}' and '{B}' share values: {overlap}")
 
         IF one is Set, one is Predicate:
-            set_recog, pred_recog ← order appropriately
-            FOR EACH value IN set_recog:
-                IF pred_recog(value):
-                    EMIT warning(HC003,
-                        f"Value '{value}' matches both Set and predicate type")
+            // The static linter never executes application code, so it cannot evaluate the
+            // predicate over the Set's members. It emits an info pointing to honest-test
+            // (section 1.1); honest-test runs the predicate over each Set value at test time
+            // and emits a warning for any value matched by both.
+            EMIT info(HC003,
+                "Set and predicate type may overlap on a Set value — verified by honest-test")
 
         IF both are Predicates:
             EMIT info(HC003,
                 "Predicate × predicate overlap cannot be checked statically — verified by honest-test")
 ```
+
+Both predicate-involved overlaps are statically undecidable (the predicate is opaque source), so the static rule emits an `info` directing the developer to the runtime check, exactly as section 1.1 prescribes. The `Error/Warning` severity in the rule table refers to the decidable Set × Set case (error) and the runtime Set × predicate case honest-test performs (warning); the static rule itself emits error (Set × Set) or info (any predicate involved).
 
 #### HC006 — Composed type references unknown base type
 

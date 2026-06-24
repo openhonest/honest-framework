@@ -737,6 +737,18 @@ def check_hc003(root, source: bytes, path: str) -> list[Diagnostic]:
                         "cannot be checked statically; verified by honest-test.",
                     )
                 )
+            if {rec_a[0], rec_b[0]} == {"set", "predicate"}:
+                out.append(
+                    diagnostic(
+                        "HC003",
+                        "info",
+                        path,
+                        line,
+                        col,
+                        f"Set type and predicate type ('{name_a}', '{name_b}') may overlap on a Set "
+                        "value — the predicate is not evaluated here; verified by honest-test.",
+                    )
+                )
     return out
 
 

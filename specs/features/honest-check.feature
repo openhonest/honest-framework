@@ -178,7 +178,7 @@ Feature: honest-check — the static honesty gate
     Given a vocabulary whose types could both match one token
     When check_hc003 inspects it
     Then it flags two bounded types that share a value as HC003
-    But two open-ended types that may overlap are routed to honest-test as information
+    But a predicate paired with another predicate or with a bounded set may overlap and is routed to honest-test as information, the predicate never being evaluated statically
 
   Scenario: check_state_machine_vocab flags transitions outside the declared vocabulary
     Given a state machine whose transitions or initial state use undeclared states or events
