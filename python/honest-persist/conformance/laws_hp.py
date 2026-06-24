@@ -155,11 +155,37 @@ RENDER_LAWS = [law("HP-render", "every operation type renders to DDL on every di
 # --------------------------------------------------------------------------- fake connections
 
 
-class _Conn:
+class _ReconControl:
+    """The transaction + foreign-key control a reconstruction connection must provide (section 5.5):
+    begin/commit/rollback and disable/verify foreign keys, each recorded in order so the control flow is
+    assertable. verify_foreign_keys reports no violations by default."""
+
+    def _record(self):
+        self.calls = []
+
+    async def begin(self):
+        self.calls.append("begin")
+
+    async def commit(self):
+        self.calls.append("commit")
+
+    async def rollback(self):
+        self.calls.append("rollback")
+
+    async def disable_foreign_keys(self):
+        self.calls.append("disable_fk")
+
+    async def verify_foreign_keys(self):
+        self.calls.append("verify_fk")
+        return []
+
+
+class _Conn(_ReconControl):
     def __init__(self):
         self.executed = []
         self.paused = 0
         self.resumed = 0
+        self._record()
 
     async def execute(self, sql):
         self.executed.append(sql)
@@ -171,20 +197,22 @@ class _Conn:
         self.resumed += 1
 
 
-class _BareConn:
+class _BareConn(_ReconControl):
     """A connection without sync-push hooks (the hasattr-false path)."""
 
     def __init__(self):
         self.executed = []
+        self._record()
 
     async def execute(self, sql):
         self.executed.append(sql)
 
 
-class _FailingConn:
+class _FailingConn(_ReconControl):
     def __init__(self, fail_on):
         self.executed = []
         self._fail_on = fail_on
+        self._record()
 
     async def pause_push(self):
         pass
@@ -196,6 +224,14 @@ class _FailingConn:
         if self._fail_on in sql:
             raise RuntimeError(f"boom on {self._fail_on}")
         self.executed.append(sql)
+
+
+class _FkViolationConn(_Conn):
+    """A connection whose post-reconstruction foreign-key verification finds a dangling reference."""
+
+    async def verify_foreign_keys(self):
+        self.calls.append("verify_fk")
+        return [{"table": "child", "column": "parent_id"}]
 
 
 # --------------------------------------------------------------------------- apply boundary probes
@@ -217,14 +253,25 @@ def _probe_apply():
             bad.append(f"reconstruction did not copy data / recreate index: {full.executed}")
         if full.paused < 1 or full.resumed < 1:
             bad.append("reconstruction did not pause/resume sync push")
+        # §5.5: reconstruction is one transaction with FK checks disabled, then verified, then committed.
+        if full.calls != ["begin", "disable_fk", "verify_fk", "commit"]:
+            bad.append(f"reconstruction control flow should be begin/disable-fk/verify-fk/commit: {full.calls}")
 
         bare = _BareConn()
         if not (await apply(plan, _RECON_TARGET, bare, "sqlite"))["success"]:
             bad.append("reconstruction failed on a connection without push hooks")
 
+        # §5.5 atomicity: a DDL failure rolls the whole transaction back — never a half-migrated table.
         failing = _FailingConn("DROP TABLE")
-        if (await apply(plan, _RECON_TARGET, failing, "sqlite"))["success"]:
-            bad.append("reconstruction should report failure when a statement raises")
+        failed = await apply(plan, _RECON_TARGET, failing, "sqlite")
+        if failed["success"] or "rollback" not in failing.calls or "commit" in failing.calls:
+            bad.append(f"a failed reconstruction must roll back, not commit: {failing.calls}")
+
+        # §5.5 step 6: a foreign key left dangling after the rebuild rolls back and reports failure.
+        fk = _FkViolationConn()
+        fk_result = await apply(plan, _RECON_TARGET, fk, "sqlite")
+        if fk_result["success"] or "rollback" not in fk.calls or "commit" in fk.calls:
+            bad.append(f"a post-reconstruction FK violation must roll back: {fk.calls}")
 
         # Two reconstruction ops on one table reconstruct it once (the already-done skip).
         two = {"t": {"columns": {"id": {"type": "text"}, "keep": {"type": "integer"}}}}

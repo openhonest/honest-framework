@@ -225,19 +225,32 @@ async def _resume_push(conn):
 
 
 async def _reconstruct(table, target_tables, operations, conn, dialect, executed):
-    """Rebuild one table to its target shape (section 5.5), pausing sync push for the duration
-    (Turso). Returns None on success, or an ApplyResult on failure. I/O."""
+    """Rebuild one table to its target shape (section 5.5) as one atomic transaction with foreign-key
+    checks disabled, pausing sync push for the duration (Turso). Inside the transaction it runs the
+    rebuild statements, then re-enables and verifies foreign keys (step 6); any statement failure or a
+    dangling foreign key rolls the whole transaction back, so a table is never left half-migrated.
+    Returns None on success, or an ApplyResult on failure. The exact transaction and foreign-key SQL is
+    the connection's (dialect-specific, section 12); this orchestrates the control flow. I/O."""
     target_table = target_tables.get(table, {})
     added = _columns_added(operations, table)
     common = [name for name in target_table.get("columns", {}) if name not in added]
     await _pause_push(conn)
+    await conn.begin()
+    await conn.disable_foreign_keys()
     try:
         for sql in reconstruction_sql(table, target_table, common, dialect):
             await conn.execute(sql)
             executed.append(sql)
+        violations = await conn.verify_foreign_keys()
     except Exception as exc:
+        await conn.rollback()
         await _resume_push(conn)
         return _apply_result(False, executed, str(exc), None)
+    if violations:
+        await conn.rollback()
+        await _resume_push(conn)
+        return _apply_result(False, executed, f"foreign keys left dangling after reconstruction: {violations}", None)
+    await conn.commit()
     await _resume_push(conn)
     return None
 

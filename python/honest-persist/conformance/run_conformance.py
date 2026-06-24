@@ -158,6 +158,22 @@ class _FakeConn:
     async def resume_push(self):
         self.resumed += 1
 
+    async def begin(self):
+        self.executed.append("BEGIN")
+
+    async def commit(self):
+        self.executed.append("COMMIT")
+
+    async def rollback(self):
+        self.executed.append("ROLLBACK")
+
+    async def disable_foreign_keys(self):
+        self.executed.append("DISABLE FK")
+
+    async def verify_foreign_keys(self):
+        self.executed.append("VERIFY FK")
+        return []
+
 
 def _check_to_sql(case):
     sql = to_sql(case["to_sql"], case["dialect"])
