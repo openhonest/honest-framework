@@ -14,6 +14,12 @@ from honest_test.adversarial import (
     length_extensions,
     unicode_confusables,
 )
+from honest_test.determinism import (
+    call_monitor,
+    nondeterminism_finding,
+    nondeterministic_watch_list,
+    verify_determinism,
+)
 from honest_test.enumeration import enumerate_sets
 from honest_test.honesty import (
     detect_mutation,
@@ -58,6 +64,10 @@ __all__ = [
     "verify_purity",
     "detect_mutation",
     "verify_idempotency",
+    "nondeterministic_watch_list",
+    "nondeterminism_finding",
+    "call_monitor",
+    "verify_determinism",
     "enumerate_test_cases",
     "test_chain_contracts",
     "test_valid_transitions",

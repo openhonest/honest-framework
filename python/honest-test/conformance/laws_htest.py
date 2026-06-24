@@ -181,6 +181,63 @@ def _probe_honesty():
     return bad
 
 
+def _probe_determinism():
+    """Non-determinism detection (§4.5): the pure decision, the runtime trap over every watch-list
+    symbol, and the end-to-end flag — a non-boundary link that touches a non-deterministic source warns,
+    a boundary link is exempt, a link that touches none is honest."""
+    import time
+
+    from honest_test import call_monitor, nondeterminism_finding, nondeterministic_watch_list, verify_determinism
+
+    bad = []
+
+    # The pure decision (§4.5): detected + non-boundary -> warning; boundary or none -> honest.
+    if nondeterminism_finding("validate", False, ["time.time"]) is None:
+        bad.append("a non-boundary link that called a source should warn")
+    if nondeterminism_finding("record", True, ["time.time"]) is not None:
+        bad.append("a boundary link is exempt from the non-determinism check")
+    if nondeterminism_finding("validate", False, []) is not None:
+        bad.append("a link that touched no source is honest")
+
+    watch = nondeterministic_watch_list()
+    if "time.time" not in watch or "random.random" not in watch or "uuid.uuid4" not in watch:
+        bad.append(f"the watch list should mirror the non-deterministic sources: {watch}")
+
+    # Conformance (§4.5): every watch-list symbol is trapped at runtime when called from inside the monitor.
+    with call_monitor(watch) as detected:
+        for path in watch:
+            module_name, attr = path.rsplit(".", 1)
+            getattr(__import__(module_name), attr)()
+    if set(detected) != set(watch):
+        bad.append(f"every watch-list symbol must be trapped at runtime: missing {set(watch) - set(detected)}")
+    # The monitor restores the originals on exit — no lingering patch.
+    if type(time.time()) is not float:
+        bad.append("call_monitor should restore the original symbols on exit")
+
+    # End-to-end: a non-boundary link calling a source is flagged; a boundary one and a pure one are not.
+    @link()
+    def impure(manifest):
+        time.time()
+        return ok(manifest)
+
+    @link(boundary=True)
+    def at_boundary(manifest):
+        time.time()
+        return ok(manifest)
+
+    @link()
+    def pure_link(manifest):
+        return ok(manifest)
+
+    if verify_determinism(impure, {"a": 1}) is None:
+        bad.append("verify_determinism should flag a non-boundary link that calls a non-deterministic source")
+    if verify_determinism(at_boundary, {"a": 1}) is not None:
+        bad.append("verify_determinism should exempt a boundary link")
+    if verify_determinism(pure_link, {"a": 1}) is not None:
+        bad.append("verify_determinism should pass a link that touches no source")
+    return bad
+
+
 def _probe_supplied():
     bad = []
     if load_config("/no/such/honest-test.toml") != {}:
@@ -349,6 +406,7 @@ def run():
         "predicate": _probe_predicate(),
         "length": _probe_length(),
         "honesty": _probe_honesty(),
+        "determinism": _probe_determinism(),
         "supplied": _probe_supplied(),
         "statemachine": _probe_statemachine(),
         "runner": _probe_runner(),

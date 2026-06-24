@@ -241,3 +241,28 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given an argument expression and the function map
     When _eval evaluates it
     Then a literal is itself, a list evaluates each element, a reference resolves the named callable, and a call applies the named function to its evaluated arguments recursively, so a function-taking function needs no callable in the data, even inside a list
+
+  Scenario: nondeterministic_watch_list lists the sources a pure link must not call
+    Given the framework's non-determinism rules
+    When nondeterministic_watch_list is asked
+    Then it returns the call-form non-deterministic sources the runtime monitor traps, mirroring honest-check's HC008 list
+
+  Scenario: nondeterminism_finding decides whether a link's calls are honest
+    Given a link name, its boundary flag, and the sources it called
+    When nondeterminism_finding decides
+    Then a non-boundary link that called any source is a warning naming them, while a boundary link or one that called none is honest
+
+  Scenario: _recorder wraps a watched symbol to record its call
+    Given a watched symbol path, its original, and a detected list
+    When _recorder wraps it
+    Then the wrapper records the path and delegates to the original so the link still runs
+
+  Scenario: call_monitor traps every watch-list symbol for the duration of a run
+    Given a watch list
+    When call_monitor patches the symbols and the run calls them
+    Then it records every call and restores each original on exit
+
+  Scenario: verify_determinism flags a non-boundary link that touches a non-deterministic source
+    Given a link and a manifest
+    When verify_determinism runs the link under the monitor
+    Then it warns for a non-boundary link that touched a source, and is silent for a boundary link or a link that touched none
