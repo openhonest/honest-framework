@@ -195,16 +195,26 @@ Feature: honest-type — vocabulary, classification, chains, and the boundary
     Then it feeds each link's manifest to the next and returns the first failure if one occurs
     And if a link returns neither success nor failure it returns a server fault
 
-  Scenario: chain composes links into a single link
+  Scenario: execute_chain_async runs links in sequence, awaiting any async link
+    Given a sequence of links, some async, and a starting manifest
+    When execute_chain_async runs them
+    Then it awaits each async link's result, short-circuits on the first failure, and returns a server fault for a link that returns neither success nor failure
+
+  Scenario: chain composes links into a single link, async when any link is async
     Given several links
     When chain composes them
-    Then it yields one link that runs them in sequence and short-circuits
+    Then it yields one link that runs them in sequence and short-circuits, returning an async link when any composed link is async
 
   Scenario: _run_validate_all runs every link against the same manifest
     Given a sequence of links and a manifest
     When _run_validate_all runs them all against that manifest
     Then it succeeds only when every link succeeds
     But if any fails it yields one failure carrying every result, success and failure alike
+
+  Scenario: _run_validate_all_async runs every link against the same manifest, awaiting async links
+    Given a sequence of links, some async, and a manifest
+    When _run_validate_all_async runs them all against that manifest
+    Then it awaits each async link, succeeds only when every link succeeds, and otherwise yields one failure carrying every result
 
   Scenario: validate_all composes accumulating checks into a single link
     Given several validation links

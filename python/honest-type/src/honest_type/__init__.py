@@ -12,6 +12,7 @@ from honest_type.boundary import (
 from honest_type.chains import (
     chain,
     execute_chain,
+    execute_chain_async,
     is_link,
     link,
     link_meta,
@@ -36,6 +37,7 @@ __all__ = [
     "classify",
     "chain",
     "execute_chain",
+    "execute_chain_async",
     "validate_all",
     "link",
     "is_link",

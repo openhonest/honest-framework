@@ -1,87 +1,1185 @@
 {
-  "version": "0.1",
-  "module": "honest-type",
-  "note": "Unit 1 — vocabulary construction contract (sections 2, 3). Set members as arrays; the runner builds the vocabulary and checks ok vs VocabularyError. classify() cases follow with unit 2.",
-  "cases": [
-    {"id": "vocab-valid", "declarations": {"currency_code": ["USD", "EUR", "GBP"], "format_name": ["currency", "number", "percent"]}, "expect": "ok"},
-    {"id": "vocab-single", "declarations": {"t": ["alpha", "beta"]}, "expect": "ok"},
-    {"id": "vocab-no-overlap", "declarations": {"a": ["x"], "b": ["y"]}, "expect": "ok"},
-    {"id": "vocab-reserved-class", "declarations": {"x": ["class"]}, "expect": "error", "error_contains": "reserved"},
-    {"id": "vocab-reserved-return", "declarations": {"y": ["return", "ok"]}, "expect": "error", "error_contains": "reserved"},
-    {"id": "vocab-reserved-manifest", "declarations": {"z": ["manifest"]}, "expect": "error", "error_contains": "framework"},
-    {"id": "vocab-overlap", "declarations": {"a": ["x", "y"], "b": ["y", "z"]}, "expect": "error", "error_contains": "share"},
-
-    {"id": "classify-binding", "declarations": {"currency_code": ["USD", "EUR"], "format_name": ["currency", "number"]}, "binding": {"currency_code": "currency", "format_name": "format"}, "tokens": ["currency", "EUR"], "expect_manifest": {"format": "currency", "currency": "EUR"}, "expect_rejections": []},
-    {"id": "classify-order-independent", "declarations": {"currency_code": ["USD", "EUR"], "format_name": ["currency", "number"]}, "binding": {"currency_code": "currency", "format_name": "format"}, "tokens": ["EUR", "currency"], "expect_manifest": {"format": "currency", "currency": "EUR"}},
-    {"id": "classify-auto-binding", "declarations": {"cc": ["USD", "EUR"]}, "tokens": ["USD"], "expect_manifest": {"cc": "USD"}, "expect_rejections": []},
-    {"id": "classify-unrecognized", "declarations": {"cc": ["USD"]}, "tokens": ["zzz"], "expect_rejections": ["unrecognized", "missing_required"]},
-    {"id": "classify-duplicate-slot", "declarations": {"format_name": ["currency", "number"]}, "tokens": ["currency", "number"], "expect_manifest": {"format_name": "currency"}, "expect_rejections": ["duplicate_slot"]},
-    {"id": "classify-missing-required", "declarations": {"a": ["x"], "b": ["y"]}, "tokens": [], "expect_rejections": ["missing_required"]},
-    {"id": "classify-null-token", "declarations": {"cc": ["USD"]}, "tokens": [null, "USD"], "expect_manifest": {"cc": "USD"}, "expect_rejections": ["null_token"]},
-    {"id": "classify-empty-token", "declarations": {"cc": ["USD"]}, "tokens": ["", "USD"], "expect_manifest": {"cc": "USD"}, "expect_rejections": ["empty_token"]},
-
-    {"id": "composed-fires", "declarations": {"format_name": ["currency", "number"], "currency_code": ["USD", "EUR"], "integer": ["2", "3"]}, "composed_types": [{"name": "currency_precision", "requires": {"format_name": "currency"}, "captures": "integer"}], "binding": {"format_name": "format", "currency_code": "currency", "integer": "precision", "currency_precision": "decimals"}, "tokens": ["2", "EUR", "currency"], "expect_manifest": {"format": "currency", "currency": "EUR", "decimals": "2"}, "expect_rejections": []},
-    {"id": "composed-off-falls-through", "declarations": {"format_name": ["currency", "number"], "currency_code": ["USD", "EUR"], "integer": ["2", "3"]}, "composed_types": [{"name": "currency_precision", "requires": {"format_name": "currency"}, "captures": "integer"}], "binding": {"format_name": "format", "currency_code": "currency", "integer": "precision", "currency_precision": "decimals"}, "tokens": ["2", "EUR", "number"], "expect_manifest": {"format": "number", "currency": "EUR", "precision": "2"}, "expect_rejections": []},
-    {"id": "maybe-absent-nothing", "declarations": {"cc": ["USD"], "intg": ["2"]}, "binding": {"cc": "currency", "intg": {"maybe": "precision"}}, "tokens": ["USD"], "expect_manifest": {"currency": "USD", "precision": null}, "expect_rejections": []},
-    {"id": "maybe-present-value", "declarations": {"cc": ["USD"], "intg": ["2"]}, "binding": {"cc": "currency", "intg": {"maybe": "precision"}}, "tokens": ["USD", "2"], "expect_manifest": {"currency": "USD", "precision": "2"}, "expect_rejections": []},
-    {"id": "composed-maybe-capture-absent", "declarations": {"format_name": ["currency"], "integer": ["2"]}, "composed_types": [{"name": "cp", "requires": {"format_name": "currency"}, "captures": {"maybe": "integer"}}], "binding": {"format_name": "format", "integer": "precision", "cp": "decimals"}, "tokens": ["currency"], "expect_manifest": {"format": "currency", "decimals": null}, "expect_rejections": []},
-
-    {"id": "merge-disjoint", "merge_a": {"currency_code": ["USD", "EUR"]}, "merge_b": {"format_name": ["currency", "number"]}, "expect": "ok"},
-    {"id": "merge-name-collision", "merge_a": {"cc": ["USD", "EUR"]}, "merge_b": {"cc": ["GBP"]}, "expect": "error", "error_contains": "both define"},
-    {"id": "merge-value-collision", "merge_a": {"a": ["x", "y"]}, "merge_b": {"b": ["y", "z"]}, "expect": "error", "error_contains": "share"},
-
-    {"id": "chain-ok-transforms", "combinator": "chain", "links": ["pass", "set_role"], "initial": {"email": "a@b"}, "expect": "ok", "expect_manifest": {"role": "admin", "email": "a@b"}},
-    {"id": "chain-short-circuits-on-fault", "combinator": "chain", "links": ["fault", "set_role"], "initial": {}, "expect": "err", "expect_code": "boom"},
-    {"id": "chain-non-result-return", "combinator": "chain", "links": ["bad"], "initial": {}, "expect": "err", "expect_code": "non_result_return"},
-    {"id": "validate-all-ok", "combinator": "validate_all", "links": ["pass", "set_role"], "initial": {"x": "1"}, "expect": "ok", "expect_manifest": {"x": "1"}},
-    {"id": "validate-all-accumulates-fault", "combinator": "validate_all", "links": ["pass", "fault"], "initial": {}, "expect": "err", "expect_code": "validation_failed"},
-
-    {"id": "boundary-ok-success-output", "links": ["pass", "set_role"], "initial": {}, "expect_status": 200},
-    {"id": "boundary-server-fault-default", "links": ["fault"], "initial": {}, "expect_status": 500, "expect_code": "boom"},
-    {"id": "boundary-fault-table-hit", "links": ["unrecognized"], "initial": {}, "expect_status": 422, "expect_code": "unrecognized"},
-    {"id": "boundary-catches-exception", "links": ["raise"], "initial": {}, "expect_status": 500, "expect_code": "unhandled_exception"},
-
-    {"id": "rejections-block-on-fault", "rejection_manifest": {"cc": "USD", "_rejections": [{"token": "zz", "reason": "unrecognized", "detail": null}]}, "expect": "err", "expect_code": "unrecognized"},
-    {"id": "rejections-warn-passes-clean", "rejection_manifest": {"cc": "USD", "_rejections": [{"token": "", "reason": "empty_token", "detail": null}]}, "expect": "ok"},
-
-    {"id": "link-records-boundary-and-name", "link": "declared", "expect_boundary": true, "expect_name": "_declared_link"},
-    {"id": "link-records-accepts", "link": "declared", "expect_accepts": "user_vocab"},
-    {"id": "declared-link-still-runs-in-chain", "combinator": "chain", "links": ["declared", "set_role"], "initial": {}, "expect": "ok", "expect_manifest": {"role": "admin"}},
-
-    {"id": "sm-construct-valid", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "expect": "ok"},
-    {"id": "sm-construct-bad-next-state", "sm": true, "states": ["pending"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "expect": "error", "error_contains": "unknown state"},
-    {"id": "sm-construct-bad-initial", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "zzz", "expect": "error", "error_contains": "Initial state"},
-    {"id": "sm-transition-valid", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["pending", "pay"], "expect_state": "paid"},
-    {"id": "sm-transition-invalid-state", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["zzz", "pay"], "expect_code": "invalid_state"},
-    {"id": "sm-transition-invalid-event", "sm": true, "states": ["pending", "paid"], "events": ["pay"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["pending", "zzz"], "expect_code": "invalid_event"},
-    {"id": "sm-transition-no-transition", "sm": true, "states": ["pending", "paid"], "events": ["pay", "ship"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "apply": ["paid", "ship"], "expect_code": "no_transition"},
-    {"id": "value-ok", "value_case": {"function": "ok", "args": [{"x": "1"}], "expected": {"ok": {"x": "1"}}}},
-    {"id": "value-fault", "value_case": {"function": "fault", "args": ["unrecognized", "bad", "server"], "expected": {"code": "unrecognized", "message": "bad", "category": "server", "detail": null}}},
-    {"id": "value-err", "value_case": {"function": "err", "args": [{"code": "unrecognized", "message": "bad", "category": "server", "detail": null}], "expected": {"err": {"code": "unrecognized", "message": "bad", "category": "server", "detail": null}}}},
-    {"id": "value-maybe", "value_case": {"function": "maybe", "args": ["slot"], "expected": {"kind": "maybe", "slot": "slot"}}},
-    {"id": "value-rejection", "value_case": {"function": "rejection", "args": ["tok", "why"], "expected": {"token": "tok", "reason": "why", "detail": null}}},
-    {"id": "value-ticket", "value_case": {"function": "ticket", "args": ["currency", "USD"], "expected": {"type": "currency", "value": "USD"}}},
-    {"id": "value-is-reserved", "value_case": {"function": "is_reserved", "args": ["ok"], "expected": false}},
-    {"id": "value-check-rejections", "value_case": {"function": "check_rejections", "args": [{"x": "1"}], "expected": {"ok": {"x": "1"}}}},
-    {"id": "value-binding", "value_case": {"function": "binding", "args": [{"slot": "type"}], "expected": {"slot": "type"}}},
-    {"id": "value-composed", "value_case": {"function": "composed", "args": ["n", {"a": "cur"}, null], "expected": {"name": "n", "requires": {"a": "cur"}, "captures": null}}},
-    {"id": "value-auto-binding", "value_case": {"function": "auto_binding", "args": [{"$call": "vocabulary", "args": [{"cur": ["USD"]}]}], "expected": {"cur": "cur"}}},
-    {"id": "value-recognize", "value_case": {"function": "recognize", "args": ["USD", {"$call": "insensitive", "args": [["USD", "EUR"]]}], "expected": true}},
-    {"id": "value-classify", "value_case": {"function": "classify", "args": [["USD"], {"$call": "vocabulary", "args": [{"cur": ["USD", "EUR"]}]}], "expected": {"cur": "USD"}}},
-    {"id": "value-transition", "value_case": {"function": "transition", "args": [{"$call": "make_machine", "args": [["a", "b"], ["go"], [["a", "go", "b"]], "a"]}, "a", "go"], "expected": {"ok": {"state": "b"}}}},
-    {"id": "value-is-link", "value_case": {"function": "is_link", "args": [{"$ref": "value_link"}], "expected": true}},
-    {"id": "value-link-meta", "value_case": {"function": "link_meta", "args": [{"$ref": "value_link"}], "expected": {"name": "value_link", "accepts": null, "binds": null, "boundary": false, "authorizes": false, "emits": null}}},
-    {"id": "value-execute-chain", "value_case": {"function": "execute_chain", "args": [[{"$ref": "value_link"}], {"x": "1"}], "expected": {"ok": {"x": "1", "seen": true}}}}
-  ],
-  "value_oracle_exempt": [
-    {"function": "vocabulary", "reason": "Returns a vocabulary whose Set members are frozensets; not JSON-serialisable. A constructor, exercised by classify/enumerate via \\$call."},
-    {"function": "insensitive", "reason": "Returns a recognizer whose members are a frozenset; not JSON-serialisable. Exercised by recognize via \\$call."},
-    {"function": "merge", "reason": "Returns a merged vocabulary (frozenset members); not JSON-serialisable."},
-    {"function": "predicate", "reason": "Returns a recognizer wrapping the predicate (a callable / frozenset); not a portable value."},
-    {"function": "state_machine", "reason": "Returns a machine whose state/event sets are not JSON-serialisable; built for transition via \\$call make_machine."},
-    {"function": "chain", "reason": "Returns a composed chain that embeds its link callables; not a portable value."},
-    {"function": "link", "reason": "Returns a decorator (a callable); not a portable value."},
-    {"function": "validate_all", "reason": "Returns/raises over link callables; its argument and effect are callables, not a portable value."},
-    {"function": "catch_at_boundary", "reason": "Wraps a handler callable at the boundary; its arguments and result are callables, not a portable value."}
-  ]
+ "version": "0.1",
+ "module": "honest-type",
+ "note": "Unit 1 \u2014 vocabulary construction contract (sections 2, 3). Set members as arrays; the runner builds the vocabulary and checks ok vs VocabularyError. classify() cases follow with unit 2.",
+ "cases": [
+  {
+   "id": "vocab-valid",
+   "declarations": {
+    "currency_code": [
+     "USD",
+     "EUR",
+     "GBP"
+    ],
+    "format_name": [
+     "currency",
+     "number",
+     "percent"
+    ]
+   },
+   "expect": "ok"
+  },
+  {
+   "id": "vocab-single",
+   "declarations": {
+    "t": [
+     "alpha",
+     "beta"
+    ]
+   },
+   "expect": "ok"
+  },
+  {
+   "id": "vocab-no-overlap",
+   "declarations": {
+    "a": [
+     "x"
+    ],
+    "b": [
+     "y"
+    ]
+   },
+   "expect": "ok"
+  },
+  {
+   "id": "vocab-reserved-class",
+   "declarations": {
+    "x": [
+     "class"
+    ]
+   },
+   "expect": "error",
+   "error_contains": "reserved"
+  },
+  {
+   "id": "vocab-reserved-return",
+   "declarations": {
+    "y": [
+     "return",
+     "ok"
+    ]
+   },
+   "expect": "error",
+   "error_contains": "reserved"
+  },
+  {
+   "id": "vocab-reserved-manifest",
+   "declarations": {
+    "z": [
+     "manifest"
+    ]
+   },
+   "expect": "error",
+   "error_contains": "framework"
+  },
+  {
+   "id": "vocab-overlap",
+   "declarations": {
+    "a": [
+     "x",
+     "y"
+    ],
+    "b": [
+     "y",
+     "z"
+    ]
+   },
+   "expect": "error",
+   "error_contains": "share"
+  },
+  {
+   "id": "classify-binding",
+   "declarations": {
+    "currency_code": [
+     "USD",
+     "EUR"
+    ],
+    "format_name": [
+     "currency",
+     "number"
+    ]
+   },
+   "binding": {
+    "currency_code": "currency",
+    "format_name": "format"
+   },
+   "tokens": [
+    "currency",
+    "EUR"
+   ],
+   "expect_manifest": {
+    "format": "currency",
+    "currency": "EUR"
+   },
+   "expect_rejections": []
+  },
+  {
+   "id": "classify-order-independent",
+   "declarations": {
+    "currency_code": [
+     "USD",
+     "EUR"
+    ],
+    "format_name": [
+     "currency",
+     "number"
+    ]
+   },
+   "binding": {
+    "currency_code": "currency",
+    "format_name": "format"
+   },
+   "tokens": [
+    "EUR",
+    "currency"
+   ],
+   "expect_manifest": {
+    "format": "currency",
+    "currency": "EUR"
+   }
+  },
+  {
+   "id": "classify-auto-binding",
+   "declarations": {
+    "cc": [
+     "USD",
+     "EUR"
+    ]
+   },
+   "tokens": [
+    "USD"
+   ],
+   "expect_manifest": {
+    "cc": "USD"
+   },
+   "expect_rejections": []
+  },
+  {
+   "id": "classify-unrecognized",
+   "declarations": {
+    "cc": [
+     "USD"
+    ]
+   },
+   "tokens": [
+    "zzz"
+   ],
+   "expect_rejections": [
+    "unrecognized",
+    "missing_required"
+   ]
+  },
+  {
+   "id": "classify-duplicate-slot",
+   "declarations": {
+    "format_name": [
+     "currency",
+     "number"
+    ]
+   },
+   "tokens": [
+    "currency",
+    "number"
+   ],
+   "expect_manifest": {
+    "format_name": "currency"
+   },
+   "expect_rejections": [
+    "duplicate_slot"
+   ]
+  },
+  {
+   "id": "classify-missing-required",
+   "declarations": {
+    "a": [
+     "x"
+    ],
+    "b": [
+     "y"
+    ]
+   },
+   "tokens": [],
+   "expect_rejections": [
+    "missing_required"
+   ]
+  },
+  {
+   "id": "classify-null-token",
+   "declarations": {
+    "cc": [
+     "USD"
+    ]
+   },
+   "tokens": [
+    null,
+    "USD"
+   ],
+   "expect_manifest": {
+    "cc": "USD"
+   },
+   "expect_rejections": [
+    "null_token"
+   ]
+  },
+  {
+   "id": "classify-empty-token",
+   "declarations": {
+    "cc": [
+     "USD"
+    ]
+   },
+   "tokens": [
+    "",
+    "USD"
+   ],
+   "expect_manifest": {
+    "cc": "USD"
+   },
+   "expect_rejections": [
+    "empty_token"
+   ]
+  },
+  {
+   "id": "composed-fires",
+   "declarations": {
+    "format_name": [
+     "currency",
+     "number"
+    ],
+    "currency_code": [
+     "USD",
+     "EUR"
+    ],
+    "integer": [
+     "2",
+     "3"
+    ]
+   },
+   "composed_types": [
+    {
+     "name": "currency_precision",
+     "requires": {
+      "format_name": "currency"
+     },
+     "captures": "integer"
+    }
+   ],
+   "binding": {
+    "format_name": "format",
+    "currency_code": "currency",
+    "integer": "precision",
+    "currency_precision": "decimals"
+   },
+   "tokens": [
+    "2",
+    "EUR",
+    "currency"
+   ],
+   "expect_manifest": {
+    "format": "currency",
+    "currency": "EUR",
+    "decimals": "2"
+   },
+   "expect_rejections": []
+  },
+  {
+   "id": "composed-off-falls-through",
+   "declarations": {
+    "format_name": [
+     "currency",
+     "number"
+    ],
+    "currency_code": [
+     "USD",
+     "EUR"
+    ],
+    "integer": [
+     "2",
+     "3"
+    ]
+   },
+   "composed_types": [
+    {
+     "name": "currency_precision",
+     "requires": {
+      "format_name": "currency"
+     },
+     "captures": "integer"
+    }
+   ],
+   "binding": {
+    "format_name": "format",
+    "currency_code": "currency",
+    "integer": "precision",
+    "currency_precision": "decimals"
+   },
+   "tokens": [
+    "2",
+    "EUR",
+    "number"
+   ],
+   "expect_manifest": {
+    "format": "number",
+    "currency": "EUR",
+    "precision": "2"
+   },
+   "expect_rejections": []
+  },
+  {
+   "id": "maybe-absent-nothing",
+   "declarations": {
+    "cc": [
+     "USD"
+    ],
+    "intg": [
+     "2"
+    ]
+   },
+   "binding": {
+    "cc": "currency",
+    "intg": {
+     "maybe": "precision"
+    }
+   },
+   "tokens": [
+    "USD"
+   ],
+   "expect_manifest": {
+    "currency": "USD",
+    "precision": null
+   },
+   "expect_rejections": []
+  },
+  {
+   "id": "maybe-present-value",
+   "declarations": {
+    "cc": [
+     "USD"
+    ],
+    "intg": [
+     "2"
+    ]
+   },
+   "binding": {
+    "cc": "currency",
+    "intg": {
+     "maybe": "precision"
+    }
+   },
+   "tokens": [
+    "USD",
+    "2"
+   ],
+   "expect_manifest": {
+    "currency": "USD",
+    "precision": "2"
+   },
+   "expect_rejections": []
+  },
+  {
+   "id": "composed-maybe-capture-absent",
+   "declarations": {
+    "format_name": [
+     "currency"
+    ],
+    "integer": [
+     "2"
+    ]
+   },
+   "composed_types": [
+    {
+     "name": "cp",
+     "requires": {
+      "format_name": "currency"
+     },
+     "captures": {
+      "maybe": "integer"
+     }
+    }
+   ],
+   "binding": {
+    "format_name": "format",
+    "integer": "precision",
+    "cp": "decimals"
+   },
+   "tokens": [
+    "currency"
+   ],
+   "expect_manifest": {
+    "format": "currency",
+    "decimals": null
+   },
+   "expect_rejections": []
+  },
+  {
+   "id": "merge-disjoint",
+   "merge_a": {
+    "currency_code": [
+     "USD",
+     "EUR"
+    ]
+   },
+   "merge_b": {
+    "format_name": [
+     "currency",
+     "number"
+    ]
+   },
+   "expect": "ok"
+  },
+  {
+   "id": "merge-name-collision",
+   "merge_a": {
+    "cc": [
+     "USD",
+     "EUR"
+    ]
+   },
+   "merge_b": {
+    "cc": [
+     "GBP"
+    ]
+   },
+   "expect": "error",
+   "error_contains": "both define"
+  },
+  {
+   "id": "merge-value-collision",
+   "merge_a": {
+    "a": [
+     "x",
+     "y"
+    ]
+   },
+   "merge_b": {
+    "b": [
+     "y",
+     "z"
+    ]
+   },
+   "expect": "error",
+   "error_contains": "share"
+  },
+  {
+   "id": "chain-ok-transforms",
+   "combinator": "chain",
+   "links": [
+    "pass",
+    "set_role"
+   ],
+   "initial": {
+    "email": "a@b"
+   },
+   "expect": "ok",
+   "expect_manifest": {
+    "role": "admin",
+    "email": "a@b"
+   }
+  },
+  {
+   "id": "chain-short-circuits-on-fault",
+   "combinator": "chain",
+   "links": [
+    "fault",
+    "set_role"
+   ],
+   "initial": {},
+   "expect": "err",
+   "expect_code": "boom"
+  },
+  {
+   "id": "chain-non-result-return",
+   "combinator": "chain",
+   "links": [
+    "bad"
+   ],
+   "initial": {},
+   "expect": "err",
+   "expect_code": "non_result_return"
+  },
+  {
+   "id": "validate-all-ok",
+   "combinator": "validate_all",
+   "links": [
+    "pass",
+    "set_role"
+   ],
+   "initial": {
+    "x": "1"
+   },
+   "expect": "ok",
+   "expect_manifest": {
+    "x": "1"
+   }
+  },
+  {
+   "id": "validate-all-accumulates-fault",
+   "combinator": "validate_all",
+   "links": [
+    "pass",
+    "fault"
+   ],
+   "initial": {},
+   "expect": "err",
+   "expect_code": "validation_failed"
+  },
+  {
+   "id": "boundary-ok-success-output",
+   "links": [
+    "pass",
+    "set_role"
+   ],
+   "initial": {},
+   "expect_status": 200
+  },
+  {
+   "id": "boundary-server-fault-default",
+   "links": [
+    "fault"
+   ],
+   "initial": {},
+   "expect_status": 500,
+   "expect_code": "boom"
+  },
+  {
+   "id": "boundary-fault-table-hit",
+   "links": [
+    "unrecognized"
+   ],
+   "initial": {},
+   "expect_status": 422,
+   "expect_code": "unrecognized"
+  },
+  {
+   "id": "boundary-catches-exception",
+   "links": [
+    "raise"
+   ],
+   "initial": {},
+   "expect_status": 500,
+   "expect_code": "unhandled_exception"
+  },
+  {
+   "id": "rejections-block-on-fault",
+   "rejection_manifest": {
+    "cc": "USD",
+    "_rejections": [
+     {
+      "token": "zz",
+      "reason": "unrecognized",
+      "detail": null
+     }
+    ]
+   },
+   "expect": "err",
+   "expect_code": "unrecognized"
+  },
+  {
+   "id": "rejections-warn-passes-clean",
+   "rejection_manifest": {
+    "cc": "USD",
+    "_rejections": [
+     {
+      "token": "",
+      "reason": "empty_token",
+      "detail": null
+     }
+    ]
+   },
+   "expect": "ok"
+  },
+  {
+   "id": "link-records-boundary-and-name",
+   "link": "declared",
+   "expect_boundary": true,
+   "expect_name": "_declared_link"
+  },
+  {
+   "id": "link-records-accepts",
+   "link": "declared",
+   "expect_accepts": "user_vocab"
+  },
+  {
+   "id": "declared-link-still-runs-in-chain",
+   "combinator": "chain",
+   "links": [
+    "declared",
+    "set_role"
+   ],
+   "initial": {},
+   "expect": "ok",
+   "expect_manifest": {
+    "role": "admin"
+   }
+  },
+  {
+   "id": "chain-async-ok",
+   "combinator": "chain",
+   "links": [
+    "async",
+    "set_role"
+   ],
+   "initial": {
+    "x": "1"
+   },
+   "expect": "ok",
+   "expect_manifest": {
+    "async_ran": "yes",
+    "role": "admin",
+    "x": "1"
+   }
+  },
+  {
+   "id": "chain-async-fault",
+   "combinator": "chain",
+   "links": [
+    "async_fault"
+   ],
+   "initial": {},
+   "expect": "err",
+   "expect_code": "async_boom"
+  },
+  {
+   "id": "chain-async-bad",
+   "combinator": "chain",
+   "links": [
+    "async_bad"
+   ],
+   "initial": {},
+   "expect": "err",
+   "expect_code": "non_result_return"
+  },
+  {
+   "id": "validate-all-async-ok",
+   "combinator": "validate_all",
+   "links": [
+    "async",
+    "set_role"
+   ],
+   "initial": {
+    "x": "1"
+   },
+   "expect": "ok",
+   "expect_manifest": {
+    "x": "1"
+   }
+  },
+  {
+   "id": "validate-all-async-fault",
+   "combinator": "validate_all",
+   "links": [
+    "async",
+    "async_fault"
+   ],
+   "initial": {},
+   "expect": "err",
+   "expect_code": "validation_failed"
+  },
+  {
+   "id": "sm-construct-valid",
+   "sm": true,
+   "states": [
+    "pending",
+    "paid"
+   ],
+   "events": [
+    "pay"
+   ],
+   "transitions": [
+    [
+     "pending",
+     "pay",
+     "paid"
+    ]
+   ],
+   "initial": "pending",
+   "expect": "ok"
+  },
+  {
+   "id": "sm-construct-bad-next-state",
+   "sm": true,
+   "states": [
+    "pending"
+   ],
+   "events": [
+    "pay"
+   ],
+   "transitions": [
+    [
+     "pending",
+     "pay",
+     "paid"
+    ]
+   ],
+   "initial": "pending",
+   "expect": "error",
+   "error_contains": "unknown state"
+  },
+  {
+   "id": "sm-construct-bad-initial",
+   "sm": true,
+   "states": [
+    "pending",
+    "paid"
+   ],
+   "events": [
+    "pay"
+   ],
+   "transitions": [
+    [
+     "pending",
+     "pay",
+     "paid"
+    ]
+   ],
+   "initial": "zzz",
+   "expect": "error",
+   "error_contains": "Initial state"
+  },
+  {
+   "id": "sm-transition-valid",
+   "sm": true,
+   "states": [
+    "pending",
+    "paid"
+   ],
+   "events": [
+    "pay"
+   ],
+   "transitions": [
+    [
+     "pending",
+     "pay",
+     "paid"
+    ]
+   ],
+   "initial": "pending",
+   "apply": [
+    "pending",
+    "pay"
+   ],
+   "expect_state": "paid"
+  },
+  {
+   "id": "sm-transition-invalid-state",
+   "sm": true,
+   "states": [
+    "pending",
+    "paid"
+   ],
+   "events": [
+    "pay"
+   ],
+   "transitions": [
+    [
+     "pending",
+     "pay",
+     "paid"
+    ]
+   ],
+   "initial": "pending",
+   "apply": [
+    "zzz",
+    "pay"
+   ],
+   "expect_code": "invalid_state"
+  },
+  {
+   "id": "sm-transition-invalid-event",
+   "sm": true,
+   "states": [
+    "pending",
+    "paid"
+   ],
+   "events": [
+    "pay"
+   ],
+   "transitions": [
+    [
+     "pending",
+     "pay",
+     "paid"
+    ]
+   ],
+   "initial": "pending",
+   "apply": [
+    "pending",
+    "zzz"
+   ],
+   "expect_code": "invalid_event"
+  },
+  {
+   "id": "sm-transition-no-transition",
+   "sm": true,
+   "states": [
+    "pending",
+    "paid"
+   ],
+   "events": [
+    "pay",
+    "ship"
+   ],
+   "transitions": [
+    [
+     "pending",
+     "pay",
+     "paid"
+    ]
+   ],
+   "initial": "pending",
+   "apply": [
+    "paid",
+    "ship"
+   ],
+   "expect_code": "no_transition"
+  },
+  {
+   "id": "value-ok",
+   "value_case": {
+    "function": "ok",
+    "args": [
+     {
+      "x": "1"
+     }
+    ],
+    "expected": {
+     "ok": {
+      "x": "1"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-fault",
+   "value_case": {
+    "function": "fault",
+    "args": [
+     "unrecognized",
+     "bad",
+     "server"
+    ],
+    "expected": {
+     "code": "unrecognized",
+     "message": "bad",
+     "category": "server",
+     "detail": null
+    }
+   }
+  },
+  {
+   "id": "value-err",
+   "value_case": {
+    "function": "err",
+    "args": [
+     {
+      "code": "unrecognized",
+      "message": "bad",
+      "category": "server",
+      "detail": null
+     }
+    ],
+    "expected": {
+     "err": {
+      "code": "unrecognized",
+      "message": "bad",
+      "category": "server",
+      "detail": null
+     }
+    }
+   }
+  },
+  {
+   "id": "value-maybe",
+   "value_case": {
+    "function": "maybe",
+    "args": [
+     "slot"
+    ],
+    "expected": {
+     "kind": "maybe",
+     "slot": "slot"
+    }
+   }
+  },
+  {
+   "id": "value-rejection",
+   "value_case": {
+    "function": "rejection",
+    "args": [
+     "tok",
+     "why"
+    ],
+    "expected": {
+     "token": "tok",
+     "reason": "why",
+     "detail": null
+    }
+   }
+  },
+  {
+   "id": "value-ticket",
+   "value_case": {
+    "function": "ticket",
+    "args": [
+     "currency",
+     "USD"
+    ],
+    "expected": {
+     "type": "currency",
+     "value": "USD"
+    }
+   }
+  },
+  {
+   "id": "value-is-reserved",
+   "value_case": {
+    "function": "is_reserved",
+    "args": [
+     "ok"
+    ],
+    "expected": false
+   }
+  },
+  {
+   "id": "value-check-rejections",
+   "value_case": {
+    "function": "check_rejections",
+    "args": [
+     {
+      "x": "1"
+     }
+    ],
+    "expected": {
+     "ok": {
+      "x": "1"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-binding",
+   "value_case": {
+    "function": "binding",
+    "args": [
+     {
+      "slot": "type"
+     }
+    ],
+    "expected": {
+     "slot": "type"
+    }
+   }
+  },
+  {
+   "id": "value-composed",
+   "value_case": {
+    "function": "composed",
+    "args": [
+     "n",
+     {
+      "a": "cur"
+     },
+     null
+    ],
+    "expected": {
+     "name": "n",
+     "requires": {
+      "a": "cur"
+     },
+     "captures": null
+    }
+   }
+  },
+  {
+   "id": "value-auto-binding",
+   "value_case": {
+    "function": "auto_binding",
+    "args": [
+     {
+      "$call": "vocabulary",
+      "args": [
+       {
+        "cur": [
+         "USD"
+        ]
+       }
+      ]
+     }
+    ],
+    "expected": {
+     "cur": "cur"
+    }
+   }
+  },
+  {
+   "id": "value-recognize",
+   "value_case": {
+    "function": "recognize",
+    "args": [
+     "USD",
+     {
+      "$call": "insensitive",
+      "args": [
+       [
+        "USD",
+        "EUR"
+       ]
+      ]
+     }
+    ],
+    "expected": true
+   }
+  },
+  {
+   "id": "value-classify",
+   "value_case": {
+    "function": "classify",
+    "args": [
+     [
+      "USD"
+     ],
+     {
+      "$call": "vocabulary",
+      "args": [
+       {
+        "cur": [
+         "USD",
+         "EUR"
+        ]
+       }
+      ]
+     }
+    ],
+    "expected": {
+     "cur": "USD"
+    }
+   }
+  },
+  {
+   "id": "value-transition",
+   "value_case": {
+    "function": "transition",
+    "args": [
+     {
+      "$call": "make_machine",
+      "args": [
+       [
+        "a",
+        "b"
+       ],
+       [
+        "go"
+       ],
+       [
+        [
+         "a",
+         "go",
+         "b"
+        ]
+       ],
+       "a"
+      ]
+     },
+     "a",
+     "go"
+    ],
+    "expected": {
+     "ok": {
+      "state": "b"
+     }
+    }
+   }
+  },
+  {
+   "id": "value-is-link",
+   "value_case": {
+    "function": "is_link",
+    "args": [
+     {
+      "$ref": "value_link"
+     }
+    ],
+    "expected": true
+   }
+  },
+  {
+   "id": "value-link-meta",
+   "value_case": {
+    "function": "link_meta",
+    "args": [
+     {
+      "$ref": "value_link"
+     }
+    ],
+    "expected": {
+     "name": "value_link",
+     "accepts": null,
+     "binds": null,
+     "boundary": false,
+     "authorizes": false,
+     "emits": null
+    }
+   }
+  },
+  {
+   "id": "value-execute-chain",
+   "value_case": {
+    "function": "execute_chain",
+    "args": [
+     [
+      {
+       "$ref": "value_link"
+      }
+     ],
+     {
+      "x": "1"
+     }
+    ],
+    "expected": {
+     "ok": {
+      "x": "1",
+      "seen": true
+     }
+    }
+   }
+  }
+ ],
+ "value_oracle_exempt": [
+  {
+   "function": "vocabulary",
+   "reason": "Returns a vocabulary whose Set members are frozensets; not JSON-serialisable. A constructor, exercised by classify/enumerate via \\$call."
+  },
+  {
+   "function": "insensitive",
+   "reason": "Returns a recognizer whose members are a frozenset; not JSON-serialisable. Exercised by recognize via \\$call."
+  },
+  {
+   "function": "merge",
+   "reason": "Returns a merged vocabulary (frozenset members); not JSON-serialisable."
+  },
+  {
+   "function": "predicate",
+   "reason": "Returns a recognizer wrapping the predicate (a callable / frozenset); not a portable value."
+  },
+  {
+   "function": "state_machine",
+   "reason": "Returns a machine whose state/event sets are not JSON-serialisable; built for transition via \\$call make_machine."
+  },
+  {
+   "function": "chain",
+   "reason": "Returns a composed chain that embeds its link callables; not a portable value."
+  },
+  {
+   "function": "link",
+   "reason": "Returns a decorator (a callable); not a portable value."
+  },
+  {
+   "function": "validate_all",
+   "reason": "Returns/raises over link callables; its argument and effect are callables, not a portable value."
+  },
+  {
+   "function": "catch_at_boundary",
+   "reason": "Wraps a handler callable at the boundary; its arguments and result are callables, not a portable value."
+  }
+ ]
 }

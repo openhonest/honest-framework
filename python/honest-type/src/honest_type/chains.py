@@ -10,6 +10,8 @@ propagates to the boundary (section 10.8); the boundary (`catch_at_boundary`) is
 place that catches.
 """
 
+import inspect
+
 from honest_type.types import err, fault, ok
 
 
@@ -65,8 +67,32 @@ def execute_chain(links, initial_manifest) -> dict:
     return ok(current)
 
 
+async def execute_chain_async(links, initial_manifest) -> dict:
+    """Run links in sequence, awaiting any async link, short-circuiting on the first err (sections
+    10.3, 10.6). An async link returns a coroutine resolving to a Result; a sync link returns the
+    Result directly. A link that returns neither ok nor err is a server fault (non_result_return)."""
+    current = initial_manifest
+    for link in links:
+        result = link(current)
+        if inspect.isawaitable(result):
+            result = await result
+        if "err" in result:
+            return result
+        if "ok" not in result:
+            return err(fault("non_result_return", "Link returned neither ok nor err", "server", {"input": current}))
+        current = result["ok"]
+    return ok(current)
+
+
 def chain(*links):
-    """Compose links into a single link (section 10.7): manifest -> Result, short-circuit."""
+    """Compose links into a single link (sections 10.6, 10.7): manifest -> Result, short-circuit. A
+    chain containing any async link is itself async (its run awaits through execute_chain_async); a
+    chain of all sync links is sync. Composition preserves this — an async chain is a coroutine
+    function, so a parent chain that contains it is async too."""
+    if any(inspect.iscoroutinefunction(link) for link in links):
+        async def run(manifest):
+            return await execute_chain_async(list(links), manifest)
+        return run
 
     def run(manifest):
         return execute_chain(list(links), manifest)
@@ -90,9 +116,28 @@ def _run_validate_all(links, manifest) -> dict:
     return ok(manifest)
 
 
+async def _run_validate_all_async(links, manifest) -> dict:
+    """Run every link against the same manifest, awaiting any async link, accumulating (sections
+    10.4, 10.6). Any err makes the whole a validation_failed fault carrying every result."""
+    results = []
+    for link in links:
+        result = link(manifest)
+        if inspect.isawaitable(result):
+            result = await result
+        results.append(result)
+    if any("err" in result for result in results):
+        return err(fault("validation_failed", "One or more validation checks failed", "client", {"results": results}))
+    return ok(manifest)
+
+
 def validate_all(*links):
-    """An accumulating combinator as a composable link (sections 10.4, 10.7): all links run
-    against the same manifest; the complete picture is preserved on failure."""
+    """An accumulating combinator as a composable link (sections 10.4, 10.6, 10.7): all links run
+    against the same manifest; the complete picture is preserved on failure. Async when any link is
+    async."""
+    if any(inspect.iscoroutinefunction(link) for link in links):
+        async def run(manifest):
+            return await _run_validate_all_async(list(links), manifest)
+        return run
 
     def run(manifest):
         return _run_validate_all(list(links), manifest)

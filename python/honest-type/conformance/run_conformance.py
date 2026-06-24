@@ -11,6 +11,7 @@ The runner builds the objects from the data and checks; no per-case hand-coded t
   uv run --package honest-type python honest-type/conformance/run_conformance.py
 """
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -81,7 +82,23 @@ def _declared_link(manifest):
     return ok({**manifest, "role": "admin"})
 
 
+# Async links (section 10.6): a chain or validate_all containing any of these is itself async.
+async def _link_async(manifest):
+    return ok({**manifest, "async_ran": "yes"})
+
+
+async def _link_async_fault(manifest):
+    return err(fault("async_boom", "async link failed", "client"))
+
+
+async def _link_async_bad(manifest):
+    return {"weird": 1}  # neither ok nor err -> non_result_return, after await
+
+
 _LINKS = {
+    "async": _link_async,
+    "async_fault": _link_async_fault,
+    "async_bad": _link_async_bad,
     "pass": _link_pass,
     "set_role": _link_set_role,
     "fault": _link_fault,
@@ -165,6 +182,8 @@ def _check_merge(case):
 def _check_chainrun(case):
     links = [_LINKS[name] for name in case["links"]]
     result = _COMBINATORS[case["combinator"]](*links)(case["initial"])
+    if asyncio.iscoroutine(result):
+        result = asyncio.run(result)
     if case["expect"] == "err":
         matched = "err" in result and result["err"]["code"] == case["expect_code"]
         return matched, f"got {result}"
