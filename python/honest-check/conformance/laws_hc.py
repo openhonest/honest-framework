@@ -395,8 +395,54 @@ def _probe_determinism():
     return bad
 
 
+def _probe_routes():
+    """The route-map reader (honest-page §9): extract_routes reads a declared ROUTES mapping into a list
+    of {method, path, chain}, skipping any entry whose key is not a two-string tuple or whose value is
+    not a chain identifier, and any assignment that is not a ROUTES dictionary. Parsed, never run."""
+    from honest_parse import parse_python
+
+    from honest_check.declgraph import extract_routes
+
+    bad = []
+    source = (
+        b"ROUTES = {\n"
+        b'    ("POST", "/api/orders"): create_order_chain,\n'
+        b'    ("GET", "/api/items"): fetch_items_chain,\n'
+        b"}\n"
+        b"OTHER = {1: 2}\n"
+    )
+    routes = extract_routes(parse_python(source).root_node, source)
+    if routes != [
+        {"method": "POST", "path": "/api/orders", "chain": "create_order_chain"},
+        {"method": "GET", "path": "/api/items", "chain": "fetch_items_chain"},
+    ]:
+        bad.append(f"extract_routes should read the ROUTES map and ignore other assignments: {routes}")
+
+    # Malformed entries are skipped: a splat, a one-string tuple, a non-tuple key, a non-identifier chain.
+    malformed = (
+        b"ROUTES = {\n"
+        b"    **base_routes,\n"
+        b'    ("POST",): only_one,\n'
+        b'    "/api/x": bare_string_key,\n'
+        b'    ("GET", "/ok"): valid_chain,\n'
+        b'    ("POST", "/bad"): "not_an_identifier",\n'
+        b"}\n"
+    )
+    only_valid = extract_routes(parse_python(malformed).root_node, malformed)
+    if only_valid != [{"method": "GET", "path": "/ok", "chain": "valid_chain"}]:
+        bad.append(f"extract_routes should skip splats and malformed entries: {only_valid}")
+
+    # A ROUTES bound to a non-dictionary, and a module with no ROUTES at all, both yield no routes.
+    if extract_routes(parse_python(b"ROUTES = []\n").root_node, b"ROUTES = []\n") != []:
+        bad.append("a non-dictionary ROUTES yields no routes")
+    if extract_routes(parse_python(b"x = 1\n").root_node, b"x = 1\n") != []:
+        bad.append("a module with no ROUTES declaration yields no routes")
+    return bad
+
+
 def run():
     probes = {
+        "routes": _probe_routes(),
         "formats": _probe_formats(),
         "config": _probe_config(),
         "cli": _probe_cli(),

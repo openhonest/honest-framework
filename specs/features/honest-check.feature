@@ -299,3 +299,13 @@ Feature: honest-check — the static honesty gate
     Then unparseable source returns only the syntax fault
     And otherwise it runs every registered rule and collects their violations
     And a directive-silenced violation is downgraded to information rather than dropped
+
+  Scenario: extract_routes reads the declared route map
+    Given module source with a ROUTES mapping from method-and-path tuples to chains
+    When extract_routes reads it
+    Then it returns a list of method, path, and chain for each entry, skipping any non-ROUTES assignment, non-dictionary value, splat, or entry whose key is not a two-string tuple or whose value is not a chain identifier
+
+  Scenario: _route_key takes the method and path from a route-map key
+    Given a route-map key node
+    When _route_key reads it
+    Then it returns the method and path for a two-string tuple, and None otherwise

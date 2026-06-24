@@ -540,6 +540,38 @@ def extract_chains(root, source: bytes, aliases) -> list[dict]:
     return chains
 
 
+def _route_key(key_node, source: bytes):
+    """The (method, path) of a route-map key, or None when the key is not a two-string tuple."""
+    if key_node.type != "tuple":
+        return None
+    strings = [child for child in key_node.named_children if child.type == "string"]
+    if len(strings) != 2:
+        return None
+    return (string_value(strings[0], source), string_value(strings[1], source))
+
+
+def extract_routes(root, source: bytes) -> list:
+    """The declared route map (honest-page §9) as a list of {method, path, chain}: each ROUTES entry's
+    (method, path) string-tuple key paired with the identifier naming the chain that route runs. Pure —
+    the declaration is read by parsing, never by running it. An assignment that is not a ROUTES
+    dictionary, and any entry whose key is not a two-string tuple or whose value is not a chain
+    identifier (or is a splat), is skipped."""
+    routes = []
+    for assignment in module_assignments(root):
+        left = assignment.child_by_field_name("left")
+        right = assignment.child_by_field_name("right")
+        if node_text(left, source) != "ROUTES" or right.type != "dictionary":
+            continue
+        for pair in right.named_children:
+            if pair.type != "pair":
+                continue
+            key = _route_key(pair.child_by_field_name("key"), source)
+            value = pair.child_by_field_name("value")
+            if key is not None and value.type == "identifier":
+                routes.append({"method": key[0], "path": key[1], "chain": node_text(value, source)})
+    return routes
+
+
 def keyword_args(call_node, source: bytes) -> dict:
     """{name: value_node} for a call's keyword arguments (e.g. state_machine(...))."""
     args = call_node.child_by_field_name("arguments")
