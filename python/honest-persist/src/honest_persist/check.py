@@ -240,3 +240,40 @@ _EVALUATORS = {
 def check_holds(tree, row):
     """Evaluate a compiled CHECK tree against a row (section 6.2). Pure: row -> Bool."""
     return _EVALUATORS[tree["kind"]](tree, row)
+
+
+# Dialects that enforce CHECK constraints natively, so an emitted CHECK in DDL is honoured by the
+# database. Where a dialect is not here (older engines, some Turso configurations, section 6.2), the
+# CHECK is compiled and enforced at the write boundary instead, so the guarantee is never silently lost.
+_DIALECTS_ENFORCING_CHECK = frozenset({"postgresql", "sqlite"})
+
+
+def dialect_enforces_check(dialect):
+    """Whether a dialect enforces CHECK constraints natively (section 6.2). When it does, the database
+    is trusted; when it does not, honest-persist compiles the CHECK and enforces it on every write. Pure."""
+    return dialect in _DIALECTS_ENFORCING_CHECK
+
+
+def table_checks(table):
+    """Every CHECK expression declared on a table (section 6.2): the column-level `check` fields first,
+    then the table-level check constraints, in declaration order. Pure."""
+    checks = [column["check"] for column in table.get("columns", {}).values() if column.get("check")]
+    checks += [constraint["expression"] for constraint in table.get("constraints", {}).values() if constraint.get("type") == "check" and constraint.get("expression")]
+    return checks
+
+
+def enforce_checks(schema, table, row, dialect):
+    """Enforce a table's CHECK constraints on a row at the write boundary (section 6.2). Pure. When the
+    dialect enforces CHECK natively the database is trusted and ok(row) is returned. Otherwise each
+    declared CHECK is compiled and evaluated against the row: a CHECK that cannot be compiled is an
+    `uncompilable_check` fault (it can be neither natively enforced nor compiled), and a row that fails a
+    compiled CHECK is a `check_violation` client fault. A row that satisfies every CHECK returns ok(row)."""
+    if dialect_enforces_check(dialect):
+        return ok(row)
+    for expression in table_checks(schema[table]):
+        compiled = parse_check(expression)
+        if "err" in compiled:
+            return compiled
+        if not check_holds(compiled["ok"], row):
+            return err(fault("check_violation", f"Row violates CHECK ({expression})", "client", {"expression": expression, "row": row}))
+    return ok(row)

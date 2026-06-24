@@ -300,6 +300,60 @@ def _probe_check():
     return bad
 
 
+def _probe_enforce_checks():
+    """CHECK enforcement at the write boundary (§6.2): on a dialect that does not enforce CHECK
+    natively, a declared CHECK is compiled and the row validated before the write — never silently
+    dropped. table_checks collects column-level and table-level CHECKs; enforce_checks compiles and
+    evaluates them; checked_insert refuses a violating row."""
+    from honest_persist import checked_insert, dialect_enforces_check, enforce_checks, table_checks
+
+    bad = []
+
+    # Native dialects enforce CHECK in the database; Turso may not, so honest-persist enforces it.
+    if not dialect_enforces_check("postgresql") or not dialect_enforces_check("sqlite"):
+        bad.append("postgresql and sqlite enforce CHECK natively")
+    if dialect_enforces_check("turso"):
+        bad.append("turso is not assumed to enforce CHECK natively")
+
+    # table_checks gathers a column-level check and a table-level check constraint, in that order.
+    table = {
+        "columns": {"price": {"type": "integer", "check": "price > 0"}, "qty": {"type": "integer"}},
+        "constraints": {"sane": {"type": "check", "expression": "qty <= 1000"}},
+    }
+    if table_checks(table) != ["price > 0", "qty <= 1000"]:
+        bad.append(f"table_checks should collect column then table CHECKs: {table_checks(table)}")
+
+    schema = {"products": table}
+    # Non-native dialect: a satisfying row passes; a violating row is a check_violation fault.
+    if "ok" not in enforce_checks(schema, "products", {"price": 5, "qty": 10}, "turso"):
+        bad.append("a row satisfying every CHECK should pass enforcement")
+    violation = enforce_checks(schema, "products", {"price": 0, "qty": 10}, "turso")
+    if violation.get("err", {}).get("code") != "check_violation" or violation["err"]["category"] != "client":
+        bad.append(f"a row violating a CHECK should be a client check_violation: {violation}")
+
+    # Native dialect: the database enforces, so the pure layer trusts it (no row evaluation).
+    if "ok" not in enforce_checks(schema, "products", {"price": 0, "qty": 10}, "postgresql"):
+        bad.append("on a native dialect enforce_checks trusts the database")
+
+    # An uncompilable CHECK on a non-native dialect is a fault (neither natively enforced nor compiled).
+    bad_schema = {"t": {"columns": {"x": {"type": "integer", "check": "x @ 1"}}}}
+    uncompilable = enforce_checks(bad_schema, "t", {"x": 1}, "turso")
+    if uncompilable.get("err", {}).get("code") != "uncompilable_check":
+        bad.append(f"an uncompilable CHECK on a non-native dialect should fault: {uncompilable}")
+
+    # checked_insert wires enforcement: a violating row on a non-native dialect is refused.
+    refused = checked_insert(schema, "products", {"price": 0, "qty": 1}, "turso")
+    if refused.get("err", {}).get("code") != "check_violation":
+        bad.append(f"checked_insert should refuse a CHECK-violating row on a non-native dialect: {refused}")
+    accepted = checked_insert(schema, "products", {"price": 5, "qty": 1}, "turso")
+    if "ok" not in accepted or "INSERT INTO products" not in accepted["ok"]["sql"]:
+        bad.append(f"checked_insert should build the INSERT when the row satisfies every CHECK: {accepted}")
+    # Default dialect is native, so existing two-arg callers keep their behaviour.
+    if "ok" not in checked_insert(schema, "products", {"price": 0, "qty": 1}):
+        bad.append("checked_insert defaults to a native dialect, trusting the database")
+    return bad
+
+
 # --------------------------------------------------------------------------- validate / extended probes
 
 
@@ -2011,6 +2065,7 @@ def run():
         "django_loader": _probe_django_loader(),
         "cutover": _probe_cutover(),
         "check": _probe_check(),
+        "enforce_checks": _probe_enforce_checks(),
         "diff_alter": _probe_diff_alter(),
         "validate": _probe_validate(),
         "extended": _probe_extended(),

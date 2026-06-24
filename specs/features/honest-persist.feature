@@ -316,3 +316,18 @@ Feature: honest-persist — schema diffing, query building, and the write bounda
     When transaction applies them
     Then it appends each write and commits them together, reporting the rows each affected
     But if any write fails it rolls the whole transaction back and returns a "write_failed" fault carrying the failing write's position
+
+  Scenario: dialect_enforces_check reports whether a dialect enforces CHECK natively
+    Given a dialect
+    When dialect_enforces_check is asked
+    Then it is true for a dialect that enforces CHECK natively and false for one that does not
+
+  Scenario: table_checks collects a table's declared CHECK expressions
+    Given a table with column-level and table-level CHECK constraints
+    When table_checks collects them
+    Then it returns the column-level checks then the table-level check constraints in declaration order
+
+  Scenario: enforce_checks validates a row against a table's CHECK constraints
+    Given a schema, table, row, and dialect
+    When enforce_checks validates the row
+    Then on a native dialect it trusts the database, and otherwise it compiles each CHECK and returns a check_violation for a failing row or an uncompilable_check for one that cannot be compiled

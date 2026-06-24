@@ -14,6 +14,7 @@ misspelled column is caught at build time rather than reaching the database in p
 
 from honest_type import err, fault, ok
 
+from honest_persist.check import enforce_checks
 from honest_persist.types import Query
 
 
@@ -133,11 +134,18 @@ def checked_select(schema, table, columns=None, where=None, order_by=None, joins
     return ok(select(table, columns=columns, where=where, order_by=order_by, joins=joins, limit=limit, offset=offset))
 
 
-def checked_insert(schema, table, values):
-    """A schema-checked INSERT (section 7.3): ok(Query) or err(fault). Pure."""
+def checked_insert(schema, table, values, dialect="postgresql"):
+    """A schema-checked INSERT (section 7.3): ok(Query) or err(fault). Pure. As well as checking every
+    column is declared, it enforces the table's CHECK constraints on the row for the target `dialect`
+    (section 6.2): on a dialect that does not enforce CHECK natively, a violating row is refused here
+    rather than reaching a database that would silently accept it. `dialect` defaults to a native one,
+    so the database is trusted unless a non-native dialect is named."""
     checked = _check_columns(schema, table, list(values))
     if "err" in checked:
         return checked
+    enforced = enforce_checks(schema, table, values, dialect)
+    if "err" in enforced:
+        return enforced
     return ok(insert(table, values))
 
 

@@ -50,6 +50,8 @@ def _column_ddl(name, definition, dialect):
     if definition.get("references"):
         ref_table, ref_column = definition["references"].rsplit(".", 1)
         parts.append(f"REFERENCES {ref_table}({ref_column})")
+    if definition.get("check"):
+        parts.append(f"CHECK ({definition['check']})")
     return " ".join(parts)
 
 

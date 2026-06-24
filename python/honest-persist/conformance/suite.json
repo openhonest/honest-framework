@@ -603,6 +603,56 @@
    "expect_sql": "CREATE TABLE users (id uuid PRIMARY KEY, email text)"
   },
   {
+   "id": "value-dialect-enforces-check-native",
+   "value_case": {"function": "dialect_enforces_check", "args": ["postgresql"], "expected": true}
+  },
+  {
+   "id": "value-dialect-enforces-check-nonnative",
+   "value_case": {"function": "dialect_enforces_check", "args": ["turso"], "expected": false}
+  },
+  {
+   "id": "value-table-checks",
+   "value_case": {
+    "function": "table_checks",
+    "args": [{"columns": {"price": {"type": "integer", "check": "price > 0"}, "qty": {"type": "integer"}}, "constraints": {"sane": {"type": "check", "expression": "qty <= 1000"}}}],
+    "expected": ["price > 0", "qty <= 1000"]
+   }
+  },
+  {
+   "id": "value-enforce-checks-ok",
+   "value_case": {
+    "function": "enforce_checks",
+    "args": [{"products": {"columns": {"price": {"type": "integer", "check": "price > 0"}, "qty": {"type": "integer"}}, "constraints": {"sane": {"type": "check", "expression": "qty <= 1000"}}}}, "products", {"price": 5, "qty": 10}, "turso"],
+    "expected": {"ok": {"price": 5, "qty": 10}}
+   }
+  },
+  {
+   "id": "value-enforce-checks-violation",
+   "value_case": {
+    "function": "enforce_checks",
+    "args": [{"products": {"columns": {"price": {"type": "integer", "check": "price > 0"}, "qty": {"type": "integer"}}, "constraints": {"sane": {"type": "check", "expression": "qty <= 1000"}}}}, "products", {"price": 0, "qty": 10}, "turso"],
+    "expected": {"err": {"code": "check_violation", "message": "Row violates CHECK (price > 0)", "category": "client", "detail": {"expression": "price > 0", "row": {"price": 0, "qty": 10}}}}
+   }
+  },
+  {
+   "id": "tosql-create-table-column-check",
+   "to_sql": {
+    "op": "create_table",
+    "table": "products",
+    "details": {
+     "columns": {
+      "price": {
+       "type": "integer",
+       "nullable": false,
+       "check": "price > 0"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE products (price integer NOT NULL CHECK (price > 0))"
+  },
+  {
    "id": "tosql-uuid-maps-to-text-on-sqlite",
    "to_sql": {
     "op": "create_table",
