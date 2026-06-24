@@ -7,7 +7,7 @@ stored by persist without importing it. The log storage itself is the runtime's 
 """
 
 from honest_observe.browser import browser_classify, browser_request, browser_response, build_browser_event, dom_changed
-from honest_observe.devtools import format_tail_line
+from honest_observe.devtools import format_inspect, format_tail_line
 from honest_observe.emit import emit
 from honest_observe.event_log import event_log_manifest, event_log_schema
 from honest_observe.events import Event, build_event, extract_auth, extract_meta
@@ -64,4 +64,5 @@ __all__ = [
     "browser_response",
     "dom_changed",
     "format_tail_line",
+    "format_inspect",
 ]

@@ -558,6 +558,63 @@ def _probe_tail():
     return bad
 
 
+def _probe_inspect():
+    """The inspect trace (section 9.3): one request reconstructed from its request_id — server trace
+    from the canonical event's denormalized link_sequence, browser trace from the browser events that
+    carry the request_id, ordered BROWSER -> SERVER -> BROWSER, with a single-clock timing breakdown."""
+    from honest_observe import format_inspect
+    from honest_observe.devtools import _request_id_of
+
+    bad = []
+
+    # _request_id_of finds the id wherever present, and only where present.
+    if _request_id_of({"request_id": "r1", "payload": {}}) != "r1":
+        bad.append("_request_id_of should read the envelope request_id")
+    if _request_id_of({"payload": {"request_id": "r2"}}) != "r2":
+        bad.append("_request_id_of should fall back to the payload request_id")
+    if _request_id_of({"aggregate_type": "request", "aggregate_id": "r3", "payload": {}}) != "r3":
+        bad.append("_request_id_of should use the aggregate_id of a request event")
+    if _request_id_of({"aggregate_type": "link", "aggregate_id": "validate", "payload": {}}) is not None:
+        bad.append("_request_id_of should be None when no request_id is present")
+
+    canonical = {
+        "event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": "req_abc",
+        "timestamp": "2026-03-15T14:23:07.023Z",
+        "payload": {
+            "request_id": "req_abc", "http_method": "POST", "http_path": "/api/items", "http_status": 200,
+            "duration_ns": 16000000, "source": "server",
+            "link_sequence": [
+                {"link_name": "validate_filters", "duration_ns": 800000, "result": "ok"},
+                {"link_name": "build_query", "duration_ns": 400000, "result": "ok"},
+                {"link_name": "pay", "duration_ns": 300000, "result": "err", "fault_code": "declined"},
+            ],
+        },
+    }
+    dom_before = {"event_type": "hf.dom.changed", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.001Z", "payload": {"changed_keys": ["filters"]}}
+    req = {"event_type": "hf.browser.request", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.003Z", "payload": {"method": "POST", "url": "/api/items"}}
+    resp = {"event_type": "hf.browser.response", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.166Z", "payload": {"status": 200, "swap_target": "#content-area", "duration_ms": 163, "request_id": "req_abc"}}
+    classify = {"event_type": "hf.browser.classify", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.171Z", "payload": {"element": "#content-area", "attribute": "hf-format", "duration_ns": 3000000}}
+    foreign = {"event_type": "hf.dom.changed", "source": "browser", "request_id": "other", "timestamp": "2026-03-15T14:23:07.500Z", "payload": {"changed_keys": ["x"]}}
+
+    trace = format_inspect("req_abc", [dom_before, req, canonical, resp, classify, foreign])
+    if not trace.startswith("Request: req_abc\nPOST /api/items → 200  total: 166ms"):
+        bad.append(f"inspect header wrong: {trace.splitlines()[:2]}")
+    if trace.count("BROWSER") != 2 or trace.count("SERVER") != 1:
+        bad.append(f"inspect should read BROWSER -> SERVER -> BROWSER: {trace}")
+    if "  link  validate_filters  ok  0.8ms" not in trace or "  link  pay  err  0.3ms  declined" not in trace:
+        bad.append(f"server lines should render the link_sequence with fault on error: {trace}")
+    if "other" in trace:
+        bad.append("an event with a different request_id must be excluded")
+    if not trace.endswith("Total: 166ms  (server: 16ms  network: 147ms  browser: 3ms)"):
+        bad.append(f"timing breakdown wrong: {trace}")
+
+    # A request with no browser side: server block alone, network and browser zero.
+    server_only = format_inspect("req_abc", [canonical])
+    if "BROWSER" in server_only or not server_only.endswith("Total: 16ms  (server: 16ms  network: 0ms  browser: 0ms)"):
+        bad.append(f"a server-only request should render the server block alone: {server_only}")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -572,6 +629,7 @@ def run():
         "otel": _probe_otel(),
         "browser": _probe_browser(),
         "tail": _probe_tail(),
+        "inspect": _probe_inspect(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

@@ -218,3 +218,33 @@ Feature: honest-observe — event envelope, recording, and projection
     Given an event with a mapped or unmapped type
     When _tail_fields renders it
     Then it returns the event-type-specific key=value fields, or empty for an unmapped type
+
+  Scenario: format_inspect reconstructs a request's execution trace
+    Given a request id and the request's correlated events
+    When format_inspect reconstructs the trace
+    Then it returns the header, the browser and server blocks ordered by timestamp, and the single-clock timing breakdown
+
+  Scenario: _request_id_of finds the request id wherever it is present
+    Given an event that may carry a request id in its envelope, payload, or aggregate id
+    When _request_id_of reads it
+    Then it returns the request id where present, and None where none is
+
+  Scenario: _browser_line renders one browser event for the trace
+    Given a browser event
+    When _browser_line renders it
+    Then it returns the clock time, abbreviated event type, and the event detail
+
+  Scenario: _server_lines renders the server section from the canonical link sequence
+    Given a canonical event payload with its link sequence
+    When _server_lines renders the section
+    Then it returns one line per link with name, result, duration, and the fault code on an errored link
+
+  Scenario: _inspect_breakdown attributes the elapsed time across the tiers
+    Given a canonical payload and the browser events
+    When _inspect_breakdown attributes the time
+    Then it returns server from the canonical duration, network from the round trip minus server, browser from the browser-local durations, and their sum
+
+  Scenario: _whole_ms renders a millisecond quantity as whole milliseconds
+    Given a millisecond quantity
+    When _whole_ms renders it
+    Then it returns the rounded whole-millisecond display string

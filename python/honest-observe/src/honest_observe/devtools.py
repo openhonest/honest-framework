@@ -50,3 +50,83 @@ def format_tail_line(event: dict) -> str:
     the event-type-specific field tail. Pure."""
     source = event.get("source", "server")
     return f"{_short_time(event['timestamp'])} {source:<7} {event['event_type']}  {_tail_fields(event)}"
+
+
+def _whole_ms(ms_value) -> str:
+    """A millisecond quantity as a whole-millisecond display string (the inspect tier totals)."""
+    return f"{round(ms_value)}ms"
+
+
+# Section 9.3 browser-line detail, one renderer per automatic browser event type (section 8.4). The
+# four types are the closed set a browser trace can contain, so the lookup is direct.
+_INSPECT_DETAIL = {
+    "hf.dom.changed": lambda p: f"{p['changed_keys']}",
+    "hf.browser.request": lambda p: f"{p['method']} {p['url']}",
+    "hf.browser.response": lambda p: f"{p['status']}  {p['swap_target']}  {p['duration_ms']}ms",
+    "hf.browser.classify": lambda p: f"{p['element']}  {p['attribute']}",
+}
+
+
+def _request_id_of(event: dict):
+    """The request_id an event carries, wherever it is present (section 9.3): the envelope field on a
+    browser event, the payload on a server event that includes one, or the aggregate_id of a
+    request-aggregate event. None when the event carries no request_id."""
+    if "request_id" in event:
+        return event["request_id"]
+    if "request_id" in event["payload"]:
+        return event["payload"]["request_id"]
+    if event.get("aggregate_type") == "request":
+        return event["aggregate_id"]
+    return None
+
+
+def _browser_line(event: dict) -> str:
+    """One browser event as an inspect line (section 9.3): clock time, the abbreviated event type, and
+    its detail."""
+    detail = _INSPECT_DETAIL[event["event_type"]](event["payload"])
+    return f"  {_short_time(event['timestamp'])}  {event['event_type'].removeprefix('hf.')}  {detail}"
+
+
+def _server_lines(canonical_payload: dict) -> list:
+    """The server section of an inspect trace (section 9.3): one line per link in the canonical event's
+    denormalized link_sequence — name, result, duration, and the fault code on an errored link. No
+    per-link timestamp, because the canonical record holds durations, not per-link wall-clock."""
+    return [
+        f"  link  {s['link_name']}  {s['result']}  {_ms(s['duration_ns'])}" + (f"  {s['fault_code']}" if "fault_code" in s else "")
+        for s in canonical_payload["link_sequence"]
+    ]
+
+
+def _inspect_breakdown(canonical_payload: dict, browser_events: list):
+    """The single-clock timing breakdown for a request (section 9.3): server from the canonical
+    duration, network from the browser round trip minus server, browser from the sum of browser-local
+    durations, total as their sum. Returns (server_ms, network_ms, browser_ms, total_ms)."""
+    server_ms = canonical_payload["duration_ns"] / _NS_PER_MS
+    response = next((e for e in browser_events if e["event_type"] == "hf.browser.response"), None)
+    network_ms = response["payload"]["duration_ms"] - server_ms if response else 0
+    browser_ms = sum(e["payload"]["duration_ns"] / _NS_PER_MS for e in browser_events if e["event_type"] == "hf.browser.classify")
+    return server_ms, network_ms, browser_ms, server_ms + network_ms + browser_ms
+
+
+def format_inspect(request_id: str, events: list) -> str:
+    """A request's execution trace (section 9.3). Pure. Correlates by request_id: the server trace is
+    the canonical event's link_sequence, the browser trace is the browser events carrying the
+    request_id, ordered BROWSER -> SERVER -> BROWSER by timestamp. The footer attributes the elapsed
+    time across the tiers from single-clock durations."""
+    canonical = next(e for e in events if e.get("aggregate_type") == "request" and e.get("aggregate_id") == request_id)
+    payload = canonical["payload"]
+    browser = [e for e in events if e.get("source") == "browser" and _request_id_of(e) == request_id]
+    before = sorted((e for e in browser if e["timestamp"] < canonical["timestamp"]), key=lambda e: e["timestamp"])
+    after = sorted((e for e in browser if e["timestamp"] >= canonical["timestamp"]), key=lambda e: e["timestamp"])
+    server_ms, network_ms, browser_ms, total_ms = _inspect_breakdown(payload, browser)
+
+    sections = []
+    if before:
+        sections.append("BROWSER\n" + "\n".join(_browser_line(e) for e in before))
+    sections.append("SERVER\n" + "\n".join(_server_lines(payload)))
+    if after:
+        sections.append("BROWSER\n" + "\n".join(_browser_line(e) for e in after))
+
+    header = f"Request: {request_id}\n{payload['http_method']} {payload['http_path']} → {payload['http_status']}  total: {_whole_ms(total_ms)}"
+    footer = f"Total: {_whole_ms(total_ms)}  (server: {_whole_ms(server_ms)}  network: {_whole_ms(network_ms)}  browser: {_whole_ms(browser_ms)})"
+    return header + "\n\n" + "\n\n".join(sections) + "\n\n" + footer

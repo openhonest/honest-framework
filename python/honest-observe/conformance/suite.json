@@ -901,6 +901,22 @@
     "args": [{"event_type": "hf.link.executed", "source": "server", "timestamp": "2026-03-15T14:23:07.006Z", "payload": {"link_name": "validate_filters", "chain_name": "fetch_items", "result": "ok", "duration_ns": 800000}}],
     "expected": "14:23:07.006 server  hf.link.executed  link=validate_filters chain=fetch_items result=ok duration=0.8ms"
    }
+  },
+  {
+   "id": "value-format-inspect",
+   "value_case": {
+    "function": "format_inspect",
+    "args": [
+     "req_abc",
+     [
+      {"event_type": "hf.dom.changed", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.001Z", "payload": {"changed_keys": ["filters"]}},
+      {"event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": "req_abc", "timestamp": "2026-03-15T14:23:07.023Z", "payload": {"request_id": "req_abc", "http_method": "POST", "http_path": "/api/items", "http_status": 200, "duration_ns": 16000000, "source": "server", "link_sequence": [{"link_name": "validate_filters", "duration_ns": 800000, "result": "ok"}, {"link_name": "build_query", "duration_ns": 400000, "result": "ok"}, {"link_name": "format_response", "duration_ns": 300000, "result": "ok"}]}},
+      {"event_type": "hf.browser.response", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.166Z", "payload": {"status": 200, "swap_target": "#content-area", "duration_ms": 163, "request_id": "req_abc"}},
+      {"event_type": "hf.browser.classify", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.171Z", "payload": {"element": "#content-area", "attribute": "hf-format", "duration_ns": 3000000}}
+     ]
+    ],
+    "expected": "Request: req_abc\nPOST /api/items → 200  total: 166ms\n\nBROWSER\n  14:23:07.001  dom.changed  ['filters']\n\nSERVER\n  link  validate_filters  ok  0.8ms\n  link  build_query  ok  0.4ms\n  link  format_response  ok  0.3ms\n\nBROWSER\n  14:23:07.166  browser.response  200  #content-area  163ms\n  14:23:07.171  browser.classify  #content-area  hf-format\n\nTotal: 166ms  (server: 16ms  network: 147ms  browser: 3ms)"
+   }
   }
  ],
  "value_oracle_exempt": [
