@@ -318,3 +318,23 @@ Feature: honest-observe — event envelope, recording, and projection
     Given two hybrid logical clocks
     When hlc_compare orders them
     Then it compares by physical time, then logical counter, then source identifier
+
+  Scenario: identity_claimed records a mapping from an external id to a canonical id
+    Given a canonical id, external system, external id, evidence, and who asserted it
+    When identity_claimed records the claim
+    Then it returns the identity.claimed event carrying the mapping and its evidence
+
+  Scenario: identity_unknown records an unresolvable external id
+    Given an external id and its source
+    When identity_unknown records it
+    Then it returns the identity.unknown event for the id and source
+
+  Scenario: fold_identity_claims projects claims into a binding lookup
+    Given a log of identity claims
+    When fold_identity_claims projects them
+    Then it returns the bindings keyed by system and external id, with a differing claim recorded as a conflict rather than overwriting
+
+  Scenario: resolve_identity maps an external id to its canonical id
+    Given an external id, its source, and the bindings
+    When resolve_identity looks it up
+    Then it returns the canonical id where bound, and None for an unknown source or id

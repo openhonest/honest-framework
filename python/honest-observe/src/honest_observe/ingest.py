@@ -65,3 +65,46 @@ def rejection_log_manifest() -> dict:
     """The append-only manifest for the rejection log (section 8c.7): the table name, the append-only
     declaration persist reads to reject UPDATE and DELETE, and the embedded schema. Pure data."""
     return {"table": "honest_rejection_log", "append_only": True, "schema": rejection_log_schema()["honest_rejection_log"]}
+
+
+def identity_claimed(canonical_id, external_system, external_id, evidence, asserted_by) -> dict:
+    """The identity.claimed event (section 8c.3): an append-only claim that an external system's id maps
+    to a canonical id, with the evidence for the mapping and who asserted it. Pure — claims are events,
+    so identity resolution is itself answered by reading the log."""
+    return {
+        "event_type": "identity.claimed",
+        "payload": {"canonical_id": canonical_id, "external_system": external_system, "external_id": external_id, "evidence": evidence, "asserted_by": asserted_by},
+    }
+
+
+def identity_unknown(external_id, source) -> dict:
+    """The identity.unknown event (section 8c.3): a translator met an external id it could not resolve.
+    Pure. A background link attempts resolution and emits new claims."""
+    return {"event_type": "identity.unknown", "payload": {"external_id": external_id, "source": source}}
+
+
+def fold_identity_claims(events) -> dict:
+    """The identity-binding projection (section 8c.3): fold identity.claimed events into a lookup keyed
+    by external system then external id, returning {bindings, conflicts}. A repeated claim to the same
+    canonical id is harmless; a claim to a different canonical id for an already-bound external id is a
+    conflict recorded for human adjudication, never a silent overwrite. Pure.
+
+    The spec's conceptual key is (external_system, external_id); it is encoded here as a nested mapping
+    so the result stays plain JSON-serializable data."""
+    bindings = {}
+    conflicts = []
+    for event in (e for e in events if e["event_type"] == "identity.claimed"):
+        payload = event["payload"]
+        system, external_id, canonical_id = payload["external_system"], payload["external_id"], payload["canonical_id"]
+        existing = bindings.get(system, {}).get(external_id)
+        if existing is not None and existing != canonical_id:
+            conflicts.append({"external_system": system, "external_id": external_id, "existing": existing, "claimed": canonical_id})
+        else:
+            bindings.setdefault(system, {})[external_id] = canonical_id
+    return {"bindings": bindings, "conflicts": conflicts}
+
+
+def resolve_identity(external_id, source, bindings):
+    """Resolve an external id to its canonical id (section 8c.3): look it up in the bindings under its
+    source. None when the source or the id is not bound. Pure."""
+    return bindings.get(source, {}).get(external_id)

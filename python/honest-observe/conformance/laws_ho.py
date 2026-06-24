@@ -855,6 +855,47 @@ def _probe_hlc():
     return bad
 
 
+def _probe_identity():
+    """Identity binding (section 8c.3): the same entity has different ids in different systems. Claims
+    are events; bindings are a projection of claims; resolution is a lookup. All pure. A conflicting
+    claim is data for adjudication, not a silent overwrite; an unresolvable id becomes an event."""
+    from honest_observe import fold_identity_claims, identity_claimed, identity_unknown, resolve_identity
+
+    bad = []
+
+    claim = identity_claimed("user-42", "stripe", "cus_Nx3a9c", "webhook_signature_verified", "system:stripe_translator")
+    if claim != {"event_type": "identity.claimed", "payload": {"canonical_id": "user-42", "external_system": "stripe", "external_id": "cus_Nx3a9c", "evidence": "webhook_signature_verified", "asserted_by": "system:stripe_translator"}}:
+        bad.append(f"identity_claimed wrong: {claim}")
+
+    if identity_unknown("cus_unknown", "stripe") != {"event_type": "identity.unknown", "payload": {"external_id": "cus_unknown", "source": "stripe"}}:
+        bad.append(f"identity_unknown wrong: {identity_unknown('cus_unknown', 'stripe')}")
+
+    # The binding projection folds claims into a lookup keyed by system then external id. A repeated
+    # claim to the same canonical id is harmless; a claim to a different one is a conflict for adjudication.
+    events = [
+        identity_claimed("user-42", "stripe", "cus_Nx3a9c", "sig", "translator"),
+        identity_claimed("user-7", "salesforce", "U000123", "api", "translator"),
+        identity_claimed("user-42", "stripe", "cus_Nx3a9c", "sig", "translator"),
+        identity_claimed("user-99", "stripe", "cus_Nx3a9c", "sig", "other"),
+        {"event_type": "other.event", "payload": {}},
+    ]
+    folded = fold_identity_claims(events)
+    if folded["bindings"] != {"stripe": {"cus_Nx3a9c": "user-42"}, "salesforce": {"U000123": "user-7"}}:
+        bad.append(f"fold_identity_claims bindings wrong: {folded['bindings']}")
+    if folded["conflicts"] != [{"external_system": "stripe", "external_id": "cus_Nx3a9c", "existing": "user-42", "claimed": "user-99"}]:
+        bad.append(f"a conflicting claim should be recorded for adjudication, not overwrite: {folded['conflicts']}")
+
+    # Resolution is a lookup against the bindings; an unknown external id resolves to None.
+    bindings = folded["bindings"]
+    if resolve_identity("cus_Nx3a9c", "stripe", bindings) != "user-42":
+        bad.append("resolve_identity should map a known external id to its canonical id")
+    if resolve_identity("cus_missing", "stripe", bindings) is not None:
+        bad.append("resolve_identity should be None for an unknown external id")
+    if resolve_identity("anything", "unknown_source", bindings) is not None:
+        bad.append("resolve_identity should be None for an unknown source")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -876,6 +917,7 @@ def run():
         "threshold_projection": _probe_threshold_projection(),
         "rejection": _probe_rejection(),
         "hlc": _probe_hlc(),
+        "identity": _probe_identity(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

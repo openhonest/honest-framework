@@ -943,6 +943,41 @@
    "value_case": {"function": "hlc_compare", "args": [{"physical": 10, "logical": 2, "source": "a"}, {"physical": 10, "logical": 2, "source": "a"}], "expected": 0}
   },
   {
+   "id": "value-identity-claimed",
+   "value_case": {
+    "function": "identity_claimed",
+    "args": ["user-42", "stripe", "cus_Nx3a9c", "webhook_signature_verified", "system:stripe_translator"],
+    "expected": {"event_type": "identity.claimed", "payload": {"canonical_id": "user-42", "external_system": "stripe", "external_id": "cus_Nx3a9c", "evidence": "webhook_signature_verified", "asserted_by": "system:stripe_translator"}}
+   }
+  },
+  {
+   "id": "value-identity-unknown",
+   "value_case": {
+    "function": "identity_unknown",
+    "args": ["cus_unknown", "stripe"],
+    "expected": {"event_type": "identity.unknown", "payload": {"external_id": "cus_unknown", "source": "stripe"}}
+   }
+  },
+  {
+   "id": "value-resolve-identity-hit",
+   "value_case": {"function": "resolve_identity", "args": ["cus_Nx3a9c", "stripe", {"stripe": {"cus_Nx3a9c": "user-42"}}], "expected": "user-42"}
+  },
+  {
+   "id": "value-resolve-identity-miss",
+   "value_case": {"function": "resolve_identity", "args": ["cus_missing", "stripe", {"stripe": {"cus_Nx3a9c": "user-42"}}], "expected": null}
+  },
+  {
+   "id": "value-fold-identity-claims",
+   "value_case": {
+    "function": "fold_identity_claims",
+    "args": [[
+     {"event_type": "identity.claimed", "payload": {"canonical_id": "user-42", "external_system": "stripe", "external_id": "cus_Nx3a9c", "evidence": "sig", "asserted_by": "translator"}},
+     {"event_type": "identity.claimed", "payload": {"canonical_id": "user-99", "external_system": "stripe", "external_id": "cus_Nx3a9c", "evidence": "sig", "asserted_by": "other"}}
+    ]],
+    "expected": {"bindings": {"stripe": {"cus_Nx3a9c": "user-42"}}, "conflicts": [{"external_system": "stripe", "external_id": "cus_Nx3a9c", "existing": "user-42", "claimed": "user-99"}]}
+   }
+  },
+  {
    "id": "value-rejection",
    "value_case": {
     "function": "rejection",

@@ -11,7 +11,15 @@ from honest_observe.devtools import format_inspect, format_tail_line, run_named_
 from honest_observe.emit import emit
 from honest_observe.event_log import event_log_manifest, event_log_schema
 from honest_observe.hlc import hlc_compare, hlc_receive, hlc_send
-from honest_observe.ingest import rejection, rejection_log_manifest, rejection_log_schema
+from honest_observe.ingest import (
+    fold_identity_claims,
+    identity_claimed,
+    identity_unknown,
+    rejection,
+    rejection_log_manifest,
+    rejection_log_schema,
+    resolve_identity,
+)
 from honest_observe.events import Event, build_event, extract_auth, extract_meta
 from honest_observe.framework_events import (
     app_error,
@@ -81,4 +89,8 @@ __all__ = [
     "hlc_send",
     "hlc_receive",
     "hlc_compare",
+    "identity_claimed",
+    "identity_unknown",
+    "fold_identity_claims",
+    "resolve_identity",
 ]
