@@ -903,6 +903,30 @@
    }
   },
   {
+   "id": "value-rejection",
+   "value_case": {
+    "function": "rejection",
+    "args": ["stripe", "unrecognized_shape", {"missing": "amount"}, {"id": "evt_1"}, "1.0", "rej-uuid-1", "2026-03-15T14:23:07Z"],
+    "expected": {"rejection_id": "rej-uuid-1", "received_at": "2026-03-15T14:23:07Z", "source": "stripe", "reason_code": "unrecognized_shape", "reason_detail": {"missing": "amount"}, "raw_event": {"id": "evt_1"}, "translator_version": "1.0"}
+   }
+  },
+  {
+   "id": "value-rejection-log-schema",
+   "value_case": {
+    "function": "rejection_log_schema",
+    "args": [],
+    "expected": {"honest_rejection_log": {"columns": {"rejection_id": {"type": "text", "primary_key": true, "nullable": false}, "received_at": {"type": "text", "nullable": false}, "source": {"type": "text", "nullable": false}, "reason_code": {"type": "text", "nullable": false}, "reason_detail": {"type": "text", "nullable": false}, "raw_event": {"type": "text", "nullable": false}, "translator_version": {"type": "text", "nullable": false}}, "primary_key": ["rejection_id"], "indexes": {"idx_source": {"columns": ["source"]}, "idx_reason": {"columns": ["reason_code"]}, "idx_received": {"columns": ["received_at"]}}}}
+   }
+  },
+  {
+   "id": "value-rejection-log-manifest",
+   "value_case": {
+    "function": "rejection_log_manifest",
+    "args": [],
+    "expected": {"table": "honest_rejection_log", "append_only": true, "schema": {"columns": {"rejection_id": {"type": "text", "primary_key": true, "nullable": false}, "received_at": {"type": "text", "nullable": false}, "source": {"type": "text", "nullable": false}, "reason_code": {"type": "text", "nullable": false}, "reason_detail": {"type": "text", "nullable": false}, "raw_event": {"type": "text", "nullable": false}, "translator_version": {"type": "text", "nullable": false}}, "primary_key": ["rejection_id"], "indexes": {"idx_source": {"columns": ["source"]}, "idx_reason": {"columns": ["reason_code"]}, "idx_received": {"columns": ["received_at"]}}}}
+   }
+  },
+  {
    "id": "value-threshold-projection",
    "value_case": {
     "function": "threshold_projection",

@@ -10,6 +10,7 @@ from honest_observe.browser import browser_classify, browser_request, browser_re
 from honest_observe.devtools import format_inspect, format_tail_line, run_named_projection
 from honest_observe.emit import emit
 from honest_observe.event_log import event_log_manifest, event_log_schema
+from honest_observe.ingest import rejection, rejection_log_manifest, rejection_log_schema
 from honest_observe.events import Event, build_event, extract_auth, extract_meta
 from honest_observe.framework_events import (
     app_error,
@@ -73,4 +74,7 @@ __all__ = [
     "builtin_metrics",
     "threshold_projection",
     "evaluate_threshold",
+    "rejection",
+    "rejection_log_schema",
+    "rejection_log_manifest",
 ]

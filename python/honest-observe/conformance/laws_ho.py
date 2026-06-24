@@ -781,6 +781,40 @@ def _probe_threshold_projection():
     return bad
 
 
+def _probe_rejection():
+    """External-ingest rejections (section 8c.5): a raw event that fails translation or identity
+    resolution becomes a rejection record — data, not an exception — and the honest_rejection_log is the
+    append-only table it lands in (section 8c.7), observe's to define as data, persist's to apply."""
+    from honest_observe import rejection, rejection_log_manifest, rejection_log_schema
+
+    bad = []
+
+    record = rejection("stripe", "unrecognized_shape", {"missing": "amount"}, {"id": "evt_1"}, "1.0", "rej-uuid-1", "2026-03-15T14:23:07Z")
+    if record != {
+        "rejection_id": "rej-uuid-1", "received_at": "2026-03-15T14:23:07Z", "source": "stripe",
+        "reason_code": "unrecognized_shape", "reason_detail": {"missing": "amount"},
+        "raw_event": {"id": "evt_1"}, "translator_version": "1.0",
+    }:
+        bad.append(f"rejection record wrong: {record}")
+
+    schema = rejection_log_schema()
+    if list(schema.keys()) != ["honest_rejection_log"]:
+        bad.append(f"rejection_log_schema should be a one-table persist schema: {list(schema.keys())}")
+    table = schema["honest_rejection_log"]
+    expected_columns = ["rejection_id", "received_at", "source", "reason_code", "reason_detail", "raw_event", "translator_version"]
+    if list(table["columns"].keys()) != expected_columns:
+        bad.append(f"rejection-log columns should mirror the rejection record: {list(table['columns'].keys())}")
+    if table["columns"]["rejection_id"].get("primary_key") is not True or table.get("primary_key") != ["rejection_id"]:
+        bad.append("rejection_id should be the primary key")
+    if table["indexes"].get("idx_source", {}).get("columns") != ["source"]:
+        bad.append("the rejection log should be indexed by source for per-source forensics")
+
+    manifest = rejection_log_manifest()
+    if manifest.get("table") != "honest_rejection_log" or manifest.get("append_only") is not True or manifest.get("schema") != table:
+        bad.append(f"rejection_log_manifest should declare an append-only honest_rejection_log: {manifest}")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -800,6 +834,7 @@ def run():
         "threshold_engine": _probe_threshold_engine(),
         "builtin_metrics": _probe_builtin_metrics(),
         "threshold_projection": _probe_threshold_projection(),
+        "rejection": _probe_rejection(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

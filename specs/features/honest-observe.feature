@@ -288,3 +288,18 @@ Feature: honest-observe — event envelope, recording, and projection
     Given a threshold projection, its metric, and the events
     When evaluate_threshold decides
     Then an enabled projection fires with its value when the condition is crossed, and a disabled one never fires
+
+  Scenario: rejection records a raw event that failed translation
+    Given a source, reason, raw event, translator version, rejection id, and received-at time
+    When rejection records them
+    Then it returns the rejection record preserving the raw event verbatim with its source and reason
+
+  Scenario: rejection_log_schema is the honest_rejection_log persist table
+    Given the rejection record shape
+    When rejection_log_schema builds the table
+    Then it returns a one-table persist schema with rejection_id the primary key and forensic indexes by source, reason, and time
+
+  Scenario: rejection_log_manifest declares the table append-only
+    Given the rejection-log table
+    When rejection_log_manifest wraps it
+    Then it returns the honest_rejection_log manifest with append_only true and the embedded schema
