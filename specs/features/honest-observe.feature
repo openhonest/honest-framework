@@ -98,3 +98,13 @@ Feature: honest-observe — event envelope, recording, and projection
     Given an app name, error type, and message
     When app_error builds the event
     Then it returns the hf.app.error event, including the traceback and context only when supplied
+
+  Scenario: event_log_schema is the honest_event_log persist table
+    Given the event envelope shape
+    When event_log_schema builds the table
+    Then it returns a one-table persist schema whose columns mirror the envelope, with event_id the primary key, the framework fields NOT NULL, the auth and meta partitions nullable, and the four projection indexes
+
+  Scenario: event_log_manifest declares the table append-only
+    Given the event-log table
+    When event_log_manifest wraps it
+    Then it returns the honest_event_log manifest with append_only true and the embedded schema

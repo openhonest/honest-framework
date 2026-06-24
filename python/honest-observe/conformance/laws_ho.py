@@ -298,6 +298,58 @@ def _probe_canonical_app_events():
     return bad
 
 
+def _probe_event_log():
+    """The event-log table (section 10): observe owns the honest_event_log definition as pure data — the
+    persist-compatible schema (ten columns matching the envelope, four projection indexes) and the
+    append-only manifest that wraps it. observe never imports persist; persist applies this dict."""
+    from honest_observe import event_log_manifest, event_log_schema
+
+    bad = []
+    schema = event_log_schema()
+    if list(schema.keys()) != ["honest_event_log"]:
+        bad.append(f"event_log_schema should be a one-table persist schema: {list(schema.keys())}")
+    table = schema["honest_event_log"]
+    columns = table["columns"]
+
+    # Every envelope field is a column, in envelope order; the JSON partitions land as text.
+    expected_columns = ["event_id", "event_type", "event_version", "timestamp", "sequence", "aggregate_type", "aggregate_id", "payload", "auth", "meta"]
+    if list(columns.keys()) != expected_columns:
+        bad.append(f"event-log columns should mirror the envelope: {list(columns.keys())}")
+    if columns["event_id"].get("primary_key") is not True or table.get("primary_key") != ["event_id"]:
+        bad.append("event_id should be the primary key, column-level and table-level")
+    if columns["sequence"]["type"] != "integer":
+        bad.append(f"sequence should be an integer column: {columns['sequence']}")
+
+    # The framework fields are NOT NULL; only the auth/meta partitions are nullable (§2.2 no-auth event).
+    not_null = ["event_type", "event_version", "timestamp", "sequence", "aggregate_type", "aggregate_id", "payload"]
+    for name in not_null:
+        if columns[name].get("nullable", True) is not False:
+            bad.append(f"{name} must be NOT NULL in the event log")
+    for name in ("auth", "meta"):
+        if columns[name].get("nullable") is not True:
+            bad.append(f"{name} must be nullable in the event log")
+
+    # The four projection indexes of §10, each over its declared columns.
+    indexes = table["indexes"]
+    expected_indexes = {
+        "idx_event_type": ["event_type"],
+        "idx_aggregate": ["aggregate_type", "aggregate_id"],
+        "idx_timestamp": ["timestamp"],
+        "idx_sequence": ["aggregate_id", "sequence"],
+    }
+    for name, cols in expected_indexes.items():
+        if indexes.get(name, {}).get("columns") != cols:
+            bad.append(f"index {name} should cover {cols}: {indexes.get(name)}")
+
+    # The manifest declares append-only and embeds the same schema (§10): UPDATE/DELETE are persist's to reject.
+    manifest = event_log_manifest()
+    if manifest.get("table") != "honest_event_log" or manifest.get("append_only") is not True:
+        bad.append(f"event_log_manifest should declare an append-only honest_event_log table: {manifest}")
+    if manifest.get("schema") != table:
+        bad.append("the manifest should embed the same table definition as the schema")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -307,6 +359,7 @@ def run():
         "emit": _probe_emit(),
         "framework_events": _probe_framework_events(),
         "canonical_app_events": _probe_canonical_app_events(),
+        "event_log": _probe_event_log(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

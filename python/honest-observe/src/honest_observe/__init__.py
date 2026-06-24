@@ -7,6 +7,7 @@ stored by persist without importing it. The log storage itself is the runtime's 
 """
 
 from honest_observe.emit import emit
+from honest_observe.event_log import event_log_manifest, event_log_schema
 from honest_observe.events import Event, build_event, extract_auth, extract_meta
 from honest_observe.framework_events import (
     app_error,
@@ -44,4 +45,6 @@ __all__ = [
     "app_started",
     "app_stopped",
     "app_error",
+    "event_log_schema",
+    "event_log_manifest",
 ]

@@ -739,6 +739,68 @@
      }
     }
    }
+  },
+  {
+   "id": "value-event-log-schema",
+   "value_case": {
+    "function": "event_log_schema",
+    "args": [],
+    "expected": {
+     "honest_event_log": {
+      "columns": {
+       "event_id": {"type": "text", "primary_key": true, "nullable": false},
+       "event_type": {"type": "text", "nullable": false},
+       "event_version": {"type": "text", "nullable": false},
+       "timestamp": {"type": "text", "nullable": false},
+       "sequence": {"type": "integer", "nullable": false},
+       "aggregate_type": {"type": "text", "nullable": false},
+       "aggregate_id": {"type": "text", "nullable": false},
+       "payload": {"type": "text", "nullable": false},
+       "auth": {"type": "text", "nullable": true},
+       "meta": {"type": "text", "nullable": true}
+      },
+      "primary_key": ["event_id"],
+      "indexes": {
+       "idx_event_type": {"columns": ["event_type"]},
+       "idx_aggregate": {"columns": ["aggregate_type", "aggregate_id"]},
+       "idx_timestamp": {"columns": ["timestamp"]},
+       "idx_sequence": {"columns": ["aggregate_id", "sequence"]}
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "value-event-log-manifest",
+   "value_case": {
+    "function": "event_log_manifest",
+    "args": [],
+    "expected": {
+     "table": "honest_event_log",
+     "append_only": true,
+     "schema": {
+      "columns": {
+       "event_id": {"type": "text", "primary_key": true, "nullable": false},
+       "event_type": {"type": "text", "nullable": false},
+       "event_version": {"type": "text", "nullable": false},
+       "timestamp": {"type": "text", "nullable": false},
+       "sequence": {"type": "integer", "nullable": false},
+       "aggregate_type": {"type": "text", "nullable": false},
+       "aggregate_id": {"type": "text", "nullable": false},
+       "payload": {"type": "text", "nullable": false},
+       "auth": {"type": "text", "nullable": true},
+       "meta": {"type": "text", "nullable": true}
+      },
+      "primary_key": ["event_id"],
+      "indexes": {
+       "idx_event_type": {"columns": ["event_type"]},
+       "idx_aggregate": {"columns": ["aggregate_type", "aggregate_id"]},
+       "idx_timestamp": {"columns": ["timestamp"]},
+       "idx_sequence": {"columns": ["aggregate_id", "sequence"]}
+      }
+     }
+    }
+   }
   }
  ],
  "value_oracle_exempt": [
