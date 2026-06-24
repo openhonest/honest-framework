@@ -114,6 +114,30 @@ def _check_composed(base_types: dict, composed_list: list) -> None:
             )
 
 
+def _captures_conflict(comp_a: dict, comp_b: dict) -> bool:
+    """Whether two composed types are ambiguous at construction (section 4.3 no-ambiguity rule): they
+    capture the same base type and one's requirements are a subset of the other's, so the subset
+    fires whenever the superset does and a token of the captured type is captured by both. Disjoint
+    requirements may still co-fire on some input, but that is input-dependent and left to honest-test.
+    Pure."""
+    if unwrap_maybe(comp_a["captures"]) != unwrap_maybe(comp_b["captures"]):
+        return False
+    requires_a = set(comp_a["requires"].items())
+    requires_b = set(comp_b["requires"].items())
+    return requires_a <= requires_b or requires_b <= requires_a
+
+
+def _check_capture_ambiguity(composed_list: list) -> None:
+    """Reject two composed types that would ambiguously capture the same token (section 4.3). Pure."""
+    for comp_a, comp_b in combinations(composed_list, 2):
+        if _captures_conflict(comp_a, comp_b):
+            raise VocabularyError(
+                f"Composed types '{comp_a['name']}' and '{comp_b['name']}' both capture "
+                f"'{unwrap_maybe(comp_a['captures'])}' under compatible requirements — a token would be "
+                "ambiguously captured by both (section 4.3 no-ambiguity rule)."
+            )
+
+
 def vocabulary(base_declarations: dict, composed_types=None) -> dict:
     """Build a validated vocabulary from {type_name: declaration}. Raises VocabularyError."""
     if not base_declarations:
@@ -128,6 +152,7 @@ def vocabulary(base_declarations: dict, composed_types=None) -> dict:
     _check_catch_all(base_types)
     composed_list = list(composed_types or [])
     _check_composed(base_types, composed_list)
+    _check_capture_ambiguity(composed_list)
     return {"base_types": base_types, "composed_types": composed_list}
 
 
@@ -150,6 +175,7 @@ def merge(vocab_a: dict, vocab_b: dict) -> dict:
     composed_list = [*vocab_a["composed_types"], *vocab_b["composed_types"]]
     _check_overlap(base_types)  # cross-vocabulary Set x Set value collision (section 3)
     _check_composed(base_types, composed_list)
+    _check_capture_ambiguity(composed_list)
     return {"base_types": base_types, "composed_types": composed_list}
 
 

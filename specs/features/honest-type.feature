@@ -144,6 +144,16 @@ Feature: honest-type — vocabulary, classification, chains, and the boundary
     When _check_composed validates each composed type
     Then it raises a vocabulary error when a required or captured type is not a declared base
 
+  Scenario: _captures_conflict detects two composed types that ambiguously capture the same type
+    Given two composed types
+    When _captures_conflict compares them
+    Then it is true when they capture the same base type and one's requirements are a subset of the other's, false otherwise
+
+  Scenario: _check_capture_ambiguity rejects ambiguously capturing composed types
+    Given the composed types of a vocabulary
+    When _check_capture_ambiguity compares every pair
+    Then it raises a vocabulary error when two composed types would ambiguously capture the same token, leaving disjoint requirements to honest-test
+
   Scenario: vocabulary builds a validated vocabulary from declarations
     Given base declarations and optional composed types
     When vocabulary builds them

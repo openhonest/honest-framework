@@ -283,6 +283,63 @@
    "expect_rejections": []
   },
   {
+   "id": "composed-multiple-non-conflicting",
+   "declarations": {
+    "format_name": [
+     "currency",
+     "number"
+    ],
+    "currency_code": [
+     "USD",
+     "EUR"
+    ],
+    "integer": [
+     "2",
+     "3"
+    ]
+   },
+   "composed_types": [
+    {
+     "name": "currency_precision",
+     "requires": {
+      "format_name": "currency"
+     },
+     "captures": "integer"
+    },
+    {
+     "name": "number_precision",
+     "requires": {
+      "format_name": "number"
+     },
+     "captures": "integer"
+    },
+    {
+     "name": "currency_alias",
+     "requires": {
+      "format_name": "currency"
+     },
+     "captures": "currency_code"
+    }
+   ],
+   "binding": {
+    "format_name": "format",
+    "currency_code": "currency",
+    "integer": "precision",
+    "currency_precision": "decimals",
+    "number_precision": "ndecimals",
+    "currency_alias": "calias"
+   },
+   "tokens": [
+    "2",
+    "EUR",
+    "currency"
+   ],
+   "expect_manifest": {
+    "format": "currency",
+    "decimals": "2"
+   }
+  },
+  {
    "id": "composed-off-falls-through",
    "declarations": {
     "format_name": [

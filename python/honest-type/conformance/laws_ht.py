@@ -203,6 +203,16 @@ CONSTRUCTION_SUBJECTS = [
     ("set_overlap", {"build": lambda: vocabulary({"a": {"x"}, "b": {"x"}}), "expect": "share"}),
     ("catch_all_predicate", {"build": lambda: vocabulary({"anything": predicate(lambda token: True)}), "expect": "nearly all"}),
     (
+        "ambiguous_capture",
+        {
+            "build": lambda: vocabulary(
+                {"a": {"x"}, "b": {"y"}, "n": {"1"}},
+                composed_types=[composed("c1", {"a": "x"}, "n"), composed("c2", {"a": "x", "b": "y"}, "n")],
+            ),
+            "expect": "ambiguously captured",
+        },
+    ),
+    (
         "merge_name_collision",
         {"build": lambda: merge(vocabulary({"a": {"x"}}), vocabulary({"a": {"y"}})), "expect": "type name"},
     ),
