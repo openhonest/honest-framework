@@ -128,3 +128,48 @@ Feature: honest-observe — event envelope, recording, and projection
     Given a snapshot and the events around its position
     When resume_from_snapshot replays from it
     Then it folds only the strictly-later matching events onto the snapshot state, leaving the position's own event already counted
+
+  Scenario: otel_signal_kind maps an hf event to its OTel signal kind
+    Given an hf framework event type
+    When otel_signal_kind maps it
+    Then it returns the OTel signal kind for a framework event and None for any other
+
+  Scenario: otel_attributes derives the OTel semantic-convention attributes
+    Given an hf event with a payload and optional meta release
+    When otel_attributes derives them
+    Then it returns the hf attributes its event type contributes plus service version from meta release, and nothing for an event with no attribute builder
+
+  Scenario: otel_signal is the projection output for one event
+    Given an hf event
+    When otel_signal projects it
+    Then it returns the event type, OTel signal kind, and attributes as one signal
+
+  Scenario: _chain_started_attrs builds the chain-started span attributes
+    Given a chain-started payload
+    When _chain_started_attrs reads it
+    Then it returns the hf chain name and link count
+
+  Scenario: _chain_completed_attrs builds the chain-completed span attributes
+    Given a chain-completed payload
+    When _chain_completed_attrs reads it
+    Then it returns the hf chain name and link count, with the fault code only when the chain errored
+
+  Scenario: _link_executed_attrs builds the link span attributes
+    Given a link-executed payload
+    When _link_executed_attrs reads it
+    Then it returns the hf link name, boundary flag, and the mutation, singleton, nondeterminism, and io-call measurements
+
+  Scenario: _link_faulted_attrs builds the faulted-link span attributes
+    Given a link-faulted payload
+    When _link_faulted_attrs reads it
+    Then it returns the hf link name
+
+  Scenario: _classify_attrs builds the classification metric attributes
+    Given a classify-completed payload
+    When _classify_attrs reads it
+    Then it returns the hf vocabulary name and rejection count
+
+  Scenario: _state_attrs builds the state-transition span-event attributes
+    Given a state-transitioned payload
+    When _state_attrs reads it
+    Then it returns the hf state machine, from state, event, and to state

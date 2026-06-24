@@ -402,6 +402,72 @@ def _probe_snapshot():
     return bad
 
 
+def _probe_otel():
+    """The OTel export projection (section 7): the pure half of the exporter — map an hf.* event to its
+    OTel signal kind (§7.1) and its semantic-convention attributes (§7.2, §7.3). Running the export loop
+    against an injected SDK exporter is the boundary's, exactly as with the emit runtime."""
+    from honest_observe import otel_attributes, otel_signal, otel_signal_kind
+
+    bad = []
+
+    # The §7.1 signal-kind map; an event that is not a framework signal maps to None.
+    kinds = {
+        "hf.chain.started": "span_start",
+        "hf.chain.completed": "span_end",
+        "hf.link.executed": "child_span",
+        "hf.link.faulted": "span_event",
+        "hf.persist.query": "child_span",
+        "hf.classify.completed": "metric_counter",
+        "hf.state.transitioned": "span_event",
+    }
+    for event_type, kind in kinds.items():
+        if otel_signal_kind(event_type) != kind:
+            bad.append(f"otel_signal_kind({event_type}) should be {kind}: {otel_signal_kind(event_type)}")
+    if otel_signal_kind("app.order.placed") is not None:
+        bad.append("a non-framework event has no OTel signal kind")
+
+    # §7.3 hf.* attributes per event type, read from the payload.
+    chain_done = {"event_type": "hf.chain.completed", "payload": {"chain_name": "checkout", "link_count": 3, "result": "err", "fault_code": "declined"}}
+    if otel_attributes(chain_done) != {"hf.chain.name": "checkout", "hf.chain.link_count": 3, "hf.chain.fault_code": "declined"}:
+        bad.append(f"chain.completed attributes wrong: {otel_attributes(chain_done)}")
+    chain_ok = {"event_type": "hf.chain.completed", "payload": {"chain_name": "checkout", "link_count": 3, "result": "ok"}}
+    if otel_attributes(chain_ok) != {"hf.chain.name": "checkout", "hf.chain.link_count": 3}:
+        bad.append(f"a successful chain.completed should carry no fault code attribute: {otel_attributes(chain_ok)}")
+    chain_started = {"event_type": "hf.chain.started", "payload": {"chain_name": "checkout", "link_count": 3, "input_types": []}}
+    if otel_attributes(chain_started) != {"hf.chain.name": "checkout", "hf.chain.link_count": 3}:
+        bad.append(f"chain.started attributes should omit a fault code: {otel_attributes(chain_started)}")
+    link = {"event_type": "hf.link.executed", "payload": {"link_name": "validate", "chain_name": "checkout", "boundary": True, "mutations": 0, "singletons": 1, "nondeterminism": False, "io_calls": 2, "duration_ns": 9, "result": "ok"}}
+    if otel_attributes(link) != {"hf.link.name": "validate", "hf.link.boundary": True, "hf.link.mutations": 0, "hf.link.singletons": 1, "hf.link.nondeterminism": False, "hf.link.io_calls": 2}:
+        bad.append(f"link.executed attributes wrong: {otel_attributes(link)}")
+    faulted = {"event_type": "hf.link.faulted", "payload": {"link_name": "pay", "chain_name": "checkout", "fault_code": "declined", "fault_category": "client", "fault_message": "no"}}
+    if otel_attributes(faulted) != {"hf.link.name": "pay"}:
+        bad.append(f"link.faulted attributes wrong: {otel_attributes(faulted)}")
+    classify = {"event_type": "hf.classify.completed", "payload": {"vocabulary_name": "order_vocab", "token_count": 5, "rejection_count": 1, "duration_ns": 3, "rejection_reasons": {}}}
+    if otel_attributes(classify) != {"hf.vocabulary.name": "order_vocab", "hf.classify.rejection_count": 1}:
+        bad.append(f"classify attributes wrong: {otel_attributes(classify)}")
+    state = {"event_type": "hf.state.transitioned", "payload": {"machine_name": "order_sm", "entity_id": "o1", "from_state": "pending", "event": "pay", "to_state": "paid", "duration_ns": 4}}
+    if otel_attributes(state) != {"hf.state.machine": "order_sm", "hf.state.from": "pending", "hf.state.event": "pay", "hf.state.to": "paid"}:
+        bad.append(f"state attributes wrong: {otel_attributes(state)}")
+
+    # An event with no hf.* attribute builder (e.g. persist.query, mapped only by kind) yields no hf.* attrs.
+    persist_q = {"event_type": "hf.persist.query", "payload": {"sql": "SELECT 1"}}
+    if otel_attributes(persist_q) != {}:
+        bad.append(f"an event with no attribute builder yields no attributes: {otel_attributes(persist_q)}")
+
+    # §7.2 service.version is sourced from meta.release, and attaches across any event that carries it.
+    with_release = {"event_type": "hf.chain.started", "payload": {"chain_name": "c", "link_count": 1, "input_types": []}, "meta": {"release": "1.4.0"}}
+    if otel_attributes(with_release).get("service.version") != "1.4.0":
+        bad.append("service.version should come from meta.release")
+    if "service.version" in otel_attributes({"event_type": "hf.persist.query", "payload": {}, "meta": {"other": "x"}}):
+        bad.append("service.version should be absent when meta has no release")
+
+    # otel_signal is the projection's output: kind plus attributes for one event.
+    sig = otel_signal(chain_done)
+    if sig != {"event_type": "hf.chain.completed", "kind": "span_end", "attributes": {"hf.chain.name": "checkout", "hf.chain.link_count": 3, "hf.chain.fault_code": "declined"}}:
+        bad.append(f"otel_signal wrong: {sig}")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -413,6 +479,7 @@ def run():
         "canonical_app_events": _probe_canonical_app_events(),
         "event_log": _probe_event_log(),
         "snapshot": _probe_snapshot(),
+        "otel": _probe_otel(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

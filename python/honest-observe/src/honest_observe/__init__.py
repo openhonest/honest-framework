@@ -23,6 +23,7 @@ from honest_observe.framework_events import (
     state_rejected,
     state_transitioned,
 )
+from honest_observe.otel import otel_attributes, otel_signal, otel_signal_kind
 from honest_observe.projections import apply_projection, matches
 from honest_observe.snapshot import build_snapshot, declare_projection, resume_from_snapshot, should_snapshot
 
@@ -52,4 +53,7 @@ __all__ = [
     "should_snapshot",
     "declare_projection",
     "resume_from_snapshot",
+    "otel_signal_kind",
+    "otel_attributes",
+    "otel_signal",
 ]

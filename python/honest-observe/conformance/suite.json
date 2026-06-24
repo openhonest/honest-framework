@@ -821,6 +821,30 @@
   {
    "id": "value-should-snapshot-no-interval",
    "value_case": {"function": "should_snapshot", "args": [5000, null], "expected": false}
+  },
+  {
+   "id": "value-otel-signal-kind",
+   "value_case": {"function": "otel_signal_kind", "args": ["hf.link.executed"], "expected": "child_span"}
+  },
+  {
+   "id": "value-otel-signal-kind-non-framework",
+   "value_case": {"function": "otel_signal_kind", "args": ["app.order.placed"], "expected": null}
+  },
+  {
+   "id": "value-otel-attributes",
+   "value_case": {
+    "function": "otel_attributes",
+    "args": [{"event_type": "hf.chain.completed", "payload": {"chain_name": "checkout", "link_count": 3, "result": "err", "fault_code": "declined"}, "meta": {"release": "1.4.0"}}],
+    "expected": {"hf.chain.name": "checkout", "hf.chain.link_count": 3, "hf.chain.fault_code": "declined", "service.version": "1.4.0"}
+   }
+  },
+  {
+   "id": "value-otel-signal",
+   "value_case": {
+    "function": "otel_signal",
+    "args": [{"event_type": "hf.state.transitioned", "payload": {"machine_name": "order_sm", "entity_id": "o1", "from_state": "pending", "event": "pay", "to_state": "paid", "duration_ns": 4}}],
+    "expected": {"event_type": "hf.state.transitioned", "kind": "span_event", "attributes": {"hf.state.machine": "order_sm", "hf.state.from": "pending", "hf.state.event": "pay", "hf.state.to": "paid"}}
+   }
   }
  ],
  "value_oracle_exempt": [
