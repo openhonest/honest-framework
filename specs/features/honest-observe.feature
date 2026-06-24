@@ -303,3 +303,18 @@ Feature: honest-observe — event envelope, recording, and projection
     Given the rejection-log table
     When rejection_log_manifest wraps it
     Then it returns the honest_rejection_log manifest with append_only true and the embedded schema
+
+  Scenario: hlc_send advances a hybrid logical clock on a local event
+    Given a local clock and the wall-clock physical time
+    When hlc_send advances it
+    Then it takes the later physical time, resetting the logical counter when the clock advanced and incrementing it otherwise
+
+  Scenario: hlc_receive merges an incoming clock into the local one
+    Given a local clock, an incoming clock, and the wall-clock time
+    When hlc_receive merges them
+    Then the new physical time is the max of the three, the logical counter follows whichever the max came from, and the source stays local
+
+  Scenario: hlc_compare gives the total order on hybrid logical clocks
+    Given two hybrid logical clocks
+    When hlc_compare orders them
+    Then it compares by physical time, then logical counter, then source identifier

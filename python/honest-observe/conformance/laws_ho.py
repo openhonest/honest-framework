@@ -815,6 +815,46 @@ def _probe_rejection():
     return bad
 
 
+def _probe_hlc():
+    """Hybrid Logical Clocks (section 8c.2): a causal total order across sources that do not share a
+    clock. Pure — the physical clock is read at the boundary and passed in. hlc_send advances on a local
+    event, hlc_receive merges an incoming clock, hlc_compare gives the total order."""
+    from honest_observe import hlc_compare, hlc_receive, hlc_send
+
+    bad = []
+
+    # Send: when the wall clock has advanced, take it and reset the logical counter; when it has not,
+    # keep the physical time and increment the logical counter (so same-millisecond events still order).
+    if hlc_send({"physical": 10, "logical": 5, "source": "a"}, 20) != {"physical": 20, "logical": 0, "source": "a"}:
+        bad.append("hlc_send should take an advanced wall clock and reset logical")
+    if hlc_send({"physical": 10, "logical": 5, "source": "a"}, 8) != {"physical": 10, "logical": 6, "source": "a"}:
+        bad.append("hlc_send should keep physical and increment logical when the clock did not advance")
+
+    # Receive: new physical is the max of local, incoming, and the wall clock; the logical counter is
+    # chosen by which of those the max came from (canonical HLC receive).
+    if hlc_receive({"physical": 10, "logical": 2, "source": "a"}, {"physical": 10, "logical": 3, "source": "b"}, 5) != {"physical": 10, "logical": 4, "source": "a"}:
+        bad.append("hlc_receive with local==incoming should take max logical + 1")
+    if hlc_receive({"physical": 10, "logical": 2, "source": "a"}, {"physical": 8, "logical": 9, "source": "b"}, 7) != {"physical": 10, "logical": 3, "source": "a"}:
+        bad.append("hlc_receive when local physical wins should increment the local logical")
+    if hlc_receive({"physical": 8, "logical": 2, "source": "a"}, {"physical": 10, "logical": 9, "source": "b"}, 7) != {"physical": 10, "logical": 10, "source": "a"}:
+        bad.append("hlc_receive when incoming physical wins should increment the incoming logical")
+    if hlc_receive({"physical": 8, "logical": 2, "source": "a"}, {"physical": 9, "logical": 9, "source": "b"}, 20) != {"physical": 20, "logical": 0, "source": "a"}:
+        bad.append("hlc_receive when the wall clock wins should reset logical")
+
+    # Compare: by physical, then logical, then source id; the receiver keeps its own source.
+    order = [
+        ({"physical": 10, "logical": 0, "source": "a"}, {"physical": 20, "logical": 0, "source": "a"}, -1),
+        ({"physical": 20, "logical": 0, "source": "a"}, {"physical": 10, "logical": 0, "source": "a"}, 1),
+        ({"physical": 10, "logical": 1, "source": "a"}, {"physical": 10, "logical": 2, "source": "a"}, -1),
+        ({"physical": 10, "logical": 2, "source": "a"}, {"physical": 10, "logical": 2, "source": "b"}, -1),
+        ({"physical": 10, "logical": 2, "source": "a"}, {"physical": 10, "logical": 2, "source": "a"}, 0),
+    ]
+    for a, b, want in order:
+        if hlc_compare(a, b) != want:
+            bad.append(f"hlc_compare({a}, {b}) should be {want}, got {hlc_compare(a, b)}")
+    return bad
+
+
 def run():
     probes = {
         "build_event": _probe_build_event(),
@@ -835,6 +875,7 @@ def run():
         "builtin_metrics": _probe_builtin_metrics(),
         "threshold_projection": _probe_threshold_projection(),
         "rejection": _probe_rejection(),
+        "hlc": _probe_hlc(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]
     for name, messages in violations:

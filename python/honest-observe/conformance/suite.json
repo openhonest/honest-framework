@@ -903,6 +903,46 @@
    }
   },
   {
+   "id": "value-hlc-send-advanced",
+   "value_case": {"function": "hlc_send", "args": [{"physical": 10, "logical": 5, "source": "a"}, 20], "expected": {"physical": 20, "logical": 0, "source": "a"}}
+  },
+  {
+   "id": "value-hlc-send-stalled",
+   "value_case": {"function": "hlc_send", "args": [{"physical": 10, "logical": 5, "source": "a"}, 8], "expected": {"physical": 10, "logical": 6, "source": "a"}}
+  },
+  {
+   "id": "value-hlc-receive-both",
+   "value_case": {"function": "hlc_receive", "args": [{"physical": 10, "logical": 2, "source": "a"}, {"physical": 10, "logical": 3, "source": "b"}, 5], "expected": {"physical": 10, "logical": 4, "source": "a"}}
+  },
+  {
+   "id": "value-hlc-receive-local",
+   "value_case": {"function": "hlc_receive", "args": [{"physical": 10, "logical": 2, "source": "a"}, {"physical": 8, "logical": 9, "source": "b"}, 7], "expected": {"physical": 10, "logical": 3, "source": "a"}}
+  },
+  {
+   "id": "value-hlc-receive-incoming",
+   "value_case": {"function": "hlc_receive", "args": [{"physical": 8, "logical": 2, "source": "a"}, {"physical": 10, "logical": 9, "source": "b"}, 7], "expected": {"physical": 10, "logical": 10, "source": "a"}}
+  },
+  {
+   "id": "value-hlc-receive-clock",
+   "value_case": {"function": "hlc_receive", "args": [{"physical": 8, "logical": 2, "source": "a"}, {"physical": 9, "logical": 9, "source": "b"}, 20], "expected": {"physical": 20, "logical": 0, "source": "a"}}
+  },
+  {
+   "id": "value-hlc-compare-physical",
+   "value_case": {"function": "hlc_compare", "args": [{"physical": 10, "logical": 0, "source": "a"}, {"physical": 20, "logical": 0, "source": "a"}], "expected": -1}
+  },
+  {
+   "id": "value-hlc-compare-logical",
+   "value_case": {"function": "hlc_compare", "args": [{"physical": 10, "logical": 5, "source": "a"}, {"physical": 10, "logical": 2, "source": "a"}], "expected": 1}
+  },
+  {
+   "id": "value-hlc-compare-source",
+   "value_case": {"function": "hlc_compare", "args": [{"physical": 10, "logical": 2, "source": "a"}, {"physical": 10, "logical": 2, "source": "b"}], "expected": -1}
+  },
+  {
+   "id": "value-hlc-compare-equal",
+   "value_case": {"function": "hlc_compare", "args": [{"physical": 10, "logical": 2, "source": "a"}, {"physical": 10, "logical": 2, "source": "a"}], "expected": 0}
+  },
+  {
    "id": "value-rejection",
    "value_case": {
     "function": "rejection",
