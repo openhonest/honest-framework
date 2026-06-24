@@ -1434,7 +1434,7 @@ This is the Stripe canonical log line insight applied: every meaningful thing th
 
 ### 9.3 honest-observe inspect
 
-Renders the complete execution tree for one request: browser and server events interleaved in timestamp order, formatted as a readable trace.
+Renders the complete execution tree for one request: the browser and server traces in timestamp order, formatted as a readable trace and correlated by `request_id`.
 
 ```bash
 honest-observe inspect req_abc123
@@ -1447,28 +1447,40 @@ Request: req_abc123
 POST /api/items → 200  total: 166ms
 
 BROWSER
-  14:23:07.001  dom.changed       filters [] → ["active"]             0.1ms
-  14:23:07.003  browser.request   POST /api/items                      —
+  14:23:07.001  dom.changed  filters [] → ["active"]
+  14:23:07.003  browser.request  POST /api/items
 
 SERVER
-  14:23:07.004  classify          3 tokens, 0 rejected                 0.2ms
-  14:23:07.005  chain.started     fetch_items  3 links
-  14:23:07.006    link            validate_filters          ok          0.8ms
-  14:23:07.007    link            build_query               ok          0.4ms
-  14:23:07.008    persist.query   SELECT items WHERE ...    47 rows     12.0ms
-  14:23:07.021    link            format_response           ok          0.3ms
-  14:23:07.022  chain.completed   fetch_items               ok          16.0ms
-  14:23:07.023  canonical         POST /api/items 200                  —
+  link  validate_filters  ok  0.8ms
+  link  build_query  ok  0.4ms
+  link  format_response  ok  0.3ms
 
 BROWSER
-  14:23:07.166  browser.response  200  #content-area swapped           163ms
-  14:23:07.168  dom.changed       #content-area innerHTML
-  14:23:07.171  classify          12 elements                          1.1ms
+  14:23:07.166  browser.response  200  #content-area  163ms
+  14:23:07.171  browser.classify  #content-area  hf-format
 
 Total: 166ms  (server: 16ms  network: 147ms  browser: 3ms)
 ```
 
 This is the development replacement for attaching a debugger or scattering print statements to understand a specific request.
+
+**Correlation.** `inspect` reconstructs one request from its `request_id`, using the id wherever it is present and only where it is present:
+
+- The **server trace** is read from the request's `hf.request.canonical` event (section 4.6). The boundary already denormalized the ordered links into that event's `link_sequence`, so no read-time join over the individual `hf.link.executed` events is needed — and those events are not request-correlated (they carry no `request_id`; they are aggregated per link, not per request). The canonical event is located by its `aggregate_id`, which is the `request_id`. Because the canonical record carries link *durations*, not per-link wall-clock, the server lines show no per-link timestamp.
+- The **browser trace** is the browser events (section 8.2) whose envelope `request_id` equals the target. The browser emits them separately, and they join to the server side by `request_id`.
+
+Events that carry no `request_id` are not part of a request trace and are not shown.
+
+**Ordering.** The browser events split into the run emitted before the server processed the request and the run emitted after, by `timestamp`, so the trace reads top to bottom as BROWSER → SERVER → BROWSER; an empty browser run is omitted. Within a run, events are in `timestamp` order. This is the operator wall-clock view. Because the browser and server clocks are independent (section 8c.2), causal ordering across the two sides is available by sorting on `meta.source_hlc` where present, but `inspect` uses wall-clock by default.
+
+**Timing breakdown.** The footer attributes the elapsed time across the three tiers using only single-clock durations, never the difference of two timestamps read on different clocks:
+
+- `server` is the canonical event's `duration_ns` — the server chain time, measured on the server clock.
+- `network` is the browser `hf.browser.response` `duration_ms` (the round trip, measured on the browser clock) minus `server`. The round trip is network plus server, so removing the server time leaves the network time. With no browser response, `network` is zero.
+- `browser` is the sum of the browser events' own local processing durations (for example `hf.browser.classify` `duration_ns`); a browser event with no local duration contributes nothing, and the response's `duration_ms` is the round trip, not local time, so it is not counted here.
+- `total` is `server` + `network` + `browser`.
+
+A request with no browser side renders the server block alone, with `network` and `browser` zero and `total` equal to `server`. Tier totals are rendered as whole milliseconds; sub-millisecond per-link durations keep one decimal place.
 
 ### 9.4 honest-observe query
 
