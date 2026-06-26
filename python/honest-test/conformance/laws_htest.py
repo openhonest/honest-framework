@@ -568,6 +568,15 @@ def _probe_mutation():
     from honest_test import enumerate_mutants
 
     bad = []
+    # Labels are stable: a mutant is identified by its change and the stripped source line it sits on
+    # (not a byte offset), with #n for the nth identical (change, line) pair — so a set-aside survives
+    # edits elsewhere in the file.
+    if {m["label"] for m in enumerate_mutants("a == b\n")} != {"==->!=@a == b", "remove@a == b"}:
+        bad.append(f"a label identifies the change and the line, not a byte offset: {sorted(m['label'] for m in enumerate_mutants('a == b\n'))}")
+    chained = sorted(m["label"] for m in enumerate_mutants("a < b < c\n") if m["operator"] == "comparison_swap")
+    if chained != ["<-><=@a < b < c", "<-><=@a < b < c#1"]:
+        bad.append(f"identical (change, line) pairs are disambiguated by index: {chained}")
+
     source = "def f(x):\n    return x < 0 and x == y\n"
     swaps = sorted(m["source"] for m in enumerate_mutants(source) if m["operator"] == "comparison_swap")
     if swaps != [
@@ -701,7 +710,7 @@ def _probe_mutation():
     # Docstrings are non-behavioural: a docstring is neither emptied nor removed (a universally
     # equivalent mutant), but a non-docstring bare string still is.
     doc_labels = {m["label"] for m in enumerate_mutants('"""doc."""\nx = 1\n')}
-    if any(label.startswith("string->empty@0") for label in doc_labels) or "remove@0" in doc_labels:
+    if any(label.startswith('string->empty@"""doc') for label in doc_labels) or 'remove@"""doc."""' in doc_labels:
         bad.append("a docstring must produce no string-empty or line-removal mutant (it cannot change behaviour)")
     if not any("1->2@" in label for label in doc_labels):
         bad.append("a non-docstring statement beside the docstring is still mutated")
@@ -728,7 +737,7 @@ def _probe_mutation_runner():
     bad = []
     # A hand-built single-mutant list: the runner and the adequacy decision are exercised on a known
     # input, independent of how enumeration would size the mutant set.
-    mutants = [{"operator": "comparison_swap", "label": "==->!=@2", "source": "a != b\n"}]
+    mutants = [{"operator": "comparison_swap", "label": "==->!=@a == b", "source": "a != b\n"}]
 
     # run_suite returns True when the suite PASSES on the mutated source — i.e. the mutant was NOT caught.
     if run_mutants(mutants, lambda source: False) != []:
@@ -739,11 +748,11 @@ def _probe_mutation_runner():
 
     # An undeclared survivor is not adequate; total/caught/set_aside accounting holds.
     report = mutation_adequacy(mutants, survivors, {})
-    if report != {"total": 1, "caught": 0, "set_aside": 0, "undeclared": [{"operator": "comparison_swap", "label": "==->!=@2"}], "adequate": False}:
+    if report != {"total": 1, "caught": 0, "set_aside": 0, "undeclared": [{"operator": "comparison_swap", "label": "==->!=@a == b"}], "adequate": False}:
         bad.append(f"an undeclared survivor must be reported as inadequate: {report}")
 
     # A survivor declared equivalent (by label, with a reason) is set aside -> adequate.
-    declared = mutation_adequacy(mutants, survivors, {"==->!=@2": "equivalent: the suite asserts only the other arm"})
+    declared = mutation_adequacy(mutants, survivors, {"==->!=@a == b": "equivalent: the suite asserts only the other arm"})
     if not declared["adequate"] or declared["set_aside"] != 1 or declared["undeclared"]:
         bad.append(f"a declared-equivalent survivor must be adequate: {declared}")
 

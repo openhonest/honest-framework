@@ -392,10 +392,15 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When _branch_arm_removals mutates it
     Then it returns a mutant with each droppable arm removed
 
+  Scenario: _stabilize_labels rewrites byte-offset labels to stable line-based ones
+    Given mutants labelled by byte offset and the source
+    When _stabilize_labels rewrites each label
+    Then each becomes the change and the stripped source line it sits on, with an index for an identical pair
+
   Scenario: enumerate_mutants produces every mutant of the source
     Given module source
     When enumerate_mutants runs every operator over it
-    Then it returns the full list of mutants, each an operator, a label, and the mutated source
+    Then it returns the full list of mutants, each an operator, a stable label, and the mutated source
 
   Scenario: run_mutants returns the mutants a suite does not catch
     Given a list of mutants and an injected suite-runner

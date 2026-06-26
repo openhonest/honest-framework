@@ -256,15 +256,36 @@ def _branch_arm_removals(tree, source: bytes) -> list:
 _OPERATORS = (_comparison_swaps, _number_shifts, _condition_flips, _constant_replaces, _result_swaps, _membership_changes, _dict_key_swaps, _line_removals, _branch_arm_removals)
 
 
+def _stabilize_labels(mutants, source: str) -> list:
+    """Rewrite each mutant's byte-offset label to a stable one (section 9.6): the change plus the
+    stripped source line it sits on, with `#n` for the nth identical (change, line) pair. A set-aside
+    keyed this way survives edits elsewhere in the file — only changing that line, or adding an
+    identical mutation, moves it; a byte offset moved on every edit before the site. Pure."""
+    newline = b"\n"
+    source_bytes = source.encode("utf-8")
+    lines = source.splitlines()
+    counts = {}
+    stabilized = []
+    for mutant in mutants:
+        change, _, offset = mutant["label"].rpartition("@")
+        line_index = source_bytes[: int(offset)].count(newline)
+        base = f"{change}@{lines[line_index].strip()}"
+        index = counts.get(base, 0)
+        counts[base] = index + 1
+        stabilized.append({**mutant, "label": base if index == 0 else f"{base}#{index}"})
+    return stabilized
+
+
 def enumerate_mutants(source: str) -> list:
-    """Every mutant of `source` (section 9.6): run each operator over the parsed source and collect one
-    mutant per site, the full mutant list the runner checks the suite against. Pure."""
+    """Every mutant of `source` (section 9.6): run each operator over the parsed source, collect one
+    mutant per site, and give each a stable label. The full mutant list the runner checks the suite
+    against. Pure."""
     source_bytes = source.encode("utf-8")
     tree = parse_python(source_bytes)
     mutants = []
     for operator in _OPERATORS:
         mutants.extend(operator(tree, source_bytes))
-    return mutants
+    return _stabilize_labels(mutants, source)
 
 
 def run_mutants(mutants, run_suite) -> list:
