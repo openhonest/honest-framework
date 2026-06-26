@@ -376,3 +376,13 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given module source
     When enumerate_mutants runs every operator over it
     Then it returns the full list of mutants, each an operator, a label, and the mutated source
+
+  Scenario: run_mutants returns the mutants a suite does not catch
+    Given a list of mutants and an injected suite-runner
+    When run_mutants checks each mutant against the suite
+    Then it returns the survivors — the mutants that leave the suite still passing
+
+  Scenario: mutation_adequacy accounts caught plus set-aside against the total
+    Given the mutants, the survivors, and a set-aside map of equivalent mutants by label
+    When mutation_adequacy reports
+    Then it returns the totals with each survivor either declared equivalent or undeclared, and adequate only when none are undeclared

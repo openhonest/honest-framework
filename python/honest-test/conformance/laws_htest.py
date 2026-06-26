@@ -615,10 +615,43 @@ def _probe_mutation():
     return bad
 
 
+def _probe_mutation_runner():
+    """The mutant runner and adequacy decision (§9.6, A3/A4): run_mutants checks each mutant against an
+    injected suite-runner and returns the survivors (mutants the suite did not catch); mutation_adequacy
+    accounts caught + set_aside == total, where every survivor must be declared equivalent by label."""
+    from honest_test import enumerate_mutants, mutation_adequacy, run_mutants
+
+    bad = []
+    mutants = enumerate_mutants("a == b\n")  # one mutant: == -> !=
+
+    # run_suite returns True when the suite PASSES on the mutated source — i.e. the mutant was NOT caught.
+    if run_mutants(mutants, lambda source: False) != []:
+        bad.append("a suite that fails on every mutant leaves no survivors")
+    survivors = run_mutants(mutants, lambda source: True)
+    if len(survivors) != 1 or survivors[0]["operator"] != "comparison_swap":
+        bad.append(f"a suite that passes on every mutant leaves all as survivors: {survivors}")
+
+    # An undeclared survivor is not adequate; total/caught/set_aside accounting holds.
+    report = mutation_adequacy(mutants, survivors, {})
+    if report != {"total": 1, "caught": 0, "set_aside": 0, "undeclared": [{"operator": "comparison_swap", "label": "==->!=@2"}], "adequate": False}:
+        bad.append(f"an undeclared survivor must be reported as inadequate: {report}")
+
+    # A survivor declared equivalent (by label, with a reason) is set aside -> adequate.
+    declared = mutation_adequacy(mutants, survivors, {"==->!=@2": "equivalent: the suite asserts only the other arm"})
+    if not declared["adequate"] or declared["set_aside"] != 1 or declared["undeclared"]:
+        bad.append(f"a declared-equivalent survivor must be adequate: {declared}")
+
+    # No survivors is adequate (every mutant caught).
+    if not mutation_adequacy(mutants, [], {})["adequate"]:
+        bad.append("no survivors is adequate")
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
         "mutation": _probe_mutation(),
+        "mutation_runner": _probe_mutation_runner(),
         "predicate": _probe_predicate(),
         "length": _probe_length(),
         "honesty": _probe_honesty(),

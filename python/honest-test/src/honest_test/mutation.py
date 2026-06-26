@@ -147,3 +147,26 @@ def enumerate_mutants(source: str) -> list:
     for operator in _OPERATORS:
         mutants.extend(operator(tree, source_bytes))
     return mutants
+
+
+def run_mutants(mutants, run_suite) -> list:
+    """The mutants a suite does not catch (section 9.6). `run_suite(mutated_source) -> bool` returns
+    whether the conformance suite still PASSES on the mutated source; a mutant that leaves the suite
+    passing was not caught, so it survives. Returns the survivors. The decision is pure — running the
+    suite is the injected I/O seam, so this is testable without subprocesses."""
+    return [mutant for mutant in mutants if run_suite(mutant["source"])]
+
+
+def mutation_adequacy(mutants, survivors, set_aside) -> dict:
+    """The adequacy report for a module (section 9.6): caught + set_aside == total. A survivor whose label
+    appears in `set_aside` (a `{label: reason}` map of mutants that cannot change the result) is declared
+    equivalent; any other survivor is undeclared and fails the gate. Pure. Returns the totals and the
+    undeclared survivors, with `adequate` true only when none are undeclared."""
+    undeclared = [{"operator": mutant["operator"], "label": mutant["label"]} for mutant in survivors if mutant["label"] not in set_aside]
+    return {
+        "total": len(mutants),
+        "caught": len(mutants) - len(survivors),
+        "set_aside": len(survivors) - len(undeclared),
+        "undeclared": undeclared,
+        "adequate": not undeclared,
+    }
