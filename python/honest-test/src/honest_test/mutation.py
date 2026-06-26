@@ -27,6 +27,19 @@ def _edit(source: bytes, start: int, end: int, replacement: bytes) -> bytes:
     return source[:start] + replacement + source[end:]
 
 
+def _is_docstring(string_node) -> bool:
+    """Whether a string node is a docstring — a bare string that is the first statement of its module or
+    block. A docstring is ignored at runtime, so emptying or removing it is a universally equivalent
+    mutant; the engine skips it rather than make every module declare it set-aside."""
+    statement = string_node.parent
+    if statement.type != "expression_statement":
+        return False
+    siblings = [child for child in statement.parent.named_children if child.type != "comment"]
+    # tree-sitter returns a fresh node object from `.parent` vs `.named_children`, so compare by the
+    # node's unique start byte rather than identity: the docstring is the first statement of its block.
+    return siblings[0].start_byte == statement.start_byte
+
+
 def _comparison_swaps(tree, source: bytes) -> list:
     """Every comparison-swap mutant (section 9.6): each `<`, `<=`, `>`, `>=`, `==`, `!=` token swapped to
     its pair, one mutant per site. Pure."""
@@ -85,7 +98,7 @@ def _constant_replaces(tree, source: bytes) -> list:
             text = node_text(node, source)
             swapped = _BOOL_LITERAL_SWAP[text]
             mutants.append(_mutant("constant_replace", f"{text}->{swapped}@{node.start_byte}", source, node.start_byte, node.end_byte, swapped.encode("utf-8")))
-        elif node.type == "string" and any(child.type == "string_content" for child in node.children):
+        elif node.type == "string" and any(child.type == "string_content" for child in node.children) and not _is_docstring(node):
             mutants.append(_mutant("constant_replace", f"string->empty@{node.start_byte}", source, node.start_byte, node.end_byte, b'""'))
     return mutants
 
@@ -131,6 +144,9 @@ def _line_removals(tree, source: bytes) -> list:
         if len(statements) < 2:
             continue
         for statement in statements:
+            string_child = next((child for child in statement.named_children if child.type == "string"), None)
+            if string_child is not None and _is_docstring(string_child):
+                continue
             mutants.append(_mutant("line_removal", f"remove@{statement.start_byte}", source, statement.start_byte, statement.end_byte, b""))
     return mutants
 

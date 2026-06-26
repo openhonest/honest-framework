@@ -612,6 +612,17 @@ def _probe_mutation():
         bad.append(f"line removal should delete one statement, keeping the rest: {by('def f():\n    a()\n    b()\n', 'line_removal')}")
     if [m for m in enumerate_mutants("a()\n") if m["operator"] == "line_removal"]:
         bad.append("a sole statement is not removed")
+
+    # Docstrings are non-behavioural: a docstring is neither emptied nor removed (a universally
+    # equivalent mutant), but a non-docstring bare string still is.
+    doc_labels = {m["label"] for m in enumerate_mutants('"""doc."""\nx = 1\n')}
+    if any(label.startswith("string->empty@0") for label in doc_labels) or "remove@0" in doc_labels:
+        bad.append("a docstring must produce no string-empty or line-removal mutant (it cannot change behaviour)")
+    if not any("1->2@" in label for label in doc_labels):
+        bad.append("a non-docstring statement beside the docstring is still mutated")
+    nondoc = {m["label"] for m in enumerate_mutants('x = 1\n"side"\n')}
+    if not any(label.startswith("string->empty@") for label in nondoc):
+        bad.append("a bare string that is not the first statement is not a docstring and is still emptiable")
     return bad
 
 

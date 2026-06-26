@@ -1,0 +1,3 @@
+{
+  "honest-parse/src/honest_parse/__init__.py:remove@2145": "equivalent: removing the trailing `return None` of first_error_node leaves the function falling off its end, which returns None — the same result the explicit statement produced."
+}

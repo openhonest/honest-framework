@@ -386,3 +386,8 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given the mutants, the survivors, and a set-aside map of equivalent mutants by label
     When mutation_adequacy reports
     Then it returns the totals with each survivor either declared equivalent or undeclared, and adequate only when none are undeclared
+
+  Scenario: _is_docstring recognizes a non-behavioural docstring
+    Given a string node
+    When _is_docstring checks it
+    Then it is true only for a bare string that is the first statement of its module or block
