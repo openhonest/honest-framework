@@ -358,9 +358,9 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Then it swaps and with or, drops a not, and negates each condition to not (c)
 
   Scenario: _dict_key_swaps swaps each dict key to a sibling key
-    Given source with a dictionary literal of two or more string keys
+    Given source with a dictionary literal of two or more keys
     When _dict_key_swaps mutates it
-    Then it returns a mutant replacing each string key with the next sibling key
+    Then it returns a mutant replacing each key with the next sibling key, skipping a swap that would not change the source
 
   Scenario: _constant_replaces swaps booleans and empties strings
     Given source with True/False literals and non-empty strings
@@ -382,10 +382,15 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When _line_removals mutates it
     Then it deletes each statement of a multi-statement block and replaces a block's sole statement with pass
 
-  Scenario: _branch_arm_removals drops an elif or else clause
-    Given source with an if statement carrying elif or else clauses
+  Scenario: _removable_arms returns the droppable clauses of a compound statement
+    Given a syntax node
+    When _removable_arms inspects it
+    Then it returns the clauses whose removal still parses for an if, for, while, try, or match, else none
+
+  Scenario: _branch_arm_removals drops a droppable branch arm
+    Given source with a compound statement carrying removable arms
     When _branch_arm_removals mutates it
-    Then it returns a mutant with each trailing arm removed
+    Then it returns a mutant with each droppable arm removed
 
   Scenario: enumerate_mutants produces every mutant of the source
     Given module source

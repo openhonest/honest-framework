@@ -633,10 +633,14 @@ def _probe_mutation():
         bad.append(f"a dict key should swap to a sibling key: {keyswaps}")
     if by('d = {"a": 1}\n', "key_swap") != []:
         bad.append("a single-key dict has no sibling key to swap to")
-    if by("d = {x: 1, y: 2}\n", "key_swap") != []:
-        bad.append("non-string dict keys are not swapped")
+    if by("d = {x: 1, y: 2}\n", "key_swap") != ["d = {x: 1, x: 2}\n", "d = {y: 1, y: 2}\n"]:
+        bad.append(f"identifier dict keys swap to a sibling too: {by('d = {x: 1, y: 2}\n', 'key_swap')}")
+    if by('d = {1: "a", 2: "b"}\n', "key_swap") != ['d = {1: "a", 1: "b"}\n', 'd = {2: "a", 2: "b"}\n']:
+        bad.append("integer dict keys swap to a sibling too")
+    if by('d = {"a": 1, "a": 2}\n', "key_swap") != []:
+        bad.append("a swap that would not change the source (a duplicate key) is skipped")
     if by('d = {**z, "a": 1, "b": 2}\n', "key_swap") != ['d = {**z, "a": 1, "a": 2}\n', 'd = {**z, "b": 1, "b": 2}\n']:
-        bad.append("a splat entry beside string keys is skipped; the keys still swap")
+        bad.append("a splat entry beside keys is skipped; the keys still swap")
     # Line removal: in a multi-statement block one statement is deleted, the rest kept.
     if by("def f():\n    a()\n    b()\n", "line_removal") != ["def f():\n    \n    b()\n", "def f():\n    a()\n    \n"]:
         bad.append(f"line removal should delete one statement, keeping the rest: {by('def f():\n    a()\n    b()\n', 'line_removal')}")
@@ -663,6 +667,33 @@ def _probe_mutation():
         bad.append(f"branch-arm removal should drop the elif clause: {elif_arm}")
     if any(m["label"].startswith("drop-arm@") for m in enumerate_mutants("if x:\n    a()\n    c()\n")):
         bad.append("an if with no elif or else has no branch arm to drop")
+
+    def arms(source):
+        return sorted(m["source"] for m in enumerate_mutants(source) if m["label"].startswith("drop-arm@"))
+
+    # Branch-arm removal reaches every compound statement, dropping only clauses whose removal still parses.
+    if arms("for i in x:\n    a()\nelse:\n    b()\n") != ["for i in x:\n    a()\n\n"]:
+        bad.append(f"a for-else arm is droppable: {arms('for i in x:\n    a()\nelse:\n    b()\n')}")
+    if arms("while x:\n    a()\nelse:\n    b()\n") != ["while x:\n    a()\n\n"]:
+        bad.append(f"a while-else arm is droppable: {arms('while x:\n    a()\nelse:\n    b()\n')}")
+    # match: a case is droppable only when two or more remain.
+    if arms("match v:\n    case 1:\n        a()\n    case 2:\n        b()\n") != ["match v:\n    \n    case 2:\n        b()\n", "match v:\n    case 1:\n        a()\n    \n"]:
+        bad.append(f"a match case is droppable when two or more: {arms('match v:\n    case 1:\n        a()\n    case 2:\n        b()\n')}")
+    if arms("match v:\n    case 1:\n        a()\n") != []:
+        bad.append("a sole match case is not droppable")
+    # try: each except droppable when another except remains; else always; finally when an except remains.
+    if arms("try:\n    a()\nexcept E:\n    b()\nexcept F:\n    c()\n") != ["try:\n    a()\n\nexcept F:\n    c()\n", "try:\n    a()\nexcept E:\n    b()\n\n"]:
+        bad.append(f"each of two excepts is droppable: {arms('try:\n    a()\nexcept E:\n    b()\nexcept F:\n    c()\n')}")
+    # one except + finally (no else): the except drops (finally remains), the finally drops (except remains).
+    if arms("try:\n    a()\nexcept E:\n    b()\nfinally:\n    c()\n") != ["try:\n    a()\n\nfinally:\n    c()\n", "try:\n    a()\nexcept E:\n    b()\n\n"]:
+        bad.append(f"except and finally each drop when the other remains: {arms('try:\n    a()\nexcept E:\n    b()\nfinally:\n    c()\n')}")
+    # one except + else + finally: the else and finally drop, but the sole except cannot (else needs it).
+    if arms("try:\n    a()\nexcept E:\n    b()\nelse:\n    c()\nfinally:\n    d()\n") != ["try:\n    a()\nexcept E:\n    b()\n\nfinally:\n    d()\n", "try:\n    a()\nexcept E:\n    b()\nelse:\n    c()\n\n"]:
+        bad.append(f"else and finally drop, sole except does not when an else needs it: {arms('try:\n    a()\nexcept E:\n    b()\nelse:\n    c()\nfinally:\n    d()\n')}")
+    if arms("try:\n    a()\nexcept E:\n    b()\n") != []:
+        bad.append("a sole except is not droppable (the try would have no handler)")
+    if arms("try:\n    a()\nfinally:\n    b()\n") != []:
+        bad.append("a finally with no except is not droppable (the try would be bare)")
 
     # Docstrings are non-behavioural: a docstring is neither emptied nor removed (a universally
     # equivalent mutant), but a non-docstring bare string still is.

@@ -125,23 +125,25 @@ def _condition_flips(tree, source: bytes) -> list:
 
 
 def _dict_key_swaps(tree, source: bytes) -> list:
-    """Every dict-key-swap mutant (section 9.6): in a dictionary literal with two or more string keys,
-    each key replaced by the next sibling key (cyclically), one mutant per key — so reading the wrong
-    key, or a key gone missing, is caught. Non-string keys and splat entries are left alone. Pure."""
+    """Every dict-key-swap mutant (section 9.6): in a dictionary literal with two or more keys, each key
+    replaced by the next sibling key (cyclically), one mutant per key — so reading the wrong key, or a
+    key gone missing, is caught. Keys of any kind are swapped (a splat entry has no key and is left
+    alone); a swap that would not change the source (a duplicate key) is skipped. Pure."""
     mutants = []
     for node in walk(tree.root_node):
         if node.type != "dictionary":
             continue
-        string_keys = []
+        keys = []
         for child in node.named_children:
             key = child.child_by_field_name("key")
-            if key is not None and key.type == "string":
-                string_keys.append(key)
-        if len(string_keys) < 2:
+            if key is not None:
+                keys.append(key)
+        if len(keys) < 2:
             continue
-        for index, key in enumerate(string_keys):
-            sibling = string_keys[(index + 1) % len(string_keys)]
-            mutants.append(_mutant("key_swap", f"key->sibling@{key.start_byte}", source, key.start_byte, key.end_byte, node_text(sibling, source).encode("utf-8")))
+        for index, key in enumerate(keys):
+            sibling_text = node_text(keys[(index + 1) % len(keys)], source)
+            if sibling_text != node_text(key, source):
+                mutants.append(_mutant("key_swap", f"key->sibling@{key.start_byte}", source, key.start_byte, key.end_byte, sibling_text.encode("utf-8")))
     return mutants
 
 
@@ -210,17 +212,39 @@ def _line_removals(tree, source: bytes) -> list:
     return mutants
 
 
+def _removable_arms(node) -> list:
+    """The clauses of a compound statement that can be dropped while it still parses (section 9.6). An
+    `if`'s elif/else and a `for`/`while`'s else are always removable (the head stands alone). A `match`
+    case is removable only when two or more remain. A `try`'s else is always removable; its finally
+    only when an except remains; an except only when another except remains, or when a finally (and no
+    else, which would be orphaned) remains. The leading arm of each construct is left to the other
+    operators. Returns the removable clause nodes; empty for any other node."""
+    if node.type == "if_statement":
+        return [child for child in node.children if child.type in ("elif_clause", "else_clause")]
+    if node.type in ("for_statement", "while_statement"):
+        return [child for child in node.children if child.type == "else_clause"]
+    if node.type == "match_statement":
+        cases = [clause for block in node.children if block.type == "block" for clause in block.children if clause.type == "case_clause"]
+        return cases if len(cases) >= 2 else []
+    if node.type == "try_statement":
+        excepts = [child for child in node.children if child.type == "except_clause"]
+        has_finally = any(child.type == "finally_clause" for child in node.children)
+        has_else = any(child.type == "else_clause" for child in node.children)
+        except_ok = len(excepts) >= 2 or (has_finally and not has_else)
+        droppable = {"else_clause": True, "finally_clause": bool(excepts), "except_clause": except_ok}
+        return [child for child in node.children if droppable.get(child.type, False)]
+    return []
+
+
 def _branch_arm_removals(tree, source: bytes) -> list:
-    """Every branch-arm-removal mutant (section 9.6): an `elif` or `else` clause of an `if` deleted
-    whole, so its arm never runs. The leading `if` arm cannot be dropped without restructuring and is
-    left to the other operators; only the trailing optional arms are removed. Pure."""
+    """Every branch-arm-removal mutant (section 9.6): a droppable clause of a compound statement — an
+    `if`'s elif/else, a `for`/`while` else, a `try`'s except/else/finally, a `match` case — deleted
+    whole, so its arm never runs. Only clauses whose removal leaves the statement parseable are dropped
+    (see _removable_arms). Pure."""
     mutants = []
     for node in walk(tree.root_node):
-        if node.type != "if_statement":
-            continue
-        for child in node.children:
-            if child.type in ("elif_clause", "else_clause"):
-                mutants.append(_mutant("line_removal", f"drop-arm@{child.start_byte}", source, child.start_byte, child.end_byte, b""))
+        for arm in _removable_arms(node):
+            mutants.append(_mutant("line_removal", f"drop-arm@{arm.start_byte}", source, arm.start_byte, arm.end_byte, b""))
     return mutants
 
 
