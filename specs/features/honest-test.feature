@@ -342,15 +342,25 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When _comparison_swaps mutates it
     Then it returns one mutant per site with each operator swapped to its pair
 
-  Scenario: _number_shifts shifts every integer literal
-    Given source with integer literals
+  Scenario: _number_shifts shifts every integer and float literal
+    Given source with integer and float literals
     When _number_shifts mutates it
     Then it returns a mutant for n+1 and a mutant for n-1 at each literal
 
-  Scenario: _condition_flips flips boolean operators and drops a not
-    Given source with and/or operators and not operators
+  Scenario: _condition_node returns the condition of a conditional construct
+    Given a syntax node
+    When _condition_node inspects it
+    Then it returns the boolean condition for an if, elif, while, ternary, assert, or comprehension filter, else None
+
+  Scenario: _condition_flips flips boolean operators, drops a not, and negates a condition
+    Given source with and/or operators, not operators, and conditional constructs
     When _condition_flips mutates it
-    Then it swaps and with or and drops a not at each site
+    Then it swaps and with or, drops a not, and negates each condition to not (c)
+
+  Scenario: _dict_key_swaps swaps each dict key to a sibling key
+    Given source with a dictionary literal of two or more string keys
+    When _dict_key_swaps mutates it
+    Then it returns a mutant replacing each string key with the next sibling key
 
   Scenario: _constant_replaces swaps booleans and empties strings
     Given source with True/False literals and non-empty strings
@@ -367,10 +377,15 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When _membership_changes mutates it
     Then it swaps in with not in at each membership site
 
-  Scenario: _line_removals deletes one statement at a time
-    Given source with a block of two or more statements
+  Scenario: _line_removals deletes a statement or replaces a sole statement with pass
+    Given source with a block of statements
     When _line_removals mutates it
-    Then it returns a mutant with each statement deleted, leaving a sole statement alone
+    Then it deletes each statement of a multi-statement block and replaces a block's sole statement with pass
+
+  Scenario: _branch_arm_removals drops an elif or else clause
+    Given source with an if statement carrying elif or else clauses
+    When _branch_arm_removals mutates it
+    Then it returns a mutant with each trailing arm removed
 
   Scenario: enumerate_mutants produces every mutant of the source
     Given module source

@@ -74,19 +74,38 @@ def _mutant(operator, label, source_bytes, start, end, replacement):
 
 
 def _number_shifts(tree, source: bytes) -> list:
-    """Every number-shift mutant (section 9.6): each integer literal n replaced by n+1 and by n-1. Pure."""
+    """Every number-shift mutant (section 9.6): each integer or float literal n replaced by n+1 and by
+    n-1. Integer bases (hex/octal/binary) and digit separators are read with int(text, 0); a complex
+    literal (text ending in j) has no single 'one' to add and is skipped rather than crashing. Pure."""
     mutants = []
     for node in walk(tree.root_node):
-        if node.type != "integer":
+        if node.type not in ("integer", "float"):
             continue
-        value = int(node_text(node, source))
+        text = node_text(node, source)
+        if text[-1] in ("j", "J"):
+            continue  # a complex literal (1j) has no single 'one' to add — skip rather than crash.
+        value = int(text, 0) if node.type == "integer" else float(text)
         for shift in (1, -1):
             mutants.append(_mutant("number_shift", f"{value}->{value + shift}@{node.start_byte}", source, node.start_byte, node.end_byte, str(value + shift).encode("utf-8")))
     return mutants
 
 
+def _condition_node(node):
+    """The boolean condition of a conditional construct, or None if `node` is not one. The branch
+    statements (if/elif/while) carry it as a `condition` field; the ternary, the assert, and the
+    comprehension filter name it positionally — the expression immediately after their keyword."""
+    if node.type in ("if_statement", "elif_clause", "while_statement"):
+        return node.child_by_field_name("condition")
+    if node.type == "conditional_expression":
+        return node.children[2]
+    if node.type in ("assert_statement", "if_clause"):
+        return node.children[1]
+    return None
+
+
 def _condition_flips(tree, source: bytes) -> list:
-    """Every condition-flip mutant (section 9.6): `and`<->`or`, and a `not` removed. Pure."""
+    """Every condition-flip mutant (section 9.6): `and`<->`or`, a `not` removed, and a condition negated
+    (`c` -> `not (c)`) at every conditional construct — the `x` -> `not x` case. Pure."""
     mutants = []
     for node in walk(tree.root_node):
         if node.type == "boolean_operator":
@@ -97,6 +116,32 @@ def _condition_flips(tree, source: bytes) -> list:
         elif node.type == "not_operator":
             operand = node.children[1]
             mutants.append(_mutant("condition_flip", f"drop-not@{node.start_byte}", source, node.start_byte, node.end_byte, node_text(operand, source).encode("utf-8")))
+        else:
+            condition = _condition_node(node)
+            if condition is not None:
+                negated = b"not (" + node_text(condition, source).encode("utf-8") + b")"
+                mutants.append(_mutant("condition_flip", f"add-not@{condition.start_byte}", source, condition.start_byte, condition.end_byte, negated))
+    return mutants
+
+
+def _dict_key_swaps(tree, source: bytes) -> list:
+    """Every dict-key-swap mutant (section 9.6): in a dictionary literal with two or more string keys,
+    each key replaced by the next sibling key (cyclically), one mutant per key — so reading the wrong
+    key, or a key gone missing, is caught. Non-string keys and splat entries are left alone. Pure."""
+    mutants = []
+    for node in walk(tree.root_node):
+        if node.type != "dictionary":
+            continue
+        string_keys = []
+        for child in node.named_children:
+            key = child.child_by_field_name("key")
+            if key is not None and key.type == "string":
+                string_keys.append(key)
+        if len(string_keys) < 2:
+            continue
+        for index, key in enumerate(string_keys):
+            sibling = string_keys[(index + 1) % len(string_keys)]
+            mutants.append(_mutant("key_swap", f"key->sibling@{key.start_byte}", source, key.start_byte, key.end_byte, node_text(sibling, source).encode("utf-8")))
     return mutants
 
 
@@ -144,25 +189,42 @@ def _membership_changes(tree, source: bytes) -> list:
 
 
 def _line_removals(tree, source: bytes) -> list:
-    """Every line-removal mutant (section 9.6): one statement deleted, leaving the rest. Only a container
-    with two or more statements is mutated, so the result still parses; a sole statement is left to the
-    other operators. Pure."""
+    """Every line-removal mutant (section 9.6): in a container of two or more statements, one statement
+    is deleted, leaving the rest. A block's sole statement cannot be deleted without breaking the block,
+    so it is replaced by `pass` — its effect removed while the source still parses. A docstring, a bare
+    annotation, or a statement already `pass` is universally equivalent and skipped; a module's sole
+    statement is left to deletion (a module carries many top-level statements). Pure."""
     mutants = []
     for node in walk(tree.root_node):
         if node.type not in ("block", "module"):
             continue
         statements = [child for child in node.named_children if child.type != "comment"]
-        if len(statements) < 2:
-            continue
         for statement in statements:
             string_child = next((child for child in statement.named_children if child.type == "string"), None)
             if (string_child is not None and _is_docstring(string_child)) or _is_annotation_only(statement):
                 continue
-            mutants.append(_mutant("line_removal", f"remove@{statement.start_byte}", source, statement.start_byte, statement.end_byte, b""))
+            if len(statements) >= 2:
+                mutants.append(_mutant("line_removal", f"remove@{statement.start_byte}", source, statement.start_byte, statement.end_byte, b""))
+            elif node.type == "block" and node_text(statement, source) != "pass":
+                mutants.append(_mutant("line_removal", f"sole-pass@{statement.start_byte}", source, statement.start_byte, statement.end_byte, b"pass"))
     return mutants
 
 
-_OPERATORS = (_comparison_swaps, _number_shifts, _condition_flips, _constant_replaces, _result_swaps, _membership_changes, _line_removals)
+def _branch_arm_removals(tree, source: bytes) -> list:
+    """Every branch-arm-removal mutant (section 9.6): an `elif` or `else` clause of an `if` deleted
+    whole, so its arm never runs. The leading `if` arm cannot be dropped without restructuring and is
+    left to the other operators; only the trailing optional arms are removed. Pure."""
+    mutants = []
+    for node in walk(tree.root_node):
+        if node.type != "if_statement":
+            continue
+        for child in node.children:
+            if child.type in ("elif_clause", "else_clause"):
+                mutants.append(_mutant("line_removal", f"drop-arm@{child.start_byte}", source, child.start_byte, child.end_byte, b""))
+    return mutants
+
+
+_OPERATORS = (_comparison_swaps, _number_shifts, _condition_flips, _constant_replaces, _result_swaps, _membership_changes, _dict_key_swaps, _line_removals, _branch_arm_removals)
 
 
 def enumerate_mutants(source: str) -> list:

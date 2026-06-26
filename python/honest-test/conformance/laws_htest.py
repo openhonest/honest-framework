@@ -586,14 +586,33 @@ def _probe_mutation():
     def by(source, operator):
         return sorted(m["source"] for m in enumerate_mutants(source) if m["operator"] == operator)
 
-    # Number shift: each integer to n+1 and n-1.
+    # Number shift: each integer to n+1 and n-1, and the same for float literals.
     if by("x = 5\n", "number_shift") != ["x = 4\n", "x = 6\n"]:
         bad.append(f"number shift should produce n+1 and n-1: {by('x = 5\n', 'number_shift')}")
-    # Condition flip: and <-> or, and a `not` dropped.
+    if by("x = 2.5\n", "number_shift") != ["x = 1.5\n", "x = 3.5\n"]:
+        bad.append(f"number shift should cover float literals: {by('x = 2.5\n', 'number_shift')}")
+    if by("x = 0xff\n", "number_shift") != ["x = 254\n", "x = 256\n"]:
+        bad.append(f"number shift should read hex/octal/binary bases: {by('x = 0xff\n', 'number_shift')}")
+    if by("x = 1j\n", "number_shift") != []:
+        bad.append("a complex literal has no single one to add and is skipped, not crashed")
+    # Condition flip: and <-> or, a `not` dropped, and a branch condition negated (`if c` -> `if not (c)`).
     if by("a and b\n", "condition_flip") != ["a or b\n"]:
         bad.append("and should flip to or")
     if by("not a\n", "condition_flip") != ["a\n"]:
         bad.append("a not should be droppable")
+    if by("if x:\n    pass\n", "condition_flip") != ["if not (x):\n    pass\n"]:
+        bad.append(f"a branch condition should be negatable: {by('if x:\n    pass\n', 'condition_flip')}")
+    if by("while x:\n    pass\n", "condition_flip") != ["while not (x):\n    pass\n"]:
+        bad.append("a while condition should be negatable")
+    elif_neg = by("if x:\n    pass\nelif y:\n    pass\n", "condition_flip")
+    if "if x:\n    pass\nelif not (y):\n    pass\n" not in elif_neg:
+        bad.append(f"an elif condition should be negatable: {elif_neg}")
+    if by("x = a if b else c\n", "condition_flip") != ["x = a if not (b) else c\n"]:
+        bad.append(f"a ternary condition should be negatable: {by('x = a if b else c\n', 'condition_flip')}")
+    if by("assert a\n", "condition_flip") != ["assert not (a)\n"]:
+        bad.append("an assert condition should be negatable")
+    if by("y = [i for i in z if a]\n", "condition_flip") != ["y = [i for i in z if not (a)]\n"]:
+        bad.append("a comprehension filter condition should be negatable")
     # Constant replace: True <-> False, and a non-empty string emptied.
     if by("x = True\n", "constant_replace") != ["x = False\n"]:
         bad.append("True should flip to False")
@@ -607,11 +626,43 @@ def _probe_mutation():
         bad.append("in should change to not in")
     if by("x not in y\n", "membership_change") != ["x in y\n"]:
         bad.append("not in should change to in")
-    # Line removal: one statement deleted, the rest kept; a sole statement is left alone (it would break the block).
+    # Dict-key swap: each dict key replaced by a sibling key (the cyclic next), one per key. A single-key
+    # dict has no sibling to swap to. Only string keys are swapped.
+    keyswaps = by('d = {"a": 1, "b": 2}\n', "key_swap")
+    if keyswaps != ['d = {"a": 1, "a": 2}\n', 'd = {"b": 1, "b": 2}\n']:
+        bad.append(f"a dict key should swap to a sibling key: {keyswaps}")
+    if by('d = {"a": 1}\n', "key_swap") != []:
+        bad.append("a single-key dict has no sibling key to swap to")
+    if by("d = {x: 1, y: 2}\n", "key_swap") != []:
+        bad.append("non-string dict keys are not swapped")
+    if by('d = {**z, "a": 1, "b": 2}\n', "key_swap") != ['d = {**z, "a": 1, "a": 2}\n', 'd = {**z, "b": 1, "b": 2}\n']:
+        bad.append("a splat entry beside string keys is skipped; the keys still swap")
+    # Line removal: in a multi-statement block one statement is deleted, the rest kept.
     if by("def f():\n    a()\n    b()\n", "line_removal") != ["def f():\n    \n    b()\n", "def f():\n    a()\n    \n"]:
         bad.append(f"line removal should delete one statement, keeping the rest: {by('def f():\n    a()\n    b()\n', 'line_removal')}")
-    if [m for m in enumerate_mutants("a()\n") if m["operator"] == "line_removal"]:
-        bad.append("a sole statement is not removed")
+    # A sole statement cannot be deleted (the block would not parse), so it is replaced by `pass` — its
+    # effect removed while the block stays valid. A block already `pass` yields nothing; a sole docstring
+    # or bare annotation stays universally equivalent.
+    if by("def f():\n    a()\n", "line_removal") != ["def f():\n    pass\n"]:
+        bad.append(f"a sole statement is replaced by pass: {by('def f():\n    a()\n', 'line_removal')}")
+    if by("a()\n", "line_removal") != []:
+        bad.append("a sole module statement is left to deletion (a module carries many top-level statements)")
+    if by("def f():\n    pass\n", "line_removal") != []:
+        bad.append("a block that is already a sole pass yields no line-removal mutant")
+    if by('def f():\n    """d"""\n', "line_removal") != [] or by("def f():\n    a: int\n", "line_removal") != []:
+        bad.append("a sole docstring or annotation is not replaced by pass")
+    # Branch-arm removal: an else or elif clause is dropped whole (multi-statement bodies, so the arm
+    # removal is distinct from the sole-statement replacement); an if with neither has no arm to drop.
+    # Dropping the trailing clause leaves the source's final newline orphaned (a harmless blank line);
+    # the mutant still parses and runs, which is all the gate needs.
+    else_arm = by("if x:\n    a()\n    c()\nelse:\n    b()\n    d()\n", "line_removal")
+    if "if x:\n    a()\n    c()\n\n" not in else_arm:
+        bad.append(f"branch-arm removal should drop the else clause: {else_arm}")
+    elif_arm = by("if x:\n    a()\n    c()\nelif y:\n    b()\n    d()\n", "line_removal")
+    if "if x:\n    a()\n    c()\n\n" not in elif_arm:
+        bad.append(f"branch-arm removal should drop the elif clause: {elif_arm}")
+    if any(m["label"].startswith("drop-arm@") for m in enumerate_mutants("if x:\n    a()\n    c()\n")):
+        bad.append("an if with no elif or else has no branch arm to drop")
 
     # Docstrings are non-behavioural: a docstring is neither emptied nor removed (a universally
     # equivalent mutant), but a non-docstring bare string still is.
