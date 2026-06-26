@@ -114,9 +114,13 @@ def _ht6_unrecognized(subject):
 
 
 def _ht7_totality(subject):
+    # Totality is checked against the subject's hand-written `declared` members (an independent oracle),
+    # NOT against _set_members(vocab) — the latter reads the constructed vocabulary's own frozenset back,
+    # so a member the constructor dropped would vanish from both the input and the matcher and the law
+    # could never fail. Sourcing the members independently makes a construction-time drop a real failure.
     vocab = subject["vocab"]
     bad = []
-    for member in _set_members(vocab):
+    for member in subject.get("declared", []):
         result = classify([member], vocab)
         hits = _matches(vocab, member)
         if not hits:
@@ -183,14 +187,18 @@ def _classify_contract(subject):
 _PROTOCOL_HOST = {"protocol": {"http", "https"}, "host": {"example.com"}}
 
 RUNTIME_SUBJECTS = [
-    ("two_sets", {"vocab": vocabulary({"color": {"red", "green"}, "size": {"small", "large"}})}),
-    ("insensitive", {"vocab": vocabulary({"lang": insensitive({"EN", "FR"})}), "valid": ["en", "Fr"]}),
+    # `declared` is the hand-written list of every Set member each subject declares — an independent
+    # oracle for totality (_ht7): it is NOT read back from the constructed vocabulary, so a member
+    # dropped or mangled during construction is caught rather than silently dropped from both sides.
+    ("two_sets", {"vocab": vocabulary({"color": {"red", "green"}, "size": {"small", "large"}}), "declared": ["red", "green", "small", "large"]}),
+    ("insensitive", {"vocab": vocabulary({"lang": insensitive({"EN", "FR"})}), "valid": ["en", "Fr"], "declared": ["EN", "FR"]}),
     ("predicate", {"vocab": vocabulary({"digits": predicate(str.isdigit)}), "valid": ["1", "42", "007"]}),
     (
         "mixed",
         {
             "vocab": vocabulary({"color": {"red"}, "digits": predicate(str.isdigit)}),
             "valid": ["7"],
+            "declared": ["red"],
         },
     ),
 ]
