@@ -326,3 +326,53 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given a coverage document, a path, and an injected write
     When write_coverage writes it
     Then it serializes the document and writes it to the path so honest-check can read it back
+
+  Scenario: _edit replaces a byte range of the source
+    Given a source, a start and end byte, and a replacement
+    When _edit applies it
+    Then it returns the source with that byte range replaced
+
+  Scenario: _mutant records one mutation
+    Given an operator, a label, the source, a byte range, and a replacement
+    When _mutant records it
+    Then it returns the operator, label, and the mutated source
+
+  Scenario: _comparison_swaps mutates every comparison operator
+    Given source with comparison operators
+    When _comparison_swaps mutates it
+    Then it returns one mutant per site with each operator swapped to its pair
+
+  Scenario: _number_shifts shifts every integer literal
+    Given source with integer literals
+    When _number_shifts mutates it
+    Then it returns a mutant for n+1 and a mutant for n-1 at each literal
+
+  Scenario: _condition_flips flips boolean operators and drops a not
+    Given source with and/or operators and not operators
+    When _condition_flips mutates it
+    Then it swaps and with or and drops a not at each site
+
+  Scenario: _constant_replaces swaps booleans and empties strings
+    Given source with True/False literals and non-empty strings
+    When _constant_replaces mutates it
+    Then it swaps True with False and empties each non-empty string literal
+
+  Scenario: _result_swaps swaps ok and err calls
+    Given source with ok and err calls
+    When _result_swaps mutates it
+    Then it swaps the callee ok with err and vice versa at each call
+
+  Scenario: _membership_changes swaps in and not in
+    Given source with in and not in operators
+    When _membership_changes mutates it
+    Then it swaps in with not in at each membership site
+
+  Scenario: _line_removals deletes one statement at a time
+    Given source with a block of two or more statements
+    When _line_removals mutates it
+    Then it returns a mutant with each statement deleted, leaving a sole statement alone
+
+  Scenario: enumerate_mutants produces every mutant of the source
+    Given module source
+    When enumerate_mutants runs every operator over it
+    Then it returns the full list of mutants, each an operator, a label, and the mutated source

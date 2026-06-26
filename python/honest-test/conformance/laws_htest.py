@@ -561,9 +561,64 @@ def _probe_value():
     return bad
 
 
+def _probe_mutation():
+    """Mutation adequacy engine (§9.6): each operator is a pure tree-sitter transform producing one
+    mutated source per site (the way the generators enumerate a Set). Comparison swap: every
+    <, <=, >, >=, ==, != token swapped to its pair."""
+    from honest_test import enumerate_mutants
+
+    bad = []
+    source = "def f(x):\n    return x < 0 and x == y\n"
+    swaps = sorted(m["source"] for m in enumerate_mutants(source) if m["operator"] == "comparison_swap")
+    if swaps != [
+        "def f(x):\n    return x < 0 and x != y\n",
+        "def f(x):\n    return x <= 0 and x == y\n",
+    ]:
+        bad.append(f"comparison swap should mutate each comparison operator to its pair: {swaps}")
+
+    # Every comparison operator is swappable (the full closed pairing), and an unmutated source has none.
+    pairs = sorted({m["source"] for m in enumerate_mutants("a >= b\nc != d\n") if m["operator"] == "comparison_swap"})
+    if pairs != ["a > b\nc != d\n", "a >= b\nc == d\n"]:
+        bad.append(f">= -> > and != -> == should each be produced: {pairs}")
+    if [m for m in enumerate_mutants("x = 1\n") if m["operator"] == "comparison_swap"]:
+        bad.append("source with no comparison operator yields no comparison-swap mutant")
+
+    def by(source, operator):
+        return sorted(m["source"] for m in enumerate_mutants(source) if m["operator"] == operator)
+
+    # Number shift: each integer to n+1 and n-1.
+    if by("x = 5\n", "number_shift") != ["x = 4\n", "x = 6\n"]:
+        bad.append(f"number shift should produce n+1 and n-1: {by('x = 5\n', 'number_shift')}")
+    # Condition flip: and <-> or, and a `not` dropped.
+    if by("a and b\n", "condition_flip") != ["a or b\n"]:
+        bad.append("and should flip to or")
+    if by("not a\n", "condition_flip") != ["a\n"]:
+        bad.append("a not should be droppable")
+    # Constant replace: True <-> False, and a non-empty string emptied.
+    if by("x = True\n", "constant_replace") != ["x = False\n"]:
+        bad.append("True should flip to False")
+    if by('x = "hi"\n', "constant_replace") != ['x = ""\n']:
+        bad.append("a non-empty string should be emptiable")
+    # Result swap: ok(...) <-> err(...).
+    if by("ok(z)\n", "result_swap") != ["err(z)\n"]:
+        bad.append("ok should swap to err")
+    # Membership change: in <-> not in.
+    if by("x in y\n", "membership_change") != ["x not in y\n"]:
+        bad.append("in should change to not in")
+    if by("x not in y\n", "membership_change") != ["x in y\n"]:
+        bad.append("not in should change to in")
+    # Line removal: one statement deleted, the rest kept; a sole statement is left alone (it would break the block).
+    if by("def f():\n    a()\n    b()\n", "line_removal") != ["def f():\n    \n    b()\n", "def f():\n    a()\n    \n"]:
+        bad.append(f"line removal should delete one statement, keeping the rest: {by('def f():\n    a()\n    b()\n', 'line_removal')}")
+    if [m for m in enumerate_mutants("a()\n") if m["operator"] == "line_removal"]:
+        bad.append("a sole statement is not removed")
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
+        "mutation": _probe_mutation(),
         "predicate": _probe_predicate(),
         "length": _probe_length(),
         "honesty": _probe_honesty(),

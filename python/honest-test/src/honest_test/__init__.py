@@ -29,6 +29,7 @@ from honest_test.coverage_data import (
     vocabulary_coverage,
     write_coverage,
 )
+from honest_test.mutation import enumerate_mutants
 from honest_test.determinism import (
     call_monitor,
     nondeterminism_finding,
@@ -94,6 +95,7 @@ __all__ = [
     "state_machine_coverage",
     "build_coverage",
     "write_coverage",
+    "enumerate_mutants",
     "enumerate_test_cases",
     "test_chain_contracts",
     "test_valid_transitions",
