@@ -175,6 +175,9 @@ class _ReconControl:
     async def disable_foreign_keys(self):
         self.calls.append("disable_fk")
 
+    async def enable_foreign_keys(self):
+        self.calls.append("enable_fk")
+
     async def verify_foreign_keys(self):
         self.calls.append("verify_fk")
         return []
@@ -253,25 +256,28 @@ def _probe_apply():
             bad.append(f"reconstruction did not copy data / recreate index: {full.executed}")
         if full.paused < 1 or full.resumed < 1:
             bad.append("reconstruction did not pause/resume sync push")
-        # §5.5: reconstruction is one transaction with FK checks disabled, then verified, then committed.
-        if full.calls != ["begin", "disable_fk", "verify_fk", "commit"]:
-            bad.append(f"reconstruction control flow should be begin/disable-fk/verify-fk/commit: {full.calls}")
+        # §5.5: foreign-key checks are disabled BEFORE the transaction (the pragma is connection-scoped,
+        # not transactional), the rebuild runs, step 6 verifies the foreign keys, the transaction commits,
+        # and the foreign-key checks are re-enabled after — the full disable/verify/re-enable lifecycle.
+        if full.calls != ["disable_fk", "begin", "verify_fk", "commit", "enable_fk"]:
+            bad.append(f"reconstruction control flow should be disable-fk/begin/verify-fk/commit/enable-fk: {full.calls}")
 
         bare = _BareConn()
         if not (await apply(plan, _RECON_TARGET, bare, "sqlite"))["success"]:
             bad.append("reconstruction failed on a connection without push hooks")
 
-        # §5.5 atomicity: a DDL failure rolls the whole transaction back — never a half-migrated table.
+        # §5.5 atomicity: a DDL failure rolls the whole transaction back — never a half-migrated table —
+        # and re-enables foreign-key checks so the connection is not left with them off.
         failing = _FailingConn("DROP TABLE")
         failed = await apply(plan, _RECON_TARGET, failing, "sqlite")
-        if failed["success"] or "rollback" not in failing.calls or "commit" in failing.calls:
-            bad.append(f"a failed reconstruction must roll back, not commit: {failing.calls}")
+        if failed["success"] or "rollback" not in failing.calls or "commit" in failing.calls or "enable_fk" not in failing.calls:
+            bad.append(f"a failed reconstruction must roll back and re-enable foreign keys, not commit: {failing.calls}")
 
-        # §5.5 step 6: a foreign key left dangling after the rebuild rolls back and reports failure.
+        # §5.5 step 6: a foreign key left dangling after the rebuild rolls back, re-enables, and fails.
         fk = _FkViolationConn()
         fk_result = await apply(plan, _RECON_TARGET, fk, "sqlite")
-        if fk_result["success"] or "rollback" not in fk.calls or "commit" in fk.calls:
-            bad.append(f"a post-reconstruction FK violation must roll back: {fk.calls}")
+        if fk_result["success"] or "rollback" not in fk.calls or "commit" in fk.calls or "enable_fk" not in fk.calls:
+            bad.append(f"a post-reconstruction FK violation must roll back and re-enable foreign keys: {fk.calls}")
 
         # Two reconstruction ops on one table reconstruct it once (the already-done skip).
         two = {"t": {"columns": {"id": {"type": "text"}, "keep": {"type": "integer"}}}}

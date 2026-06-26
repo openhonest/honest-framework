@@ -170,6 +170,9 @@ class _FakeConn:
     async def disable_foreign_keys(self):
         self.executed.append("DISABLE FK")
 
+    async def enable_foreign_keys(self):
+        self.executed.append("ENABLE FK")
+
     async def verify_foreign_keys(self):
         self.executed.append("VERIFY FK")
         return []
