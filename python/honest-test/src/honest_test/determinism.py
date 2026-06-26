@@ -6,44 +6,83 @@ static analysis. call_monitor patches the watch-list symbols so any call to one 
 verify_determinism runs the link under the monitor and, for a non-boundary link, warns about every
 source it touched.
 
-The watch list mirrors honest-check's HC008 NONDETERMINISTIC_WATCH_LIST — the call-form, patchable
-subset the runtime monitor can trap. The attribute-read and C-type-method entries honest-check carries
-(os.environ, sys.argv, datetime.datetime.now) cannot be monkeypatched, so they stay honest-check's
-static responsibility. The decision (nondeterminism_finding) and the list are pure; the monitor and the
-link run are the boundary — this file mutates module attributes and executes the link under
-instrumentation, exactly the impurity the linter forbids in business logic, so HC-P004/HC-P011 are
-disabled here.
+The watch list is the patchable, module-level callable subset of honest-check's HC008
+NONDETERMINISTIC_WATCH_LIST: every concrete callable that list names is trapped here, and the conformance
+probe checks the two against each other directly (honest-test traps nothing honest-check omits, and every
+module-level callable honest-check publishes is trapped), so the lists cannot drift. honest-check's
+entries the runtime monitor cannot patch — attribute reads (os.environ, sys.argv), C-type-bound methods
+(datetime.datetime.now), and the id builtin — stay honest-check's static responsibility; its module-glob
+entries (random.*, secrets.*, platform.*) are trapped representatively. A symbol absent on the running
+platform (e.g. os.uname off POSIX) is skipped rather than failing the monitor. The decision
+(nondeterminism_finding) and the list are pure; the monitor and the link run are the boundary — this file
+mutates module attributes and executes the link under instrumentation, exactly the impurity the linter
+forbids in business logic, so HC-P004/HC-P011 are disabled here.
 """
 
 # honest: disable HC-P004, HC-P011
 
+import asyncio
 import contextlib
+import getpass
+import multiprocessing
 import os
+import platform
 import random
+import secrets
 import threading
 import time
 import uuid
 
 from honest_test.honesty import _finding, _is_boundary, _name
 
-_MODULES = {"os": os, "random": random, "threading": threading, "time": time, "uuid": uuid}
+_MODULES = {
+    "asyncio": asyncio,
+    "getpass": getpass,
+    "multiprocessing": multiprocessing,
+    "os": os,
+    "platform": platform,
+    "random": random,
+    "secrets": secrets,
+    "threading": threading,
+    "time": time,
+    "uuid": uuid,
+}
 
-# The non-deterministic sources a non-boundary link must not call. Each is a no-argument-callable module
-# function the monitor patches; the set mirrors the call-form, patchable entries of honest-check's HC008
-# list (randomness, time, process state, thread identity).
+# The non-deterministic sources a non-boundary link must not call: every module-level callable in honest-
+# check's HC008 list (randomness, time, process and thread state), plus a representative member of each of
+# its module-glob entries. Verified against the published list by the conformance probe, so the two stay
+# in lockstep.
 _WATCH_LIST = (
-    "random.random",
     "uuid.uuid1",
+    "uuid.uuid3",
     "uuid.uuid4",
+    "uuid.uuid5",
+    "os.urandom",
+    "os.getenv",
+    "os.getlogin",
     "os.getpid",
     "os.getppid",
     "os.getcwd",
+    "os.uname",
     "time.time",
     "time.time_ns",
     "time.monotonic",
     "time.perf_counter",
     "time.process_time",
+    "time.sleep",
+    "getpass.getpass",
+    "getpass.getuser",
+    "threading.current_thread",
     "threading.get_ident",
+    "threading.active_count",
+    "multiprocessing.current_process",
+    "multiprocessing.cpu_count",
+    "asyncio.get_event_loop",
+    "asyncio.current_task",
+    "random.random",
+    "random.randint",
+    "secrets.token_bytes",
+    "platform.system",
 )
 
 
@@ -81,7 +120,9 @@ def call_monitor(watch_list):
     for path in watch_list:
         module_name, attr = path.rsplit(".", 1)
         module = _MODULES[module_name]
-        original = getattr(module, attr)
+        original = getattr(module, attr, None)
+        if original is None:
+            continue
         saved.append((module, attr, original))
         setattr(module, attr, _recorder(path, original, detected))
     try:

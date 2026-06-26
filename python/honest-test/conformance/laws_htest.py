@@ -181,11 +181,31 @@ def _probe_honesty():
     return bad
 
 
+def _module_callable_entry(entry):
+    """A honest-check watch-list entry resolved to itself when it is a module-level callable available on
+    this platform, else None: wildcards, attribute reads, C-type-bound methods, and missing symbols
+    resolve to None. Used to compute the patchable subset honest-test must trap."""
+    import importlib
+
+    if entry.endswith("*"):
+        return None
+    parent, _, attr = entry.rpartition(".")
+    try:
+        module = importlib.import_module(parent)
+    except (ImportError, ValueError):
+        return None
+    return entry if callable(getattr(module, attr, None)) else None
+
+
 def _probe_determinism():
-    """Non-determinism detection (§4.5): the pure decision, the runtime trap over every watch-list
-    symbol, and the end-to-end flag — a non-boundary link that touches a non-deterministic source warns,
-    a boundary link is exempt, a link that touches none is honest."""
+    """Non-determinism detection (§4.5): the pure decision, and the runtime trap verified against honest-
+    check's PUBLISHED HC008 list (not honest-test's own list, which would be tautological) — every
+    module-level callable honest-check publishes is trapped, honest-test traps nothing honest-check does
+    not, every entry is genuinely patched inside the monitor, and the end-to-end flag fires correctly."""
+    import importlib
     import time
+
+    from honest_check.watchlists import NONDETERMINISTIC_WATCH_LIST, matches_watchlist
 
     from honest_test import call_monitor, nondeterminism_finding, nondeterministic_watch_list, verify_determinism
 
@@ -200,19 +220,47 @@ def _probe_determinism():
         bad.append("a link that touched no source is honest")
 
     watch = nondeterministic_watch_list()
-    if "time.time" not in watch or "random.random" not in watch or "uuid.uuid4" not in watch:
-        bad.append(f"the watch list should mirror the non-deterministic sources: {watch}")
+    published = NONDETERMINISTIC_WATCH_LIST["python"]
 
-    # Conformance (§4.5): every watch-list symbol is trapped at runtime when called from inside the monitor.
+    # Cross-tool consistency (§4.5: "both tools trap the same entries"): honest-test traps nothing honest-
+    # check does not publish — this is the check that makes the conformance non-tautological.
+    for path in watch:
+        if not matches_watchlist(path, published):
+            bad.append(f"honest-test traps {path}, which honest-check does not publish")
+
+    # Completeness: every module-level callable honest-check publishes (resolvable on this platform) is
+    # trapped. Dropping a published symbol from honest-test now fails the suite, as §4.5 requires.
+    required = {entry for entry in (_module_callable_entry(p) for p in published) if entry is not None}
+    missing = required - set(watch)
+    if missing:
+        bad.append(f"honest-test does not trap published module-level callables: {sorted(missing)}")
+
+    # Every watch symbol is genuinely patched inside the monitor (regardless of its arity), and restored
+    # after — verified without calling it, so arg-taking sources (uuid.uuid3, random.randint) count too.
+    def resolve(path):
+        module_name, attr = path.rsplit(".", 1)
+        return getattr(importlib.import_module(module_name), attr, None)
+
+    originals = {path: resolve(path) for path in watch}
     with call_monitor(watch) as detected:
         for path in watch:
-            module_name, attr = path.rsplit(".", 1)
-            getattr(__import__(module_name), attr)()
-    if set(detected) != set(watch):
-        bad.append(f"every watch-list symbol must be trapped at runtime: missing {set(watch) - set(detected)}")
-    # The monitor restores the originals on exit — no lingering patch.
-    if type(time.time()) is not float:
-        bad.append("call_monitor should restore the original symbols on exit")
+            if resolve(path) is originals[path]:
+                bad.append(f"{path} was not patched inside the monitor")
+    for path in watch:
+        if resolve(path) is not originals[path]:
+            bad.append(f"{path} was not restored after the monitor")
+
+    # A symbol absent on the running platform is skipped, not a crash.
+    with call_monitor(["os.this_symbol_does_not_exist"]) as detected:
+        pass
+    if detected != []:
+        bad.append("an unavailable symbol should be skipped, not trapped")
+
+    # The recording itself works: a trapped call lands in the detected list.
+    with call_monitor(["time.time"]) as detected:
+        time.time()
+    if detected != ["time.time"]:
+        bad.append(f"a trapped call should be recorded: {detected}")
 
     # End-to-end: a non-boundary link calling a source is flagged; a boundary one and a pure one are not.
     @link()
