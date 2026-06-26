@@ -1,6 +1,6 @@
 # Remediation Plan — Mutation Adequacy + the Independent-Oracle Rule
 
-**Status:** in progress — Phase D done (`a8bdc69`); Phase A done (engine `3f17992`/`1a449df`, scripts+docstring-skip `81cf45c`); Phase B underway (parse done)
+**Status:** in progress — Phase D complete (HT-7 fixed `a8bdc69`; three borderlines settled by inspection). Phase A engine **built and self-tested but NOT complete to §9.6**: four operator sub-cases are missing (float-literal shift, add-`not` `x`→`not x`, dict-key→sibling-key swap, sole-statement/branch-arm removal), so every "adequate" verdict so far holds only against the implemented operator subset. Phase B underway (parse, errors adequate; type partial — reserved done).
 **Spec basis:** commit `34b736a` — *"spec: define mutation adequacy and the independent-oracle rule for the verification model"* (Tier 1 Verification Model + Bootstrapping; honest-test §9.6; GLOSSARY).
 **Trigger:** the 2026-06-26 honesty audit caught a test that passed every gate while proving nothing (honest-test §4.5: its expected answer came from the same code it was checking, so it could not fail). 100% coverage could not see it — the line ran. The spec now closes that gap; this plan brings the implementation into line with it.
 
@@ -40,7 +40,7 @@ A hopeful note for effort: honest code's **exact-output value cases are unusuall
 
 The core new capability. Built red-first and incrementally, under the framework's own discipline (100% coverage, value cases, one gherkin per function). The engine must itself become mutation-adequate once it runs (resolve the chicken-and-egg by building under coverage first, then self-mutating in Phase B).
 
-- [x] **A1 — Mutation operators (7)** (`3f17992`). All seven red-first in `mutation.py`. Plus a docstring skip (`81cf45c`): a docstring is a universally-equivalent mutant, skipped rather than set-aside everywhere. Deferred sub-cases noted in code: float literals, `x`→`not x`, dict-key swap, sole-statement removal.
+- [~] **A1 — Mutation operators (7)** — **INCOMPLETE against §9.6.** The seven operator families exist red-first in `mutation.py` (`3f17992`), plus a docstring skip and an annotation skip (`81cf45c`, `19453f5`) for universally-equivalent mutants. But four §9.6 sub-cases are **not implemented**, so the operator set is a subset of the spec: (1) number shift covers integers only — **no float literals**; (2) condition flip covers `and`↔`or` and drop-`not` — **no add-`not` (`x`→`not x`)**; (3) membership covers `in`↔`not in` — **no dict-key→sibling-key swap**; (4) line removal skips containers with a single statement — **no sole-statement removal and no branch-arm removal**. Until these land, every "mutation-adequate" verdict holds only against the implemented operators.
 - [x] **A2 — Site enumerator** (`3f17992`). `enumerate_mutants(source)` parses once, runs every operator, returns the full `{operator,label,source}` list.
 - [x] **A3 — Mutant runner** (`1a449df`). `run_mutants(mutants, run_suite)` returns survivors; `run_suite` injected, so the decision is pure/testable.
 - [x] **A4 — Set-aside registry** (`1a449df`). `mutation_adequacy(mutants, survivors, set_aside)` → `caught + set_aside == total`; `conformance/mutants_setaside.json` per module ({label: reason}).
@@ -70,10 +70,14 @@ Per the bootstrapping update: nothing lands unless suites pass, coverage is tota
 
 A fast fan-out over all conformance probes (`laws_*.py` × 8) hunting for self-referential assertions like the §4.5 one — caught before the engine exists, since they're the urgent honesty class.
 
-- [x] Audit probes (3 parallel agents, all 9 `laws_*.py`); fixed the one genuine self-referential law — HT-7 totality (`a8bdc69`), now driven by a hand-written `declared` oracle, proven load-bearing. Three borderlines (reservation_layer single-sample, checked_select-vs-select, manifest-embeds-schema) left for the mutation engine to settle.
-- [x] honest-check heuristic rule for self-reference — **deferred** (R2 subsumes it structurally).
+- [x] Audit probes (3 parallel agents, all 9 `laws_*.py`); fixed the one genuine self-referential law — HT-7 totality (`a8bdc69`), now driven by a hand-written `declared` oracle, proven load-bearing.
+- [x] **The three deferred borderlines are now settled by inspection, not punted to the engine:**
+  - `reservation_layer` (honest-type) — **was genuinely self-referential**: it drew its words from the module's own `_LAYER*` frozensets, so an emptied word still mapped correctly (the empty string sorts first and is itself a member) and the law passed. Fixed with a hand-written literal oracle pinning all three layers plus every word→layer mapping; the mutation engine confirms it load-bearing (92 caught). Committed `11bddae`.
+  - `checked_select`-vs-`select` (honest-persist `_probe_checked`:558) — **benign**: the comparison `checked_select(...)["ok"] == select(...)` leans on `select()` being independently pinned by suite.json hand-written `expect_sql`/`expect_params` (`q-select-star`/`-cols-where`/`-full`), and `checked_select` has its own `cq-select-ok`. Not circular.
+  - `manifest`-embeds-`schema` (honest-observe `_probe_event_log`:348) — **benign**: the embedded `table` is pinned against hand-written `expected_columns`/`expected_indexes`/nullability literals in the same probe (laws_ho.py 313–345); the embed check leans on that independent grounding.
+- [x] honest-check heuristic rule for self-reference — **deferred** (R2 subsumes it structurally, once the engine is complete — see Phase A's missing operators).
 
-**Effort:** small.
+**Effort:** small. **Status: complete.**
 
 ---
 
