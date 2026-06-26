@@ -22,12 +22,21 @@ ROOT = Path(__file__).resolve().parent
 def _suite_passes(module):
     """Run the module's conformance suite as a subprocess; True iff it exits 0 (passes). Uses the
     current interpreter (the workspace venv python) directly rather than `uv run`, which would re-resolve
-    the environment on every one of the thousands of per-mutant calls — the dominant cost of the gate."""
-    result = subprocess.run(
-        [sys.executable, f"honest-{module}/conformance/run_conformance.py"],
-        cwd=ROOT,
-        capture_output=True,
-    )
+    the environment on every one of the thousands of per-mutant calls — the dominant cost of the gate.
+
+    A per-mutant timeout is essential: some mutants are non-terminating (a removed loop increment, a
+    flipped exit condition), and without a bound the whole gate hangs on the first one. A timeout means
+    the suite did not pass, so the mutant is caught — a program that no longer halts is a detected
+    behaviour change, exactly what the gate is for."""
+    try:
+        result = subprocess.run(
+            [sys.executable, f"honest-{module}/conformance/run_conformance.py"],
+            cwd=ROOT,
+            capture_output=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     return result.returncode == 0
 
 
