@@ -74,17 +74,20 @@ def _mutant(operator, label, source_bytes, start, end, replacement):
 
 
 def _number_shifts(tree, source: bytes) -> list:
-    """Every number-shift mutant (section 9.6): each integer or float literal n replaced by n+1 and by
-    n-1. Integer bases (hex/octal/binary) and digit separators are read with int(text, 0); a complex
-    literal (text ending in j) has no single 'one' to add and is skipped rather than crashing. Pure."""
+    """Every number-shift mutant (section 9.6): each integer, float, or complex literal n replaced by
+    n+1 and by n-1. Integer bases (hex/octal/binary) and digit separators are read with int(text, 0); a
+    complex literal (text ending in j) shifts by one in its real part (1j -> (1+1j)). Pure."""
     mutants = []
     for node in walk(tree.root_node):
         if node.type not in ("integer", "float"):
             continue
         text = node_text(node, source)
         if text[-1] in ("j", "J"):
-            continue  # a complex literal (1j) has no single 'one' to add — skip rather than crash.
-        value = int(text, 0) if node.type == "integer" else float(text)
+            value = complex(text)
+        elif node.type == "integer":
+            value = int(text, 0)
+        else:
+            value = float(text)
         for shift in (1, -1):
             mutants.append(_mutant("number_shift", f"{value}->{value + shift}@{node.start_byte}", source, node.start_byte, node.end_byte, str(value + shift).encode("utf-8")))
     return mutants
@@ -191,11 +194,11 @@ def _membership_changes(tree, source: bytes) -> list:
 
 
 def _line_removals(tree, source: bytes) -> list:
-    """Every line-removal mutant (section 9.6): in a container of two or more statements, one statement
-    is deleted, leaving the rest. A block's sole statement cannot be deleted without breaking the block,
-    so it is replaced by `pass` — its effect removed while the source still parses. A docstring, a bare
-    annotation, or a statement already `pass` is universally equivalent and skipped; a module's sole
-    statement is left to deletion (a module carries many top-level statements). Pure."""
+    """Every line-removal mutant (section 9.6): one statement deleted, leaving the rest. A module's sole
+    statement is deleted outright (an empty module is valid Python); a block's sole statement cannot be
+    deleted without breaking the block, so it is replaced by `pass` — its effect removed while the
+    source still parses. A docstring, a bare annotation, or a statement already `pass` is universally
+    equivalent and skipped. Pure."""
     mutants = []
     for node in walk(tree.root_node):
         if node.type not in ("block", "module"):
@@ -205,9 +208,9 @@ def _line_removals(tree, source: bytes) -> list:
             string_child = next((child for child in statement.named_children if child.type == "string"), None)
             if (string_child is not None and _is_docstring(string_child)) or _is_annotation_only(statement):
                 continue
-            if len(statements) >= 2:
+            if len(statements) >= 2 or node.type == "module":
                 mutants.append(_mutant("line_removal", f"remove@{statement.start_byte}", source, statement.start_byte, statement.end_byte, b""))
-            elif node.type == "block" and node_text(statement, source) != "pass":
+            elif node_text(statement, source) != "pass":
                 mutants.append(_mutant("line_removal", f"sole-pass@{statement.start_byte}", source, statement.start_byte, statement.end_byte, b"pass"))
     return mutants
 

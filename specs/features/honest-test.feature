@@ -342,8 +342,8 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When _comparison_swaps mutates it
     Then it returns one mutant per site with each operator swapped to its pair
 
-  Scenario: _number_shifts shifts every integer and float literal
-    Given source with integer and float literals
+  Scenario: _number_shifts shifts every integer, float, and complex literal
+    Given source with integer, float, and complex literals
     When _number_shifts mutates it
     Then it returns a mutant for n+1 and a mutant for n-1 at each literal
 
@@ -377,10 +377,10 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When _membership_changes mutates it
     Then it swaps in with not in at each membership site
 
-  Scenario: _line_removals deletes a statement or replaces a sole statement with pass
-    Given source with a block of statements
+  Scenario: _line_removals deletes a statement or replaces a block's sole statement with pass
+    Given source with a block or module of statements
     When _line_removals mutates it
-    Then it deletes each statement of a multi-statement block and replaces a block's sole statement with pass
+    Then it deletes each statement of a multi-statement container, deletes a module's sole statement, and replaces a block's sole statement with pass
 
   Scenario: _removable_arms returns the droppable clauses of a compound statement
     Given a syntax node

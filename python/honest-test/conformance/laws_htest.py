@@ -593,8 +593,8 @@ def _probe_mutation():
         bad.append(f"number shift should cover float literals: {by('x = 2.5\n', 'number_shift')}")
     if by("x = 0xff\n", "number_shift") != ["x = 254\n", "x = 256\n"]:
         bad.append(f"number shift should read hex/octal/binary bases: {by('x = 0xff\n', 'number_shift')}")
-    if by("x = 1j\n", "number_shift") != []:
-        bad.append("a complex literal has no single one to add and is skipped, not crashed")
+    if by("x = 1j\n", "number_shift") != ["x = (-1+1j)\n", "x = (1+1j)\n"]:
+        bad.append(f"a complex literal shifts by one in the real part: {by('x = 1j\n', 'number_shift')}")
     # Condition flip: and <-> or, a `not` dropped, and a branch condition negated (`if c` -> `if not (c)`).
     if by("a and b\n", "condition_flip") != ["a or b\n"]:
         bad.append("and should flip to or")
@@ -641,19 +641,20 @@ def _probe_mutation():
         bad.append("a swap that would not change the source (a duplicate key) is skipped")
     if by('d = {**z, "a": 1, "b": 2}\n', "key_swap") != ['d = {**z, "a": 1, "a": 2}\n', 'd = {**z, "b": 1, "b": 2}\n']:
         bad.append("a splat entry beside keys is skipped; the keys still swap")
-    # Line removal: in a multi-statement block one statement is deleted, the rest kept.
-    if by("def f():\n    a()\n    b()\n", "line_removal") != ["def f():\n    \n    b()\n", "def f():\n    a()\n    \n"]:
+    # Line removal: in a multi-statement block one statement is deleted, the rest kept. A module's sole
+    # statement is deleted too — an empty module is valid Python — so a sole top-level def disappears.
+    if by("def f():\n    a()\n    b()\n", "line_removal") != ["\n", "def f():\n    \n    b()\n", "def f():\n    a()\n    \n"]:
         bad.append(f"line removal should delete one statement, keeping the rest: {by('def f():\n    a()\n    b()\n', 'line_removal')}")
-    # A sole statement cannot be deleted (the block would not parse), so it is replaced by `pass` — its
-    # effect removed while the block stays valid. A block already `pass` yields nothing; a sole docstring
-    # or bare annotation stays universally equivalent.
-    if by("def f():\n    a()\n", "line_removal") != ["def f():\n    pass\n"]:
-        bad.append(f"a sole statement is replaced by pass: {by('def f():\n    a()\n', 'line_removal')}")
-    if by("a()\n", "line_removal") != []:
-        bad.append("a sole module statement is left to deletion (a module carries many top-level statements)")
-    if by("def f():\n    pass\n", "line_removal") != []:
-        bad.append("a block that is already a sole pass yields no line-removal mutant")
-    if by('def f():\n    """d"""\n', "line_removal") != [] or by("def f():\n    a: int\n", "line_removal") != []:
+    # A block's sole statement cannot be deleted (the block would not parse), so it is replaced by `pass`
+    # — its effect removed while the block stays valid. The module's sole def is still deleted. A block
+    # already `pass` yields no replacement; a sole docstring or bare annotation stays universally equivalent.
+    if by("def f():\n    a()\n", "line_removal") != ["\n", "def f():\n    pass\n"]:
+        bad.append(f"a block's sole statement is replaced by pass: {by('def f():\n    a()\n', 'line_removal')}")
+    if by("a()\n", "line_removal") != ["\n"]:
+        bad.append(f"a module's sole statement is deleted, leaving an empty module: {by('a()\n', 'line_removal')}")
+    if by("def f():\n    pass\n", "line_removal") != ["\n"]:
+        bad.append(f"a block already a sole pass yields no replacement, only the module's def is deleted: {by('def f():\n    pass\n', 'line_removal')}")
+    if any(m["label"].startswith("sole-pass@") for m in enumerate_mutants('def f():\n    """d"""\n')) or any(m["label"].startswith("sole-pass@") for m in enumerate_mutants("def f():\n    a: int\n")):
         bad.append("a sole docstring or annotation is not replaced by pass")
     # Branch-arm removal: an else or elif clause is dropped whole (multi-statement bodies, so the arm
     # removal is distinct from the sole-statement replacement); an if with neither has no arm to drop.
@@ -709,7 +710,8 @@ def _probe_mutation():
     # A bare type annotation (`name: type`, no value) has no runtime effect, so it is not a removable
     # statement (a universally equivalent mutant, like a docstring); the runtime statements beside it are.
     annotated = "def f():\n    a: int\n    x = 5\n    b()\n    return 1\n"
-    line_removals = sorted(m["label"] for m in enumerate_mutants(annotated) if m["operator"] == "line_removal")
+    # Exclude the module-level deletion of the sole def (source "\n"); count the block's own removals.
+    line_removals = sorted(m["label"] for m in enumerate_mutants(annotated) if m["operator"] == "line_removal" and m["source"] != "\n")
     if len(line_removals) != 3:
         bad.append(f"an annotation-only field is skipped; the three runtime statements (x=5, b(), return) are removable: {line_removals}")
     return bad
@@ -719,10 +721,12 @@ def _probe_mutation_runner():
     """The mutant runner and adequacy decision (§9.6, A3/A4): run_mutants checks each mutant against an
     injected suite-runner and returns the survivors (mutants the suite did not catch); mutation_adequacy
     accounts caught + set_aside == total, where every survivor must be declared equivalent by label."""
-    from honest_test import enumerate_mutants, mutation_adequacy, run_mutants
+    from honest_test import mutation_adequacy, run_mutants
 
     bad = []
-    mutants = enumerate_mutants("a == b\n")  # one mutant: == -> !=
+    # A hand-built single-mutant list: the runner and the adequacy decision are exercised on a known
+    # input, independent of how enumeration would size the mutant set.
+    mutants = [{"operator": "comparison_swap", "label": "==->!=@2", "source": "a != b\n"}]
 
     # run_suite returns True when the suite PASSES on the mutated source — i.e. the mutant was NOT caught.
     if run_mutants(mutants, lambda source: False) != []:
