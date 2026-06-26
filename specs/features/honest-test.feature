@@ -391,3 +391,8 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given a string node
     When _is_docstring checks it
     Then it is true only for a bare string that is the first statement of its module or block
+
+  Scenario: _is_annotation_only recognizes a non-behavioural field annotation
+    Given a statement node
+    When _is_annotation_only checks it
+    Then it is true only for a bare type annotation with no value, which has no runtime effect

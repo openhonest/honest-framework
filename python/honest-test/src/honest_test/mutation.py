@@ -40,6 +40,17 @@ def _is_docstring(string_node) -> bool:
     return siblings[0].start_byte == statement.start_byte
 
 
+def _is_annotation_only(statement) -> bool:
+    """Whether a statement is a bare type annotation (`name: type`, no value) — a field declaration with
+    no runtime effect (a TypedDict field, an `__annotations__` entry), so removing it cannot change the
+    result. A universally equivalent mutant, like a docstring; the engine skips it rather than make every
+    module declare it set-aside. `name: type = value` has a value and is left removable."""
+    if statement.type != "expression_statement":
+        return False
+    inner = statement.children[0]
+    return inner.type == "assignment" and inner.child_by_field_name("type") is not None and inner.child_by_field_name("right") is None
+
+
 def _comparison_swaps(tree, source: bytes) -> list:
     """Every comparison-swap mutant (section 9.6): each `<`, `<=`, `>`, `>=`, `==`, `!=` token swapped to
     its pair, one mutant per site. Pure."""
@@ -145,7 +156,7 @@ def _line_removals(tree, source: bytes) -> list:
             continue
         for statement in statements:
             string_child = next((child for child in statement.named_children if child.type == "string"), None)
-            if string_child is not None and _is_docstring(string_child):
+            if (string_child is not None and _is_docstring(string_child)) or _is_annotation_only(statement):
                 continue
             mutants.append(_mutant("line_removal", f"remove@{statement.start_byte}", source, statement.start_byte, statement.end_byte, b""))
     return mutants

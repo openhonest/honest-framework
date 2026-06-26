@@ -623,6 +623,13 @@ def _probe_mutation():
     nondoc = {m["label"] for m in enumerate_mutants('x = 1\n"side"\n')}
     if not any(label.startswith("string->empty@") for label in nondoc):
         bad.append("a bare string that is not the first statement is not a docstring and is still emptiable")
+
+    # A bare type annotation (`name: type`, no value) has no runtime effect, so it is not a removable
+    # statement (a universally equivalent mutant, like a docstring); the runtime statements beside it are.
+    annotated = "def f():\n    a: int\n    x = 5\n    b()\n    return 1\n"
+    line_removals = sorted(m["label"] for m in enumerate_mutants(annotated) if m["operator"] == "line_removal")
+    if len(line_removals) != 3:
+        bad.append(f"an annotation-only field is skipped; the three runtime statements (x=5, b(), return) are removable: {line_removals}")
     return bad
 
 
