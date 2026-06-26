@@ -20,9 +20,11 @@ ROOT = Path(__file__).resolve().parent
 
 
 def _suite_passes(module):
-    """Run the module's conformance suite as a subprocess; True iff it exits 0 (passes)."""
+    """Run the module's conformance suite as a subprocess; True iff it exits 0 (passes). Uses the
+    current interpreter (the workspace venv python) directly rather than `uv run`, which would re-resolve
+    the environment on every one of the thousands of per-mutant calls — the dominant cost of the gate."""
     result = subprocess.run(
-        ["uv", "run", "--package", f"honest-{module}", "python", f"honest-{module}/conformance/run_conformance.py"],
+        [sys.executable, f"honest-{module}/conformance/run_conformance.py"],
         cwd=ROOT,
         capture_output=True,
     )
