@@ -33,7 +33,7 @@ from honest_persist.cutover import (
     mirror_write,
 )
 from honest_persist.migrate import inspect, migrate
-from honest_persist.check import check_holds, dialect_enforces_check, enforce_checks, parse_check, table_checks
+from honest_persist.check import check_holds, dialect_enforces_check, enforce_checks, parse_check, table_checks, validate_checks
 from honest_persist.execute import execute, execute_many, execute_one, execute_scalar
 from honest_persist.instrumented import emit_pool_event, instrumented_execute
 from honest_persist.pool import (
@@ -110,6 +110,7 @@ __all__ = [
     "dialect_enforces_check",
     "table_checks",
     "enforce_checks",
+    "validate_checks",
     "select",
     "insert",
     "update",

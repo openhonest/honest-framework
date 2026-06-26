@@ -262,6 +262,21 @@ def table_checks(table):
     return checks
 
 
+def validate_checks(schema, dialect):
+    """Construction-time CHECK validation (section 6.2): every declared CHECK must be enforceable — either
+    natively on the target dialect, or by compilation into a row validator. A CHECK that is neither (an
+    uncompilable expression on a dialect that does not enforce CHECK natively) is a construction-time
+    fault, never a silently dropped guarantee surfaced only at the first write. Returns ok(schema), or
+    err(fault 'uncompilable_check') naming the first offending CHECK. Pure."""
+    if dialect_enforces_check(dialect):
+        return ok(schema)
+    for table_name, table in schema.items():
+        for expression in table_checks(table):
+            if "err" in parse_check(expression):
+                return err(fault("uncompilable_check", f"CHECK on '{table_name}' can be neither natively enforced on '{dialect}' nor compiled: {expression}", "server", {"table": table_name, "expression": expression, "dialect": dialect}))
+    return ok(schema)
+
+
 def enforce_checks(schema, table, row, dialect):
     """Enforce a table's CHECK constraints on a row at the write boundary (section 6.2). Pure. When the
     dialect enforces CHECK natively the database is trusted and ok(row) is returned. Otherwise each

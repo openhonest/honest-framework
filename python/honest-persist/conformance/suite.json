@@ -611,6 +611,22 @@
    }
   },
   {
+   "id": "value-validate-checks-native",
+   "value_case": {
+    "function": "validate_checks",
+    "args": [{"t": {"columns": {"x": {"type": "integer", "check": "x @@ 1"}}}}, "postgresql"],
+    "expected": {"ok": {"t": {"columns": {"x": {"type": "integer", "check": "x @@ 1"}}}}}
+   }
+  },
+  {
+   "id": "value-validate-checks-reject",
+   "value_case": {
+    "function": "validate_checks",
+    "args": [{"t": {"columns": {"x": {"type": "integer", "check": "x @@ 1"}}}}, "turso"],
+    "expected": {"err": {"code": "uncompilable_check", "message": "CHECK on 't' can be neither natively enforced on 'turso' nor compiled: x @@ 1", "category": "server", "detail": {"table": "t", "expression": "x @@ 1", "dialect": "turso"}}}
+   }
+  },
+  {
    "id": "value-dialect-enforces-check-native",
    "value_case": {"function": "dialect_enforces_check", "args": ["postgresql"], "expected": true}
   },

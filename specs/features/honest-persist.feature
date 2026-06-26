@@ -341,3 +341,8 @@ Feature: honest-persist — schema diffing, query building, and the write bounda
     Given an injected emit, db id, and the transaction outcome
     When _emit_transaction emits the event
     Then it emits one hf.persist.transaction keyed by the db, swallows a failing emit, and is a no-op when no emit is wired in
+
+  Scenario: validate_checks rejects an unenforceable CHECK at construction
+    Given a schema and a target dialect
+    When validate_checks validates the declared CHECKs
+    Then on a native dialect it trusts the database, and otherwise a CHECK that cannot be compiled is a construction-time uncompilable_check fault rather than a silently dropped guarantee

@@ -398,6 +398,19 @@ def _probe_enforce_checks():
     # Default dialect is native, so existing two-arg callers keep their behaviour.
     if "ok" not in checked_insert(schema, "products", {"price": 0, "qty": 1}):
         bad.append("checked_insert defaults to a native dialect, trusting the database")
+
+    # Construction-time validation (§6.2): a CHECK that can be neither natively enforced nor compiled is
+    # a construction-time fault, not a silently dropped guarantee surfaced only at the first write.
+    from honest_persist import validate_checks
+
+    uncompilable = {"t": {"columns": {"x": {"type": "integer", "check": "x @@ 1"}}}}
+    if "ok" not in validate_checks(uncompilable, "postgresql"):
+        bad.append("a native dialect enforces CHECK in the database, so construction does not require compilability")
+    if "ok" not in validate_checks(schema, "turso"):
+        bad.append("a compilable CHECK on a non-native dialect passes construction")
+    rejected = validate_checks(uncompilable, "turso")
+    if rejected.get("err", {}).get("code") != "uncompilable_check":
+        bad.append(f"an uncompilable CHECK on a non-native dialect must fault at construction: {rejected}")
     return bad
 
 
@@ -1592,6 +1605,15 @@ def _probe_migrate():
         unknown = await migrate({}, nodb, "oracle")
         if unknown.get("err", {}).get("code") != "unsupported_dialect":
             bad.append(f"migrate should fault on an unsupported dialect: {unknown}")
+
+        # §6.2: a CHECK that can be neither natively enforced nor compiled is refused at construction,
+        # before any DDL touches the database, not silently dropped to surface at the first write.
+        badcheck = _SqliteConn()
+        target = {"t": {"columns": {"id": {"type": "integer", "nullable": True}, "x": {"type": "integer", "nullable": True, "check": "x @@ 1"}}}}
+        construction = await migrate(target, badcheck, "turso")
+        left = await inspect(badcheck, "turso")
+        if construction.get("err", {}).get("code") != "uncompilable_check" or "t" in left["ok"]:
+            bad.append(f"migrate should refuse an uncompilable CHECK at construction without applying: {construction}, {left}")
         return bad
 
     return asyncio.run(_run())
