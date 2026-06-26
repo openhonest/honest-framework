@@ -360,16 +360,39 @@ SM_VOCAB_LAWS = [
 
 
 def _reservation_layer_law():
-    """A direct check of reservation_layer's full domain — including the not-reserved case,
-    which its only production caller (vocabulary construction) can never reach."""
+    """reservation_layer's full domain pinned to a hand-written oracle (§2): the three reserved-word
+    layers stated independently of the module, the layer name each word maps to, and the not-reserved
+    case its only production caller (vocabulary construction) can never reach. HT-4 rejects vocabulary
+    members that collide with these words; this law fixes the collision set itself, so dropping,
+    emptying, or moving any reserved word fails here rather than silently widening what a vocabulary
+    may contain. The expected words are literals, not the module's own frozensets, so the check is an
+    independent oracle rather than a restatement of the code."""
     bad = []
+    layer1 = frozenset({
+        "manifest", "ticket", "rejection", "fault", "vocabulary", "binding",
+        "link", "chain", "recognizer", "slot", "token", "widget", "grid", "cell",
+    })
+    layer2 = frozenset({
+        "if", "else", "elif", "for", "while", "do", "switch", "case", "break",
+        "continue", "return", "class", "import", "export", "from", "as", "with",
+        "yield", "async", "await", "function", "def", "var", "let", "const",
+        "static", "new", "delete", "try", "catch", "finally", "throw", "raise",
+        "except", "true", "false", "null", "nil", "None", "undefined", "NaN",
+        "self", "this", "super", "and", "or", "not", "in", "is", "typeof",
+        "instanceof", "int", "float", "str", "string", "bool", "boolean", "void",
+        "public", "private", "protected", "abstract", "interface", "extends",
+        "implements", "print", "puts", "echo", "console", "require", "include",
+        "module", "package",
+    })
+    layer3 = frozenset({"nonlocal", "global", "lambda", "pass", "assert", "del", "exec", "eval"})
+    if _LAYER1 != layer1 or _LAYER2 != layer2 or _LAYER3_PYTHON != layer3:
+        bad.append("a reserved-word layer drifted from its hand-written contract")
     if reservation_layer("definitely-not-reserved") is not None:
         bad.append("reservation_layer should return None for a non-reserved word")
-    layers = {"framework": _LAYER1, "cross-language": _LAYER2, "python": _LAYER3_PYTHON}
-    for expected, words in layers.items():
-        sample = sorted(words)[0]
-        if reservation_layer(sample) != expected:
-            bad.append(f"reservation_layer({sample!r}) != {expected!r}")
+    by_layer = [(word, "framework") for word in layer1] + [(word, "cross-language") for word in layer2] + [(word, "python") for word in layer3]
+    for word, expected in by_layer:
+        if reservation_layer(word) != expected:
+            bad.append(f"reservation_layer({word!r}) != {expected!r}")
     return bad
 
 
