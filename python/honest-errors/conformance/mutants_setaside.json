@@ -1,0 +1,4 @@
+{
+  "honest-errors/src/honest_errors/report.py:False->True@799": "equivalent: `total=False` on a TypedDict is a static-typing directive with no runtime effect (TypedDict performs no validation at construction), so flipping it to True cannot change any value the suite observes.",
+  "honest-errors/src/honest_errors/report.py:False->True@1014": "equivalent: `total=False` on a TypedDict is a static-typing directive with no runtime effect (TypedDict performs no validation at construction), so flipping it to True cannot change any value the suite observes."
+}
