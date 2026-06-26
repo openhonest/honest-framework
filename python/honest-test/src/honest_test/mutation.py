@@ -152,7 +152,8 @@ def _dict_key_swaps(tree, source: bytes) -> list:
 
 def _constant_replaces(tree, source: bytes) -> list:
     """Every constant-replace mutant (section 9.6): `True`<->`False`, and a non-empty string literal made
-    empty. (The 0->1 case is the number shift.) Pure."""
+    empty. A bytes literal empties to `b""` so its type is preserved (an empty `""` would be a str). (The
+    0->1 case is the number shift.) Pure."""
     mutants = []
     for node in walk(tree.root_node):
         if node.type in ("true", "false"):
@@ -160,7 +161,8 @@ def _constant_replaces(tree, source: bytes) -> list:
             swapped = _BOOL_LITERAL_SWAP[text]
             mutants.append(_mutant("constant_replace", f"{text}->{swapped}@{node.start_byte}", source, node.start_byte, node.end_byte, swapped.encode("utf-8")))
         elif node.type == "string" and any(child.type == "string_content" for child in node.children) and not _is_docstring(node):
-            mutants.append(_mutant("constant_replace", f"string->empty@{node.start_byte}", source, node.start_byte, node.end_byte, b'""'))
+            empty = b'b""' if "b" in node_text(node.children[0], source).lower() else b'""'
+            mutants.append(_mutant("constant_replace", f"string->empty@{node.start_byte}", source, node.start_byte, node.end_byte, empty))
     return mutants
 
 

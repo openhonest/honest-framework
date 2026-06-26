@@ -618,6 +618,8 @@ def _probe_mutation():
         bad.append("True should flip to False")
     if by('x = "hi"\n', "constant_replace") != ['x = ""\n']:
         bad.append("a non-empty string should be emptiable")
+    if by('x = b"hi"\n', "constant_replace") != ['x = b""\n']:
+        bad.append(f"a non-empty bytes literal empties to b-quotes, preserving its bytes type: {by(chr(120) + ' = b' + chr(34) + 'hi' + chr(34) + chr(10), 'constant_replace')}")
     # Result swap: ok(...) <-> err(...).
     if by("ok(z)\n", "result_swap") != ["err(z)\n"]:
         bad.append("ok should swap to err")
