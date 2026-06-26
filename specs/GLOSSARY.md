@@ -61,3 +61,4 @@ plain language in the text itself.
 | **exhaustive** | Covering every case, not a sample. |
 | **adversarial neighbours** | The near-miss inputs around a valid value (one character changed, a look-alike letter, an added control character) that a correct recognizer must reject. |
 | **atomic / all-or-nothing** | A step that either happens completely or not at all; no other transaction ever sees it half-done. |
+| **mutation adequacy** | A measure of a test suite, beyond coverage: change the source in small mechanical ways, one at a time from a fixed list (a comparison loosened, a number shifted by one, a line deleted), and require some test to fail on each change. A change no test catches is a line no test would notice was wrong — a gap coverage cannot show, because the unchanged line still ran. |

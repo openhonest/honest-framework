@@ -268,6 +268,18 @@ honest-check's rules split by what they can promise:
 
 So honest-check is **complete on the thing that decides checkability** (limited input) and best-effort on the separate question of purity. "Any code that passes honest-check is honest" is exactly true for the first and true-but-backstopped for the second.
 
+### Running a line is not the same as testing it
+
+Running every case proves each line ran. It does not prove that a test would fail if the line were wrong. A test can run a line and catch nothing: if the test's expected answer comes from the same code it is checking, the test passes no matter what that code does. Full coverage cannot see this, because the line did run — the gate is green and the line is untested.
+
+Two requirements close the gap.
+
+**A test's expected answer must come from somewhere other than the code being tested.** It comes from a value written down by hand, from a different module, or from the shared portable contract — the same `suite.json` that checks every language version — never from the output of the function under test. A test that takes its expected answer from the function it is checking will pass whatever that function does, so it proves nothing.
+
+**Every change to the code must make at least one test fail.** The source is changed in small, mechanical ways from a fixed list — a comparison loosened from `<` to `<=`, a number shifted by one, a condition flipped, a line deleted — and each changed version is run against the whole suite. If some change makes no test fail, then no test would catch that same mistake in the real code. Coverage cannot reveal this, because the unchanged line still ran. The list of changes is finite and applied in full, the same way the input vocabularies are. A change that cannot alter the result — there are few — is listed by name with the reason, not left to pass silently.
+
+The first requirement means a test cannot check itself against itself. The second means that if a line could be wrong without any test failing, the gate stops. Coverage shows the line ran; these two show that a mistake in the line would be caught.
+
 ### One parser, and when in doubt it rejects
 
 Source is read with tree-sitter — the framework's only parser, chosen because the framework is one standard meant to run across many languages, and a single parser family lets the same rule shapes run on Python, Rust, C, and the rest. tree-sitter keeps going when it meets something it cannot read, marking those spots rather than dropping them; honest-check stops at the first such spot (HC-SYN). The gate never passes code it could not fully read.
@@ -359,6 +371,8 @@ So what is genuinely new per language is narrow: adding the grammar to the parse
 ### Completeness is measured, not claimed
 
 The generated proof is complete only when it reaches every line and branch of the module. **The bar is 100% line and branch coverage, enforced as a gate — and it is a real test of completeness, not a vanity number:** a line that no rule or example reaches is either dead code (delete it) or a behaviour nothing declares (declare it). Both are faults the coverage gate exposes. A new version wires this gate into its commit step alongside honest-check: nothing lands unless the conformance suites pass *and* coverage is total. The small bits of code that only run when a module is launched as a program are covered by launching it that way, not by leaving them out — the gate has no exceptions.
+
+Coverage proves every line ran, but a line can run inside a test that checks nothing ("Running a line is not the same as testing it", above). So the bar has a second half: every mechanical change to the source, drawn from the fixed list, must make some test fail. A new version wires both into its commit step alongside honest-check: nothing lands unless the conformance suites pass, coverage is total, **and** no such change to the code passes every test.
 
 ---
 

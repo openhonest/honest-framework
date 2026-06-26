@@ -883,6 +883,22 @@ honest-test writes `coverage.json` that honest-check reads for HC-P009 (chain mi
 }
 ```
 
+### 9.6 Mutation Adequacy
+
+Coverage (§9.1–9.4) measures whether the suite reaches every line; it does not measure whether the suite would catch a line that is wrong. honest-test adds that measure: it changes the module's own source in small, mechanical ways and requires the conformance suite to fail on each change. The changes are a fixed, finite list, applied to every place they fit — the way the generators enumerate a Set:
+
+| Change | Example |
+|---|---|
+| Comparison swap | `<` ↔ `<=`, `>` ↔ `>=`, `==` ↔ `!=` |
+| Number shifted by one | `n` → `n + 1`, `n` → `n - 1` |
+| Condition flipped | `and` ↔ `or`, remove a `not`, `x` → `not x` |
+| Constant replaced | `0` → `1`, non-empty literal → empty, `True` ↔ `False` |
+| Result swapped | `ok(...)` ↔ `err(...)` |
+| Line removed | delete one statement or one branch arm |
+| Membership or key changed | `in` ↔ `not in`, a dict key → a sibling key |
+
+For each module, honest-test parses the source with tree-sitter, makes one such change at a time, and runs the module's conformance suite against the changed source. A change is **caught** when at least one case fails; the gate requires every change to be caught. A change that cannot alter the result — for example reordering two operations that commute — is listed by name with the reason and set aside, never left to pass unnoticed. The count of changes caught (plus those set aside) must equal the total, enforced as a gate alongside coverage. A change that passes every test is the one thing coverage cannot report: the line ran, but no test would fail if it were wrong.
+
 ---
 
 ## 10. Configuration
