@@ -656,6 +656,105 @@
    "expect": "ok"
   },
   {
+   "id": "rejections-block-missing-required",
+   "rejection_manifest": {
+    "cc": "USD",
+    "_rejections": [
+     {
+      "token": "x",
+      "reason": "missing_required",
+      "detail": null
+     }
+    ]
+   },
+   "expect": "err",
+   "expect_code": "missing_required",
+   "expect_category": "client",
+   "expect_message": "Input rejected at the boundary",
+   "expect_detail": {
+    "rejections": [
+     {
+      "token": "x",
+      "reason": "missing_required",
+      "detail": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "rejections-block-duplicate-slot",
+   "rejection_manifest": {
+    "cc": "USD",
+    "_rejections": [
+     {
+      "token": "y",
+      "reason": "duplicate_slot",
+      "detail": null
+     }
+    ]
+   },
+   "expect": "err",
+   "expect_code": "duplicate_slot"
+  },
+  {
+   "id": "rejections-warn-null-token-passes",
+   "rejection_manifest": {
+    "cc": "USD",
+    "_rejections": [
+     {
+      "token": null,
+      "reason": "null_token",
+      "detail": null
+     }
+    ]
+   },
+   "expect": "ok"
+  },
+  {
+   "id": "rejections-unlisted-reason-blocks-by-default",
+   "rejection_manifest": {
+    "cc": "USD",
+    "_rejections": [
+     {
+      "token": "q",
+      "reason": "some_unlisted_reason",
+      "detail": null
+     }
+    ]
+   },
+   "expect": "err",
+   "expect_code": "some_unlisted_reason"
+  },
+  {
+   "id": "rejections-first-blocking-reason-wins",
+   "rejection_manifest": {
+    "cc": "USD",
+    "_rejections": [
+     {
+      "token": "a",
+      "reason": "missing_required",
+      "detail": null
+     },
+     {
+      "token": "b",
+      "reason": "duplicate_slot",
+      "detail": null
+     }
+    ]
+   },
+   "expect": "err",
+   "expect_code": "missing_required"
+  },
+  {
+   "id": "boundary-client-fault-default",
+   "links": [
+    "client_fault"
+   ],
+   "initial": {},
+   "expect_status": 400,
+   "expect_code": "denied"
+  },
+  {
    "id": "link-records-boundary-and-name",
    "link": "declared",
    "expect_boundary": true,

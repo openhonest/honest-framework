@@ -73,6 +73,12 @@ def _link_unrecognized(manifest):
     return err(fault("unrecognized", "no", "client"))
 
 
+def _link_client_fault(manifest):
+    # A client-category fault whose code is NOT in _FAULT_TO_OUTPUT, so the boundary routes it by
+    # category default (client) — exercising the "client" arm of the category table.
+    return err(fault("denied", "no", "client"))
+
+
 def _link_raise(manifest):
     raise ValueError("kaboom")
 
@@ -104,6 +110,7 @@ _LINKS = {
     "fault": _link_fault,
     "bad": _link_bad,
     "unrecognized": _link_unrecognized,
+    "client_fault": _link_client_fault,
     "raise": _link_raise,
     "declared": _declared_link,
 }
@@ -218,7 +225,12 @@ def _check_boundary(case):
 def _check_rejections(case):
     result = check_rejections(case["rejection_manifest"])
     if case["expect"] == "err":
-        matched = "err" in result and result["err"]["code"] == case["expect_code"]
+        failure = result.get("err", {})
+        matched = "err" in result and failure.get("code") == case["expect_code"]
+        for field in ("category", "message", "detail"):
+            key = f"expect_{field}"
+            if key in case:
+                matched = matched and failure.get(field) == case[key]
         return matched, f"got {result}"
     matched = "ok" in result and "_rejections" not in result["ok"]
     return matched, f"got {result}"
