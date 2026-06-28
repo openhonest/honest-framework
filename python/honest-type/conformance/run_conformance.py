@@ -272,13 +272,24 @@ def _check_statemachine(case):
         result = transition(machine, state, event)
         if "expect_state" in case:
             return "ok" in result and result["ok"]["state"] == case["expect_state"], f"got {result}"
-        return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"
+        failure = result.get("err", {})
+        matched = "err" in result and failure.get("code") == case["expect_code"]
+        for field in ("message", "category", "detail"):
+            key = f"expect_{field}"
+            if key in case:
+                matched = matched and failure.get(field) == case[key]
+        return matched, f"got {result}"
     try:
-        _build_sm(case)
+        machine = _build_sm(case)
         outcome, message = "ok", ""
     except StateMachineError as exc:
-        outcome, message = "error", str(exc)
+        machine, outcome, message = None, "error", str(exc)
     ok_ = outcome == case["expect"] and case.get("error_contains", "") in message
+    if machine is not None:
+        for field in ("initial", "terminal"):
+            key = f"expect_{field}"
+            if key in case:
+                ok_ = ok_ and machine[field] == case[key]
     return ok_, f"got {outcome} ({message[:40]})"
 
 

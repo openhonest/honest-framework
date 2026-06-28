@@ -958,7 +958,14 @@
     ]
    ],
    "initial": "pending",
-   "expect": "ok"
+   "expect": "ok",
+   "terminal": [
+    "paid"
+   ],
+   "expect_initial": "pending",
+   "expect_terminal": [
+    "paid"
+   ]
   },
   {
    "id": "sm-construct-bad-next-state",
@@ -1047,7 +1054,12 @@
     "zzz",
     "pay"
    ],
-   "expect_code": "invalid_state"
+   "expect_code": "invalid_state",
+   "expect_message": "Unknown state 'zzz'",
+   "expect_category": "server",
+   "expect_detail": {
+    "state": "zzz"
+   }
   },
   {
    "id": "sm-transition-invalid-event",
@@ -1071,7 +1083,12 @@
     "pending",
     "zzz"
    ],
-   "expect_code": "invalid_event"
+   "expect_code": "invalid_event",
+   "expect_message": "Unknown event 'zzz'",
+   "expect_category": "client",
+   "expect_detail": {
+    "event": "zzz"
+   }
   },
   {
    "id": "sm-transition-no-transition",
@@ -1096,7 +1113,13 @@
     "paid",
     "ship"
    ],
-   "expect_code": "no_transition"
+   "expect_code": "no_transition",
+   "expect_message": "No transition for (paid, ship)",
+   "expect_category": "client",
+   "expect_detail": {
+    "state": "paid",
+    "event": "ship"
+   }
   },
   {
    "id": "value-ok",
