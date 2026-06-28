@@ -19,17 +19,23 @@ import importlib.abc
 import importlib.util
 import io
 import json
+import multiprocessing as mp
 import os
 import signal
 import sys
-from concurrent.futures import ProcessPoolExecutor
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from honest_test import enumerate_mutants, mutation_adequacy
 
 ROOT = Path(__file__).resolve().parent
-_TIMEOUT_SECONDS = 15
+# In-worker SIGALRM is the fast path for a Python-level non-terminating mutant; the parent's hard
+# deadline is the backstop for one SIGALRM cannot reach (asyncio.run installs its own signal handling),
+# where the parent SIGKILLs the whole worker. A legitimate mutant runs in well under 0.2s, so these are
+# generous.
+_TIMEOUT_SECONDS = 2
+_DEADLINE_SECONDS = 4
 _WORKERS = max(1, (os.cpu_count() or 2) - 1)
 
 
@@ -116,11 +122,70 @@ def _suite_passes(fqmn, path, source):
         _FINDER.fqmn = None
 
 
-def _run_one(mutant):
-    """Worker task: returns the mutant (minus its source) iff it survives, else None."""
-    if _suite_passes(mutant["fqmn"], mutant["path"], mutant["source"]):
-        return {"operator": mutant["operator"], "label": mutant["label"]}
-    return None
+def _worker_main(module, task_conn, result_conn):
+    """A warm worker: import once, then loop — receive a mutant, send back whether it survived. Runs
+    until it receives the stop sentinel (or the parent kills it for blowing the deadline)."""
+    _init_worker(module)
+    while True:
+        mutant = task_conn.recv()
+        if mutant is None:
+            return
+        try:
+            survived = _suite_passes(mutant["fqmn"], mutant["path"], mutant["source"])
+        except BaseException:
+            survived = False
+        result_conn.send(survived)
+
+
+class _Worker:
+    """A killable warm worker process the parent dispatches one mutant at a time, so a mutant that hangs
+    past the deadline can be SIGKILLed and replaced without losing the rest of the run."""
+
+    def __init__(self, module):
+        self._module = module
+        self._spawn()
+
+    def _spawn(self):
+        self._task_recv, self._task_send = mp.Pipe(duplex=False)
+        self._result_recv, self._result_send = mp.Pipe(duplex=False)
+        self.proc = mp.Process(target=_worker_main, args=(self._module, self._task_recv, self._result_send), daemon=True)
+        self.proc.start()
+        self.current = None
+        self.since = None
+
+    def dispatch(self, mutant):
+        self.current = mutant
+        self.since = time.monotonic()
+        self._task_send.send(mutant)
+
+    def ready(self):
+        return self.current is not None and self._result_recv.poll()
+
+    def take(self):
+        survived = self._result_recv.recv()
+        mutant, self.current, self.since = self.current, None, None
+        return mutant, survived
+
+    def overdue(self):
+        return self.since is not None and time.monotonic() - self.since > _DEADLINE_SECONDS
+
+    def kill_and_respawn(self):
+        """A mutant that no signal could stop — kill the worker and start a fresh one. The mutant it was
+        running is caught (a program that does not halt is a detected behaviour change)."""
+        mutant = self.current
+        self.proc.kill()
+        self.proc.join()
+        self._spawn()
+        return mutant
+
+    def stop(self):
+        try:
+            self._task_send.send(None)
+        except (BrokenPipeError, OSError):
+            pass
+        self.proc.join(timeout=2)
+        if self.proc.is_alive():
+            self.proc.kill()
 
 
 def _fqmn(path, module):
@@ -152,9 +217,34 @@ def _mutants(module):
 
 
 def _run_module(module):
+    """Fan the mutants across killable warm workers. Each worker runs one mutant at a time; a mutant that
+    runs past the deadline (one no in-worker signal could stop) has its worker SIGKILLed and replaced,
+    and is counted as caught. A surviving mutant is one whose worker reported the suite still passing."""
     mutants = _mutants(module)
-    with ProcessPoolExecutor(max_workers=_WORKERS, initializer=_init_worker, initargs=(module,)) as pool:
-        survivors = [survivor for survivor in pool.map(_run_one, mutants, chunksize=16) if survivor is not None]
+    pending = list(reversed(mutants))  # pop() from the end
+    workers = [_Worker(module) for _ in range(min(_WORKERS, len(mutants) or 1))]
+    survivors = []
+    done = 0
+    while done < len(mutants):
+        for worker in workers:
+            if worker.current is None and pending:
+                worker.dispatch(pending.pop())
+        progressed = False
+        for worker in workers:
+            if worker.ready():
+                mutant, survived = worker.take()
+                if survived:
+                    survivors.append({"operator": mutant["operator"], "label": mutant["label"]})
+                done += 1
+                progressed = True
+            elif worker.overdue():
+                worker.kill_and_respawn()  # the hung mutant is caught; nothing to record
+                done += 1
+                progressed = True
+        if not progressed:
+            time.sleep(0.002)
+    for worker in workers:
+        worker.stop()
     return mutation_adequacy(mutants, survivors, _set_aside(module))
 
 
