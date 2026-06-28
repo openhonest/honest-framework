@@ -88,6 +88,18 @@ def _declared_link(manifest):
     return ok({**manifest, "role": "admin"})
 
 
+@link(accepts="v", binds={"slot": "field"}, authorizes=True, emits="evt")
+def _rich_link(manifest):
+    # Every metadata field set (boundary left default False), so a linkmeta case can pin each one.
+    return ok(manifest)
+
+
+@link()
+def _plain_link(manifest):
+    # All defaults — pins boundary/authorizes False and binds/emits None.
+    return ok(manifest)
+
+
 # Async links (section 10.6): a chain or validate_all containing any of these is itself async.
 async def _link_async(manifest):
     return ok({**manifest, "async_ran": "yes"})
@@ -113,6 +125,8 @@ _LINKS = {
     "client_fault": _link_client_fault,
     "raise": _link_raise,
     "declared": _declared_link,
+    "rich": _rich_link,
+    "plain": _plain_link,
 }
 _COMBINATORS = {"chain": chain, "validate_all": validate_all}
 
@@ -203,6 +217,10 @@ def _check_chainrun(case):
         for field in ("input", "results", "link"):
             if case.get(f"expect_fault_{field}") and field not in failure:
                 matched = False
+        for field in ("message", "category"):
+            key = f"expect_{field}"
+            if key in case:
+                matched = matched and failure.get(field) == case[key]
         return matched, f"got {result}"
     manifest = result.get("ok", {})
     matched = "ok" in result and all(
@@ -240,7 +258,7 @@ def _check_linkmeta(case):
     fn = _LINKS[case["link"]]
     meta = link_meta(fn)
     matched = is_link(fn) and callable(fn)
-    for field in ("boundary", "name", "accepts"):
+    for field in ("boundary", "name", "accepts", "binds", "authorizes", "emits"):
         key = f"expect_{field}"
         if key in case:
             matched = matched and meta.get(field) == case[key]

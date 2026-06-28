@@ -1,13 +1,96 @@
 {
  "version": "0.1",
  "module": "honest-type",
- "note": "Unit 1 \u2014 vocabulary construction contract (sections 2, 3). Set members as arrays; the runner builds the vocabulary and checks ok vs VocabularyError. classify() cases follow with unit 2.",
+ "note": "Unit 1 — vocabulary construction contract (sections 2, 3). Set members as arrays; the runner builds the vocabulary and checks ok vs VocabularyError. classify() cases follow with unit 2.",
  "cases": [
-  {"id": "value-rejection-shape", "call": "rejection", "args": ["tok", "unrecognized"], "expect": {"token": "tok", "reason": "unrecognized", "detail": null}},
-  {"id": "value-rejection-detail", "call": "rejection", "args": ["t2", "duplicate_slot", {"d": 1}], "expect": {"token": "t2", "reason": "duplicate_slot", "detail": {"d": 1}}},
-  {"id": "value-is-bounded-insensitive", "module": "honest_type.recognizers", "call": "is_bounded", "args": [{"kind": "insensitive", "members": ["a"]}], "expect": true},
-  {"id": "value-is-bounded-set", "module": "honest_type.recognizers", "call": "is_bounded", "args": [{"kind": "set", "members": ["a"]}], "expect": true},
-  {"id": "value-is-bounded-predicate", "module": "honest_type.recognizers", "call": "is_bounded", "args": [{"kind": "predicate"}], "expect": false},
+  {
+   "id": "value-rejection-shape",
+   "call": "rejection",
+   "args": [
+    "tok",
+    "unrecognized"
+   ],
+   "expect": {
+    "token": "tok",
+    "reason": "unrecognized",
+    "detail": null
+   }
+  },
+  {
+   "id": "value-rejection-detail",
+   "call": "rejection",
+   "args": [
+    "t2",
+    "duplicate_slot",
+    {
+     "d": 1
+    }
+   ],
+   "expect": {
+    "token": "t2",
+    "reason": "duplicate_slot",
+    "detail": {
+     "d": 1
+    }
+   }
+  },
+  {
+   "id": "value-is-bounded-insensitive",
+   "module": "honest_type.recognizers",
+   "call": "is_bounded",
+   "args": [
+    {
+     "kind": "insensitive",
+     "members": [
+      "a"
+     ]
+    }
+   ],
+   "expect": true
+  },
+  {
+   "id": "value-is-bounded-set",
+   "module": "honest_type.recognizers",
+   "call": "is_bounded",
+   "args": [
+    {
+     "kind": "set",
+     "members": [
+      "a"
+     ]
+    }
+   ],
+   "expect": true
+  },
+  {
+   "id": "value-is-bounded-predicate",
+   "module": "honest_type.recognizers",
+   "call": "is_bounded",
+   "args": [
+    {
+     "kind": "predicate"
+    }
+   ],
+   "expect": false
+  },
+  {
+   "id": "linkmeta-rich-all-fields",
+   "link": "rich",
+   "expect_name": "_rich_link",
+   "expect_accepts": "v",
+   "expect_binds": {
+    "slot": "field"
+   },
+   "expect_authorizes": true,
+   "expect_emits": "evt",
+   "expect_boundary": false
+  },
+  {
+   "id": "linkmeta-plain-defaults",
+   "link": "plain",
+   "expect_boundary": false,
+   "expect_authorizes": false
+  },
   {
    "id": "vocab-valid",
    "declarations": {
@@ -566,7 +649,9 @@
    "expect": "err",
    "expect_code": "non_result_return",
    "expect_fault_input": true,
-   "expect_fault_link": true
+   "expect_fault_link": true,
+   "expect_message": "Link returned neither ok nor err",
+   "expect_category": "server"
   },
   {
    "id": "validate-all-ok",
@@ -593,7 +678,9 @@
    "initial": {},
    "expect": "err",
    "expect_code": "validation_failed",
-   "expect_fault_results": true
+   "expect_fault_results": true,
+   "expect_message": "One or more validation checks failed",
+   "expect_category": "client"
   },
   {
    "id": "boundary-ok-success-output",
@@ -819,7 +906,10 @@
    "initial": {},
    "expect": "err",
    "expect_code": "non_result_return",
-   "expect_fault_input": true
+   "expect_fault_input": true,
+   "expect_fault_link": true,
+   "expect_message": "Link returned neither ok nor err",
+   "expect_category": "server"
   },
   {
    "id": "validate-all-async-ok",
@@ -846,7 +936,9 @@
    "initial": {},
    "expect": "err",
    "expect_code": "validation_failed",
-   "expect_fault_results": true
+   "expect_fault_results": true,
+   "expect_message": "One or more validation checks failed",
+   "expect_category": "client"
   },
   {
    "id": "sm-construct-valid",
