@@ -10,6 +10,7 @@ caught + set_aside == total. This file is the boundary (subprocesses, file write
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -27,13 +28,19 @@ def _suite_passes(module):
     A per-mutant timeout is essential: some mutants are non-terminating (a removed loop increment, a
     flipped exit condition), and without a bound the whole gate hangs on the first one. A timeout means
     the suite did not pass, so the mutant is caught — a program that no longer halts is a detected
-    behaviour change, exactly what the gate is for."""
+    behaviour change, exactly what the gate is for.
+
+    PYTHONDONTWRITEBYTECODE is essential too: the gate rewrites a source file many times per second, but
+    CPython's default timestamp-based .pyc cache has one-second resolution, so a subprocess can import a
+    stale .pyc of a *different* version of the file. With no .pyc written, every run compiles the source
+    on disk — the actual mutant — so the caught/survived verdict is deterministic and true."""
     try:
         result = subprocess.run(
-            [sys.executable, f"honest-{module}/conformance/run_conformance.py"],
+            [sys.executable, "-B", f"honest-{module}/conformance/run_conformance.py"],
             cwd=ROOT,
             capture_output=True,
             timeout=15,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
     except subprocess.TimeoutExpired:
         return False
