@@ -92,6 +92,25 @@
    "expect_authorizes": false
   },
   {
+   "id": "classify-non-string-token",
+   "declarations": {
+    "cc": [
+     "USD"
+    ]
+   },
+   "tokens": [
+    123
+   ],
+   "expect_fault": {
+    "code": "non_string_token",
+    "message": "classify() requires string tokens. Got: 123",
+    "category": "server",
+    "detail": {
+     "token": 123
+    }
+   }
+  },
+  {
    "id": "vocab-valid",
    "declarations": {
     "currency_code": [

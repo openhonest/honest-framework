@@ -184,7 +184,12 @@ def _check_classify(case):
     bind = binding({k: _slot(v) for k, v in case["binding"].items()}) if "binding" in case else None
     result = classify(case["tokens"], vocab, bind)
     if "expect_fault" in case:
-        ok = "err" in result and result["err"]["code"] == case["expect_fault"]
+        spec = case["expect_fault"]
+        failure = result.get("err", {})
+        if isinstance(spec, dict):  # honest: ignore HC-P005  (str vs dict is a case-format shape, not a domain discriminant)
+            ok = "err" in result and all(failure.get(field) == value for field, value in spec.items())
+        else:
+            ok = "err" in result and failure.get("code") == spec
         return ok, f"got {result}"
     reasons = [r["reason"] for r in result.get("_rejections", [])]
     # `slot in result` distinguishes Nothing (present, null) from an absent slot.
