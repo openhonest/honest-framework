@@ -264,6 +264,18 @@ def _check_statemachine(case):
     return ok_, f"got {outcome} ({message[:40]})"
 
 
+def _check_value(case):
+    """A value-oracle case: call a named function with literal args and confirm its exact output. Pins
+    the constructor/predicate results (the shapes of fault, rejection, ok/err, and the bounded predicate)
+    that the behavioural checkers only exercise indirectly. `module` defaults to the package."""
+    import importlib
+
+    module = importlib.import_module(case.get("module", "honest_type"))
+    fn = getattr(module, case["call"])
+    got = fn(*case.get("args", []), **case.get("kwargs", {}))
+    return got == case["expect"], f"got {got!r}"
+
+
 _CHECKERS = {
     "construction": _check_construction,
     "classify": _check_classify,
@@ -273,10 +285,13 @@ _CHECKERS = {
     "rejections": _check_rejections,
     "linkmeta": _check_linkmeta,
     "statemachine": _check_statemachine,
+    "value": _check_value,
 }
 
 
 def _kind(case):
+    if "call" in case:
+        return "value"
     if "sm" in case:
         return "statemachine"
     if "link" in case:

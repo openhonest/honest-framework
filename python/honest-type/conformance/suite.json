@@ -3,6 +3,11 @@
  "module": "honest-type",
  "note": "Unit 1 \u2014 vocabulary construction contract (sections 2, 3). Set members as arrays; the runner builds the vocabulary and checks ok vs VocabularyError. classify() cases follow with unit 2.",
  "cases": [
+  {"id": "value-rejection-shape", "call": "rejection", "args": ["tok", "unrecognized"], "expect": {"token": "tok", "reason": "unrecognized", "detail": null}},
+  {"id": "value-rejection-detail", "call": "rejection", "args": ["t2", "duplicate_slot", {"d": 1}], "expect": {"token": "t2", "reason": "duplicate_slot", "detail": {"d": 1}}},
+  {"id": "value-is-bounded-insensitive", "module": "honest_type.recognizers", "call": "is_bounded", "args": [{"kind": "insensitive", "members": ["a"]}], "expect": true},
+  {"id": "value-is-bounded-set", "module": "honest_type.recognizers", "call": "is_bounded", "args": [{"kind": "set", "members": ["a"]}], "expect": true},
+  {"id": "value-is-bounded-predicate", "module": "honest_type.recognizers", "call": "is_bounded", "args": [{"kind": "predicate"}], "expect": false},
   {
    "id": "vocab-valid",
    "declarations": {

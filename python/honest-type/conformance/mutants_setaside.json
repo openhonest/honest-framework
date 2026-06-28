@@ -1,4 +1,6 @@
 {
+  "honest-type/src/honest_type/reserved.py:remove@return None": "equivalent: removing the trailing `return None` of reservation_layer leaves the function falling off its end, which returns None — the same result.",
+  "honest-type/src/honest_type/types.py:False->True@class Fault(TypedDict, total=False):": "equivalent: `total=False` on a TypedDict is a static-typing directive with no runtime effect, so flipping it to True cannot change any value the suite observes.",
   "honest-type/src/honest_type/boundary.py:string->empty@\"unrecognized\": \"fault\",": "equivalent: emptying the policy KEY leaves the reason unlisted, and an unlisted reason defaults to 'fault' (blocks) via rules.get(reason, 'fault') — the same outcome as the explicit 'fault' value.",
   "honest-type/src/honest_type/boundary.py:string->empty@\"missing_required\": \"fault\",": "equivalent: emptying the policy KEY leaves the reason unlisted, which defaults to 'fault' (blocks) — the same outcome as the explicit value.",
   "honest-type/src/honest_type/boundary.py:string->empty@\"duplicate_slot\": \"fault\",": "equivalent: emptying the policy KEY leaves the reason unlisted, which defaults to 'fault' (blocks) — the same outcome as the explicit value.",
