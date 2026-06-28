@@ -76,9 +76,9 @@ A fast fan-out over all conformance probes (`laws_*.py` × 8) hunting for self-r
   - `reservation_layer` (honest-type) — **was genuinely self-referential**: it drew its words from the module's own `_LAYER*` frozensets, so an emptied word still mapped correctly (the empty string sorts first and is itself a member) and the law passed. Fixed with a hand-written literal oracle pinning all three layers plus every word→layer mapping; the mutation engine confirms it load-bearing (92 caught). Committed `11bddae`.
   - `checked_select`-vs-`select` (honest-persist `_probe_checked`:558) — **benign**: the comparison `checked_select(...)["ok"] == select(...)` leans on `select()` being independently pinned by suite.json hand-written `expect_sql`/`expect_params` (`q-select-star`/`-cols-where`/`-full`), and `checked_select` has its own `cq-select-ok`. Not circular.
   - `manifest`-embeds-`schema` (honest-observe `_probe_event_log`:348) — **benign**: the embedded `table` is pinned against hand-written `expected_columns`/`expected_indexes`/nullability literals in the same probe (laws_ho.py 313–345); the embed check leans on that independent grounding.
-- [x] honest-check heuristic rule for self-reference — **deferred** (R2 subsumes it structurally, once the engine is complete — see Phase A's missing operators).
+- [x] honest-check heuristic rule for self-reference — **not needed; R2 subsumption now verified empirically, not asserted.** Controlled experiment on the `reservation_layer` law (the engine being complete): with the law in its self-referential form (words drawn from the module's own `_LAYER*` frozensets) the mutation gate reports **93** reserved.py survivors — the 92 layer-member mutants survive because the law reads the mutated values back; with the fixed hand-written-literal oracle it reports **1** (only the equivalent `return None`). So a self-referential law cannot kill the mutants it pretends to check, and the mutation gate exposes it as undeclared survivors — R2 catches self-reference structurally. A static honest-check rule is also ill-suited: it lints `src/`, but conformance laws live in unlinted `conformance/`. No code is warranted.
 
-**Effort:** small. **Status: complete.**
+**Effort:** small. **Status: complete — and verified, not just asserted (the R2-subsumes-R1 claim is now demonstrated above).**
 
 ---
 
