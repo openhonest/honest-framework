@@ -5,8 +5,11 @@ description capture, source-line tracking, and the malformed-input fault paths. 
 returns a list of failures; run() aggregates.
 """
 
+import io
 import re
+import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from honest_gherkin import (
@@ -340,6 +343,31 @@ def _probe_io():
         bad.append("a passing run should exit 0")
     if main(["run", sample]) != 1:
         bad.append("a run with no registered steps should exit 1 (every step unmatched)")
+
+    # main prints one summary line per feature; assert the observable output, not just the exit code,
+    # so the format string and the print loop are pinned.
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        main(["run", sample, "--steps", "_sample_steps"])
+    if f"{sample}: 1 passed, 0 failed" not in buffer.getvalue():
+        bad.append(f"main should print the per-feature summary line: {buffer.getvalue()!r}")
+
+    # main(None) reads sys.argv (the real CLI entry); the argv slice and `import sys` are pinned here.
+    saved_argv = sys.argv
+    sys.argv = ["honest-gherkin", "run", sample, "--steps", "_sample_steps"]
+    try:
+        argv_status = main(None)
+    finally:
+        sys.argv = saved_argv
+    if argv_status != 0:
+        bad.append("main(None) should read sys.argv[1:] and exit 0 on a passing run")
+
+    # The subcommand is required: no subcommand exits via argparse, never falls through to run.
+    try:
+        main([])
+        bad.append("main([]) with no subcommand should exit via argparse (required=True)")
+    except SystemExit:
+        pass
     return bad
 
 

@@ -83,6 +83,18 @@ def _check_vocab(case):
     return actual == expect, f"{case['vocab']} = {actual!r}, expected {expect!r}"
 
 
+def _check_failurereport(case):
+    """A parse failure is surfaced as a failing FeatureReport (section 8), never swallowed: one errored
+    scenario carrying the bad_feature_syntax fault. The full structure is fixed by (path, fault), so
+    assert it exactly — every key, status string, the synthetic step, and the 0/1 counts."""
+    from honest_gherkin.cli import _parse_failure_report
+
+    spec = case["failurereport"]
+    fault = step_fault(spec["code"], spec["detail"], spec.get("scenario_name", ""), spec.get("step_text", ""))
+    result = _parse_failure_report(spec["path"], fault)
+    return result == case["expect"], f"got {result!r}"
+
+
 def _check_exports(case):
     """The package's public surface (section 1) is exactly __all__: the listed names, no more and no
     fewer, and every one resolvable as a real attribute. Catches a name emptied or dropped from
@@ -113,11 +125,12 @@ _CHECKERS = {
     "vocab": _check_vocab,
     "stepfault": _check_stepfault,
     "exports": _check_exports,
+    "failurereport": _check_failurereport,
 }
 
 
 def _kind(case):
-    for name in ("compile", "match", "fold", "vocab", "stepfault", "exports"):
+    for name in ("compile", "match", "fold", "vocab", "stepfault", "exports", "failurereport"):
         if name in case:
             return name
     return "parse"

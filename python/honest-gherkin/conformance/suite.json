@@ -439,6 +439,45 @@
     "FeatureReport",
     "StepFault"
    ]
+  },
+  {
+   "id": "failurereport-bad-syntax",
+   "failurereport": {
+    "path": "orders.feature",
+    "code": "bad_feature_syntax",
+    "detail": "line 2: step outside a scenario",
+    "step_text": "Given an orphan step"
+   },
+   "expect": {
+    "feature_name": "orders.feature",
+    "source_path": "orders.feature",
+    "scenarios": [
+     {
+      "name": "bad feature syntax",
+      "status": "err",
+      "step_results": [
+       {
+        "step": {
+         "kind": "given",
+         "resolved_kind": "given",
+         "text": "line 2: step outside a scenario",
+         "source_line": 0
+        },
+        "status": "errored",
+        "fault": {
+         "code": "bad_feature_syntax",
+         "scenario_name": "",
+         "step_text": "Given an orphan step",
+         "detail": "line 2: step outside a scenario"
+        }
+       }
+      ],
+      "duration_ms": 0
+     }
+    ],
+    "total_passed": 0,
+    "total_failed": 1
+   }
   }
  ],
  "value_oracle_exempt": [
