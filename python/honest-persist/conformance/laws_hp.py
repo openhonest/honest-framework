@@ -846,6 +846,7 @@ def _probe_instrument():
         build_migration_event,
         build_pool_event,
         build_query_event,
+        build_transaction_event,
         extract_table,
         pool_fault,
         sql_hash,
@@ -854,32 +855,39 @@ def _probe_instrument():
     bad = []
     if POOL_FAULT_CODES != {"unknown_database", "unresolvable_dsn", "unknown_tenant", "pool_exhausted", "pool_closed", "credential_rejected", "lifecycle_failed"}:
         bad.append("POOL_FAULT_CODES vocabulary is wrong")
-    if pool_fault("unknown_database", "x")["category"] != "client":
-        bad.append("unknown_database is a caller (client) error")
-    if pool_fault("pool_exhausted", "x")["category"] != "server":
-        bad.append("pool_exhausted is a server (capacity) error")
+    # Each fault code maps to its exact category (the full client/server map).
+    expected_categories = {"unknown_database": "client", "unknown_tenant": "client", "unresolvable_dsn": "server", "pool_exhausted": "server", "pool_closed": "server", "credential_rejected": "server", "lifecycle_failed": "server"}
+    for code, category in expected_categories.items():
+        fault_record = pool_fault(code, "msg")
+        if fault_record != {"code": code, "message": "msg", "category": category}:
+            bad.append(f"pool_fault({code}) wrong: {fault_record}")
     if extract_table("SELECT * FROM users WHERE id = 1") != "users":
         bad.append("extract_table should find the FROM table")
     if extract_table("INSERT INTO orders (x) VALUES (1)") != "orders":
         bad.append("extract_table should find the INTO table")
+    if extract_table("UPDATE accounts SET x = 1") != "accounts":
+        bad.append("extract_table should find the UPDATE table")
     if extract_table("BEGIN") != "":
         bad.append("extract_table should return '' when no table is present")
-    if sql_hash("SELECT 1") != sql_hash("SELECT 1") or sql_hash("SELECT 1") == sql_hash("SELECT 2"):
-        bad.append("sql_hash should be a stable per-sql digest")
-    if len(sql_hash("SELECT 1")) != 64:
-        bad.append("sql_hash should be a 64-char sha256 hex digest")
-    dev = build_query_event("db", "users", "select", 3, 1500, "SELECT 1", "r1", None, True)
-    prod = build_query_event("db", "users", "select", 3, 1500, "SELECT 1", "r1", None, False)
-    if dev["sql"] != "SELECT 1" or prod["sql"] is not None:
-        bad.append("the full sql is included only in development mode")
-    if dev["sql_hash"] != sql_hash("SELECT 1"):
-        bad.append("the query event should always carry the sql_hash")
-    migration = build_migration_event("db", "create_table", "users", {"x": 1}, 2000, "CREATE TABLE users", True, None)
-    if migration["operation"] != "create_table" or migration["success"] is not True:
-        bad.append("build_migration_event should carry the operation and success flag")
-    pool = build_pool_event("db", "created", 10, 1, 0, None, None, None)
-    if pool["event"] != "created" or pool["pool_size"] != 10:
-        bad.append("build_pool_event should carry the event and pool size")
+    if sql_hash("SELECT 1") != "e004ebd5b5532a4b85984a62f8ad48a81aa3460c1ca07701f386135d72cdecf5" or sql_hash("SELECT 1") == sql_hash("SELECT 2"):
+        bad.append("sql_hash should be a stable per-sql sha256 digest")
+
+    # Each event builder's full payload is pinned exactly (every key and value).
+    builders = [
+        (build_query_event("db", "users", "select", 3, 1500, "SELECT 1", "r1", None, True),
+         {"db_id": "db", "table_name": "users", "operation": "select", "row_count": 3, "duration_ns": 1500, "sql_hash": sql_hash("SELECT 1"), "sql": "SELECT 1", "request_id": "r1", "fault_code": None}),
+        (build_query_event("db", "users", "select", 3, 1500, "SELECT 1", "r1", "bad", False),
+         {"db_id": "db", "table_name": "users", "operation": "select", "row_count": 3, "duration_ns": 1500, "sql_hash": sql_hash("SELECT 1"), "sql": None, "request_id": "r1", "fault_code": "bad"}),
+        (build_migration_event("db", "create_table", "users", {"x": 1}, 2000, "CREATE TABLE users", True, None),
+         {"db_id": "db", "operation": "create_table", "table": "users", "detail": {"x": 1}, "duration_ns": 2000, "sql": "CREATE TABLE users", "success": True, "fault_code": None}),
+        (build_pool_event("db", "closed", 10, 1, 2, 5000, "pool_closed", "shut"),
+         {"db_id": "db", "event": "closed", "pool_size": 10, "active": 1, "waiting": 2, "duration_ns": 5000, "fault_code": "pool_closed", "message": "shut"}),
+        (build_transaction_event("db", 3, "constraint_violation", 2, 1200, "r1"),
+         {"db_id": "db", "write_count": 3, "outcome": "constraint_violation", "failed_at": 2, "duration_ns": 1200, "request_id": "r1"}),
+    ]
+    for actual, expected in builders:
+        if actual != expected:
+            bad.append(f"instrument event builder mismatch: got {actual}, expected {expected}")
     return bad
 
 
