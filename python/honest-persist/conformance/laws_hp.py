@@ -1072,8 +1072,8 @@ def _probe_pool():
     elif by_tenant["ok"]["credential"] != "read_replica" or by_tenant["ok"]["lifecycle"] != "ephemeral":
         bad.append("the credential and lifecycle should be carried through")
     none = resolve_pool_key({"some": "query data"})
-    if none.get("err", {}).get("code") != "unknown_database":
-        bad.append(f"a manifest naming no database should fault unknown_database: {none}")
+    if none.get("err") != {"code": "unknown_database", "message": "manifest carries neither db_id nor tenant_id", "category": "client"}:
+        bad.append(f"a manifest naming no database should fault unknown_database in full: {none}")
     return bad
 
 
@@ -1210,6 +1210,8 @@ def _probe_ephemeral():
             bad.append(f"only ephemeral databases are recreated, in configuration order: {connected}")
         if "scratch:" not in registry or "keep:" in registry:
             bad.append(f"the registry should hold the ephemeral pools, not the persistent one: {list(registry)}")
+        elif registry["scratch:"]["lifecycle"] != "ephemeral":
+            bad.append(f"a recreated ephemeral pool should carry the ephemeral lifecycle: {registry['scratch:']}")
 
         # The recreated schema is real: insert and read a row through the cached connection.
         conn = registry["scratch:"]["conn"]
@@ -1227,11 +1229,18 @@ def _probe_pool_events():
     reap_idle emits 'closed' on eviction, both through the injected emit and keyed by the pool
     aggregate; emit_pool_event swallows a failing emit, and no emit means no event."""
     from honest_persist import emit_pool_event, empty_pool_registry, get_pool, reap_idle
+    from honest_persist.pool import is_idle
 
     ms = 1_000_000
 
     async def _run():
         bad = []
+        # is_idle is strict and uses a ms->ns factor of 1_000_000: exactly at the threshold is not idle,
+        # one nanosecond past is.
+        if is_idle(0, 10_000_000, 10) is not False:
+            bad.append("is_idle should be False at exactly the threshold (strict >)")
+        if is_idle(0, 10_000_001, 10) is not True:
+            bad.append("is_idle should be True one nanosecond past the threshold")
         events = []
 
         async def emit(event_type, aggregate_type, aggregate_id, payload):
@@ -1247,16 +1256,23 @@ def _probe_pool_events():
         _, registry = await get_pool(registry, {"db_id": "main", "db_lifecycle": "on_demand"}, connect, 0, emit)
         if len(events) != 1 or events[0][:3] != ("hf.persist.pool", "pool", "main") or events[0][3]["event"] != "created":
             bad.append(f"first contact should emit a pool created event: {events}")
+        elif (events[0][3]["pool_size"], events[0][3]["active"], events[0][3]["waiting"]) != (1, 1, 0):
+            bad.append(f"the created event should report one connection, one active, none waiting: {events[0][3]}")
 
-        # Reuse does not re-emit created.
-        _, registry = await get_pool(registry, {"db_id": "main", "db_lifecycle": "on_demand"}, connect, 1, emit)
+        # Reuse does not re-emit created, and it refreshes last_used to the new now (so the pool is not
+        # prematurely reaped).
+        _, registry = await get_pool(registry, {"db_id": "main", "db_lifecycle": "on_demand"}, connect, 5, emit)
         if len(events) != 1:
             bad.append("reusing a cached pool should not emit a created event")
+        if registry["main:"]["last_used"] != 5:
+            bad.append(f"reusing a pool should refresh its last_used: {registry['main:']}")
 
         # Reaping emits closed.
         registry = await reap_idle(registry, 20 * ms, 10, close, emit)
         if len(events) != 2 or events[1][2] != "main" or events[1][3]["event"] != "closed":
             bad.append(f"reaping a pool should emit a closed event: {events}")
+        elif (events[1][3]["pool_size"], events[1][3]["active"], events[1][3]["waiting"]) != (1, 0, 0):
+            bad.append(f"the reaped closed event should report the closed connection, none active: {events[1][3]}")
 
         # A failing emit is swallowed; no emit is a no-op.
         async def emit_down(event_type, aggregate_type, aggregate_id, payload):
@@ -1518,11 +1534,11 @@ def _probe_connection_pool():
         if first["ok"] != "c1" or second["ok"] != "c2" or pool["active"] != 2:
             bad.append(f"acquire should hand out idle connections and count them active: {first}, {second}, {pool}")
         miss, pool = acquire_connection(pool)
-        if miss.get("err", {}).get("code") != "pool_exhausted":
-            bad.append(f"acquire on a full pool should fault pool_exhausted: {miss}")
+        if miss.get("err") != {"code": "pool_exhausted", "message": "every connection in the pool is in use", "category": "server"}:
+            bad.append(f"acquire on a full pool should fault pool_exhausted in full: {miss}")
         pool = release_connection(pool, "c1")
-        if pool["active"] != 1 or "c1" not in pool["idle"]:
-            bad.append(f"release should return the connection to idle: {pool}")
+        if pool != {"size": 2, "idle": ["c1"], "active": 1}:
+            bad.append(f"release should return the connection to idle and decrement active: {pool}")
 
         # open_pool against real SQLite: each connection is established resiliently through
         # connect_with_retry, so a transient failure retries, and a created event fires once the
@@ -1583,11 +1599,13 @@ def _probe_connection_pool():
         exhausted = []
 
         async def emit_exhausted(event_type, aggregate_type, aggregate_id, payload):
-            exhausted.append(payload["event"])
+            exhausted.append(payload)
 
         result, _ = await lease_connection(new_pool([]), "main", emit_exhausted)
-        if result.get("err", {}).get("code") != "pool_exhausted" or exhausted != ["exhausted"]:
+        if result.get("err", {}).get("code") != "pool_exhausted" or [p["event"] for p in exhausted] != ["exhausted"]:
             bad.append(f"lease on a full pool should fault and emit exhausted: {result}, {exhausted}")
+        elif (exhausted[0]["pool_size"], exhausted[0]["active"], exhausted[0]["waiting"], exhausted[0]["fault_code"]) != (0, 0, 1, "pool_exhausted"):
+            bad.append(f"the exhausted event should report the full pool, one waiter, and the fault code: {exhausted[0]}")
         quiet = []
 
         async def emit_quiet(event_type, aggregate_type, aggregate_id, payload):
@@ -1607,11 +1625,15 @@ def _probe_connection_pool():
         closed_events = []
 
         async def emit_closed(event_type, aggregate_type, aggregate_id, payload):
-            closed_events.append(payload["event"])
+            closed_events.append(payload)
 
-        await close_pool(opened["ok"], "main", close, emit_closed)
-        if len(closed_conns) != 2 or closed_events != ["closed"]:
-            bad.append(f"close_pool should close the idle connections and emit closed: {closed_conns}, {closed_events}")
+        returned_pool = await close_pool(opened["ok"], "main", close, emit_closed)
+        if len(closed_conns) != 2 or [p["event"] for p in closed_events] != ["closed"]:
+            bad.append(f"close_pool should close the idle connections and emit closed: {closed_conns}, {[p['event'] for p in closed_events]}")
+        elif (closed_events[0]["pool_size"], closed_events[0]["active"], closed_events[0]["waiting"]) != (2, 0, 0):
+            bad.append(f"the closed event should report the pool size and no active/waiting: {closed_events[0]}")
+        if returned_pool != opened["ok"]:
+            bad.append("close_pool should return the pool")
         return bad
 
     return asyncio.run(_run())
