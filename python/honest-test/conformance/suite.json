@@ -2216,6 +2216,39 @@
    "expect_invalid_lengths": [
     5
    ]
+  },
+  {
+   "id": "pred-bare-int",
+   "source": "lambda x: int(x)",
+   "expect_class": "numeric"
+  },
+  {
+   "id": "pred-bare-float",
+   "source": "lambda x: float(x)",
+   "expect_class": "numeric"
+  },
+  {
+   "id": "pred-bare-bool",
+   "source": "lambda x: bool(x)",
+   "expect_class": "catch_all"
+  },
+  {
+   "id": "pred-bare-type",
+   "source": "lambda x: type(x)",
+   "expect_class": "catch_all"
+  },
+  {
+   "id": "pred-two-calls-first-in-codebase",
+   "source": "lambda x: aaa(x) and zzz(x)",
+   "codebase": [
+    "aaa"
+   ],
+   "expect_class": "composite"
+  },
+  {
+   "id": "pred-float-literal-comparison",
+   "source": "lambda s: s > 1.5",
+   "expect_class": "numeric"
   }
  ],
  "value_oracle_exempt": [

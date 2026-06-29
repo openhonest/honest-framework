@@ -131,7 +131,17 @@ def _ok_consumer(manifest):
 
 
 def _probe_predicate():
+    from honest_test.predicate import _CHARCLASS_METHODS, _IGNORED_BUILTINS
+
     bad = []
+    # Hardcoded expectations (NOT read from the module's own sets, which would move with a mutation):
+    # the full character-class method set and the full ignored-builtin set the spec fixes.
+    charclass_methods = ["isdigit", "isalpha", "isupper", "islower", "isalnum", "isspace", "isnumeric", "isdecimal", "isidentifier", "istitle", "isprintable", "isascii"]
+    ignored_builtins = ["str", "repr", "abs", "ord", "round", "hex", "oct", "bin", "chr", "min", "max", "sum"]
+    if set(_CHARCLASS_METHODS) != set(charclass_methods):
+        bad.append(f"_CHARCLASS_METHODS drifted from the spec set: {set(_CHARCLASS_METHODS) ^ set(charclass_methods)}")
+    if set(_IGNORED_BUILTINS) != set(ignored_builtins):
+        bad.append(f"_IGNORED_BUILTINS drifted from the spec set: {set(_IGNORED_BUILTINS) ^ set(ignored_builtins)}")
     expectations = {
         "def p(s): return str(s) == s": "unknown",       # ignored builtin (59->exit)
         "def p(s): return s.strip() == s": "unknown",    # non-charclass attribute (65->exit)
@@ -145,6 +155,22 @@ def _probe_predicate():
         bad.append("classify_predicate on a live readable fn failed")
     if classify_predicate(len) != "external":
         bad.append("classify_predicate on a C builtin should fall back to external")
+
+    # Every character-class method is recognised as character_class — iterating the hardcoded list, so
+    # dropping any member from _CHARCLASS_METHODS now fails the suite (the source uses the real name).
+    for method in charclass_methods:
+        if classify_source(f"lambda s: s.{method}()") != "character_class":
+            bad.append(f"a s.{method}() predicate should classify as character_class")
+
+    # Every ignored builtin carries no classification signal: calling it leaves the predicate unknown,
+    # not external (it must not be recorded as a named call). Iterates the hardcoded list.
+    for builtin in ignored_builtins:
+        if classify_source(f"lambda x: {builtin}(x)") != "unknown":
+            bad.append(f"the ignored builtin {builtin}() should leave the predicate unknown, not external")
+
+    # classify_predicate unwraps a {"fn": ...} recognizer (the "fn"/"get" branch) and classifies the fn.
+    if classify_predicate({"fn": lambda s: s.isdigit()}) != "character_class":
+        bad.append("classify_predicate should unwrap a {'fn': ...} recognizer and classify its fn")
     # callee-is-None guard: feed _fact_call a non-call node (an integer has no function field).
     facts = _collect_facts("0")
     integer_node = next(n for n in walk(parse_python(b"0").root_node) if n.type == "integer")
