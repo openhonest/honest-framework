@@ -22,6 +22,7 @@ import json
 import multiprocessing as mp
 import os
 import signal
+import subprocess
 import sys
 import time
 from contextlib import redirect_stderr, redirect_stdout
@@ -33,10 +34,26 @@ ROOT = Path(__file__).resolve().parent
 # In-worker SIGALRM is the fast path for a Python-level non-terminating mutant; the parent's hard
 # deadline is the backstop for one SIGALRM cannot reach (asyncio.run installs its own signal handling),
 # where the parent SIGKILLs the whole worker. A legitimate mutant runs in well under 0.2s, so these are
-# generous.
+# generous. They are kept tight on purpose: a mutant that shifts a size constant (honest-test's
+# adversarial generators build strings up to ~1 MB) allocates for the whole window before the alarm
+# fires, so a long timeout times that runaway by the worker count in resident memory. The run-to-run
+# flap that tempted a longer window was warm-worker state leakage, fixed by the stdlib snapshot below,
+# not by waiting longer.
 _TIMEOUT_SECONDS = 2
 _DEADLINE_SECONDS = 4
-_WORKERS = max(1, (os.cpu_count() or 2) - 1)
+
+# Total resident memory ceiling for the whole run (parent + every worker). A legitimate conformance run
+# peaks around 50 MB; a pathological mutant (a removed loop increment that grows a list, a size constant
+# in honest-test's adversarial generators) can allocate without bound until the timeout fires. RLIMIT_AS
+# is a no-op on macOS, so the parent instead polls each worker's RSS and SIGKILLs (then respawns) any that
+# crosses the per-worker cap — a memory blowup is a detected behaviour change, caught exactly like a hang.
+# The worker count is clamped so workers x cap stays under the ceiling with headroom for the parent and
+# for the overshoot between polls.
+_MEMORY_CEILING_BYTES = 6 * 1024**3
+_PARENT_RESERVE_BYTES = 1536 * 1024**2  # parent process + OS slack + between-poll overshoot allowance
+_WORKER_RSS_CAP_BYTES = 512 * 1024**2   # >> the ~50 MB a legitimate run needs, so no real survivor is killed
+_MEMORY_POLL_SECONDS = 0.05
+_WORKERS = max(1, min((os.cpu_count() or 2) - 1, (_MEMORY_CEILING_BYTES - _PARENT_RESERVE_BYTES) // _WORKER_RSS_CAP_BYTES))
 
 
 class _MutantLoader(importlib.abc.SourceLoader):
@@ -100,11 +117,31 @@ def _purge():
             del sys.modules[name]
 
 
+# Stdlib modules a conformance harness patches at runtime (honest-test's non-determinism probe replaces
+# attributes of these inside a call_monitor, restoring them in a finally). A mutant that breaks that
+# restore would leave a module patched for every later mutant in the same warm worker — making a real
+# survivor flap to "caught" depending on run order. Snapshotting and restoring these around each run
+# isolates one mutant from the next without paying a fresh interpreter per mutant.
+_PATCHABLE = ("asyncio", "getpass", "multiprocessing", "os", "platform", "random", "secrets", "threading", "time", "uuid")
+
+
+def _snapshot_stdlib():
+    return [(sys.modules[name], dict(sys.modules[name].__dict__)) for name in _PATCHABLE if name in sys.modules]
+
+
+def _restore_stdlib(snapshot):
+    for module, saved in snapshot:
+        module.__dict__.clear()
+        module.__dict__.update(saved)
+
+
 def _suite_passes(fqmn, path, source):
     """True iff the conformance __main__ exits 0 with `path` overridden by `source`. A non-terminating
-    mutant trips the alarm and counts as caught (returns False)."""
+    mutant trips the alarm and counts as caught (returns False). Stdlib state is snapshotted and restored
+    around the run so a mutant that leaks a patch cannot poison the next mutant in this warm worker."""
     _FINDER.fqmn, _FINDER.path, _FINDER.source = fqmn, path, source
     _purge()
+    snapshot = _snapshot_stdlib()
     signal.signal(signal.SIGALRM, _alarm)
     signal.alarm(_TIMEOUT_SECONDS)
     try:
@@ -119,6 +156,7 @@ def _suite_passes(fqmn, path, source):
         return False
     finally:
         signal.alarm(0)
+        _restore_stdlib(snapshot)
         _FINDER.fqmn = None
 
 
@@ -188,6 +226,20 @@ class _Worker:
             self.proc.kill()
 
 
+def _rss_bytes(pids):
+    """Resident memory in bytes for each pid, via one `ps` call (the RSS column is KB on macOS and
+    Linux). A pid that has already exited is simply omitted. Used to cap a runaway worker."""
+    if not pids:
+        return {}
+    listed = subprocess.run(["ps", "-o", "pid=,rss=", "-p", ",".join(str(pid) for pid in pids)], capture_output=True, text=True).stdout
+    rss = {}
+    for line in listed.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            rss[int(parts[0])] = int(parts[1]) * 1024
+    return rss
+
+
 def _fqmn(path, module):
     """The dotted module name for a source file, e.g. honest_type/boundary.py -> honest_type.boundary;
     a package __init__.py -> honest_type."""
@@ -225,6 +277,7 @@ def _run_module(module):
     workers = [_Worker(module) for _ in range(min(_WORKERS, len(mutants) or 1))]
     survivors = []
     done = 0
+    last_memory_poll = 0.0
     while done < len(mutants):
         for worker in workers:
             if worker.current is None and pending:
@@ -241,6 +294,19 @@ def _run_module(module):
                 worker.kill_and_respawn()  # the hung mutant is caught; nothing to record
                 done += 1
                 progressed = True
+        # Cap resident memory: a mutant whose run grows past the per-worker cap has its worker SIGKILLed
+        # and replaced, and is counted as caught (a memory blowup is a detected behaviour change, like a
+        # hang). Polled, not per-iteration, so the `ps` cost is bounded.
+        now = time.monotonic()
+        if now - last_memory_poll >= _MEMORY_POLL_SECONDS:
+            last_memory_poll = now
+            busy = [worker for worker in workers if worker.current is not None]
+            rss = _rss_bytes([worker.proc.pid for worker in busy])
+            for worker in busy:
+                if rss.get(worker.proc.pid, 0) > _WORKER_RSS_CAP_BYTES:
+                    worker.kill_and_respawn()
+                    done += 1
+                    progressed = True
         if not progressed:
             time.sleep(0.002)
     for worker in workers:
