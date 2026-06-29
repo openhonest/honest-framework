@@ -41,7 +41,7 @@ from honest_check.formats import (
     supported_formats,
 )
 from honest_check.lsp import _read_message, dispatch, serve, to_lsp_diagnostic
-from honest_check.watchlists import IO_WATCH_LIST, matches_watchlist
+from honest_check.watchlists import IO_WATCH_LIST, NONDETERMINISTIC_WATCH_LIST, matches_watchlist
 
 _CLEAN = "def add(a, b):\n    return a + b\n"
 _VIOLATION = "class Widget:\n    pass\n"  # HC-P003: class declaration
@@ -566,9 +566,46 @@ def _probe_startup():
     return bad
 
 
+# The normative watch lists (section 4.2): every entry must be trapped, so the table is pinned
+# exactly. Emptying or dropping any entry changes the frozenset and is caught here.
+_EXPECTED_IO_WATCH = frozenset({
+    "open", "pathlib.Path.open", "pathlib.Path.read_text", "pathlib.Path.write_text",
+    "pathlib.Path.read_bytes", "pathlib.Path.write_bytes", "os.open", "os.read", "os.write",
+    "os.remove", "os.rename", "os.mkdir", "os.rmdir", "os.listdir", "os.walk",
+    "shutil.copy", "shutil.move", "shutil.rmtree", "tempfile.*", "mmap.mmap",
+    "subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_output",
+    "os.system", "os.popen", "os.execvp", "os.spawn*", "os.fork",
+    "socket.*", "http.client.*", "urllib.request.*", "urllib.urlopen",
+    "requests.*", "httpx.*", "aiohttp.*", "urllib3.*", "smtplib.*",
+    "ftplib.*", "poplib.*", "imaplib.*", "telnetlib.*", "ssl.*",
+    "print", "input", "sys.stdout.write", "sys.stderr.write", "sys.stdin.read", "logging.*",
+    "psycopg2.connect", "psycopg.connect", "asyncpg.connect",
+    "sqlite3.connect", "aiosqlite.connect", "pymongo.MongoClient", "redis.Redis",
+})
+_EXPECTED_ND_WATCH = frozenset({
+    "random.*", "secrets.*", "uuid.uuid1", "uuid.uuid3", "uuid.uuid4", "uuid.uuid5", "os.urandom",
+    "time.time", "time.time_ns", "time.monotonic", "time.perf_counter", "time.process_time",
+    "time.sleep", "datetime.datetime.now", "datetime.datetime.utcnow", "datetime.datetime.today",
+    "datetime.date.today",
+    "os.environ", "os.getenv", "os.getlogin", "os.getpid", "os.getppid", "os.getcwd", "os.uname",
+    "os.environ.get", "getpass.getpass", "getpass.getuser", "platform.*", "sys.argv", "sys.version",
+    "sys.path",
+    "threading.current_thread", "threading.get_ident", "threading.active_count",
+    "multiprocessing.current_process", "multiprocessing.cpu_count", "asyncio.get_event_loop",
+    "asyncio.current_task", "id",
+})
+
+
 def _probe_watchlist():
     bad = []
     io_list = IO_WATCH_LIST["python"]
+    # The tables are exactly the normative set (every entry trapped, nothing dropped or emptied).
+    if IO_WATCH_LIST != {"python": _EXPECTED_IO_WATCH}:
+        bad.append(f"IO_WATCH_LIST drifted from the normative set: {IO_WATCH_LIST['python'] ^ _EXPECTED_IO_WATCH}")
+    if NONDETERMINISTIC_WATCH_LIST != {"python": _EXPECTED_ND_WATCH}:
+        bad.append(f"NONDETERMINISTIC_WATCH_LIST drifted: {NONDETERMINISTIC_WATCH_LIST['python'] ^ _EXPECTED_ND_WATCH}")
+
+    # Matcher: the three entry forms, and the boundaries that pin the matching logic.
     if matches_watchlist("", io_list):
         bad.append("an empty call name matches nothing")
     if not matches_watchlist("os.spawnvp", io_list):  # bare-wildcard entry os.spawn*
@@ -577,8 +614,21 @@ def _probe_watchlist():
         bad.append("subprocess.run should match exactly")
     if not matches_watchlist("requests.get", io_list):  # dotted-wildcard requests.*
         bad.append("requests.get should match the dotted-wildcard entry requests.*")
-    if matches_watchlist("totally.unlisted", io_list):
-        bad.append("an unlisted name matches nothing")
+    # A dotted-wildcard also matches the bare module name (name == prefix): requests matches requests.*
+    if not matches_watchlist("requests", io_list):
+        bad.append("the bare module name should match its dotted-wildcard entry (name == prefix)")
+    # A dotted-wildcard requires the dot: requestsX (no dot after the prefix) must NOT match requests.*
+    if matches_watchlist("requestsX", io_list):
+        bad.append("a dotted-wildcard must require the separating dot, not a bare prefix")
+    # A bare-wildcard prefix is exact up to the '*': os.spaw (one char short of os.spawn*) must NOT match.
+    if matches_watchlist("os.spaw", io_list):
+        bad.append("a bare-wildcard prefix must be exact: os.spaw is short of os.spawn*")
+    # An exact entry is not a prefix match: os.for (one char short of os.fork) must NOT match.
+    if matches_watchlist("os.for", io_list):
+        bad.append("an exact entry must not match a shorter prefix (os.for vs os.fork)")
+    # An unlisted name returns the boolean False, not None (identity, to pin the final return).
+    if matches_watchlist("totally.unlisted", io_list) is not False:
+        bad.append("an unlisted name must return the boolean False")
     return bad
 
 
