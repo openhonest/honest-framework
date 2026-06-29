@@ -66,21 +66,99 @@ _SYNTAX_ERROR = "def (:\n    pass\n"  # HC-SYN: unparseable — a startup-eligib
 def _probe_formats():
     bad = []
     diags = [
-        diagnostic("HC003", "error", "f.py", 1, 1, "a class & <tag> \"q\""),
+        diagnostic("HC003", "error", "f.py", 1, 1, 'a class & <tag> "q"'),
         diagnostic("HC-P001", "warning", "f.py", 2, 1, "branch"),
         diagnostic("HC-P006", "info", "f.py", 3, 1, "note"),
     ]
-    for fmt in supported_formats():
-        if not render(diags, fmt):
-            bad.append(f"render(diags, {fmt!r}) was empty")
-    if render([], "human") == "":
-        bad.append("render of no diagnostics should still summarise")
+
+    # Exact human output: a location+rule line plus an indented message line per diagnostic, then a summary.
+    human_expected = (
+        "f.py:1:1: error HC003\n"
+        '  a class & <tag> "q"\n'
+        "f.py:2:1: warning HC-P001\n"
+        "  branch\n"
+        "f.py:3:1: info HC-P006\n"
+        "  note\n"
+        "Found 1 error(s), 1 warning(s), 1 info(s)."
+    )
+    if render(diags, "human") != human_expected:
+        bad.append(f"render human mismatch: {render(diags, 'human')!r}")
+
+    # Exact GitHub-annotation output: one ::level line per diagnostic; info maps to notice.
+    github_expected = (
+        '::error file=f.py,line=1,col=1,title=HC003::a class & <tag> "q"\n'
+        "::warning file=f.py,line=2,col=1,title=HC-P001::branch\n"
+        "::notice file=f.py,line=3,col=1,title=HC-P006::note"
+    )
+    if render(diags, "github") != github_expected:
+        bad.append(f"render github mismatch: {render(diags, 'github')!r}")
+
+    # Exact JUnit XML: escaped message attribute and body; failures = errors + warnings.
+    junit_expected = (
+        '<testsuites name="honest-check" failures="2" tests="3">\n'
+        '  <testsuite name="honest-check" failures="2" tests="3">\n'
+        '    <testcase name="HC003:1" classname="f.py">\n'
+        '      <failure message="a class &amp; &lt;tag&gt; &quot;q&quot;">f.py:1:1 error HC003</failure>\n'
+        "    </testcase>\n"
+        '    <testcase name="HC-P001:2" classname="f.py">\n'
+        '      <failure message="branch">f.py:2:1 warning HC-P001</failure>\n'
+        "    </testcase>\n"
+        '    <testcase name="HC-P006:3" classname="f.py">\n'
+        '      <failure message="note">f.py:3:1 info HC-P006</failure>\n'
+        "    </testcase>\n"
+        "  </testsuite>\n"
+        "</testsuites>"
+    )
+    if render(diags, "junit") != junit_expected:
+        bad.append(f"render junit mismatch: {render(diags, 'junit')!r}")
+
+    # JSON: structure + values via parse, and 4-space indentation via the raw text.
+    json_text = render(diags, "json")
+    expected_payload = {
+        "version": "0.1",
+        "summary": {"errors": 1, "warnings": 1, "infos": 1},
+        "diagnostics": [
+            {"rule": "HC003", "severity": "error", "file": "f.py", "line": 1, "col": 1, "message": 'a class & <tag> "q"', "fixable": False},
+            {"rule": "HC-P001", "severity": "warning", "file": "f.py", "line": 2, "col": 1, "message": "branch", "fixable": False},
+            {"rule": "HC-P006", "severity": "info", "file": "f.py", "line": 3, "col": 1, "message": "note", "fixable": False},
+        ],
+    }
+    if json.loads(json_text) != expected_payload:
+        bad.append(f"render json structure mismatch: {json_text!r}")
+    if '\n    "version": "0.1"' not in json_text:
+        bad.append(f"render json should use 4-space indentation: {json_text!r}")
+
+    # render dispatches by name; supported_formats is the sorted renderer set.
+    if supported_formats() != ["github", "human", "json", "junit"]:
+        bad.append(f"supported_formats should be the sorted renderer names: {supported_formats()}")
+
+    # Defaults reached only by an off-vocabulary severity (the pure renderers accept any dict):
+    # counts tallies from a zero base, the rank default (0) sits at the info floor, and the GitHub
+    # level falls back to notice.
+    weird = diagnostic("HCX", "weird", "f.py", 9, 9, "w")
+    if counts([weird]) != {"error": 0, "warning": 0, "info": 0, "weird": 1}:
+        bad.append(f"counts should tally an unseen severity from a zero base: {counts([weird])}")
+    if filter_by_severity([weird], "warning") != []:
+        bad.append("an unranked severity (default rank 0) sits below the warning floor")
+    if filter_by_severity([weird], "info") != [weird]:
+        bad.append("an unranked severity (default rank 0) meets the info floor")
+    if render([weird], "github") != "::notice file=f.py,line=9,col=9,title=HCX::w":
+        bad.append(f"an unmapped severity renders as the notice default: {render([weird], 'github')!r}")
+
+    # GitHub flattens newlines in a message to single spaces.
+    nl = diagnostic("HCN", "error", "f.py", 5, 5, "two\nlines")
+    if render([nl], "github") != "::error file=f.py,line=5,col=5,title=HCN::two lines":
+        bad.append(f"github should flatten newlines to spaces: {render([nl], 'github')!r}")
+
+    # The empty report still summarises, and the pure predicates/filters hold.
+    if render([], "human") != "Found 0 error(s), 0 warning(s), 0 info(s).":
+        bad.append(f"empty human render should be just the summary: {render([], 'human')!r}")
     total = counts(diags)
     if (total["error"], total["warning"], total["info"]) != (1, 1, 1):
         bad.append(f"counts wrong: {total}")
     if len(filter_by_severity(diags, "info")) != 3 or len(filter_by_severity(diags, "error")) != 1:
         bad.append("filter_by_severity floor wrong")
-    if len(filter_by_severity(diags, "bogus")) != 2:  # unknown -> default warning floor
+    if len(filter_by_severity(diags, "bogus")) != 2:  # unknown minimum -> default warning floor
         bad.append("filter_by_severity default floor wrong")
     if len(filter_by_rule(diags, frozenset({"HC003"}), frozenset())) != 1:
         bad.append("filter_by_rule(only) wrong")
