@@ -826,6 +826,47 @@ def _probe_mutation():
     line_removals = sorted(m["label"] for m in enumerate_mutants(annotated) if m["operator"] == "line_removal" and m["source"] != "\n")
     if len(line_removals) != 3:
         bad.append(f"an annotation-only field is skipped; the three runtime statements (x=5, b(), return) are removable: {line_removals}")
+
+    # Both directions of every symmetric swap table are exercised (the cases above test one direction
+    # of each; these pin the other entries — an emptied key drops a swap, an emptied value would break
+    # the replacement, and the two operators the cases above never used: <= and >).
+    if by("a <= b\n", "comparison_swap") != ["a < b\n"]:
+        bad.append("<= should swap to <")
+    if by("a > b\n", "comparison_swap") != ["a >= b\n"]:
+        bad.append("> should swap to >=")
+    if by("a or b\n", "condition_flip") != ["a and b\n"]:
+        bad.append("or should flip to and")
+    if by("x = False\n", "constant_replace") != ["x = True\n"]:
+        bad.append("False should flip to True")
+    if by("err(z)\n", "result_swap") != ["ok(z)\n"]:
+        bad.append("err should swap to ok")
+
+    # An empty string is not a constant-replace site (emptying it would be a no-op): the string_content
+    # guard in _constant_replaces must require actual content.
+    if by('x = ""\n', "constant_replace") != []:
+        bad.append("an empty string yields no constant-replace mutant")
+
+    # An uppercase complex literal is read as complex too (the ('j', 'J') guard, both members).
+    if by("x = 1J\n", "number_shift") != ["x = (-1+1j)\n", "x = (1+1j)\n"]:
+        bad.append(f"an uppercase complex literal shifts in the real part: {by('x = 1J\n', 'number_shift')}")
+
+    # A comment preceding the docstring does not stop it being the docstring (the comment filter in
+    # _is_docstring), and a comment inside a block is not a removable statement (the filter in
+    # _line_removals), so the sole real statement is still replaced by pass and the comment is kept.
+    if any(label.startswith('string->empty@"""doc') for label in {m["label"] for m in enumerate_mutants('# lead\n"""doc."""\nx = 1\n')}):
+        bad.append("a docstring preceded by a comment is still recognised as the docstring")
+    if by("def f():\n    # c\n    a()\n", "line_removal") != ["\n", "def f():\n    # c\n    pass\n"]:
+        bad.append(f"a comment is not a removable statement; the sole real statement becomes pass: {by('def f():\n    # c\n    a()\n', 'line_removal')}")
+
+    # A bare annotation (no value) is skipped, but an annotated assignment WITH a value is removable
+    # (the `right is None` guard in _is_annotation_only requires the no-value form).
+    if by("def f():\n    a: int = 5\n", "line_removal") != ["\n", "def f():\n    pass\n"]:
+        bad.append(f"an annotated assignment with a value is removable: {by('def f():\n    a: int = 5\n', 'line_removal')}")
+
+    # A module-level comment is in named_children (unlike a block's), so the comment filter in
+    # _line_removals matters there: the comment is not a removable statement, only x = 1 is.
+    if by("# c\nx = 1\n", "line_removal") != ["# c\n\n"]:
+        bad.append(f"a module-level comment is not a removable statement: {by('# c\nx = 1\n', 'line_removal')}")
     return bad
 
 
