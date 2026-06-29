@@ -289,48 +289,35 @@ def _probe_event_log():
     from honest_observe import event_log_manifest, event_log_schema
 
     bad = []
-    schema = event_log_schema()
-    if list(schema.keys()) != ["honest_event_log"]:
-        bad.append(f"event_log_schema should be a one-table persist schema: {list(schema.keys())}")
-    table = schema["honest_event_log"]
-    columns = table["columns"]
-
-    # Every envelope field is a column, in envelope order; the JSON partitions land as text.
-    expected_columns = ["event_id", "event_type", "event_version", "timestamp", "sequence", "aggregate_type", "aggregate_id", "payload", "auth", "meta"]
-    if list(columns.keys()) != expected_columns:
-        bad.append(f"event-log columns should mirror the envelope: {list(columns.keys())}")
-    if columns["event_id"].get("primary_key") is not True or table.get("primary_key") != ["event_id"]:
-        bad.append("event_id should be the primary key, column-level and table-level")
-    if columns["sequence"]["type"] != "integer":
-        bad.append(f"sequence should be an integer column: {columns['sequence']}")
-
-    # The framework fields are NOT NULL; only the auth/meta partitions are nullable (§2.2 no-auth event).
-    not_null = ["event_type", "event_version", "timestamp", "sequence", "aggregate_type", "aggregate_id", "payload"]
-    for name in not_null:
-        if columns[name].get("nullable", True) is not False:
-            bad.append(f"{name} must be NOT NULL in the event log")
-    for name in ("auth", "meta"):
-        if columns[name].get("nullable") is not True:
-            bad.append(f"{name} must be nullable in the event log")
-
-    # The four projection indexes of §10, each over its declared columns.
-    indexes = table["indexes"]
-    expected_indexes = {
-        "idx_event_type": ["event_type"],
-        "idx_aggregate": ["aggregate_type", "aggregate_id"],
-        "idx_timestamp": ["timestamp"],
-        "idx_sequence": ["aggregate_id", "sequence"],
+    # The full schema dict is pinned exactly: ten columns in envelope order with their types and
+    # nullability (the seven framework fields plus the JSON payload NOT NULL, auth/meta nullable),
+    # the primary key, and the four projection indexes over their declared columns.
+    expected_table = {
+        "columns": {
+            "event_id": {"type": "text", "primary_key": True, "nullable": False},
+            "event_type": {"type": "text", "nullable": False},
+            "event_version": {"type": "text", "nullable": False},
+            "timestamp": {"type": "text", "nullable": False},
+            "sequence": {"type": "integer", "nullable": False},
+            "aggregate_type": {"type": "text", "nullable": False},
+            "aggregate_id": {"type": "text", "nullable": False},
+            "payload": {"type": "text", "nullable": False},
+            "auth": {"type": "text", "nullable": True},
+            "meta": {"type": "text", "nullable": True},
+        },
+        "primary_key": ["event_id"],
+        "indexes": {
+            "idx_event_type": {"columns": ["event_type"]},
+            "idx_aggregate": {"columns": ["aggregate_type", "aggregate_id"]},
+            "idx_timestamp": {"columns": ["timestamp"]},
+            "idx_sequence": {"columns": ["aggregate_id", "sequence"]},
+        },
     }
-    for name, cols in expected_indexes.items():
-        if indexes.get(name, {}).get("columns") != cols:
-            bad.append(f"index {name} should cover {cols}: {indexes.get(name)}")
-
-    # The manifest declares append-only and embeds the same schema (§10): UPDATE/DELETE are persist's to reject.
-    manifest = event_log_manifest()
-    if manifest.get("table") != "honest_event_log" or manifest.get("append_only") is not True:
-        bad.append(f"event_log_manifest should declare an append-only honest_event_log table: {manifest}")
-    if manifest.get("schema") != table:
-        bad.append("the manifest should embed the same table definition as the schema")
+    schema = event_log_schema()
+    if schema != {"honest_event_log": expected_table}:
+        bad.append(f"event_log_schema wrong: {schema}")
+    if event_log_manifest() != {"table": "honest_event_log", "append_only": True, "schema": expected_table}:
+        bad.append(f"event_log_manifest wrong: {event_log_manifest()}")
     return bad
 
 
