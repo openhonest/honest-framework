@@ -2062,6 +2062,8 @@ _case("p004_tuple_unpack_local", "d = {}\nd[0] = 1\ndef f():\n    for d, e in it
 # Both boundary decorator forms (@boundary() and @link(boundary = True) with spaces) exempt I/O.
 _case("p004_boundary_call_form", "@boundary()\ndef f():\n    open('x')\n", must_not_fire=("HC-P004",))
 _case("p004_boundary_spaces", "from honest_type import link\n@link(boundary = True)\ndef f(x):\n    open('x')\n", must_not_fire=("HC-P004",))
+# HC-A002: an authorizing link whose guard references the registered derivation is satisfied (no fault).
+_case("a002_guard_refs_derivation_clean", "from honest_type import link\n@link(authorizes=True)\ndef f(x):\n    return session_actor\np = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('session_actor'))\nregister_auth_provider(p)\n", must_not_fire=("HC-A002",))
 _RULE_MESSAGES += [
     ('HC-P004', 'd = {}\nd.append(1)\ndef f():\n    return d\n', "Reads module-level mutable state 'd' inside a non-boundary function. Module-level mutable state is hidden state — pass it as a parameter or move it into persist."),
     ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(q)})\n", "Predicate types 'a' and 'b' may overlap — cannot be checked statically; verified by honest-test."),
@@ -2086,6 +2088,14 @@ _RULE_SEVERITIES = [
 ]
 
 
+_RULE_SEVERITIES += [
+    ("HC-P004", "error", "CACHE = {}\nCACHE['a'] = 1\ndef f():\n    return CACHE\n"),
+    ("HC003", "info", "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(p)})\n"),
+    ("HC003", "info", "from honest_type import vocabulary, predicate\nV = vocabulary({'a': {'x'}, 'b': predicate(p)})\n"),
+    ("HC006", "error", "from honest_type import vocabulary, composed\nV = vocabulary({'a': {'x'}}, composed_types=[composed('combo', captures='ghost')])\n"),
+]
+
+
 def _probe_rule_severities() -> list[str]:
     """Pin each diagnostic's severity literal (info downgrade, warning, error)."""
     bad = []
@@ -2093,6 +2103,30 @@ def _probe_rule_severities() -> list[str]:
         sevs = [d["severity"] for d in check_source(source, "f.py") if d["rule"] == rule]
         if severity not in sevs:
             bad.append(f"{rule} should emit severity {severity!r}, got {sevs}")
+    return bad
+
+
+# Exact diagnostic count for a source: pins ordering/iteration that would over- or under-report
+# (an HC002 reversed comparison, an HC003 branch that double-fires, an HC-P006 missing function guard,
+# the HC-SM03 reachability frontier that drops a state).
+_COUNT_CASES = [
+    ("HC002", "from honest_type import vocabulary, link, chain\nA = vocabulary({'a': {'x'}})\nB = vocabulary({'b': {'y'}})\n@link(accepts=A, emits=A)\ndef first(x):\n    return x\n@link(accepts=B, emits=B)\ndef second(x):\n    return x\nc = chain(first, second)\n", 1),
+    ("HC003", "from honest_type import vocabulary, predicate\nV = vocabulary({'a': {'x'}, 'b': predicate(p)})\n", 1),
+    ("HC-P006", "@cache\ndef f(self):\n    return 1\n", 1),
+    ("HC-SM03", "from honest_type import state_machine, vocabulary\nm = state_machine(states=vocabulary({'s': {'open', 'closed'}}), events=vocabulary({'e': {'shut'}}), initial='ghost', terminal=['closed'], transitions={('open', 'shut'): 'closed'})\n", 2),
+]
+
+
+def _probe_counts() -> list[str]:
+    bad = []
+    for rule, source, expected in _COUNT_CASES:
+        n = sum(1 for d in check_source(source, "f.py") if d["rule"] == rule)
+        if n != expected:
+            bad.append(f"{rule} should fire {expected} time(s), got {n}")
+    # HC-SYN reports the error node's own location, not a (1, 1) fallback.
+    syn = [(d["line"], d["col"]) for d in check_source("def f(x):\n    if (x ==):\n        pass\n", "f.py") if d["rule"] == "HC-SYN"]
+    if syn != [(2, 11)]:
+        bad.append(f"HC-SYN should report the error-node location (2, 11), got {syn}")
     return bad
 
 
@@ -2153,6 +2187,14 @@ def run() -> int:
     if severity_bad:
         failed += 1
         print(f"FAIL HC-rule [rule_severities]: {severity_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    count_bad = _probe_counts()
+    if count_bad:
+        failed += 1
+        print(f"FAIL HC-rule [counts]: {count_bad}")
     else:
         passed += 1
 
