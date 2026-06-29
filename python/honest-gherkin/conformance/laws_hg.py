@@ -12,6 +12,7 @@ import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
+import honest_gherkin.run as run_module
 from honest_gherkin import (
     compile_pattern,
     empty_registry,
@@ -20,6 +21,7 @@ from honest_gherkin import (
     parse_feature,
     register_step,
     run_scenario,
+    run_step,
     step_fault,
 )
 from honest_gherkin.cli import (
@@ -86,6 +88,17 @@ def _probe_registry():
     only_bad = match_step(_step("a value"), register_step(empty_registry(), "given", "a {x:widget}", handler))
     if only_bad.get("err", {}).get("code") != "step_unmatched":
         bad.append(f"when only a non-compiling pattern is present, the step is unmatched: {only_bad}")
+
+    # The match-fault details are part of the fault (§7): assert them exactly. The unmatched detail
+    # carries the step text; the ambiguous detail lists the competing patterns, ", "-separated in
+    # registration order — this pins both message prefixes and the join separator.
+    nomatch = match_step(_step("unheard of"), empty_registry())
+    if nomatch.get("err", {}).get("detail") != "no registered step matches: 'unheard of'":
+        bad.append(f"the unmatched detail should quote the step text: {nomatch}")
+    two = register_step(register_step(empty_registry(), "given", "a {x}", handler), "given", "{y} z", handler)
+    amb_detail = match_step(_step("a z"), two)
+    if amb_detail.get("err", {}).get("detail") != "step matches more than one pattern: 'a {x}', '{y} z'":
+        bad.append(f"the ambiguous detail should list the competing patterns: {amb_detail}")
     return bad
 
 
@@ -154,6 +167,63 @@ def _probe_parse():
     no_feature = parse_feature("Scenario: s\n    Given a\n", "x.feature")
     if no_feature.get("err", {}).get("code") != "bad_feature_syntax":
         bad.append(f"a feature with no Feature line should fault: {no_feature}")
+
+    # Each fault detail is part of the fault (§7); assert them exactly, and that parse returns the
+    # FIRST error when several occur (not the last).
+    if nameless.get("err", {}).get("detail") != "line 3: scenario has no name":
+        bad.append(f"nameless-scenario detail wrong: {nameless}")
+    if orphan.get("err", {}).get("detail") != "line 2: step outside a scenario":
+        bad.append(f"orphan-step detail wrong: {orphan}")
+    if stray.get("err", {}).get("detail") != "line 5: unexpected text outside a scenario":
+        bad.append(f"stray-text detail wrong: {stray}")
+    if no_feature.get("err", {}).get("detail") != "no Feature declared":
+        bad.append(f"no-Feature detail wrong: {no_feature}")
+    two_errors = parse_feature("Feature: X\n  Given orphan\n  Scenario:\n    Given a\n", "x.feature")
+    if two_errors.get("err", {}).get("detail") != "line 2: step outside a scenario":
+        bad.append(f"parse should return the first error, not the last: {two_errors}")
+
+    # A richer feature pins the state the simple probe leaves implicit: a comment is ignored (never
+    # folded into the description), a multi-line description joins with single spaces, only @-tokens
+    # become tags and they attach to the next scenario only (resetting between scenarios), the
+    # scenario source_line is recorded, And/But resolve to the most recent Given/When/Then, and the
+    # resolved kind resets at each scenario boundary.
+    rich = (
+        "Feature: Shop\n"
+        "  It sells things.\n"
+        "  Across the web.\n"
+        "  # a comment, never part of the description\n"
+        "  @smoke notatag\n"
+        "  Scenario: checkout\n"
+        "    Given a cart\n"
+        "    And an item\n"
+        "    When the order is placed\n"
+        "    Then it totals\n"
+        "    But nothing ships\n"
+        "  @other\n"
+        "  Scenario: refund\n"
+        "    And a prior order\n"
+    )
+    rich_result = parse_feature(rich, "shop.feature")
+    if "ok" not in rich_result:
+        bad.append(f"the rich feature should parse: {rich_result}")
+        return bad
+    shop = rich_result["ok"]
+    if shop["description"] != "It sells things. Across the web.":
+        bad.append(f"description joins lines with single spaces and excludes comments: {shop['description']!r}")
+    if len(shop["scenarios"]) != 2:
+        bad.append(f"expected two scenarios: {len(shop['scenarios'])}")
+        return bad
+    checkout, refund = shop["scenarios"]
+    if checkout["tags"] != ["@smoke"]:
+        bad.append(f"only @-tokens attach as tags: {checkout['tags']}")
+    if refund["tags"] != ["@other"]:
+        bad.append(f"pending tags reset between scenarios: {refund['tags']}")
+    if checkout["source_line"] != 6:
+        bad.append(f"scenario source_line should be recorded 1-based: {checkout['source_line']}")
+    if [s["resolved_kind"] for s in checkout["steps"]] != ["given", "given", "when", "then", "then"]:
+        bad.append(f"And/But resolve to the most recent Given/When/Then: {[s['resolved_kind'] for s in checkout['steps']]}")
+    if refund["steps"][0]["resolved_kind"] != "":
+        bad.append(f"the resolved kind resets at each scenario boundary: {refund['steps'][0]['resolved_kind']!r}")
     return bad
 
 
@@ -191,9 +261,20 @@ def _probe_compile():
     if re.match(compile_pattern("a.b")["ok"]["regex"], "axb") is not None:
         bad.append("a literal '.' should be escaped, not match any character")
 
-    # Unknown placeholder type -> fault as data, never raised.
-    if compile_pattern("a {x:widget}").get("err", {}).get("code") != "bad_feature_syntax":
+    # Unknown placeholder type -> fault as data, never raised; the detail is part of the fault (§7).
+    unknown = compile_pattern("a {x:widget}")
+    if unknown.get("err", {}).get("code") != "bad_feature_syntax":
         bad.append("an unknown placeholder type should return bad_feature_syntax")
+    if unknown.get("err", {}).get("detail") != "unknown placeholder type 'widget' in pattern: a {x:widget}":
+        bad.append(f"the unknown-type detail should name the type and pattern: {unknown}")
+
+    # Anchored at BOTH ends (§4, full-text not substring). The leading ^: re.search (unlike re.match)
+    # would otherwise find the pattern mid-string, so a leading-junk string must not match. The
+    # trailing $: a valid prefix with trailing junk must not match under re.match either.
+    if re.search(compile_pattern("plain text")["ok"]["regex"], "x plain text") is not None:
+        bad.append("the compiled regex must be anchored at the start (^), not only the end")
+    if re.match(compile_pattern("plain text")["ok"]["regex"], "plain text extra") is not None:
+        bad.append("the compiled regex must be anchored at the end ($), not only the start")
     return bad
 
 
@@ -292,6 +373,52 @@ def _probe_run():
         bad.append(f"fold should count ok vs non-ok scenarios: {combined}")
     if combined["feature_name"] != "F" or combined["source_path"] != "f.feature":
         bad.append(f"fold should carry the feature name and path: {combined}")
+
+    # The scenario report carries its name (pins the "name" key/value in run_scenario's return).
+    if report["name"] != "pass":
+        bad.append(f"run_scenario should carry the scenario name: {report['name']!r}")
+
+    # run_step directly (§6.1): assert the FULL return for each path, so every key (result/step/
+    # status/fault/context), the echoed step, and the threaded context are pinned — not just status.
+    def grab(context):
+        return {**context, "seen": True}
+
+    direct = register_step(empty_registry(), "given", "advance", grab)
+    ok_out = run_step(_step("advance"), {"x": 1}, direct, "sc")
+    if ok_out != {"result": {"step": _step("advance"), "status": "ok", "fault": None}, "context": {"x": 1, "seen": True}}:
+        bad.append(f"run_step ok path: full shape wrong: {ok_out}")
+    miss = run_step(_step("no such step"), {"x": 1}, direct, "sc")
+    if miss["result"]["step"] != _step("no such step") or miss["result"]["status"] != "unmatched" or miss["context"] != {"x": 1}:
+        bad.append(f"run_step unmatched path: step echoed, status, context unchanged: {miss}")
+
+    # The errored detail is the exception message; a message-less exception falls back to the class
+    # name (pins `str(exc) or type(exc).__name__` — both operands).
+    def boom(context):
+        raise ValueError("kaboom")
+
+    def blank_boom(context):
+        raise ValueError()
+
+    direct = register_step(register_step(direct, "when", "explode", boom), "when", "implode", blank_boom)
+    boom_step = {"kind": "when", "resolved_kind": "when", "text": "explode", "source_line": 1}
+    spoke = run_step(boom_step, {"y": 2}, direct, "sc")
+    if spoke["result"]["step"] != boom_step or spoke["result"]["status"] != "errored" or spoke["context"] != {"y": 2} or spoke["result"]["fault"]["detail"] != "kaboom":
+        bad.append(f"run_step errored path: step/status/context/message detail wrong: {spoke}")
+    blank = run_step({"kind": "when", "resolved_kind": "when", "text": "implode", "source_line": 1}, {}, direct, "sc")
+    if blank["result"]["fault"]["detail"] != "ValueError":
+        bad.append(f"a message-less exception should use the class name as detail: {blank}")
+
+    # duration_ms is milliseconds: stub the clock (the one sanctioned impure seam, §6.2) to a known
+    # delta and assert the *1000.0 conversion factor exactly.
+    saved_clock = run_module.time.perf_counter
+    ticks = iter([10.0, 12.5])
+    run_module.time.perf_counter = lambda: next(ticks)
+    try:
+        timed = run_scenario(scenario("timed", ["a user named ada"]), [], registry)
+    finally:
+        run_module.time.perf_counter = saved_clock
+    if timed["duration_ms"] != 2500:
+        bad.append(f"duration_ms should convert seconds to ms via *1000.0: {timed['duration_ms']}")
     return bad
 
 
