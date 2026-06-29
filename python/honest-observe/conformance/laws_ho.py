@@ -217,42 +217,33 @@ def _probe_framework_events():
     )
 
     bad = []
-    if chain_started("checkout", 3, ["order_id", "items"]) != {
-        "event_type": "hf.chain.started", "aggregate_type": "chain", "aggregate_id": "checkout",
-        "payload": {"chain_name": "checkout", "link_count": 3, "input_types": ["order_id", "items"]},
-    }:
-        bad.append(f"chain_started wrong: {chain_started('checkout', 3, ['order_id', 'items'])}")
-    ok_done = chain_completed("checkout", 3, 1500, "ok")
-    if ok_done["payload"] != {"chain_name": "checkout", "duration_ns": 1500, "link_count": 3, "result": "ok"} or ok_done["event_type"] != "hf.chain.completed":
-        bad.append(f"chain_completed (ok) wrong: {ok_done}")
-    err_done = chain_completed("checkout", 3, 1500, "err", fault_code="invalid_email", fault_category="client")
-    if err_done["payload"].get("fault_code") != "invalid_email" or err_done["payload"].get("fault_category") != "client":
-        bad.append(f"chain_completed (err) should carry the fault: {err_done}")
-
-    executed = link_executed("validate", "checkout", 200, "ok", boundary=False, mutations=0, singletons=0, nondeterminism=False, io_calls=0)
-    if executed["aggregate_type"] != "link" or executed["aggregate_id"] != "validate" or executed["payload"]["mutations"] != 0 or "fault_code" in executed["payload"]:
-        bad.append(f"link_executed wrong: {executed}")
-    executed_err = link_executed("validate", "checkout", 200, "err", boundary=True, mutations=1, singletons=2, nondeterminism=True, io_calls=3, fault_code="bad")
-    if executed_err["payload"].get("fault_code") != "bad" or executed_err["payload"]["io_calls"] != 3:
-        bad.append(f"link_executed (err) should carry the fault code: {executed_err}")
-
-    faulted = link_faulted("validate", "checkout", "invalid_email", "client", "Bad email")
-    if faulted["event_type"] != "hf.link.faulted" or "input_manifest" in faulted["payload"]:
-        bad.append(f"link_faulted wrong: {faulted}")
-    faulted_ctx = link_faulted("validate", "checkout", "invalid_email", "client", "Bad email", input_manifest={"email": "x"})
-    if faulted_ctx["payload"].get("input_manifest") != {"email": "x"}:
-        bad.append(f"link_faulted should carry the input manifest when given: {faulted_ctx}")
-
-    classified = classify_completed("order_vocab", 5, 1, 300, {"unrecognized": 1})
-    if classified["event_type"] != "hf.classify.completed" or classified["aggregate_id"] != "order_vocab" or classified["payload"]["rejection_reasons"] != {"unrecognized": 1}:
-        bad.append(f"classify_completed wrong: {classified}")
-
-    transitioned = state_transitioned("order_sm", "o1", "pending", "pay", "paid", 400)
-    if transitioned["aggregate_id"] != "order_sm:o1" or transitioned["payload"]["to_state"] != "paid":
-        bad.append(f"state_transitioned wrong: {transitioned}")
-    rejected = state_rejected("order_sm", "o1", "paid", "pay", "no_transition")
-    if rejected["event_type"] != "hf.state.rejected" or rejected["aggregate_id"] != "order_sm:o1" or rejected["payload"]["fault_code"] != "no_transition":
-        bad.append(f"state_rejected wrong: {rejected}")
+    # Each builder's full {event_type, aggregate_type, aggregate_id, payload} dict is pinned exactly, so
+    # every key and value (and the presence/absence of each optional field) is caught.
+    builders = [
+        (chain_started("checkout", 3, ["order_id", "items"]),
+         {"event_type": "hf.chain.started", "aggregate_type": "chain", "aggregate_id": "checkout", "payload": {"chain_name": "checkout", "link_count": 3, "input_types": ["order_id", "items"]}}),
+        (chain_completed("checkout", 3, 1500, "ok"),
+         {"event_type": "hf.chain.completed", "aggregate_type": "chain", "aggregate_id": "checkout", "payload": {"chain_name": "checkout", "duration_ns": 1500, "link_count": 3, "result": "ok"}}),
+        (chain_completed("checkout", 3, 1500, "err", fault_code="invalid_email", fault_category="client"),
+         {"event_type": "hf.chain.completed", "aggregate_type": "chain", "aggregate_id": "checkout", "payload": {"chain_name": "checkout", "duration_ns": 1500, "link_count": 3, "result": "err", "fault_code": "invalid_email", "fault_category": "client"}}),
+        (link_executed("validate", "checkout", 200, "ok", boundary=False, mutations=0, singletons=0, nondeterminism=False, io_calls=0),
+         {"event_type": "hf.link.executed", "aggregate_type": "link", "aggregate_id": "validate", "payload": {"link_name": "validate", "chain_name": "checkout", "duration_ns": 200, "result": "ok", "boundary": False, "mutations": 0, "singletons": 0, "nondeterminism": False, "io_calls": 0}}),
+        (link_executed("validate", "checkout", 200, "err", boundary=True, mutations=1, singletons=2, nondeterminism=True, io_calls=3, fault_code="bad"),
+         {"event_type": "hf.link.executed", "aggregate_type": "link", "aggregate_id": "validate", "payload": {"link_name": "validate", "chain_name": "checkout", "duration_ns": 200, "result": "err", "boundary": True, "mutations": 1, "singletons": 2, "nondeterminism": True, "io_calls": 3, "fault_code": "bad"}}),
+        (link_faulted("validate", "checkout", "invalid_email", "client", "Bad email"),
+         {"event_type": "hf.link.faulted", "aggregate_type": "link", "aggregate_id": "validate", "payload": {"link_name": "validate", "chain_name": "checkout", "fault_code": "invalid_email", "fault_category": "client", "fault_message": "Bad email"}}),
+        (link_faulted("validate", "checkout", "invalid_email", "client", "Bad email", input_manifest={"email": "x"}),
+         {"event_type": "hf.link.faulted", "aggregate_type": "link", "aggregate_id": "validate", "payload": {"link_name": "validate", "chain_name": "checkout", "fault_code": "invalid_email", "fault_category": "client", "fault_message": "Bad email", "input_manifest": {"email": "x"}}}),
+        (classify_completed("order_vocab", 5, 1, 300, {"unrecognized": 1}),
+         {"event_type": "hf.classify.completed", "aggregate_type": "classify", "aggregate_id": "order_vocab", "payload": {"vocabulary_name": "order_vocab", "token_count": 5, "rejection_count": 1, "duration_ns": 300, "rejection_reasons": {"unrecognized": 1}}}),
+        (state_transitioned("order_sm", "o1", "pending", "pay", "paid", 400),
+         {"event_type": "hf.state.transitioned", "aggregate_type": "state_machine", "aggregate_id": "order_sm:o1", "payload": {"machine_name": "order_sm", "entity_id": "o1", "from_state": "pending", "event": "pay", "to_state": "paid", "duration_ns": 400}}),
+        (state_rejected("order_sm", "o1", "paid", "pay", "no_transition"),
+         {"event_type": "hf.state.rejected", "aggregate_type": "state_machine", "aggregate_id": "order_sm:o1", "payload": {"machine_name": "order_sm", "entity_id": "o1", "current_state": "paid", "event": "pay", "fault_code": "no_transition"}}),
+    ]
+    for actual, expected in builders:
+        if actual != expected:
+            bad.append(f"framework event builder mismatch: got {actual}, expected {expected}")
     return bad
 
 
@@ -262,39 +253,32 @@ def _probe_canonical_app_events():
     from honest_observe import app_error, app_started, app_stopped, link_summary, request_canonical
 
     bad = []
-    if link_summary("validate", 200, "ok") != {"link_name": "validate", "duration_ns": 200, "result": "ok"}:
-        bad.append(f"link_summary wrong: {link_summary('validate', 200, 'ok')}")
-    if link_summary("pay", 50, "err", fault_code="declined").get("fault_code") != "declined":
-        bad.append("link_summary should carry a fault code when given")
-
-    canonical = request_canonical(
-        "req-1", "POST", "/api/orders", 200, 2, [link_summary("validate", 200, "ok")],
-        3, 0, 4, 9000, "ok", 12000, caller_id="u1", chain_name="checkout",
-    )
-    if canonical["event_type"] != "hf.request.canonical" or canonical["aggregate_id"] != "req-1":
-        bad.append(f"request_canonical envelope wrong: {canonical}")
-    payload = canonical["payload"]
-    if payload["source"] != "server" or payload["request_id"] != "req-1" or payload["caller_id"] != "u1" or payload["chain_name"] != "checkout":
-        bad.append(f"request_canonical payload wrong: {payload}")
-    if "session_id" in payload or "fault_code" in payload:
-        bad.append("request_canonical should omit absent optional fields")
-    errored = request_canonical("req-2", "GET", "/x", 500, 0, [], 0, 0, 0, 0, "err", 5, fault_code="boom", fault_category="server")
-    if errored["payload"].get("fault_code") != "boom" or errored["payload"].get("fault_category") != "server":
-        bad.append(f"request_canonical should carry the fault on error: {errored}")
-
-    started = app_started("shop", "production", 5, 12, 3, release="r1")
-    if started["event_type"] != "hf.app.started" or started["aggregate_id"] != "shop" or started["payload"].get("release") != "r1":
-        bad.append(f"app_started wrong: {started}")
-    if "release" in app_started("shop", "dev", 1, 1, 1)["payload"]:
-        bad.append("app_started should omit release when not given")
-    stopped = app_stopped("shop", 60000, "graceful")
-    if stopped["event_type"] != "hf.app.stopped" or stopped["payload"]["reason"] != "graceful":
-        bad.append(f"app_stopped wrong: {stopped}")
-    error = app_error("shop", "ValueError", "boom", traceback="tb", context="startup")
-    if error["event_type"] != "hf.app.error" or error["payload"].get("traceback") != "tb" or error["payload"].get("context") != "startup":
-        bad.append(f"app_error wrong: {error}")
-    if "traceback" in app_error("shop", "ValueError", "boom")["payload"]:
-        bad.append("app_error should omit traceback when not given")
+    # Full-dict equality per builder, so every key/value and each optional field's presence is pinned.
+    builders = [
+        (link_summary("validate", 200, "ok"),
+         {"link_name": "validate", "duration_ns": 200, "result": "ok"}),
+        (link_summary("pay", 50, "err", fault_code="declined"),
+         {"link_name": "pay", "duration_ns": 50, "result": "err", "fault_code": "declined"}),
+        (request_canonical("req-1", "POST", "/api/orders", 200, 2, [link_summary("validate", 200, "ok")], 3, 0, 4, 9000, "ok", 12000, caller_id="u1", chain_name="checkout"),
+         {"event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": "req-1", "payload": {"http_method": "POST", "http_path": "/api/orders", "http_status": 200, "link_count": 2, "link_sequence": [{"link_name": "validate", "duration_ns": 200, "result": "ok"}], "token_count": 3, "rejection_count": 0, "query_count": 4, "query_duration_ns": 9000, "result": "ok", "duration_ns": 12000, "request_id": "req-1", "source": "server", "caller_id": "u1", "chain_name": "checkout"}}),
+        (request_canonical("req-2", "GET", "/x", 500, 0, [], 0, 0, 0, 0, "err", 5, fault_code="boom", fault_category="server"),
+         {"event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": "req-2", "payload": {"http_method": "GET", "http_path": "/x", "http_status": 500, "link_count": 0, "link_sequence": [], "token_count": 0, "rejection_count": 0, "query_count": 0, "query_duration_ns": 0, "result": "err", "duration_ns": 5, "request_id": "req-2", "source": "server", "fault_code": "boom", "fault_category": "server"}}),
+        (request_canonical("req-3", "PUT", "/y", 201, 1, [], 2, 0, 1, 100, "ok", 300, session_id="sess-9"),
+         {"event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": "req-3", "payload": {"http_method": "PUT", "http_path": "/y", "http_status": 201, "link_count": 1, "link_sequence": [], "token_count": 2, "rejection_count": 0, "query_count": 1, "query_duration_ns": 100, "result": "ok", "duration_ns": 300, "request_id": "req-3", "source": "server", "session_id": "sess-9"}}),
+        (app_started("shop", "production", 5, 12, 3, release="r1"),
+         {"event_type": "hf.app.started", "aggregate_type": "app", "aggregate_id": "shop", "payload": {"app_name": "shop", "environment": "production", "chains_loaded": 5, "links_loaded": 12, "vocabs_loaded": 3, "release": "r1"}}),
+        (app_started("shop", "dev", 1, 1, 1),
+         {"event_type": "hf.app.started", "aggregate_type": "app", "aggregate_id": "shop", "payload": {"app_name": "shop", "environment": "dev", "chains_loaded": 1, "links_loaded": 1, "vocabs_loaded": 1}}),
+        (app_stopped("shop", 60000, "graceful"),
+         {"event_type": "hf.app.stopped", "aggregate_type": "app", "aggregate_id": "shop", "payload": {"app_name": "shop", "uptime_ns": 60000, "reason": "graceful"}}),
+        (app_error("shop", "ValueError", "boom", traceback="tb", context="startup"),
+         {"event_type": "hf.app.error", "aggregate_type": "app", "aggregate_id": "shop", "payload": {"error_type": "ValueError", "message": "boom", "traceback": "tb", "context": "startup"}}),
+        (app_error("shop", "ValueError", "boom"),
+         {"event_type": "hf.app.error", "aggregate_type": "app", "aggregate_id": "shop", "payload": {"error_type": "ValueError", "message": "boom"}}),
+    ]
+    for actual, expected in builders:
+        if actual != expected:
+            bad.append(f"canonical/app event builder mismatch: got {actual}, expected {expected}")
     return bad
 
 
