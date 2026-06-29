@@ -1903,6 +1903,58 @@ def _probe_declgraph_extractors() -> list[str]:
     return bad
 
 
+
+# Exact diagnostic message per rule (section 9.2). Pinning the full rendered message catches any
+# emptied message fragment; one representative violation per rule exercises its message template.
+_RULE_MESSAGES = [
+    ('HC-A001', 'from honest_type import link\n@link(authorizes=True)\ndef f(x):\n    return x\n', "No AuthProvider registered, but these links declare authorizes=True and cannot be verified: ['f']. Register a provider, or declare authorizes=False."),
+    ('HC-A002', "from honest_type import link\n@link(authorizes=True)\ndef f(x):\n    return x\np = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('session_actor'))\nregister_auth_provider(p)\n", "Link 'f' declares authorizes=True but its guard does not reference the registered provider's derivation expression 'session_actor'. Actor identity must be derived inside the guard, not trusted from input."),
+    ('HC-OR001', 'from honest_type import orchestrator\n@orchestrator\ndef a():\n    b()\n@orchestrator\ndef b():\n    pass\n', "Orchestrator 'a' calls orchestrator 'b'. Orchestrators do not compose — extract shared logic as a pure helper or a chain."),
+    ('HC-OR003', 'from honest_type import orchestrator\n@orchestrator\ndef a():\n    step1()\n    step2()\n    step3()\n@orchestrator\ndef b():\n    step1()\n    step2()\n    step3()\n', "Orchestrators 'a' and 'b' share 3 consecutive operations. Consider extracting the shared sequence as a pure helper (if side-effect-free) or a chain (if I/O is involved). Orchestrators are not composable (HC-OR001)."),
+    ('HC-P001', "def f(x):\n    if x == 'a':\n        return 1\n    elif x == 'b':\n        return 2\n    elif x == 'c':\n        return 3\n    return 0\n", 'if/elif/else chain dispatches on value — use dict lookup. See honest-code-principles.md §3.'),
+    ('HC-P002', 'def f():\n    try:\n        do()\n    except ValueError:\n        pass\n', "Function 'f' catches an exception in business logic. Let it raise and catch at the boundary (@boundary / route handler), or return a fault as data."),
+    ('HC-P003', 'class Widget:\n    pass\n', "Class 'Widget' has no declared base. Honest Code permits class definitions only as subclasses of TypedDict, Protocol, ABC, or a declared Exception. Use a TypedDict for data shapes or a pure function."),
+    ('HC-P004', "def f():\n    open('x')\n", "Call 'open' performs I/O or non-deterministic work inside a non-boundary function. Move it to a boundary (decorate @boundary or @link(boundary=True)), or it cannot be verified for purity."),
+    ('HC-P005', 'def f(x):\n    return isinstance(x, int)\n', 'isinstance() check in business logic. Consider a vocabulary declaration instead.'),
+    ('HC-P006', 'from functools import lru_cache\n@lru_cache\ndef f(x):\n    return x\n', "Cache detected without profiling evidence. Add a @profiled annotation or a '# honest: profiled' comment."),
+    ('HC-P007', 'class C:\n    def __init__(self):\n        self._x = 1\n', "Instance state '_x'. Pass as parameter or use context manager."),
+    ('HC-P010', 'def f():\n    return Widget(1)\n', "Return value constructs 'Widget', a non-serializable object. A pure function returns a dict or TypedDict, not a class instance."),
+    ('HC-P011', "def setup():\n    addEventListener('click', h)\n", "Lifecycle hook 'addEventListener'. Use HTMX attributes or server-rendered HTML."),
+    ('HC-P013', "from honest_type import vocabulary, binding, link, predicate\nV = vocabulary({'db': predicate(p)})\nB = binding({'db': 'db_id'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n", "Routing key 'db_id' is bound to predicate recognizer 'db'. A database routing key must be a bounded Set recognizer: the vocabulary is the whitelist, and a predicate lets an arbitrary database identifier reach the pool layer."),
+    ('HC-P014', "from honest_type import vocabulary, binding, link\nV = vocabulary({'a': {'x'}, 'b': {'x'}, 'c': {'q'}})\nB = binding({'a': 'slot1', 'b': 'slot2', 'ghost': 'slotg'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n@link(accepts=V, binds=B)\ndef g(x):\n    return x\n", "One recognizer is shared by types ['a', 'b'] bound to distinct slots ['slot1', 'slot2']. Give each slot a semantically distinct recognizer, or the chain contract cannot catch a swap between them."),
+    ('HC-P016', 'def outer():\n    total = 0\n    def inner():\n        nonlocal total\n        total = total + 1\n    return inner\n', "Inner function 'inner' captures ['total'] via nonlocal and mutates it. Closures may not carry mutable state — use pure parameters or move state into persist."),
+    ('HC-P017', "def handler(req):\n    return JSONResponse({'ok': True})\n", "Function 'handler' produces HTTP output ('JSONResponse') without being a declared @link with emits vocabulary. Declare emits covering status, content-type, and body shape, or delegate to a serializer link."),
+    ('HC-R001', 'from honest_type import link\n@link(accepts=A)\ndef used():\n    return 1\ndef orphan():\n    return 2\n', "Function 'orphan' has no declared role and is not called by any roled function. Declare a role (@link / @recognizer / @boundary / @helper) or remove it."),
+    ('HC-SM01', "from honest_type import state_machine, vocabulary\nm = state_machine(states=vocabulary({'s': {'open', 'closed'}}), events=vocabulary({'e': {'shut'}}), initial='open', terminal=['closed'], transitions={('bad', 'badev'): 'closed'})\n", "State 'bad' in transition table not in states vocabulary. Add it to the states vocabulary, or correct the name in the transition."),
+    ('HC-SM02', "from honest_type import state_machine, vocabulary\nm = state_machine(states=vocabulary({'s': {'open', 'closed'}}), events=vocabulary({'e': {'shut'}}), initial='open', terminal=['closed'], transitions={('bad', 'badev'): 'closed'})\n", "Event 'badev' in transition table not in events vocabulary. Add it to the events vocabulary, or correct the name in the transition."),
+    ('HC-SM03', "from honest_type import state_machine, vocabulary\nm = state_machine(states=vocabulary({'s': {'open', 'closed', 'island'}}), events=vocabulary({'e': {'shut'}}), initial='open', terminal=['closed'], transitions={('open', 'shut'): 'closed'})\n", "State 'island' is unreachable. Add a transition that reaches it, or remove the state."),
+    ('HC-SM04', "from honest_type import state_machine, vocabulary\nm = state_machine(states=vocabulary({'s': {'open', 'closed', 'island'}}), events=vocabulary({'e': {'shut'}}), initial='open', terminal=['closed'], transitions={('open', 'shut'): 'closed'})\n", "State 'island' has no outgoing transitions and is not declared terminal. Add a transition out of it, or declare it a terminal state."),
+    ('HC-SM05', "from honest_type import state_machine, vocabulary\nm = state_machine(states=vocabulary({'s': {'open', 'closed'}}), events=vocabulary({'e': {'shut'}}), initial='ghost', terminal=['closed'], transitions={('open', 'shut'): 'closed'})\n", "Initial state 'ghost' not in states vocabulary. Add it to the states vocabulary, or correct the initial-state name."),
+    ('HC-SYN', 'def f(x):\n    if (x ==):\n        pass\n', 'Source does not parse. Fix the syntax error at this location so the file can be parsed.'),
+    ('HC001', 'from honest_type import chain\ndef step(x):\n    return x\nc = chain(step)\n', "Function 'step' in chain has no vocabulary declared. Wrap with @link(accepts=..., emits=...)."),
+    ('HC002', "from honest_type import vocabulary, link, chain\nA = vocabulary({'a': {'x'}})\nB = vocabulary({'b': {'y'}})\n@link(accepts=A, emits=A)\ndef first(x):\n    return x\n@link(accepts=B, emits=B)\ndef second(x):\n    return x\nc = chain(first, second)\n", "Link 'second' accepts types not provided by previous link 'first': ['b']. Emit those types from the previous link, or drop them from this link's accepts."),
+    ('HC003', "from honest_type import vocabulary\nV = vocabulary({'a': {'x', 'y'}, 'b': {'y', 'z'}})\n", "Types 'a' and 'b' share values: ['y']. Make their value sets disjoint, or merge the types."),
+    ('HC004', "from honest_type import vocabulary, binding, link\nV = vocabulary({'a': {'x'}, 'b': {'y'}})\nB = binding({'a': 'slot1'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n", "Type 'b' defined in vocabulary 'V' but never bound or composed. Bind it in a binding table or compose it into another type, or remove it from the vocabulary."),
+    ('HC005', "from honest_type import vocabulary, binding, link\nV = vocabulary({'a': {'x'}})\nB = binding({'a': 'slot1', 'ghost': 'slot2'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n", "Binding 'B' references type 'ghost' not found in vocabulary 'V'. Add the type to the vocabulary, or correct the name in the binding."),
+    ('HC006', "from honest_type import vocabulary, composed\nV = vocabulary({'a': {'x'}}, composed_types=[composed('combo', requires={'ghost': 1})])\n", "Composed type 'combo' requires unknown base type 'ghost'. Declare the base type in the vocabulary, or correct its name."),
+    ('HC007', 'from honest_type import chain\nc = chain()\n', "Chain 'c' has no links. Add at least one @link to the chain, or remove the chain."),
+    ('HC008', "from honest_type import link\n@link(accepts=A, emits=B)\ndef f(x):\n    open('x')\n", "Link 'f' may be impure: ['open']. Add boundary=True if the I/O is intentional."),
+    ('HC009', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: int(s) > 0)})\n", "Predicate 'a' may throw on non-matching input: ['int()']. Guard the access or wrap in try/except."),
+    ('HC010', "from honest_type import vocabulary, binding, link\nA = vocabulary({'a': {'x'}})\nB = vocabulary({'a': {'x'}, 'b': {'y'}})\nBind = binding({'b': 'slot_b'})\n@link(accepts=A, emits=B, binds=Bind)\ndef f(x):\n    return x\n", "Link 'f' declares emission of types never produced: ['b']. Remove them from the link's emits, or produce them in the body."),
+    ('HC011', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p)})\n", "Catch-all check for predicate type 'a' requires sampling and is verified by honest-test."),
+]
+
+def _probe_rule_messages() -> list[str]:
+    """Pin the exact diagnostic message of each rule. The cases above assert which rule fires; this
+    asserts the full message text, so emptying any message fragment is caught."""
+    bad = []
+    for rule, source, message in _RULE_MESSAGES:
+        msgs = [d["message"] for d in check_source(source, "f.py") if d["rule"] == rule]
+        if message not in msgs:
+            bad.append(f"{rule} message drifted: expected {message!r}, got {msgs}")
+    return bad
+
+
 def run() -> int:
     failed = 0
     passed = 0
@@ -1936,6 +1988,14 @@ def run() -> int:
     if extractor_bad:
         failed += 1
         print(f"FAIL HC-rule [declgraph_extractors]: {extractor_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    message_bad = _probe_rule_messages()
+    if message_bad:
+        failed += 1
+        print(f"FAIL HC-rule [rule_messages]: {message_bad}")
     else:
         passed += 1
 
