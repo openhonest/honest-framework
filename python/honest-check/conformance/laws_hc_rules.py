@@ -63,6 +63,7 @@ from honest_check.rules import (
     _direct_nonlocal_names,
     _is_value_load,
     _local_names,
+    _longest_common_run,
     _orchestrator_call_sequence,
     _produced_slot_keys,
     _self_attr_writes,
@@ -1507,6 +1508,21 @@ def _probe_internal_helpers() -> list[str]:
     if record["name"] is not None or record["requires"] != set() or record["captures"] is not None:
         bad.append("_parse_composed(non-call) should be an empty record")
 
+    # _longest_common_run (HC-OR003): longest *contiguous* common sublist. Pins the empty guard, the
+    # best/return-0 bases, the DP row sizing, and the loop ranges.
+    if _longest_common_run([], ["a"]) != 0 or _longest_common_run(["a"], []) != 0:
+        bad.append("_longest_common_run with an empty sequence should be 0")
+    if _longest_common_run(["a"], ["b"]) != 0:
+        bad.append("_longest_common_run with no common element should be 0")
+    if _longest_common_run(["a"], ["a"]) != 1:
+        bad.append("_longest_common_run of a single shared element should be 1")
+    if _longest_common_run(["a", "b", "c", "d"], ["x", "a", "b", "c"]) != 3:
+        bad.append("_longest_common_run should find the length-3 contiguous run")
+    if _longest_common_run(["a", "b", "c"], ["a", "x", "c"]) != 1:
+        bad.append("_longest_common_run must be contiguous: a broken run counts 1")
+    if _longest_common_run(["a", "b"], ["b", "a"]) != 1:
+        bad.append("_longest_common_run of a reordered pair is at most 1")
+
     return bad
 
 
@@ -1993,6 +2009,9 @@ _case("p003_base_ABC", "class C(ABC):\n    pass\n", must_not_fire=("HC-P003",))
 _case("p003_base_Exception", "class C(Exception):\n    pass\n", must_not_fire=("HC-P003",))
 _case("p003_base_BaseException", "class C(BaseException):\n    pass\n", must_not_fire=("HC-P003",))
 _case("p003_base_Error", "class C(Error):\n    pass\n", must_not_fire=("HC-P003",))
+_case("hc004_requires_keeps_type", "from honest_type import vocabulary, binding, link, composed\nV = vocabulary({'a': {'x'}, 'b': {'y'}}, composed_types=[composed('combo', requires={'b': 1})])\nB = binding({'a': 's1'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n", must_not_fire=("HC004",))
+_case("hc004_captures_keeps_type", "from honest_type import vocabulary, binding, link, composed\nV = vocabulary({'a': {'x'}, 'b': {'y'}}, composed_types=[composed('combo', captures='b')])\nB = binding({'a': 's1'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n", must_not_fire=("HC004",))
+_case("p004_boundary_link_io_clean", "from honest_type import link\n@link(accepts=A, emits=B, boundary=True)\ndef f(x):\n    open('x')\n", must_not_fire=("HC-P004", "HC008"))
 _RULE_MESSAGES += [
     ('HC-P004', 'd = {}\nd.append(1)\ndef f():\n    return d\n', "Reads module-level mutable state 'd' inside a non-boundary function. Module-level mutable state is hidden state — pass it as a parameter or move it into persist."),
     ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(q)})\n", "Predicate types 'a' and 'b' may overlap — cannot be checked statically; verified by honest-test."),
