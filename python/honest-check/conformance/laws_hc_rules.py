@@ -2055,6 +2055,13 @@ _case("p004_param_shadow_clean", "d = {}\nd[0] = 1\ndef f(d):\n    return d[0]\n
 # append in HC-R001 and HC-SM03 — without it, the second hop is wrongly flagged).
 _case("r001_multihop_clean", "from honest_type import link\n@link(accepts=A)\ndef a():\n    b()\ndef b():\n    c()\ndef c():\n    return 1\n", must_not_fire=("HC-R001",))
 _case("sm03_multihop_clean", "from honest_type import state_machine, vocabulary\nm = state_machine(states=vocabulary({'s': {'open', 'mid', 'end'}}), events=vocabulary({'e': {'go', 'stop'}}), initial='open', terminal=['end'], transitions={('open', 'go'): 'mid', ('mid', 'stop'): 'end'})\n", must_not_fire=("HC-SM03", "HC-SM04"))
+# Module mutation via an augmented subscript assignment (d[0] += 1) is detected (augmented_assignment).
+_case("p004_augmented_subscript", "d = {}\nd[0] += 1\ndef f():\n    return d\n", must_fire=("HC-P004",))
+# A for-loop tuple-unpack target binds locals (pattern_list/tuple), so a shadowed module name is local.
+_case("p004_tuple_unpack_local", "d = {}\nd[0] = 1\ndef f():\n    for d, e in items:\n        pass\n    return 0\n", must_not_fire=("HC-P004",))
+# Both boundary decorator forms (@boundary() and @link(boundary = True) with spaces) exempt I/O.
+_case("p004_boundary_call_form", "@boundary()\ndef f():\n    open('x')\n", must_not_fire=("HC-P004",))
+_case("p004_boundary_spaces", "from honest_type import link\n@link(boundary = True)\ndef f(x):\n    open('x')\n", must_not_fire=("HC-P004",))
 _RULE_MESSAGES += [
     ('HC-P004', 'd = {}\nd.append(1)\ndef f():\n    return d\n', "Reads module-level mutable state 'd' inside a non-boundary function. Module-level mutable state is hidden state — pass it as a parameter or move it into persist."),
     ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(q)})\n", "Predicate types 'a' and 'b' may overlap — cannot be checked statically; verified by honest-test."),
@@ -2064,7 +2071,29 @@ _RULE_MESSAGES += [
     ('HC009', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: float(s) > 0)})\n", "Predicate 'a' may throw on non-matching input: ['float()']. Guard the access or wrap in try/except."),
     ('HC009', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: s[0])})\n", "Predicate 'a' may throw on non-matching input: ['index']. Guard the access or wrap in try/except."),
     ('HC009', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: s / 2)})\n", "Predicate 'a' may throw on non-matching input: ['division']. Guard the access or wrap in try/except."),
+    ('HC-P003', 'class C(Gadget):\n    pass\n', "Class 'C' inherits from 'Gadget'. Use composition over inheritance."),
+    ('HC007', 'from honest_type import chain\nchain()\n', "Chain '<anonymous>' has no links. Add at least one @link to the chain, or remove the chain."),
 ]
+
+# Diagnostic severity per rule (pins the severity literal in each diagnostic() call).
+_RULE_SEVERITIES = [
+    ("HC011", "info", "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p)})\n"),
+    ("HC008", "warning", "from honest_type import link\n@link(accepts=A, emits=B)\ndef f(x):\n    open('x')\n"),
+    ("HC-P010", "error", "def f():\n    return Widget(1)\n"),
+    ("HC-P013", "error", "from honest_type import vocabulary, binding, link, predicate\nV = vocabulary({'db': predicate(p)})\nB = binding({'db': 'db_id'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n"),
+    ("HC006", "error", "from honest_type import vocabulary, composed\nV = vocabulary({'a': {'x'}}, composed_types=[composed('combo', requires={'ghost': 1})])\n"),
+    ("HC-P003", "info", "class Widget:  # honest: ignore HC-P003\n    pass\n"),
+]
+
+
+def _probe_rule_severities() -> list[str]:
+    """Pin each diagnostic's severity literal (info downgrade, warning, error)."""
+    bad = []
+    for rule, severity, source in _RULE_SEVERITIES:
+        sevs = [d["severity"] for d in check_source(source, "f.py") if d["rule"] == rule]
+        if severity not in sevs:
+            bad.append(f"{rule} should emit severity {severity!r}, got {sevs}")
+    return bad
 
 
 def run() -> int:
@@ -2116,6 +2145,14 @@ def run() -> int:
     if dedup_bad:
         failed += 1
         print(f"FAIL HC-rule [dedup]: {dedup_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    severity_bad = _probe_rule_severities()
+    if severity_bad:
+        failed += 1
+        print(f"FAIL HC-rule [rule_severities]: {severity_bad}")
     else:
         passed += 1
 
