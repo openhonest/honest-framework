@@ -83,6 +83,20 @@ def _check_vocab(case):
     return actual == expect, f"{case['vocab']} = {actual!r}, expected {expect!r}"
 
 
+def _check_exports(case):
+    """The package's public surface (section 1) is exactly __all__: the listed names, no more and no
+    fewer, and every one resolvable as a real attribute. Catches a name emptied or dropped from
+    __all__, the whole __all__ removed, and a re-export import deleted."""
+    names = getattr(honest_gherkin, "__all__", None)
+    if names is None:
+        return False, "__all__ is missing"
+    expect = case["expect_names"]
+    if sorted(names) != sorted(expect):
+        return False, f"__all__ = {sorted(names)}, expected {sorted(expect)}"
+    missing = [n for n in names if not hasattr(honest_gherkin, n)]
+    return not missing, f"__all__ names not importable: {missing}"
+
+
 def _check_stepfault(case):
     """step_fault (section 7) carries a fault as data: the exact four-key StepFault dict, never raised.
     Catches any key renamed/emptied, any field swapped, and the field order of arguments."""
@@ -98,11 +112,12 @@ _CHECKERS = {
     "fold": _check_fold,
     "vocab": _check_vocab,
     "stepfault": _check_stepfault,
+    "exports": _check_exports,
 }
 
 
 def _kind(case):
-    for name in ("compile", "match", "fold", "vocab", "stepfault"):
+    for name in ("compile", "match", "fold", "vocab", "stepfault", "exports"):
         if name in case:
             return name
     return "parse"

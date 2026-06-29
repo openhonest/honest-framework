@@ -407,6 +407,38 @@
     "step_text": "",
     "detail": "no match"
    }
+  },
+  {
+   "id": "exports-public-surface",
+   "exports": true,
+   "expect_names": [
+    "parse_feature",
+    "compile_pattern",
+    "PLACEHOLDER_TYPES",
+    "empty_registry",
+    "register_step",
+    "match_step",
+    "run_step",
+    "run_scenario",
+    "fold_feature_report",
+    "run_feature_file",
+    "step_fault",
+    "STEP_KINDS",
+    "STEP_STATUSES",
+    "SCENARIO_STATUSES",
+    "FAULT_CODES",
+    "Step",
+    "Scenario",
+    "Feature",
+    "CompiledPattern",
+    "StepPattern",
+    "StepRegistry",
+    "StepMatch",
+    "StepResult",
+    "ScenarioReport",
+    "FeatureReport",
+    "StepFault"
+   ]
   }
  ],
  "value_oracle_exempt": [
