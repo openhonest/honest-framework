@@ -1,253 +1,2133 @@
 {
-  "version": "0.1",
-  "module": "honest-test",
-  "note": "Unit 1 - generation engine. enumeration: Set cartesian product (section 3.2), maybe adds Nothing (null). adversarial: neighbour classes (section 3.5). Cases are data; the runner builds the vocabulary and calls the generators. Non-printable neighbours are encoded as JSON \\u escapes. The two byte-level Class 5 variants are deferred, so encoding cases assert only the string-valued variants.",
-  "cases": [
+ "version": "0.1",
+ "module": "honest-test",
+ "note": "Unit 1 - generation engine. enumeration: Set cartesian product (section 3.2), maybe adds Nothing (null). adversarial: neighbour classes (section 3.5). Cases are data; the runner builds the vocabulary and calls the generators. Non-printable neighbours are encoded as JSON \\u escapes. The two byte-level Class 5 variants are deferred, so encoding cases assert only the string-valued variants.",
+ "cases": [
+  {
+   "id": "enum-product-2x2",
+   "declarations": {
+    "a": [
+     "x",
+     "y"
+    ],
+    "b": [
+     "1",
+     "2"
+    ]
+   },
+   "expect_count": 4,
+   "expect_contains": [
     {
-      "id": "enum-product-2x2",
-      "declarations": {
-        "a": [
-          "x",
-          "y"
+     "a": "x",
+     "b": "1"
+    },
+    {
+     "a": "y",
+     "b": "2"
+    }
+   ]
+  },
+  {
+   "id": "enum-single-set",
+   "declarations": {
+    "t": [
+     "alpha",
+     "beta",
+     "gamma"
+    ]
+   },
+   "expect_count": 3,
+   "expect_contains": [
+    {
+     "t": "alpha"
+    },
+    {
+     "t": "gamma"
+    }
+   ]
+  },
+  {
+   "id": "enum-three-sets-product",
+   "declarations": {
+    "a": [
+     "x"
+    ],
+    "b": [
+     "1",
+     "2"
+    ],
+    "c": [
+     "p",
+     "q"
+    ]
+   },
+   "expect_count": 4
+  },
+  {
+   "id": "enum-maybe-adds-nothing",
+   "declarations": {
+    "a": [
+     "x",
+     "y"
+    ]
+   },
+   "maybe": [
+    "a"
+   ],
+   "expect_count": 3,
+   "expect_contains": [
+    {
+     "a": "x"
+    },
+    {
+     "a": "y"
+    },
+    {
+     "a": null
+    }
+   ]
+  },
+  {
+   "id": "adv-edit-distance-and-control",
+   "value": "USD",
+   "expect_contains": [
+    "US",
+    "UD",
+    "SD",
+    "usd",
+    "Usd",
+    " USD",
+    "USD ",
+    "U SD"
+   ],
+   "expect_excludes": [
+    "USD"
+   ],
+   "expect_count_min": 100
+  },
+  {
+   "id": "adv-confusable-cyrillic-a",
+   "value": "abc",
+   "expect_contains": [
+    "\u0430bc"
+   ]
+  },
+  {
+   "id": "adv-encoding-string-variants",
+   "value": "a b",
+   "expect_contains": [
+    "\ufeffa b",
+    "a%2520b",
+    "a\u00a0b",
+    "a\u2028b"
+   ],
+   "expect_excludes": [
+    "a b"
+   ]
+  },
+  {
+   "id": "adv-bidi-override-injected",
+   "value": "USD",
+   "expect_contains": [
+    "\u202eUSD",
+    "USD\u202e"
+   ]
+  },
+  {
+   "id": "pred-numeric-int",
+   "source": "lambda s: int(s) > 0",
+   "expect_class": "numeric"
+  },
+  {
+   "id": "pred-numeric-float",
+   "source": "def f(s):\n    return float(s) < 1.0\n",
+   "expect_class": "numeric"
+  },
+  {
+   "id": "pred-length-eq",
+   "source": "def f(s):\n    return len(s) == 5\n",
+   "expect_class": "length"
+  },
+  {
+   "id": "pred-length-lt",
+   "source": "lambda s: len(s) < 10",
+   "expect_class": "length"
+  },
+  {
+   "id": "pred-charclass-isdigit",
+   "source": "lambda s: s.isdigit()",
+   "expect_class": "character_class"
+  },
+  {
+   "id": "pred-charclass-isalpha",
+   "source": "def f(s):\n    return s.isalpha()\n",
+   "expect_class": "character_class"
+  },
+  {
+   "id": "pred-catchall-true",
+   "source": "lambda s: True",
+   "expect_class": "catch_all"
+  },
+  {
+   "id": "pred-catchall-isinstance",
+   "source": "lambda s: isinstance(s, str)",
+   "expect_class": "catch_all"
+  },
+  {
+   "id": "pred-external-call",
+   "source": "lambda s: lookup(s)",
+   "expect_class": "external"
+  },
+  {
+   "id": "pred-composite-call",
+   "source": "lambda s: validate(s)",
+   "codebase": [
+    "validate"
+   ],
+   "expect_class": "composite"
+  },
+  {
+   "id": "pred-length-beats-numeric",
+   "source": "lambda s: len(s) == 5",
+   "expect_class": "length"
+  },
+  {
+   "id": "pred-unknown-string-compare",
+   "source": "lambda s: s == 'x'",
+   "expect_class": "unknown"
+  },
+  {
+   "id": "numeric-fib-limit-10",
+   "gen": "numeric",
+   "limit": 10,
+   "expect_values": [
+    -1,
+    -1,
+    -2,
+    -3,
+    -5,
+    -8,
+    -13,
+    0,
+    1,
+    1,
+    2,
+    3,
+    5,
+    8,
+    13
+   ]
+  },
+  {
+   "id": "numeric-no-negative",
+   "gen": "numeric",
+   "limit": 10,
+   "negative": false,
+   "expect_values": [
+    0,
+    1,
+    1,
+    2,
+    3,
+    5,
+    8,
+    13
+   ]
+  },
+  {
+   "id": "numeric-float-divides-by-100",
+   "gen": "numeric",
+   "limit": 10,
+   "as_float": true,
+   "expect_contains": [
+    0.0,
+    0.01,
+    0.05,
+    0.13,
+    -0.13
+   ]
+  },
+  {
+   "id": "numeric-default-spread",
+   "gen": "numeric",
+   "expect_contains": [
+    0,
+    1,
+    -1
+   ],
+   "expect_count_min": 40
+  },
+  {
+   "id": "length-exact-eq",
+   "gen": "length",
+   "source": "lambda s: len(s) == 5",
+   "expect_min": 5,
+   "expect_max": 5,
+   "expect_valid_lengths": [
+    5
+   ],
+   "expect_invalid_lengths": [
+    4,
+    6
+   ]
+  },
+  {
+   "id": "length-le",
+   "gen": "length",
+   "source": "lambda s: len(s) <= 8",
+   "expect_min": 1,
+   "expect_max": 8,
+   "expect_valid_lengths": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "expect_invalid_lengths": [
+    9
+   ]
+  },
+  {
+   "id": "length-lt",
+   "gen": "length",
+   "source": "lambda s: len(s) < 8",
+   "expect_min": 1,
+   "expect_max": 7,
+   "expect_valid_lengths": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ],
+   "expect_invalid_lengths": [
+    8
+   ]
+  },
+  {
+   "id": "length-range-tests-one-under",
+   "gen": "length",
+   "source": "def f(s):\n    return 3 <= len(s) <= 8\n",
+   "expect_min": 3,
+   "expect_max": 8,
+   "expect_valid_lengths": [
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "expect_invalid_lengths": [
+    2,
+    9
+   ]
+  },
+  {
+   "id": "length-ge-unbounded-falls-through",
+   "gen": "length",
+   "source": "lambda s: len(s) >= 3",
+   "expect_min": 3,
+   "expect_max": null,
+   "expect_valid_lengths": [],
+   "expect_invalid_lengths": []
+  },
+  {
+   "id": "length-beyond-charset",
+   "gen": "length",
+   "source": "lambda s: len(s) == 50",
+   "expect_min": 50,
+   "expect_max": 50,
+   "expect_valid_lengths": [
+    50
+   ],
+   "expect_invalid_lengths": [
+    49,
+    51
+   ]
+  },
+  {
+   "id": "supplied-from-toml",
+   "toml": "[predicates.customer_id]\nvalid = [\"CUST-00001\", \"CUST-99999\"]\ninvalid = [\"CUST-0\", \"cust-00001\"]\nstrategy = \"supplied_only\"\n",
+   "predicate": "customer_id",
+   "expect_valid": [
+    "CUST-00001",
+    "CUST-99999"
+   ],
+   "expect_invalid": [
+    "CUST-0",
+    "cust-00001"
+   ],
+   "expect_strategy": "supplied_only"
+  },
+  {
+   "id": "supplied-toml-string-NO-stays-string",
+   "toml": "[predicates.country]\nvalid = [\"NO\", \"SE\"]\ninvalid = [\"XX\"]\n",
+   "predicate": "country",
+   "expect_valid": [
+    "NO",
+    "SE"
+   ],
+   "expect_invalid": [
+    "XX"
+   ]
+  },
+  {
+   "id": "supplied-missing-predicate",
+   "config": {
+    "predicates": {}
+   },
+   "predicate": "absent",
+   "expect_none": true
+  },
+  {
+   "id": "supplied-defaults",
+   "config": {
+    "predicates": {
+     "p": {}
+    }
+   },
+   "predicate": "p",
+   "expect_valid": [],
+   "expect_invalid": [],
+   "expect_strategy": "supplied_only"
+  },
+  {
+   "id": "honesty-purity-pure-link",
+   "honesty": "purity",
+   "link": "pure",
+   "manifest": {
+    "x": "1"
+   },
+   "expect_ok": true
+  },
+  {
+   "id": "honesty-purity-impure-link",
+   "honesty": "purity",
+   "link": "impure",
+   "manifest": {
+    "x": "1"
+   },
+   "expect_ok": false,
+   "expect_code": "non_deterministic"
+  },
+  {
+   "id": "honesty-purity-boundary-exempt",
+   "honesty": "purity",
+   "link": "boundary_impure",
+   "manifest": {
+    "x": "1"
+   },
+   "expect_ok": true
+  },
+  {
+   "id": "honesty-mutation-pure-link",
+   "honesty": "mutation",
+   "link": "pure",
+   "manifest": {
+    "x": "1"
+   },
+   "expect_ok": true
+  },
+  {
+   "id": "honesty-mutation-mutating-link",
+   "honesty": "mutation",
+   "link": "mutating",
+   "manifest": {
+    "x": "1"
+   },
+   "expect_ok": false,
+   "expect_code": "manifest_mutated"
+  },
+  {
+   "id": "honesty-idempotency-pure-chain",
+   "honesty": "idempotency",
+   "chain": [
+    "pure",
+    "set_role"
+   ],
+   "manifest": {
+    "x": "1"
+   },
+   "expect_ok": true
+  },
+  {
+   "id": "honesty-idempotency-impure-chain",
+   "honesty": "idempotency",
+   "chain": [
+    "impure"
+   ],
+   "manifest": {
+    "x": "1"
+   },
+   "expect_ok": false,
+   "expect_code": "not_idempotent"
+  },
+  {
+   "id": "contract-server-fault-is-violation",
+   "contract": true,
+   "chain": [
+    "emit_format",
+    "accepts_currency"
+   ],
+   "expect_ok": false
+  },
+  {
+   "id": "contract-client-fault-not-violation",
+   "contract": true,
+   "chain": [
+    "emit_format",
+    "client_picky"
+   ],
+   "expect_ok": true
+  },
+  {
+   "id": "contract-all-outputs-accepted",
+   "contract": true,
+   "chain": [
+    "emit_format",
+    "always_ok"
+   ],
+   "expect_ok": true
+  },
+  {
+   "id": "sm-valid-transitions-clean",
+   "sm_test": "valid",
+   "states": [
+    "pending",
+    "paid",
+    "shipped",
+    "cancelled"
+   ],
+   "events": [
+    "pay",
+    "ship",
+    "cancel",
+    "refund"
+   ],
+   "transitions": [
+    [
+     "pending",
+     "pay",
+     "paid"
+    ],
+    [
+     "pending",
+     "cancel",
+     "cancelled"
+    ],
+    [
+     "paid",
+     "ship",
+     "shipped"
+    ],
+    [
+     "paid",
+     "cancel",
+     "cancelled"
+    ],
+    [
+     "shipped",
+     "refund",
+     "cancelled"
+    ]
+   ],
+   "initial": "pending",
+   "expect_findings": 0
+  },
+  {
+   "id": "sm-invalid-transitions-clean",
+   "sm_test": "invalid",
+   "states": [
+    "pending",
+    "paid",
+    "shipped",
+    "cancelled"
+   ],
+   "events": [
+    "pay",
+    "ship",
+    "cancel",
+    "refund"
+   ],
+   "transitions": [
+    [
+     "pending",
+     "pay",
+     "paid"
+    ],
+    [
+     "pending",
+     "cancel",
+     "cancelled"
+    ],
+    [
+     "paid",
+     "ship",
+     "shipped"
+    ],
+    [
+     "paid",
+     "cancel",
+     "cancelled"
+    ],
+    [
+     "shipped",
+     "refund",
+     "cancelled"
+    ]
+   ],
+   "initial": "pending",
+   "expect_findings": 0
+  },
+  {
+   "id": "sm-adversarial-clean",
+   "sm_test": "adversarial",
+   "states": [
+    "pending",
+    "paid",
+    "shipped",
+    "cancelled"
+   ],
+   "events": [
+    "pay",
+    "ship",
+    "cancel",
+    "refund"
+   ],
+   "transitions": [
+    [
+     "pending",
+     "pay",
+     "paid"
+    ]
+   ],
+   "initial": "pending",
+   "expect_findings": 0
+  },
+  {
+   "id": "sm-adversarial-detects-similar-states",
+   "sm_test": "adversarial",
+   "states": [
+    "cat",
+    "car"
+   ],
+   "events": [
+    "go"
+   ],
+   "transitions": [
+    [
+     "cat",
+     "go",
+     "car"
+    ]
+   ],
+   "initial": "cat",
+   "expect_min_findings": 1
+  },
+  {
+   "id": "proof-payload-proved",
+   "proof_payload": {
+    "args": {
+     "function": "honest_observe.events.build_event",
+     "gherkin": "build_event assembles a validated envelope",
+     "module": "honest-observe",
+     "cases": 12,
+     "result": "proved",
+     "failures": [],
+     "line_coverage": 100.0,
+     "branch_coverage": 100.0
+    }
+   },
+   "expect": {
+    "function": "honest_observe.events.build_event",
+    "gherkin": "build_event assembles a validated envelope",
+    "module": "honest-observe",
+    "cases": 12,
+    "result": "proved",
+    "failures": [],
+    "line_coverage": 100.0,
+    "branch_coverage": 100.0
+   }
+  },
+  {
+   "id": "proof-payload-failed",
+   "proof_payload": {
+    "args": {
+     "function": "m.f",
+     "gherkin": "f does the thing",
+     "module": "m",
+     "cases": 4,
+     "result": "failed",
+     "failures": [
+      "case 3: wrong output"
+     ],
+     "line_coverage": 80.0,
+     "branch_coverage": 50.0
+    }
+   },
+   "expect": {
+    "function": "m.f",
+    "gherkin": "f does the thing",
+    "module": "m",
+    "cases": 4,
+    "result": "failed",
+    "failures": [
+     "case 3: wrong output"
+    ],
+    "line_coverage": 80.0,
+    "branch_coverage": 50.0
+   }
+  },
+  {
+   "id": "value-returns",
+   "value_case": {
+    "function": "double",
+    "input": 21,
+    "expected": 42
+   }
+  },
+  {
+   "id": "value-returns-list",
+   "value_case": {
+    "function": "double",
+    "input": [
+     1,
+     2
+    ],
+    "expected": [
+     1,
+     2,
+     1,
+     2
+    ]
+   }
+  },
+  {
+   "id": "value-fault",
+   "value_case": {
+    "function": "parity",
+    "input": 3,
+    "fault": "odd"
+   }
+  },
+  {
+   "id": "value-ok",
+   "value_case": {
+    "function": "parity",
+    "input": 4,
+    "ok": true
+   }
+  },
+  {
+   "id": "value-field",
+   "value_case": {
+    "function": "box",
+    "input": 5,
+    "field": {
+     "name": "n",
+     "value": 5
+    }
+   }
+  },
+  {
+   "id": "value-fib-5",
+   "value_case": {
+    "function": "fibonacci_sequence",
+    "input": 5,
+    "expected": [
+     -1,
+     -1,
+     -2,
+     -3,
+     -5,
+     0,
+     1,
+     1,
+     2,
+     3,
+     5
+    ]
+   }
+  },
+  {
+   "id": "value-fib-20",
+   "value_case": {
+    "function": "fibonacci_sequence",
+    "input": 20,
+    "expected": [
+     -1,
+     -1,
+     -2,
+     -3,
+     -5,
+     -8,
+     -13,
+     -21,
+     0,
+     1,
+     1,
+     2,
+     3,
+     5,
+     8,
+     13,
+     21
+    ]
+   }
+  },
+  {
+   "id": "value-numeric-5",
+   "value_case": {
+    "function": "numeric_values",
+    "input": 5,
+    "expected": [
+     -1,
+     -1,
+     -2,
+     -3,
+     -5,
+     0,
+     1,
+     1,
+     2,
+     3,
+     5
+    ]
+   }
+  },
+  {
+   "id": "value-ref",
+   "value_case": {
+    "function": "apply_fn",
+    "args": [
+     {
+      "$ref": "double"
+     },
+     21
+    ],
+    "expected": 42
+   }
+  },
+  {
+   "id": "value-nested-call",
+   "value_case": {
+    "function": "double",
+    "args": [
+     {
+      "$call": "double",
+      "args": [
+       10
+      ]
+     }
+    ],
+    "expected": 40
+   }
+  },
+  {
+   "id": "value-kwargs",
+   "value_case": {
+    "function": "double",
+    "kwargs": {
+     "x": 21
+    },
+    "expected": 42
+   }
+  },
+  {
+   "id": "value-async",
+   "value_case": {
+    "function": "add_async",
+    "args": [
+     2,
+     3
+    ],
+    "expected": 5
+   }
+  },
+  {
+   "id": "value-dict-literal",
+   "value_case": {
+    "function": "echo",
+    "input": {
+     "k": "v"
+    },
+    "expected": {
+     "k": "v"
+    }
+   }
+  },
+  {
+   "id": "value-list-of-refs",
+   "value_case": {
+    "function": "first_of",
+    "args": [
+     [
+      {
+       "$ref": "double"
+      },
+      {
+       "$ref": "echo"
+      }
+     ],
+     5
+    ],
+    "expected": 10
+   }
+  },
+  {
+   "id": "value-decide-proof",
+   "value_case": {
+    "function": "decide_proof",
+    "args": [
+     true,
+     true,
+     [
+      {
+       "id": "v1",
+       "proved": true,
+       "fault": null
+      }
+     ]
+    ],
+    "expected": {
+     "result": "proved",
+     "failures": []
+    }
+   }
+  },
+  {
+   "id": "value-proof-payload",
+   "value_case": {
+    "function": "proof_payload",
+    "args": [
+     "m.f",
+     "f does x",
+     "m",
+     3,
+     "proved",
+     [],
+     100.0,
+     100.0
+    ],
+    "expected": {
+     "function": "m.f",
+     "gherkin": "f does x",
+     "module": "m",
+     "cases": 3,
+     "result": "proved",
+     "failures": [],
+     "line_coverage": 100.0,
+     "branch_coverage": 100.0
+    }
+   }
+  },
+  {
+   "id": "value-check-oracle",
+   "value_case": {
+    "function": "check_oracle",
+    "args": [
+     {
+      "expected": 4
+     },
+     4
+    ],
+    "expected": null
+   }
+  },
+  {
+   "id": "value-classify-source",
+   "value_case": {
+    "function": "classify_source",
+    "input": "def f(x):\n    return len(x) < 10\n",
+    "expected": "length"
+   }
+  },
+  {
+   "id": "value-encoding-variants",
+   "value_case": {
+    "function": "encoding_variants",
+    "input": "a",
+    "expected": [
+     "\ufeffa",
+     "a",
+     "a",
+     "a"
+    ]
+   }
+  },
+  {
+   "id": "value-enumerate-lengths",
+   "value_case": {
+    "function": "enumerate_lengths",
+    "input": "len(x) < 5",
+    "expected": {
+     "min": 1,
+     "max": 4,
+     "valid": [
+      "a",
+      "ab",
+      "abc",
+      "abcd"
+     ],
+     "invalid": [
+      "abcde"
+     ]
+    }
+   }
+  },
+  {
+   "id": "value-load-config",
+   "value_case": {
+    "function": "load_config",
+    "input": "/nonexistent/honest-test.toml",
+    "expected": {}
+   }
+  },
+  {
+   "id": "value-classify-predicate",
+   "value_case": {
+    "function": "classify_predicate",
+    "args": [
+     {
+      "$ref": "fibonacci_sequence"
+     }
+    ],
+    "expected": "numeric"
+   }
+  },
+  {
+   "id": "value-verify-purity",
+   "value_case": {
+    "function": "verify_purity",
+    "args": [
+     {
+      "$ref": "pure_link"
+     },
+     {
+      "x": "1"
+     }
+    ],
+    "expected": null
+   }
+  },
+  {
+   "id": "value-detect-mutation",
+   "value_case": {
+    "function": "detect_mutation",
+    "args": [
+     {
+      "$ref": "pure_link"
+     },
+     {
+      "x": "1"
+     }
+    ],
+    "expected": null
+   }
+  },
+  {
+   "id": "value-verify-idempotency",
+   "value_case": {
+    "function": "verify_idempotency",
+    "args": [
+     [
+      {
+       "$ref": "pure_link"
+      },
+      {
+       "$ref": "set_role"
+      }
+     ],
+     {
+      "x": "1"
+     }
+    ],
+    "expected": null
+   }
+  },
+  {
+   "id": "value-test-valid-transitions",
+   "value_case": {
+    "function": "test_valid_transitions",
+    "args": [
+     {
+      "$call": "make_machine",
+      "args": [
+       [
+        "pending",
+        "paid"
+       ],
+       [
+        "pay"
+       ],
+       [
+        [
+         "pending",
+         "pay",
+         "paid"
+        ]
+       ],
+       "pending"
+      ]
+     }
+    ],
+    "expected": []
+   }
+  },
+  {
+   "id": "value-test-invalid-transitions",
+   "value_case": {
+    "function": "test_invalid_transitions",
+    "args": [
+     {
+      "$call": "make_machine",
+      "args": [
+       [
+        "pending",
+        "paid"
+       ],
+       [
+        "pay"
+       ],
+       [
+        [
+         "pending",
+         "pay",
+         "paid"
+        ]
+       ],
+       "pending"
+      ]
+     }
+    ],
+    "expected": []
+   }
+  },
+  {
+   "id": "value-test-adversarial-transitions",
+   "value_case": {
+    "function": "test_adversarial_transitions",
+    "args": [
+     {
+      "$call": "make_machine",
+      "args": [
+       [
+        "pending",
+        "paid"
+       ],
+       [
+        "pay"
+       ],
+       [
+        [
+         "pending",
+         "pay",
+         "paid"
+        ]
+       ],
+       "pending"
+      ]
+     }
+    ],
+    "expected": []
+   }
+  },
+  {
+   "id": "value-enumerate-sets",
+   "value_case": {
+    "function": "enumerate_sets",
+    "args": [
+     {
+      "$call": "vocabulary",
+      "args": [
+       {
+        "color": [
+         "red",
+         "green"
+        ]
+       }
+      ]
+     }
+    ],
+    "expected": [
+     {
+      "color": "green"
+     },
+     {
+      "color": "red"
+     }
+    ]
+   }
+  },
+  {
+   "id": "value-enumerate-test-cases",
+   "value_case": {
+    "function": "enumerate_test_cases",
+    "args": [
+     {
+      "$call": "vocabulary",
+      "args": [
+       {
+        "color": [
+         "red",
+         "green"
+        ]
+       }
+      ]
+     },
+     {
+      "$call": "binding",
+      "args": [
+       {
+        "shade": "color"
+       }
+      ]
+     }
+    ],
+    "expected": [
+     {
+      "color": "green"
+     },
+     {
+      "color": "red"
+     }
+    ]
+   }
+  },
+  {
+   "id": "value-supplied-for",
+   "value_case": {
+    "function": "supplied_for",
+    "args": [
+     {
+      "predicates": {
+       "p": {
+        "valid": [
+         "x"
         ],
-        "b": [
-          "1",
-          "2"
+        "invalid": [
+         "y"
         ]
+       }
+      }
+     },
+     "p"
+    ],
+    "expected": {
+     "valid": [
+      "x"
+     ],
+     "invalid": [
+      "y"
+     ],
+     "strategy": "supplied_only"
+    }
+   }
+  },
+  {
+   "id": "value-test-chain-contracts",
+   "value_case": {
+    "function": "test_chain_contracts",
+    "args": [
+     [
+      {
+       "$ref": "emit_format"
       },
-      "expect_count": 4,
-      "expect_contains": [
-        {
-          "a": "x",
-          "b": "1"
-        },
-        {
-          "a": "y",
-          "b": "2"
-        }
-      ]
-    },
-    {
-      "id": "enum-single-set",
-      "declarations": {
-        "t": [
-          "alpha",
-          "beta",
-          "gamma"
-        ]
+      {
+       "$ref": "accepts_currency"
+      }
+     ]
+    ],
+    "expected": [
+     {
+      "code": "chain_contract",
+      "subject": "_accepts_currency",
+      "message": "Rejected valid output from '_emit_format'"
+     }
+    ]
+   }
+  },
+  {
+   "id": "value-emit-proofs",
+   "value_case": {
+    "function": "emit_proofs",
+    "args": [
+     {
+      "$ref": "recording_emit"
+     },
+     [
+      {
+       "function": "m.a",
+       "gherkin": "a",
+       "module": "m",
+       "cases": 1,
+       "result": "proved",
+       "failures": [],
+       "line_coverage": 100.0,
+       "branch_coverage": 100.0
+      }
+     ]
+    ],
+    "expected": [
+     {
+      "ok": {
+       "event_id": "e"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "value-law-field",
+   "value_case": {
+    "function": "law",
+    "args": [
+     "L1",
+     "f doubles",
+     {
+      "$ref": "double"
+     }
+    ],
+    "field": {
+     "name": "id",
+     "value": "L1"
+    }
+   }
+  },
+  {
+   "id": "decide-proved",
+   "decide": {
+    "honesty_ok": true,
+    "coverage_ok": true,
+    "value_results": [
+     {
+      "id": "v1",
+      "proved": true,
+      "fault": null
+     }
+    ]
+   },
+   "expect": {
+    "result": "proved",
+    "failures": []
+   }
+  },
+  {
+   "id": "decide-value-mismatch",
+   "decide": {
+    "honesty_ok": true,
+    "coverage_ok": true,
+    "value_results": [
+     {
+      "id": "v1",
+      "proved": true,
+      "fault": null
+     },
+     {
+      "id": "v2",
+      "proved": false,
+      "fault": {
+       "code": "assertion_failed",
+       "detail": "expected 42, got 7",
+       "scenario_name": "",
+       "step_text": ""
+      }
+     }
+    ]
+   },
+   "expect": {
+    "result": "failed",
+    "failures": [
+     "value case 'v2': expected 42, got 7"
+    ]
+   }
+  },
+  {
+   "id": "decide-no-oracle",
+   "decide": {
+    "honesty_ok": true,
+    "coverage_ok": true,
+    "value_results": []
+   },
+   "expect": {
+    "result": "failed",
+    "failures": [
+     "no value oracle: the function's Then is not yet checked by a value case"
+    ]
+   }
+  },
+  {
+   "id": "decide-honesty-fail",
+   "decide": {
+    "honesty_ok": false,
+    "coverage_ok": true,
+    "value_results": [
+     {
+      "id": "v1",
+      "proved": true,
+      "fault": null
+     }
+    ]
+   },
+   "expect": {
+    "result": "failed",
+    "failures": [
+     "honesty checks did not pass"
+    ]
+   }
+  },
+  {
+   "id": "decide-coverage-fail",
+   "decide": {
+    "honesty_ok": true,
+    "coverage_ok": false,
+    "value_results": [
+     {
+      "id": "v1",
+      "proved": true,
+      "fault": null
+     }
+    ]
+   },
+   "expect": {
+    "result": "failed",
+    "failures": [
+     "not fully covered (line or branch below 100%)"
+    ]
+   }
+  },
+  {
+   "id": "decide-exempt-proved",
+   "decide": {
+    "honesty_ok": true,
+    "coverage_ok": true,
+    "value_results": [],
+    "exempt": true
+   },
+   "expect": {
+    "result": "proved",
+    "failures": []
+   }
+  },
+  {
+   "id": "decide-exempt-still-needs-honesty",
+   "decide": {
+    "honesty_ok": false,
+    "coverage_ok": true,
+    "value_results": [],
+    "exempt": true
+   },
+   "expect": {
+    "result": "failed",
+    "failures": [
+     "honesty checks did not pass"
+    ]
+   }
+  },
+  {
+   "id": "value-unicode-confusables",
+   "value_case": {
+    "function": "unicode_confusables",
+    "input": "a",
+    "expected": [
+     "\u0430",
+     "\u0251",
+     "\uff41",
+     "\ud835\udc1a",
+     "\u0430"
+    ]
+   }
+  },
+  {
+   "id": "value-control-characters",
+   "value_case": {
+    "function": "control_characters",
+    "input": "a",
+    "expected": [
+     "\u0000a",
+     "a\u0000",
+     "\u0000a",
+     "\ba",
+     "a\b",
+     "\ba",
+     "\ta",
+     "a\t",
+     "\ta",
+     "\na",
+     "a\n",
+     "\na",
+     "\ra",
+     "a\r",
+     "\ra",
+     "\u001ba",
+     "a\u001b",
+     "\u001ba",
+     "\u007fa",
+     "a\u007f",
+     "\u007fa",
+     "\u200ba",
+     "a\u200b",
+     "\u200ba",
+     "\u200ea",
+     "a\u200e",
+     "\u200ea",
+     "\u200fa",
+     "a\u200f",
+     "\u200fa",
+     "\u202aa",
+     "a\u202a",
+     "\u202aa",
+     "\u202ba",
+     "a\u202b",
+     "\u202ba",
+     "\u202ca",
+     "a\u202c",
+     "\u202ca",
+     "\u202da",
+     "a\u202d",
+     "\u202da",
+     "\u202ea",
+     "a\u202e",
+     "\u202ea",
+     "\ufeffa",
+     "a\ufeff",
+     "\ufeffa"
+    ]
+   }
+  },
+  {
+   "id": "value-edit-distance-1",
+   "value_case": {
+    "function": "edit_distance_1",
+    "input": "a",
+    "expected": [
+     "",
+     "aa",
+     "ba",
+     "ca",
+     "da",
+     "ea",
+     "fa",
+     "ga",
+     "ha",
+     "ia",
+     "ja",
+     "ka",
+     "la",
+     "ma",
+     "na",
+     "oa",
+     "pa",
+     "qa",
+     "ra",
+     "sa",
+     "ta",
+     "ua",
+     "va",
+     "wa",
+     "xa",
+     "ya",
+     "za",
+     "Aa",
+     "Ba",
+     "Ca",
+     "Da",
+     "Ea",
+     "Fa",
+     "Ga",
+     "Ha",
+     "Ia",
+     "Ja",
+     "Ka",
+     "La",
+     "Ma",
+     "Na",
+     "Oa",
+     "Pa",
+     "Qa",
+     "Ra",
+     "Sa",
+     "Ta",
+     "Ua",
+     "Va",
+     "Wa",
+     "Xa",
+     "Ya",
+     "Za",
+     "0a",
+     "1a",
+     "2a",
+     "3a",
+     "4a",
+     "5a",
+     "6a",
+     "7a",
+     "8a",
+     "9a",
+     "aa",
+     "ab",
+     "ac",
+     "ad",
+     "ae",
+     "af",
+     "ag",
+     "ah",
+     "ai",
+     "aj",
+     "ak",
+     "al",
+     "am",
+     "an",
+     "ao",
+     "ap",
+     "aq",
+     "ar",
+     "as",
+     "at",
+     "au",
+     "av",
+     "aw",
+     "ax",
+     "ay",
+     "az",
+     "aA",
+     "aB",
+     "aC",
+     "aD",
+     "aE",
+     "aF",
+     "aG",
+     "aH",
+     "aI",
+     "aJ",
+     "aK",
+     "aL",
+     "aM",
+     "aN",
+     "aO",
+     "aP",
+     "aQ",
+     "aR",
+     "aS",
+     "aT",
+     "aU",
+     "aV",
+     "aW",
+     "aX",
+     "aY",
+     "aZ",
+     "a0",
+     "a1",
+     "a2",
+     "a3",
+     "a4",
+     "a5",
+     "a6",
+     "a7",
+     "a8",
+     "a9",
+     "b",
+     "c",
+     "d",
+     "e",
+     "f",
+     "g",
+     "h",
+     "i",
+     "j",
+     "k",
+     "l",
+     "m",
+     "n",
+     "o",
+     "p",
+     "q",
+     "r",
+     "s",
+     "t",
+     "u",
+     "v",
+     "w",
+     "x",
+     "y",
+     "z",
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F",
+     "G",
+     "H",
+     "I",
+     "J",
+     "K",
+     "L",
+     "M",
+     "N",
+     "O",
+     "P",
+     "Q",
+     "R",
+     "S",
+     "T",
+     "U",
+     "V",
+     "W",
+     "X",
+     "Y",
+     "Z",
+     "0",
+     "1",
+     "2",
+     "3",
+     "4",
+     "5",
+     "6",
+     "7",
+     "8",
+     "9",
+     "a",
+     "A",
+     "A",
+     " a",
+     "a "
+    ]
+   }
+  },
+  {
+   "id": "value-nd-watch-list",
+   "value_case": {
+    "function": "nondeterministic_watch_list",
+    "args": [],
+    "expected": [
+     "uuid.uuid1",
+     "uuid.uuid3",
+     "uuid.uuid4",
+     "uuid.uuid5",
+     "os.urandom",
+     "os.getenv",
+     "os.getlogin",
+     "os.getpid",
+     "os.getppid",
+     "os.getcwd",
+     "os.uname",
+     "time.time",
+     "time.time_ns",
+     "time.monotonic",
+     "time.perf_counter",
+     "time.process_time",
+     "time.sleep",
+     "getpass.getpass",
+     "getpass.getuser",
+     "threading.current_thread",
+     "threading.get_ident",
+     "threading.active_count",
+     "multiprocessing.current_process",
+     "multiprocessing.cpu_count",
+     "asyncio.get_event_loop",
+     "asyncio.current_task",
+     "random.random",
+     "random.randint",
+     "secrets.token_bytes",
+     "platform.system"
+    ]
+   }
+  },
+  {
+   "id": "value-nd-finding-warn",
+   "value_case": {
+    "function": "nondeterminism_finding",
+    "args": [
+     "validate",
+     false,
+     [
+      "time.time"
+     ]
+    ],
+    "expected": {
+     "code": "nondeterminism_detected",
+     "subject": "validate",
+     "message": "Link called ['time.time']; non-deterministic calls belong at boundaries"
+    }
+   }
+  },
+  {
+   "id": "value-nd-finding-boundary",
+   "value_case": {
+    "function": "nondeterminism_finding",
+    "args": [
+     "record",
+     true,
+     [
+      "time.time"
+     ]
+    ],
+    "expected": null
+   }
+  },
+  {
+   "id": "value-nd-finding-none",
+   "value_case": {
+    "function": "nondeterminism_finding",
+    "args": [
+     "validate",
+     false,
+     []
+    ],
+    "expected": null
+   }
+  },
+  {
+   "id": "value-auth-token-classes",
+   "value_case": {
+    "function": "auth_token_classes",
+    "args": [],
+    "expected": [
+     "valid_authorized",
+     "valid_unauthorized",
+     "revoked",
+     "expired",
+     "malformed",
+     "missing",
+     "forged"
+    ]
+   }
+  },
+  {
+   "id": "value-auth-map-http",
+   "value_case": {
+    "function": "map_fault_to_http",
+    "args": [
+     {
+      "category": "unauthenticated"
+     }
+    ],
+    "expected": 401
+   }
+  },
+  {
+   "id": "value-auth-expected-ok",
+   "value_case": {
+    "function": "auth_expected_status",
+    "args": [
+     "valid_authorized"
+    ],
+    "expected": "ok"
+   }
+  },
+  {
+   "id": "value-auth-expected-status",
+   "value_case": {
+    "function": "auth_expected_status",
+    "args": [
+     "revoked"
+    ],
+    "expected": 401
+   }
+  },
+  {
+   "id": "value-auth-finding-fail",
+   "value_case": {
+    "function": "auth_honesty_finding",
+    "args": [
+     "guard",
+     "expired",
+     {
+      "ok": {}
+     },
+     401
+    ],
+    "expected": {
+     "code": "auth_honesty",
+     "subject": "guard",
+     "message": "Link did not fault correctly for token class 'expired': expected 401, got {'ok': {}}"
+    }
+   }
+  },
+  {
+   "id": "value-auth-finding-ok",
+   "value_case": {
+    "function": "auth_honesty_finding",
+    "args": [
+     "guard",
+     "revoked",
+     {
+      "err": {
+       "code": "guard_failed",
+       "message": "no",
+       "category": "unauthenticated"
+      }
+     },
+     401
+    ],
+    "expected": null
+   }
+  },
+  {
+   "id": "value-vocab-coverage",
+   "value_case": {
+    "function": "vocabulary_coverage",
+    "args": [
+     3,
+     2
+    ],
+    "expected": {
+     "total": 3,
+     "exercised": 2,
+     "pct": 67
+    }
+   }
+  },
+  {
+   "id": "value-chain-coverage",
+   "value_case": {
+    "function": "chain_coverage",
+    "args": [
+     3,
+     3
+    ],
+    "expected": {
+     "fault_paths": 3,
+     "exercised": 3,
+     "pct": 100
+    }
+   }
+  },
+  {
+   "id": "value-honesty-coverage",
+   "value_case": {
+    "function": "honesty_coverage",
+    "args": [
+     3,
+     3,
+     1
+    ],
+    "expected": {
+     "total": 3,
+     "honest": 3,
+     "boundary": 1,
+     "pct": 100
+    }
+   }
+  },
+  {
+   "id": "value-sm-coverage",
+   "value_case": {
+    "function": "state_machine_coverage",
+    "args": [
+     5,
+     4
+    ],
+    "expected": {
+     "transitions": 5,
+     "exercised": 4,
+     "pct": 80
+    }
+   }
+  },
+  {
+   "id": "value-build-coverage",
+   "value_case": {
+    "function": "build_coverage",
+    "args": [
+     {
+      "v": {
+       "total": 5,
+       "exercised": 5,
+       "pct": 100
+      }
+     },
+     {
+      "c": {
+       "fault_paths": 3,
+       "exercised": 3,
+       "pct": 100
+      }
+     },
+     {
+      "c": {
+       "total": 3,
+       "honest": 3,
+       "boundary": 1,
+       "pct": 100
+      }
+     },
+     {
+      "m": {
+       "transitions": 5,
+       "exercised": 5,
+       "pct": 100
+      }
+     },
+     "2026-03-15T00:00:00Z"
+    ],
+    "expected": {
+     "version": "1.0",
+     "timestamp": "2026-03-15T00:00:00Z",
+     "vocabularies": {
+      "v": {
+       "total": 5,
+       "exercised": 5,
+       "pct": 100
+      }
+     },
+     "chains": {
+      "c": {
+       "fault_paths": 3,
+       "exercised": 3,
+       "pct": 100
+      }
+     },
+     "honesty": {
+      "c": {
+       "total": 3,
+       "honest": 3,
+       "boundary": 1,
+       "pct": 100
+      }
+     },
+     "state_machines": {
+      "m": {
+       "transitions": 5,
+       "exercised": 5,
+       "pct": 100
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "value-enumerate-mutants",
+   "value_case": {
+    "function": "enumerate_mutants",
+    "args": [
+     "a == b\n"
+    ],
+    "expected": [
+     {
+      "operator": "comparison_swap",
+      "label": "==->!=@a == b",
+      "source": "a != b\n"
+     },
+     {
+      "operator": "line_removal",
+      "label": "remove@a == b",
+      "source": "\n"
+     }
+    ]
+   }
+  },
+  {
+   "id": "value-mutation-adequacy",
+   "value_case": {
+    "function": "mutation_adequacy",
+    "args": [
+     [
+      {
+       "operator": "number_shift",
+       "label": "a"
       },
-      "expect_count": 3,
-      "expect_contains": [
-        {
-          "t": "alpha"
-        },
-        {
-          "t": "gamma"
-        }
-      ]
-    },
-    {
-      "id": "enum-three-sets-product",
-      "declarations": {
-        "a": [
-          "x"
-        ],
-        "b": [
-          "1",
-          "2"
-        ],
-        "c": [
-          "p",
-          "q"
-        ]
-      },
-      "expect_count": 4
-    },
-    {
-      "id": "enum-maybe-adds-nothing",
-      "declarations": {
-        "a": [
-          "x",
-          "y"
-        ]
-      },
-      "maybe": [
-        "a"
+      {
+       "operator": "comparison_swap",
+       "label": "b"
+      }
+     ],
+     [
+      {
+       "operator": "comparison_swap",
+       "label": "b"
+      }
+     ],
+     {
+      "b": "equivalent: commutes"
+     }
+    ],
+    "expected": {
+     "total": 2,
+     "caught": 1,
+     "set_aside": 1,
+     "undeclared": [],
+     "adequate": true
+    }
+   }
+  },
+  {
+   "id": "supplied-custom-strategy",
+   "config": {
+    "predicates": {
+     "q": {
+      "valid": [
+       "a"
       ],
-      "expect_count": 3,
-      "expect_contains": [
-        {
-          "a": "x"
-        },
-        {
-          "a": "y"
-        },
-        {
-          "a": null
-        }
-      ]
-    },
-    {
-      "id": "adv-edit-distance-and-control",
-      "value": "USD",
-      "expect_contains": [
-        "US",
-        "UD",
-        "SD",
-        "usd",
-        "Usd",
-        " USD",
-        "USD ",
-        "U SD"
+      "invalid": [
+       "b"
       ],
-      "expect_excludes": [
-        "USD"
-      ],
-      "expect_count_min": 100
-    },
-    {
-      "id": "adv-confusable-cyrillic-a",
-      "value": "abc",
-      "expect_contains": [
-        "\u0430bc"
-      ]
-    },
-    {
-      "id": "adv-encoding-string-variants",
-      "value": "a b",
-      "expect_contains": [
-        "\ufeffa b",
-        "a%2520b",
-        "a\u00a0b",
-        "a\u2028b"
-      ],
-      "expect_excludes": [
-        "a b"
-      ]
-    },
-    {
-      "id": "adv-bidi-override-injected",
-      "value": "USD",
-      "expect_contains": [
-        "\u202eUSD",
-        "USD\u202e"
-      ]
-    },
-    {"id": "pred-numeric-int", "source": "lambda s: int(s) > 0", "expect_class": "numeric"},
-    {"id": "pred-numeric-float", "source": "def f(s):\n    return float(s) < 1.0\n", "expect_class": "numeric"},
-    {"id": "pred-length-eq", "source": "def f(s):\n    return len(s) == 5\n", "expect_class": "length"},
-    {"id": "pred-length-lt", "source": "lambda s: len(s) < 10", "expect_class": "length"},
-    {"id": "pred-charclass-isdigit", "source": "lambda s: s.isdigit()", "expect_class": "character_class"},
-    {"id": "pred-charclass-isalpha", "source": "def f(s):\n    return s.isalpha()\n", "expect_class": "character_class"},
-    {"id": "pred-catchall-true", "source": "lambda s: True", "expect_class": "catch_all"},
-    {"id": "pred-catchall-isinstance", "source": "lambda s: isinstance(s, str)", "expect_class": "catch_all"},
-    {"id": "pred-external-call", "source": "lambda s: lookup(s)", "expect_class": "external"},
-    {"id": "pred-composite-call", "source": "lambda s: validate(s)", "codebase": ["validate"], "expect_class": "composite"},
-    {"id": "pred-length-beats-numeric", "source": "lambda s: len(s) == 5", "expect_class": "length"},
-    {"id": "pred-unknown-string-compare", "source": "lambda s: s == 'x'", "expect_class": "unknown"},
-    {"id": "numeric-fib-limit-10", "gen": "numeric", "limit": 10, "expect_values": [-1, -1, -2, -3, -5, -8, -13, 0, 1, 1, 2, 3, 5, 8, 13]},
-    {"id": "numeric-no-negative", "gen": "numeric", "limit": 10, "negative": false, "expect_values": [0, 1, 1, 2, 3, 5, 8, 13]},
-    {"id": "numeric-float-divides-by-100", "gen": "numeric", "limit": 10, "as_float": true, "expect_contains": [0.0, 0.01, 0.05, 0.13, -0.13]},
-    {"id": "numeric-default-spread", "gen": "numeric", "expect_contains": [0, 1, -1], "expect_count_min": 40},
-    {"id": "length-exact-eq", "gen": "length", "source": "lambda s: len(s) == 5", "expect_min": 5, "expect_max": 5, "expect_valid_lengths": [5], "expect_invalid_lengths": [4, 6]},
-    {"id": "length-le", "gen": "length", "source": "lambda s: len(s) <= 8", "expect_min": 1, "expect_max": 8, "expect_valid_lengths": [1, 2, 3, 4, 5, 6, 7, 8], "expect_invalid_lengths": [9]},
-    {"id": "length-lt", "gen": "length", "source": "lambda s: len(s) < 8", "expect_min": 1, "expect_max": 7, "expect_valid_lengths": [1, 2, 3, 4, 5, 6, 7], "expect_invalid_lengths": [8]},
-    {"id": "length-range-tests-one-under", "gen": "length", "source": "def f(s):\n    return 3 <= len(s) <= 8\n", "expect_min": 3, "expect_max": 8, "expect_valid_lengths": [3, 4, 5, 6, 7, 8], "expect_invalid_lengths": [2, 9]},
-    {"id": "length-ge-unbounded-falls-through", "gen": "length", "source": "lambda s: len(s) >= 3", "expect_min": 3, "expect_max": null, "expect_valid_lengths": [], "expect_invalid_lengths": []},
-    {"id": "length-beyond-charset", "gen": "length", "source": "lambda s: len(s) == 50", "expect_min": 50, "expect_max": 50, "expect_valid_lengths": [50], "expect_invalid_lengths": [49, 51]},
-    {"id": "supplied-from-toml", "toml": "[predicates.customer_id]\nvalid = [\"CUST-00001\", \"CUST-99999\"]\ninvalid = [\"CUST-0\", \"cust-00001\"]\nstrategy = \"supplied_only\"\n", "predicate": "customer_id", "expect_valid": ["CUST-00001", "CUST-99999"], "expect_invalid": ["CUST-0", "cust-00001"], "expect_strategy": "supplied_only"},
-    {"id": "supplied-toml-string-NO-stays-string", "toml": "[predicates.country]\nvalid = [\"NO\", \"SE\"]\ninvalid = [\"XX\"]\n", "predicate": "country", "expect_valid": ["NO", "SE"], "expect_invalid": ["XX"]},
-    {"id": "supplied-missing-predicate", "config": {"predicates": {}}, "predicate": "absent", "expect_none": true},
-    {"id": "supplied-defaults", "config": {"predicates": {"p": {}}}, "predicate": "p", "expect_valid": [], "expect_invalid": [], "expect_strategy": "supplied_only"},
-    {"id": "honesty-purity-pure-link", "honesty": "purity", "link": "pure", "manifest": {"x": "1"}, "expect_ok": true},
-    {"id": "honesty-purity-impure-link", "honesty": "purity", "link": "impure", "manifest": {"x": "1"}, "expect_ok": false, "expect_code": "non_deterministic"},
-    {"id": "honesty-purity-boundary-exempt", "honesty": "purity", "link": "boundary_impure", "manifest": {"x": "1"}, "expect_ok": true},
-    {"id": "honesty-mutation-pure-link", "honesty": "mutation", "link": "pure", "manifest": {"x": "1"}, "expect_ok": true},
-    {"id": "honesty-mutation-mutating-link", "honesty": "mutation", "link": "mutating", "manifest": {"x": "1"}, "expect_ok": false, "expect_code": "manifest_mutated"},
-    {"id": "honesty-idempotency-pure-chain", "honesty": "idempotency", "chain": ["pure", "set_role"], "manifest": {"x": "1"}, "expect_ok": true},
-    {"id": "honesty-idempotency-impure-chain", "honesty": "idempotency", "chain": ["impure"], "manifest": {"x": "1"}, "expect_ok": false, "expect_code": "not_idempotent"},
-    {"id": "contract-server-fault-is-violation", "contract": true, "chain": ["emit_format", "accepts_currency"], "expect_ok": false},
-    {"id": "contract-client-fault-not-violation", "contract": true, "chain": ["emit_format", "client_picky"], "expect_ok": true},
-    {"id": "contract-all-outputs-accepted", "contract": true, "chain": ["emit_format", "always_ok"], "expect_ok": true},
-    {"id": "sm-valid-transitions-clean", "sm_test": "valid", "states": ["pending", "paid", "shipped", "cancelled"], "events": ["pay", "ship", "cancel", "refund"], "transitions": [["pending", "pay", "paid"], ["pending", "cancel", "cancelled"], ["paid", "ship", "shipped"], ["paid", "cancel", "cancelled"], ["shipped", "refund", "cancelled"]], "initial": "pending", "expect_findings": 0},
-    {"id": "sm-invalid-transitions-clean", "sm_test": "invalid", "states": ["pending", "paid", "shipped", "cancelled"], "events": ["pay", "ship", "cancel", "refund"], "transitions": [["pending", "pay", "paid"], ["pending", "cancel", "cancelled"], ["paid", "ship", "shipped"], ["paid", "cancel", "cancelled"], ["shipped", "refund", "cancelled"]], "initial": "pending", "expect_findings": 0},
-    {"id": "sm-adversarial-clean", "sm_test": "adversarial", "states": ["pending", "paid", "shipped", "cancelled"], "events": ["pay", "ship", "cancel", "refund"], "transitions": [["pending", "pay", "paid"]], "initial": "pending", "expect_findings": 0},
-    {"id": "sm-adversarial-detects-similar-states", "sm_test": "adversarial", "states": ["cat", "car"], "events": ["go"], "transitions": [["cat", "go", "car"]], "initial": "cat", "expect_min_findings": 1},
-    {"id": "proof-payload-proved", "proof_payload": {"args": {"function": "honest_observe.events.build_event", "gherkin": "build_event assembles a validated envelope", "module": "honest-observe", "cases": 12, "result": "proved", "failures": [], "line_coverage": 100.0, "branch_coverage": 100.0}}, "expect": {"function": "honest_observe.events.build_event", "gherkin": "build_event assembles a validated envelope", "module": "honest-observe", "cases": 12, "result": "proved", "failures": [], "line_coverage": 100.0, "branch_coverage": 100.0}},
-    {"id": "proof-payload-failed", "proof_payload": {"args": {"function": "m.f", "gherkin": "f does the thing", "module": "m", "cases": 4, "result": "failed", "failures": ["case 3: wrong output"], "line_coverage": 80.0, "branch_coverage": 50.0}}, "expect": {"function": "m.f", "gherkin": "f does the thing", "module": "m", "cases": 4, "result": "failed", "failures": ["case 3: wrong output"], "line_coverage": 80.0, "branch_coverage": 50.0}},
-    {"id": "value-returns", "value_case": {"function": "double", "input": 21, "expected": 42}},
-    {"id": "value-returns-list", "value_case": {"function": "double", "input": [1, 2], "expected": [1, 2, 1, 2]}},
-    {"id": "value-fault", "value_case": {"function": "parity", "input": 3, "fault": "odd"}},
-    {"id": "value-ok", "value_case": {"function": "parity", "input": 4, "ok": true}},
-    {"id": "value-field", "value_case": {"function": "box", "input": 5, "field": {"name": "n", "value": 5}}},
-    {"id": "value-fib-5", "value_case": {"function": "fibonacci_sequence", "input": 5, "expected": [-1, -1, -2, -3, -5, 0, 1, 1, 2, 3, 5]}},
-    {"id": "value-fib-20", "value_case": {"function": "fibonacci_sequence", "input": 20, "expected": [-1, -1, -2, -3, -5, -8, -13, -21, 0, 1, 1, 2, 3, 5, 8, 13, 21]}},
-    {"id": "value-numeric-5", "value_case": {"function": "numeric_values", "input": 5, "expected": [-1, -1, -2, -3, -5, 0, 1, 1, 2, 3, 5]}},
-    {"id": "value-ref", "value_case": {"function": "apply_fn", "args": [{"$ref": "double"}, 21], "expected": 42}},
-    {"id": "value-nested-call", "value_case": {"function": "double", "args": [{"$call": "double", "args": [10]}], "expected": 40}},
-    {"id": "value-kwargs", "value_case": {"function": "double", "kwargs": {"x": 21}, "expected": 42}},
-    {"id": "value-async", "value_case": {"function": "add_async", "args": [2, 3], "expected": 5}},
-    {"id": "value-dict-literal", "value_case": {"function": "echo", "input": {"k": "v"}, "expected": {"k": "v"}}},
-    {"id": "value-list-of-refs", "value_case": {"function": "first_of", "args": [[{"$ref": "double"}, {"$ref": "echo"}], 5], "expected": 10}},
-    {"id": "value-decide-proof", "value_case": {"function": "decide_proof", "args": [true, true, [{"id": "v1", "proved": true, "fault": null}]], "expected": {"result": "proved", "failures": []}}},
-    {"id": "value-proof-payload", "value_case": {"function": "proof_payload", "args": ["m.f", "f does x", "m", 3, "proved", [], 100.0, 100.0], "expected": {"function": "m.f", "gherkin": "f does x", "module": "m", "cases": 3, "result": "proved", "failures": [], "line_coverage": 100.0, "branch_coverage": 100.0}}},
-    {"id": "value-check-oracle", "value_case": {"function": "check_oracle", "args": [{"expected": 4}, 4], "expected": null}},
-    {"id": "value-classify-source", "value_case": {"function": "classify_source", "input": "def f(x):\n    return len(x) < 10\n", "expected": "length"}},
-    {"id": "value-encoding-variants", "value_case": {"function": "encoding_variants", "input": "a", "expected": ["﻿a", "a", "a", "a"]}},
-    {"id": "value-enumerate-lengths", "value_case": {"function": "enumerate_lengths", "input": "len(x) < 5", "expected": {"min": 1, "max": 4, "valid": ["a", "ab", "abc", "abcd"], "invalid": ["abcde"]}}},
-    {"id": "value-load-config", "value_case": {"function": "load_config", "input": "/nonexistent/honest-test.toml", "expected": {}}},
-    {"id": "value-classify-predicate", "value_case": {"function": "classify_predicate", "args": [{"$ref": "fibonacci_sequence"}], "expected": "numeric"}},
-    {"id": "value-verify-purity", "value_case": {"function": "verify_purity", "args": [{"$ref": "pure_link"}, {"x": "1"}], "expected": null}},
-    {"id": "value-detect-mutation", "value_case": {"function": "detect_mutation", "args": [{"$ref": "pure_link"}, {"x": "1"}], "expected": null}},
-    {"id": "value-verify-idempotency", "value_case": {"function": "verify_idempotency", "args": [[{"$ref": "pure_link"}, {"$ref": "set_role"}], {"x": "1"}], "expected": null}},
-    {"id": "value-test-valid-transitions", "value_case": {"function": "test_valid_transitions", "args": [{"$call": "make_machine", "args": [["pending", "paid"], ["pay"], [["pending", "pay", "paid"]], "pending"]}], "expected": []}},
-    {"id": "value-test-invalid-transitions", "value_case": {"function": "test_invalid_transitions", "args": [{"$call": "make_machine", "args": [["pending", "paid"], ["pay"], [["pending", "pay", "paid"]], "pending"]}], "expected": []}},
-    {"id": "value-test-adversarial-transitions", "value_case": {"function": "test_adversarial_transitions", "args": [{"$call": "make_machine", "args": [["pending", "paid"], ["pay"], [["pending", "pay", "paid"]], "pending"]}], "expected": []}},
-    {"id": "value-enumerate-sets", "value_case": {"function": "enumerate_sets", "args": [{"$call": "vocabulary", "args": [{"color": ["red", "green"]}]}], "expected": [{"color": "green"}, {"color": "red"}]}},
-    {"id": "value-enumerate-test-cases", "value_case": {"function": "enumerate_test_cases", "args": [{"$call": "vocabulary", "args": [{"color": ["red", "green"]}]}, {"$call": "binding", "args": [{"shade": "color"}]}], "expected": [{"color": "green"}, {"color": "red"}]}},
-    {"id": "value-supplied-for", "value_case": {"function": "supplied_for", "args": [{"predicates": {"p": {"valid": ["x"], "invalid": ["y"]}}}, "p"], "expected": {"valid": ["x"], "invalid": ["y"], "strategy": "supplied_only"}}},
-    {"id": "value-test-chain-contracts", "value_case": {"function": "test_chain_contracts", "args": [[{"$ref": "emit_format"}, {"$ref": "accepts_currency"}]], "expected": [{"code": "chain_contract", "subject": "_accepts_currency", "message": "Rejected valid output from '_emit_format'"}]}},
-    {"id": "value-emit-proofs", "value_case": {"function": "emit_proofs", "args": [{"$ref": "recording_emit"}, [{"function": "m.a", "gherkin": "a", "module": "m", "cases": 1, "result": "proved", "failures": [], "line_coverage": 100.0, "branch_coverage": 100.0}]], "expected": [{"ok": {"event_id": "e"}}]}},
-    {"id": "value-law-field", "value_case": {"function": "law", "args": ["L1", "f doubles", {"$ref": "double"}], "field": {"name": "id", "value": "L1"}}},
-    {"id": "decide-proved", "decide": {"honesty_ok": true, "coverage_ok": true, "value_results": [{"id": "v1", "proved": true, "fault": null}]}, "expect": {"result": "proved", "failures": []}},
-    {"id": "decide-value-mismatch", "decide": {"honesty_ok": true, "coverage_ok": true, "value_results": [{"id": "v1", "proved": true, "fault": null}, {"id": "v2", "proved": false, "fault": {"code": "assertion_failed", "detail": "expected 42, got 7", "scenario_name": "", "step_text": ""}}]}, "expect": {"result": "failed", "failures": ["value case 'v2': expected 42, got 7"]}},
-    {"id": "decide-no-oracle", "decide": {"honesty_ok": true, "coverage_ok": true, "value_results": []}, "expect": {"result": "failed", "failures": ["no value oracle: the function's Then is not yet checked by a value case"]}},
-    {"id": "decide-honesty-fail", "decide": {"honesty_ok": false, "coverage_ok": true, "value_results": [{"id": "v1", "proved": true, "fault": null}]}, "expect": {"result": "failed", "failures": ["honesty checks did not pass"]}},
-    {"id": "decide-coverage-fail", "decide": {"honesty_ok": true, "coverage_ok": false, "value_results": [{"id": "v1", "proved": true, "fault": null}]}, "expect": {"result": "failed", "failures": ["not fully covered (line or branch below 100%)"]}},
-    {"id": "decide-exempt-proved", "decide": {"honesty_ok": true, "coverage_ok": true, "value_results": [], "exempt": true}, "expect": {"result": "proved", "failures": []}},
-    {"id": "decide-exempt-still-needs-honesty", "decide": {"honesty_ok": false, "coverage_ok": true, "value_results": [], "exempt": true}, "expect": {"result": "failed", "failures": ["honesty checks did not pass"]}},
-    {"id": "value-unicode-confusables", "value_case": {"function": "unicode_confusables", "input": "a", "expected": ["\u0430", "\u0251", "\uff41", "\ud835\udc1a", "\u0430"]}},
-    {"id": "value-control-characters", "value_case": {"function": "control_characters", "input": "a", "expected": ["\u0000a", "a\u0000", "\u0000a", "\ba", "a\b", "\ba", "\ta", "a\t", "\ta", "\na", "a\n", "\na", "\ra", "a\r", "\ra", "\u001ba", "a\u001b", "\u001ba", "\u007fa", "a\u007f", "\u007fa", "\u200ba", "a\u200b", "\u200ba", "\u200ea", "a\u200e", "\u200ea", "\u200fa", "a\u200f", "\u200fa", "\u202aa", "a\u202a", "\u202aa", "\u202ba", "a\u202b", "\u202ba", "\u202ca", "a\u202c", "\u202ca", "\u202da", "a\u202d", "\u202da", "\u202ea", "a\u202e", "\u202ea", "\ufeffa", "a\ufeff", "\ufeffa"]}},
-    {"id": "value-edit-distance-1", "value_case": {"function": "edit_distance_1", "input": "a", "expected": ["", "aa", "ba", "ca", "da", "ea", "fa", "ga", "ha", "ia", "ja", "ka", "la", "ma", "na", "oa", "pa", "qa", "ra", "sa", "ta", "ua", "va", "wa", "xa", "ya", "za", "Aa", "Ba", "Ca", "Da", "Ea", "Fa", "Ga", "Ha", "Ia", "Ja", "Ka", "La", "Ma", "Na", "Oa", "Pa", "Qa", "Ra", "Sa", "Ta", "Ua", "Va", "Wa", "Xa", "Ya", "Za", "0a", "1a", "2a", "3a", "4a", "5a", "6a", "7a", "8a", "9a", "aa", "ab", "ac", "ad", "ae", "af", "ag", "ah", "ai", "aj", "ak", "al", "am", "an", "ao", "ap", "aq", "ar", "as", "at", "au", "av", "aw", "ax", "ay", "az", "aA", "aB", "aC", "aD", "aE", "aF", "aG", "aH", "aI", "aJ", "aK", "aL", "aM", "aN", "aO", "aP", "aQ", "aR", "aS", "aT", "aU", "aV", "aW", "aX", "aY", "aZ", "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "A", "A", " a", "a "]}},
-    {"id": "value-nd-watch-list", "value_case": {"function": "nondeterministic_watch_list", "args": [], "expected": ["uuid.uuid1", "uuid.uuid3", "uuid.uuid4", "uuid.uuid5", "os.urandom", "os.getenv", "os.getlogin", "os.getpid", "os.getppid", "os.getcwd", "os.uname", "time.time", "time.time_ns", "time.monotonic", "time.perf_counter", "time.process_time", "time.sleep", "getpass.getpass", "getpass.getuser", "threading.current_thread", "threading.get_ident", "threading.active_count", "multiprocessing.current_process", "multiprocessing.cpu_count", "asyncio.get_event_loop", "asyncio.current_task", "random.random", "random.randint", "secrets.token_bytes", "platform.system"]}},
-    {"id": "value-nd-finding-warn", "value_case": {"function": "nondeterminism_finding", "args": ["validate", false, ["time.time"]], "expected": {"code": "nondeterminism_detected", "subject": "validate", "message": "Link called ['time.time']; non-deterministic calls belong at boundaries"}}},
-    {"id": "value-nd-finding-boundary", "value_case": {"function": "nondeterminism_finding", "args": ["record", true, ["time.time"]], "expected": null}},
-    {"id": "value-nd-finding-none", "value_case": {"function": "nondeterminism_finding", "args": ["validate", false, []], "expected": null}},
-    {"id": "value-auth-token-classes", "value_case": {"function": "auth_token_classes", "args": [], "expected": ["valid_authorized", "valid_unauthorized", "revoked", "expired", "malformed", "missing", "forged"]}},
-    {"id": "value-auth-map-http", "value_case": {"function": "map_fault_to_http", "args": [{"category": "unauthenticated"}], "expected": 401}},
-    {"id": "value-auth-expected-ok", "value_case": {"function": "auth_expected_status", "args": ["valid_authorized"], "expected": "ok"}},
-    {"id": "value-auth-expected-status", "value_case": {"function": "auth_expected_status", "args": ["revoked"], "expected": 401}},
-    {"id": "value-auth-finding-fail", "value_case": {"function": "auth_honesty_finding", "args": ["guard", "expired", {"ok": {}}, 401], "expected": {"code": "auth_honesty", "subject": "guard", "message": "Link did not fault correctly for token class 'expired': expected 401, got {'ok': {}}"}}},
-    {"id": "value-auth-finding-ok", "value_case": {"function": "auth_honesty_finding", "args": ["guard", "revoked", {"err": {"code": "guard_failed", "message": "no", "category": "unauthenticated"}}, 401], "expected": null}},
-    {"id": "value-vocab-coverage", "value_case": {"function": "vocabulary_coverage", "args": [3, 2], "expected": {"total": 3, "exercised": 2, "pct": 67}}},
-    {"id": "value-chain-coverage", "value_case": {"function": "chain_coverage", "args": [3, 3], "expected": {"fault_paths": 3, "exercised": 3, "pct": 100}}},
-    {"id": "value-honesty-coverage", "value_case": {"function": "honesty_coverage", "args": [3, 3, 1], "expected": {"total": 3, "honest": 3, "boundary": 1, "pct": 100}}},
-    {"id": "value-sm-coverage", "value_case": {"function": "state_machine_coverage", "args": [5, 4], "expected": {"transitions": 5, "exercised": 4, "pct": 80}}},
-    {"id": "value-build-coverage", "value_case": {"function": "build_coverage", "args": [{"v": {"total": 5, "exercised": 5, "pct": 100}}, {"c": {"fault_paths": 3, "exercised": 3, "pct": 100}}, {"c": {"total": 3, "honest": 3, "boundary": 1, "pct": 100}}, {"m": {"transitions": 5, "exercised": 5, "pct": 100}}, "2026-03-15T00:00:00Z"], "expected": {"version": "1.0", "timestamp": "2026-03-15T00:00:00Z", "vocabularies": {"v": {"total": 5, "exercised": 5, "pct": 100}}, "chains": {"c": {"fault_paths": 3, "exercised": 3, "pct": 100}}, "honesty": {"c": {"total": 3, "honest": 3, "boundary": 1, "pct": 100}}, "state_machines": {"m": {"transitions": 5, "exercised": 5, "pct": 100}}}}},
-    {"id": "value-enumerate-mutants", "value_case": {"function": "enumerate_mutants", "args": ["a == b\n"], "expected": [{"operator": "comparison_swap", "label": "==->!=@a == b", "source": "a != b\n"}, {"operator": "line_removal", "label": "remove@a == b", "source": "\n"}]}},
-    {"id": "value-mutation-adequacy", "value_case": {"function": "mutation_adequacy", "args": [[{"operator": "number_shift", "label": "a"}, {"operator": "comparison_swap", "label": "b"}], [{"operator": "comparison_swap", "label": "b"}], {"b": "equivalent: commutes"}], "expected": {"total": 2, "caught": 1, "set_aside": 1, "undeclared": [], "adequate": true}}}
-  ],
-  "value_oracle_exempt": [
-    {"function": "run_mutants", "reason": "Section 9.6 mutant runner: takes an injected suite-runner callable (run_suite), so its input is a live function, not a JSON value. The survivor selection across a passing/failing suite is proved by the mutation-runner probe in laws_htest."},
-    {"function": "call_monitor", "reason": "Section 4.5 runtime trap: a context manager that monkeypatches module attributes and records calls — a side effect, not a returned value. Its trapping of every watch-list symbol is proved by the determinism probe in laws_htest."},
-    {"function": "verify_determinism", "reason": "Section 4.5: runs the link under the call monitor (I/O — it executes arbitrary link code under instrumentation), so its input is a live callable and its effect is the run. The boundary/exempt/pure outcomes are proved by the determinism probe."},
-    {"function": "test_auth_honesty", "reason": "Section 4.7: takes an injected provider (a token generator) and a chain-run callable, so its inputs are live callables, not JSON values. The seven-class orchestration, the honest and broken links, and the no-provider/non-authorizing no-ops are proved by the auth-honesty probe in laws_htest."},
-    {"function": "write_coverage", "reason": "Section 9.5: the I/O step that writes coverage.json through an injected write callable — its effect is the write, not a returned value. The serialization and the round-trip through the writer are proved by the coverage-data probe in laws_htest."},
-    {"function": "adversarial_neighbours", "reason": "Combinatorial generator: ~229 neighbours, ~1.2 MB, aggregating the giant length-extension strings. Its correctness is property-based (the laws), not an exact-list value."},
-    {"function": "length_extensions", "reason": "Generates boundary-length repeats — multi-hundred-KB strings. No portable value to assert; the laws prove the lengths."},
-    {"function": "extract_length_bounds", "reason": "Returns a tuple (min, max), which cannot round-trip a JSON value contract (a tuple reloads as a list)."},
-    {"function": "run_value_case", "reason": "The value oracle itself: exercised by every value case, and its `functions` argument is a map of live callables. Value-checking the oracle through the oracle is circular."},
-    {"function": "run_value_cases", "reason": "The value oracle itself (maps run_value_case): same circularity and live-callable map as run_value_case."},
-    {"function": "verify_laws", "reason": "Takes law objects and subject callables whose structure embeds functions; the full report is not a portable value. Verified by its own conformance probe."}
-  ]
+      "strategy": "generate_and_supplement"
+     }
+    }
+   },
+   "predicate": "q",
+   "expect_valid": [
+    "a"
+   ],
+   "expect_invalid": [
+    "b"
+   ],
+   "expect_strategy": "generate_and_supplement"
+  }
+ ],
+ "value_oracle_exempt": [
+  {
+   "function": "run_mutants",
+   "reason": "Section 9.6 mutant runner: takes an injected suite-runner callable (run_suite), so its input is a live function, not a JSON value. The survivor selection across a passing/failing suite is proved by the mutation-runner probe in laws_htest."
+  },
+  {
+   "function": "call_monitor",
+   "reason": "Section 4.5 runtime trap: a context manager that monkeypatches module attributes and records calls \u2014 a side effect, not a returned value. Its trapping of every watch-list symbol is proved by the determinism probe in laws_htest."
+  },
+  {
+   "function": "verify_determinism",
+   "reason": "Section 4.5: runs the link under the call monitor (I/O \u2014 it executes arbitrary link code under instrumentation), so its input is a live callable and its effect is the run. The boundary/exempt/pure outcomes are proved by the determinism probe."
+  },
+  {
+   "function": "test_auth_honesty",
+   "reason": "Section 4.7: takes an injected provider (a token generator) and a chain-run callable, so its inputs are live callables, not JSON values. The seven-class orchestration, the honest and broken links, and the no-provider/non-authorizing no-ops are proved by the auth-honesty probe in laws_htest."
+  },
+  {
+   "function": "write_coverage",
+   "reason": "Section 9.5: the I/O step that writes coverage.json through an injected write callable \u2014 its effect is the write, not a returned value. The serialization and the round-trip through the writer are proved by the coverage-data probe in laws_htest."
+  },
+  {
+   "function": "adversarial_neighbours",
+   "reason": "Combinatorial generator: ~229 neighbours, ~1.2 MB, aggregating the giant length-extension strings. Its correctness is property-based (the laws), not an exact-list value."
+  },
+  {
+   "function": "length_extensions",
+   "reason": "Generates boundary-length repeats \u2014 multi-hundred-KB strings. No portable value to assert; the laws prove the lengths."
+  },
+  {
+   "function": "extract_length_bounds",
+   "reason": "Returns a tuple (min, max), which cannot round-trip a JSON value contract (a tuple reloads as a list)."
+  },
+  {
+   "function": "run_value_case",
+   "reason": "The value oracle itself: exercised by every value case, and its `functions` argument is a map of live callables. Value-checking the oracle through the oracle is circular."
+  },
+  {
+   "function": "run_value_cases",
+   "reason": "The value oracle itself (maps run_value_case): same circularity and live-callable map as run_value_case."
+  },
+  {
+   "function": "verify_laws",
+   "reason": "Takes law objects and subject callables whose structure embeds functions; the full report is not a portable value. Verified by its own conformance probe."
+  }
+ ]
 }

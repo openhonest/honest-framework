@@ -171,6 +171,12 @@ def _probe_length():
 
 
 def _probe_honesty():
+    import functools
+    import itertools
+
+    from honest_test import detect_mutation, verify_purity
+    from honest_test.honesty import _name
+
     bad = []
     if verify_idempotency([_boundary], {"a": 1}) is not None:
         bad.append("a chain with a boundary link is exempt from idempotency")
@@ -178,6 +184,38 @@ def _probe_honesty():
         bad.append("a producer with no accepts vocabulary contributes no contract cases")
     if test_chain_contracts([_emit_fail, _ok_consumer]):
         bad.append("a producer that faults yields no contract violation")
+
+    # Each finding is a full record (code, subject, message); assert the message too, not just the code.
+    counter = itertools.count()
+
+    def nondet(manifest):
+        return ok({**manifest, "n": next(counter)})
+
+    def mutator(manifest):
+        manifest["touched"] = True
+        return ok(manifest)
+
+    if verify_purity(nondet, {"a": 1}) != {"code": "non_deterministic", "subject": "nondet", "message": "Different results on identical input"}:
+        bad.append(f"verify_purity finding record wrong: {verify_purity(nondet, {'a': 1})}")
+    if detect_mutation(mutator, {"a": 1}) != {"code": "manifest_mutated", "subject": "mutator", "message": "Link modified its input manifest"}:
+        bad.append(f"detect_mutation finding record wrong: {detect_mutation(mutator, {'a': 1})}")
+    if verify_idempotency([nondet], {"a": 1}) != {"code": "not_idempotent", "subject": "<chain>", "message": "Different results on identical input"}:
+        bad.append(f"verify_idempotency finding record wrong: {verify_idempotency([nondet], {'a': 1})}")
+
+    # A NON-deterministic boundary link is exempt from purity and idempotency (the return-None guards
+    # a deterministic boundary link cannot distinguish from "the check happened to pass").
+    @link(boundary=True)
+    def nondet_boundary(manifest):
+        return ok({**manifest, "n": next(counter)})
+
+    if verify_purity(nondet_boundary, {"a": 1}) is not None:
+        bad.append("a boundary link is exempt from the purity check even when non-deterministic")
+    if verify_idempotency([nondet_boundary], {"a": 1}) is not None:
+        bad.append("a boundary chain is exempt from idempotency even when non-deterministic")
+
+    # _name falls back to <link> for a callable with neither a declared name nor a __name__.
+    if _name(functools.partial(lambda manifest: manifest)) != "<link>":
+        bad.append("_name should fall back to <link> for a nameless callable")
     return bad
 
 
@@ -203,6 +241,7 @@ def _probe_determinism():
     module-level callable honest-check publishes is trapped, honest-test traps nothing honest-check does
     not, every entry is genuinely patched inside the monitor, and the end-to-end flag fires correctly."""
     import importlib
+    import os
     import time
 
     from honest_check.watchlists import NONDETERMINISTIC_WATCH_LIST, matches_watchlist
@@ -256,11 +295,21 @@ def _probe_determinism():
     if detected != []:
         bad.append("an unavailable symbol should be skipped, not trapped")
 
-    # The recording itself works: a trapped call lands in the detected list.
+    # The recording itself works: a trapped call lands in the detected list, AND still delegates to
+    # the original (the recorder returns the real value, it does not swallow the call).
     with call_monitor(["time.time"]) as detected:
-        time.time()
+        trapped_value = time.time()
     if detected != ["time.time"]:
         bad.append(f"a trapped call should be recorded: {detected}")
+    if not isinstance(trapped_value, float):
+        bad.append("a trapped call should still delegate to the original and return its value")
+
+    # An unavailable symbol is skipped cleanly: the monitor must not leave a stray attribute on the
+    # module (the `if original is None: continue` guard), so it is gone after the monitor exits too.
+    with call_monitor(["os.another_missing_symbol"]):
+        pass
+    if hasattr(os, "another_missing_symbol"):
+        bad.append("an unavailable symbol should be skipped, not set on the module")
 
     # End-to-end: a non-boundary link calling a source is flagged; a boundary one and a pure one are not.
     @link()
@@ -298,9 +347,14 @@ def _probe_auth_honesty():
     if classes[0] != "valid_authorized" or len(classes) != 7 or "forged" not in classes:
         bad.append(f"the seven token classes are the smallest contract probe: {classes}")
 
-    # A fault maps to its HTTP status by category (§4.7).
+    # A fault maps to its HTTP status by category (§4.7); a server fault is 500 and an unrecognised
+    # category falls back to 500 (the dict's server value and the .get default are distinct sites).
     if map_fault_to_http({"category": "forbidden"}) != 403 or map_fault_to_http({"category": "unauthenticated"}) != 401 or map_fault_to_http({"category": "client"}) != 400:
         bad.append("map_fault_to_http should map auth categories to statuses")
+    if map_fault_to_http({"category": "server"}) != 500:
+        bad.append("a server fault should map to 500")
+    if map_fault_to_http({"category": "nonexistent"}) != 500:
+        bad.append("an unrecognised category should fall back to 500")
 
     # Default expectations, overridable by the provider's fault_mapping.
     if auth_expected_status("valid_authorized") != "ok" or auth_expected_status("revoked") != 401 or auth_expected_status("valid_unauthorized") != 403:
@@ -311,8 +365,11 @@ def _probe_auth_honesty():
     # The per-class decision.
     if auth_honesty_finding("g", "valid_authorized", ok({}), "ok") is not None:
         bad.append("an accepted valid authorized token is honest")
-    if auth_honesty_finding("g", "valid_authorized", {"err": fault("x", "y", "client")}, "ok") is None:
+    rejected = auth_honesty_finding("g", "valid_authorized", {"err": fault("x", "y", "client")}, "ok")
+    if rejected is None:
         bad.append("rejecting a valid authorized token is a failure")
+    elif rejected["code"] != "auth_honesty" or "rejected a valid authorized token" not in rejected["message"]:
+        bad.append(f"the rejected-valid-authorized finding should name the cause: {rejected}")
     if auth_honesty_finding("g", "revoked", {"err": fault("guard_failed", "no", "unauthenticated")}, 401) is not None:
         bad.append("a revoked token faulting 401 is honest")
     if auth_honesty_finding("g", "expired", ok({}), 401) is None:
@@ -347,6 +404,19 @@ def _probe_auth_honesty():
         bad.append("a non-authorizing link has no auth honesty test")
     if test_auth_honesty(guarded, None, run_correct) != []:
         bad.append("no registered provider means no auth honesty test")
+
+    # The provider's fault_mapping overrides the default expectation through test_auth_honesty: revoked
+    # overridden to 403, a link faulting revoked -> forbidden(403) is honest only if the override is
+    # actually read (the default would expect 401, making it a finding).
+    override_provider = {"generate": lambda class_name: class_name, "fault_mapping": {"revoked": 403}}
+
+    def run_override(token):
+        if token == "valid_authorized":
+            return ok({})
+        return {"err": fault("guard_failed", "no", "forbidden" if token == "revoked" else category[token])}
+
+    if test_auth_honesty(guarded, override_provider, run_override):
+        bad.append("the provider fault_mapping should override the default class expectation")
     return bad
 
 
@@ -762,9 +832,35 @@ def _probe_mutation_runner():
     return bad
 
 
+def _probe_laws():
+    """verify_laws, the generic law runner, eaten by itself: the (law x subject) count and the
+    violation record shape are asserted directly, because run() only DISPLAYS these counts — it does
+    not fail on them, so a miscount would otherwise slip through."""
+    bad = []
+    holds = law("L-OK", "always holds", lambda subject: [])
+    breaks = law("L-BAD", "never holds", lambda subject: [f"broke on {subject}"])
+    subjects = [("a", 1), ("b", 2)]
+
+    clean = verify_laws([holds], subjects)
+    if (clean["passed"], clean["failed"], clean["total"], clean["violations"]) != (2, 0, 2, []):
+        bad.append(f"a law that holds over two subjects: 2 passed, 0 failed, 2 total, no violations: {clean}")
+
+    failed = verify_laws([breaks], subjects)
+    if (failed["passed"], failed["failed"], failed["total"]) != (0, 2, 2):
+        bad.append(f"a law that fails over two subjects: 0 passed, 2 failed, 2 total: {failed}")
+    if failed["violations"][0] != {"law": "L-BAD", "statement": "never holds", "subject": "a", "messages": ["broke on 1"]}:
+        bad.append(f"a violation records law/statement/subject/messages exactly: {failed['violations'][0]}")
+
+    mixed = verify_laws([holds, breaks], subjects)
+    if (mixed["passed"], mixed["failed"], mixed["total"]) != (2, 2, 4):
+        bad.append(f"two laws over two subjects: 2 passed, 2 failed, 4 total: {mixed}")
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
+        "laws": _probe_laws(),
         "mutation": _probe_mutation(),
         "mutation_runner": _probe_mutation_runner(),
         "predicate": _probe_predicate(),
