@@ -1,6 +1,6 @@
 # Remediation Plan — Mutation Adequacy + the Independent-Oracle Rule
 
-**Status:** in progress — Phase D complete (`a8bdc69`, `1e6bab8`). **Phase A complete:** the mutation engine now implements the full §9.6 operator list (`bcd96af`, `4a79fba`) — branch-arm removal across every compound statement and dict-key swap for any key type closed the last two gaps; two deliberate boundaries remain (complex literals not shifted; a module's sole statement left to deletion). Phase B: parse and errors re-verified adequate under the complete operator set (35 / 316 mutants, 0 undeclared); honest-type partial (reserved done, ~99 survivors open under the old set, not yet re-run under the complete engine); check/gherkin/observe/persist/test untouched. Phase C not started.
+**Status:** COMPLETE — all four phases done. **Phase D complete** (`a8bdc69`, `1e6bab8`). **Phase A complete:** the mutation engine implements the full §9.6 operator list (`bcd96af`, `4a79fba`) — branch-arm removal across every compound statement and dict-key swap for any key type closed the last two gaps; two deliberate boundaries remain (complex literals not shifted; a module's sole statement left to deletion). **Phase B complete:** every module is mutation-adequate under the complete operator set (`mutate-all.sh`, exit 0): check 3947/199, errors 314/2, gherkin 701/17, observe 1658/6, parse 34/1, persist 3716/49, test 1898/85, type 911/38 — `caught + set_aside == total`, **0 undeclared** across all eight (14,176 mutants). **Phase C complete** (`cf6a463`): the file-scoped mutation gate (`mutate-affected.sh`) is wired into `.githooks/pre-commit`, verified both directions — it passes an adequate commit and **blocks** an inadequate one (removing a set-aside made a mutant undeclared and the hook exited 1). Per the project decision there is intentionally **no CI `mutate-all` backstop**; the whole-tree sweep stays a manual tool.
 **Spec basis:** commit `34b736a` — *"spec: define mutation adequacy and the independent-oracle rule for the verification model"* (Tier 1 Verification Model + Bootstrapping; honest-test §9.6; GLOSSARY).
 **Trigger:** the 2026-06-26 honesty audit caught a test that passed every gate while proving nothing (honest-test §4.5: its expected answer came from the same code it was checking, so it could not fail). 100% coverage could not see it — the line ran. The spec now closes that gap; this plan brings the implementation into line with it.
 
@@ -63,9 +63,10 @@ Run the engine per module; triage every surviving mutant: **add a conformance ca
 
 Per the bootstrapping update: nothing lands unless suites pass, coverage is total, **and** no mutation passes every test.
 
-- [ ] Add the mutation gate to `.githooks/pre-commit` alongside `coverage-all.sh` (per-module as each goes adequate, or globally once Phase B clears all).
+- [x] Add the mutation gate to `.githooks/pre-commit` alongside `coverage-all.sh` (`cf6a463`). Implemented **file-scoped** (`mutate-affected.sh` mutates only the staged `src/` files via `mutate.py`'s `module:filename` filter, not their whole module) so a single-file commit stays fast; it runs last (heaviest gate) and self-filters to `src/`. Verified green (an adequate commit passes, ~7s for a small file) **and** red (a manufactured undeclared survivor makes the hook exit 1, blocking the commit).
+- Intentionally **no** CI `mutate-all` backstop (project decision). The whole-tree sweep (`mutate-all.sh`, ~6 min) remains a manual tool. Accepted gap: a conformance-only change that weakens a suite without touching `src/` is not caught by the pre-commit gate.
 
-**Effort:** small. Depends on Phase B clearing survivors first (can't enforce a gate that fails).
+**Effort:** small. **Status: complete.**
 
 ### Phase D — Independent-oracle audit (R1), cheap and early
 
