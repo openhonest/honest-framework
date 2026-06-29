@@ -169,8 +169,13 @@ def _classify_contract(subject):
     result = classify(subject["tokens"], vocab, bind)
     bad = []
     if "fault" in subject:
-        if "err" not in result or result["err"]["code"] != subject["fault"]:
+        failure = result.get("err", {})
+        if "err" not in result or failure.get("code") != subject["fault"]:
             bad.append(f"expected fault {subject['fault']!r}, got {result}")
+        for field in ("message", "category", "detail"):
+            key = f"expect_{field}"
+            if key in subject and failure.get(field) != subject[key]:
+                bad.append(f"fault {field} {failure.get(field)!r} != {subject[key]!r}")
         return bad
     reasons = [r["reason"] for r in result.get("_rejections", [])]
     for reason in subject.get("reasons", []):
@@ -246,13 +251,18 @@ CONSTRUCTION_SUBJECTS = [
 
 EDGE_SUBJECTS = [
     ("reserved_word", {"vocab": vocabulary({"word": predicate(str.isalpha)}), "tokens": ["class"], "reasons": ["reserved_word"]}),
-    ("predicate_error", {"vocab": vocabulary({"boom": predicate(_raiser)}), "tokens": ["x"], "fault": "predicate_error"}),
+    ("predicate_error", {"vocab": vocabulary({"boom": predicate(_raiser)}), "tokens": ["x"], "fault": "predicate_error",
+                         "expect_message": "Predicate for type 'boom' threw on token 'x'", "expect_category": "server",
+                         "expect_detail": {"type_name": "boom", "token": "x", "exception": "predicate boom"}}),
     (
         "vocabulary_overlap",
         {
             "vocab": vocabulary({"starts_a": predicate(lambda t: t.startswith("a")), "ends_z": predicate(lambda t: t.endswith("z"))}),
             "tokens": ["az"],
             "fault": "vocabulary_overlap",
+            "expect_message": "Token 'az' matches both 'starts_a' and 'ends_z'",
+            "expect_category": "server",
+            "expect_detail": {"token": "az", "types": ["starts_a", "ends_z"]},
         },
     ),
     (

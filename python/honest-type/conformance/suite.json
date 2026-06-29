@@ -351,6 +351,9 @@
    },
    "expect_rejections": [
     "empty_token"
+   ],
+   "forbid_rejections": [
+    "unrecognized"
    ]
   },
   {
@@ -394,7 +397,10 @@
     "currency": "EUR",
     "decimals": "2"
    },
-   "expect_rejections": []
+   "expect_rejections": [],
+   "expect_absent": [
+    "precision"
+   ]
   },
   {
    "id": "composed-multiple-non-conflicting",
@@ -494,7 +500,50 @@
     "currency": "EUR",
     "precision": "2"
    },
-   "expect_rejections": []
+   "expect_rejections": [],
+   "forbid_rejections": [
+    "missing_required"
+   ]
+  },
+  {
+   "id": "classify-shared-slot-not-missing",
+   "declarations": {
+    "format_name": [
+     "currency"
+    ],
+    "integer": [
+     "2"
+    ],
+    "extra": [
+     "e"
+    ]
+   },
+   "composed_types": [
+    {
+     "name": "cp",
+     "requires": {
+      "format_name": "currency"
+     },
+     "captures": "integer"
+    }
+   ],
+   "binding": {
+    "format_name": "format",
+    "integer": "precision",
+    "cp": "shared",
+    "extra": "shared"
+   },
+   "tokens": [
+    "currency",
+    "2"
+   ],
+   "expect_manifest": {
+    "format": "currency",
+    "shared": "2"
+   },
+   "forbid_rejections": [
+    "missing_required"
+   ]
   },
   {
    "id": "maybe-absent-nothing",
@@ -580,7 +629,10 @@
     "format": "currency",
     "decimals": null
    },
-   "expect_rejections": []
+   "expect_rejections": [],
+   "forbid_rejections": [
+    "missing_required"
+   ]
   },
   {
    "id": "merge-disjoint",

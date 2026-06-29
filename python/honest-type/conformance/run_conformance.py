@@ -197,8 +197,10 @@ def _check_classify(case):
         slot in result and result.get(slot) == value
         for slot, value in case.get("expect_manifest", {}).items()
     )
+    absent_ok = all(slot not in result for slot in case.get("expect_absent", []))
     rejections_ok = all(reason in reasons for reason in case.get("expect_rejections", []))
-    return manifest_ok and rejections_ok, f"got {result}"
+    forbid_ok = all(reason not in reasons for reason in case.get("forbid_rejections", []))
+    return manifest_ok and absent_ok and rejections_ok and forbid_ok, f"got {result}"
 
 
 def _check_merge(case):
