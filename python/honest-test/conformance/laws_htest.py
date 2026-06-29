@@ -904,6 +904,66 @@ def _probe_mutation_runner():
     return bad
 
 
+def _probe_adversarial():
+    """Adversarial neighbour generation (§3.5): the per-class details the example suite cannot easily
+    carry — exact substitutions, the confusable map (every member), the length-extension multipliers
+    and buffer sizes, the control-insertion positions, and the >=2 whitespace split — asserted in
+    Python so the large strings and Unicode escapes stay readable."""
+    from honest_test import adversarial_neighbours
+    from honest_test.adversarial import control_characters, edit_distance_1, length_extensions, unicode_confusables
+
+    bad = []
+
+    # Class 1 edit-distance-1: a deletion, a substitution at position 0, an insertion, and the
+    # whitespace split that only applies to a >= 2-length value.
+    ed = set(edit_distance_1("ab"))
+    if not {"a", "b"} <= ed:
+        bad.append("edit_distance_1 should include single-character deletions")
+    if "xb" not in ed:
+        bad.append("edit_distance_1 should substitute each position (xb from ab)")
+    if "xab" not in ed:
+        bad.append("edit_distance_1 should insert at each position (xab from ab)")
+    if "a b" not in ed:
+        bad.append("a >= 2-length value gets a whitespace split (a b)")
+    if "a b" in set(edit_distance_1("a")):
+        bad.append("a single-character value has no whitespace split")
+
+    # Class 2 confusables: the exact set per character, so every mapped member (and the key) is pinned.
+    # Escapes only — the source stays pure ASCII, the very property adversarial.py defends.
+    expected_confusables = {
+        "a": {"\u0430", "\u0251", "\uff41", "\U0001d41a"},
+        "e": {"\u0435", "\u0113", "\uff45"},
+        "o": {"\u043e", "0", "\u03bf", "\uff4f"},
+        "i": {"\u0456", "\u04cf", "1", "l"},
+    }
+    for char, expected in expected_confusables.items():
+        if set(unicode_confusables(char)) != expected:
+            bad.append(f"unicode_confusables({char!r}) should be exactly {expected}: {set(unicode_confusables(char))}")
+    # The positional replacement uses value[i+1:] (the tail), not value[i+2:]: for "ae" (two
+    # confusable chars), replacing only position 0 yields a-confusable + e, which neither the i+2
+    # slip (which would drop the e) nor the full homoglyph (which also replaces the e) produces.
+    if "\u0430e" not in set(unicode_confusables("ae")):
+        bad.append("a confusable replaces one position and keeps the rest of the value")
+
+    # Class 3 control insertions land at prepend, append, and the midpoint (len//2).
+    ctrl = set(control_characters("ab"))
+    if not {"\x00ab", "ab\x00", "a\x00b"} <= ctrl:
+        bad.append(f"control_characters should prepend, append, and insert at the midpoint: {ctrl & {chr(0) + 'ab', 'ab' + chr(0), 'a' + chr(0) + 'b'}}")
+
+    # Class 4 length extensions: the exact multipliers and the exact buffer sizes.
+    ext = length_extensions("x")
+    if not {"x" * 10, "x" * 100, "x" * 1000} <= set(ext):
+        bad.append(f"length_extensions should multiply by 10/100/1000: {sorted(len(e) for e in ext)}")
+    if not {"x" + "A" * 65535, "x" + "A" * 65536, "x" + "A" * 1048575} <= set(ext):
+        bad.append("length_extensions should pad to the 65535/65536/1048575 buffer sizes")
+
+    # The aggregate de-dupes, sorts, and excludes the value itself.
+    everything = adversarial_neighbours("ab")
+    if "ab" in everything or everything != sorted(everything) or len(everything) != len(set(everything)):
+        bad.append("adversarial_neighbours should exclude the value, sort, and de-duplicate")
+    return bad
+
+
 def _probe_laws():
     """verify_laws, the generic law runner, eaten by itself: the (law x subject) count and the
     violation record shape are asserted directly, because run() only DISPLAYS these counts — it does
@@ -932,6 +992,7 @@ def _probe_laws():
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
+        "adversarial": _probe_adversarial(),
         "laws": _probe_laws(),
         "mutation": _probe_mutation(),
         "mutation_runner": _probe_mutation_runner(),
