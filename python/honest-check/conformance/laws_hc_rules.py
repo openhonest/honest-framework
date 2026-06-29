@@ -2049,6 +2049,12 @@ _case("p006_profiled_exempt", "from functools import lru_cache\n@lru_cache  # ho
 # A module container touched only by a non-mutating method (.get) is a constant lookup table, not
 # hidden state: HC-P004 must not fire (pins the obj/attr/_MUTATING_METHODS conjunction).
 _case("p004_nonmutating_method_clean", "d = {}\nd.get(0)\ndef f():\n    return d\n", must_not_fire=("HC-P004",))
+# A parameter shadowing a module-mutable name is local, not hidden state (pins _local_names' parameter walk).
+_case("p004_param_shadow_clean", "d = {}\nd[0] = 1\ndef f(d):\n    return d[0]\n", must_not_fire=("HC-P004",))
+# Multi-hop reachability: a node reached only through two hops is still reachable (pins the BFS frontier
+# append in HC-R001 and HC-SM03 — without it, the second hop is wrongly flagged).
+_case("r001_multihop_clean", "from honest_type import link\n@link(accepts=A)\ndef a():\n    b()\ndef b():\n    c()\ndef c():\n    return 1\n", must_not_fire=("HC-R001",))
+_case("sm03_multihop_clean", "from honest_type import state_machine, vocabulary\nm = state_machine(states=vocabulary({'s': {'open', 'mid', 'end'}}), events=vocabulary({'e': {'go', 'stop'}}), initial='open', terminal=['end'], transitions={('open', 'go'): 'mid', ('mid', 'stop'): 'end'})\n", must_not_fire=("HC-SM03", "HC-SM04"))
 _RULE_MESSAGES += [
     ('HC-P004', 'd = {}\nd.append(1)\ndef f():\n    return d\n', "Reads module-level mutable state 'd' inside a non-boundary function. Module-level mutable state is hidden state — pass it as a parameter or move it into persist."),
     ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(q)})\n", "Predicate types 'a' and 'b' may overlap — cannot be checked statically; verified by honest-test."),
