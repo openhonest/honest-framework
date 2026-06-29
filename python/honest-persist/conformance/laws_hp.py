@@ -2156,6 +2156,39 @@ def _probe_loader():
         if cols.get(field_name) != exp:
             bad.append(f"loader column {field_name}: got {cols.get(field_name)}, expected {exp}")
 
+    # A model covering every _PY_TO_SQL type and the remaining metadata keys (db_type override,
+    # primary_key alias, on_update, renamed_from), so each map entry and metadata branch is pinned.
+    from datetime import date as _date, time as _time
+    from decimal import Decimal as _Decimal
+    from uuid import UUID as _UUID
+
+    @table("typed")
+    class Typed(BaseModel):
+        raw: bytes
+        uid: _UUID
+        d: _date
+        t: _time
+        when: datetime
+        amount: _Decimal
+        blob: dict
+        items: list
+        custom: str = Field(json_schema_extra={"db_type": "citext"})
+        pk: int = Field(json_schema_extra={"primary_key": True})
+        upd: str = Field(json_schema_extra={"on_update": "cascade"})
+        ren: str = Field(json_schema_extra={"renamed_from": "old"})
+
+    typed_cols = load_schema_from_models(Typed)["typed"]["columns"]
+    typed_expected = {
+        "raw": {"type": "bytea", "nullable": False}, "uid": {"type": "uuid", "nullable": False},
+        "d": {"type": "date", "nullable": False}, "t": {"type": "time", "nullable": False},
+        "when": {"type": "timestamptz", "nullable": False}, "amount": {"type": "numeric", "nullable": False},
+        "blob": {"type": "jsonb", "nullable": False}, "items": {"type": "jsonb", "nullable": False},
+        "custom": {"type": "citext", "nullable": False}, "pk": {"type": "integer", "nullable": False, "primary_key": True},
+        "upd": {"type": "text", "nullable": False, "on_update": "cascade"}, "ren": {"type": "text", "nullable": False, "renamed_from": "old"},
+    }
+    if typed_cols != typed_expected:
+        bad.append(f"loader type map / metadata keys wrong: {typed_cols}")
+
     membership = load_schema_from_models(Membership)["memberships"]
     if membership.get("primary_key") != ["user_id", "group_id"]:
         bad.append(f"a Meta composite primary key should become the table primary key: {membership}")
