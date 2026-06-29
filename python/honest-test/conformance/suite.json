@@ -2082,6 +2082,140 @@
     "b"
    ],
    "expect_strategy": "generate_and_supplement"
+  },
+  {
+   "id": "length-right-lt",
+   "gen": "length",
+   "source": "lambda s: 5 < len(s)",
+   "expect_min": 6,
+   "expect_max": null,
+   "expect_valid_lengths": [],
+   "expect_invalid_lengths": []
+  },
+  {
+   "id": "length-right-ge",
+   "gen": "length",
+   "source": "lambda s: 8 >= len(s)",
+   "expect_min": 1,
+   "expect_max": 8,
+   "expect_invalid_lengths": [
+    9
+   ]
+  },
+  {
+   "id": "length-right-gt",
+   "gen": "length",
+   "source": "lambda s: 3 > len(s)",
+   "expect_min": 1,
+   "expect_max": 2,
+   "expect_valid_lengths": [
+    1,
+    2
+   ],
+   "expect_invalid_lengths": [
+    3
+   ]
+  },
+  {
+   "id": "length-right-le",
+   "gen": "length",
+   "source": "lambda s: 2 <= len(s)",
+   "expect_min": 2,
+   "expect_max": null,
+   "expect_valid_lengths": [],
+   "expect_invalid_lengths": []
+  },
+  {
+   "id": "length-right-eq",
+   "gen": "length",
+   "source": "lambda s: 4 == len(s)",
+   "expect_min": 4,
+   "expect_max": 4,
+   "expect_valid_lengths": [
+    4
+   ],
+   "expect_invalid_lengths": [
+    3,
+    5
+   ]
+  },
+  {
+   "id": "length-gt-strict-lower",
+   "gen": "length",
+   "source": "lambda s: len(s) > 3",
+   "expect_min": 4,
+   "expect_max": null,
+   "expect_valid_lengths": [],
+   "expect_invalid_lengths": []
+  },
+  {
+   "id": "length-min-two-bounded",
+   "gen": "length",
+   "source": "lambda s: 2 <= len(s) <= 5",
+   "expect_min": 2,
+   "expect_max": 5,
+   "expect_valid_lengths": [
+    2,
+    3,
+    4,
+    5
+   ],
+   "expect_invalid_lengths": [
+    1,
+    6
+   ]
+  },
+  {
+   "id": "length-nonlen-call",
+   "gen": "length",
+   "source": "lambda s: count(s) < 5",
+   "expect_min": 1,
+   "expect_max": null,
+   "expect_valid_lengths": [],
+   "expect_invalid_lengths": []
+  },
+  {
+   "id": "length-nonint-comparand",
+   "gen": "length",
+   "source": "lambda s, n: len(s) < n",
+   "expect_min": 1,
+   "expect_max": null,
+   "expect_valid_lengths": [],
+   "expect_invalid_lengths": []
+  },
+  {
+   "id": "length-nonint-left-len-right",
+   "gen": "length",
+   "source": "lambda s, n: n < len(s)",
+   "expect_min": 1,
+   "expect_max": null,
+   "expect_valid_lengths": [],
+   "expect_invalid_lengths": []
+  },
+  {
+   "id": "length-noncall-operand",
+   "gen": "length",
+   "source": "lambda s: s < 5",
+   "expect_min": 1,
+   "expect_max": null,
+   "expect_valid_lengths": [],
+   "expect_invalid_lengths": []
+  },
+  {
+   "id": "length-two-upper-bounds",
+   "gen": "length",
+   "source": "lambda s: len(s) < 10 and len(s) < 5",
+   "expect_min": 1,
+   "expect_max": 4,
+   "expect_valid_lengths": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "expect_invalid_lengths": [
+    5
+   ]
   }
  ],
  "value_oracle_exempt": [
