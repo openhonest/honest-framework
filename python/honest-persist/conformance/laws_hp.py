@@ -2240,6 +2240,24 @@ def _probe_django_loader():
     return asyncio.run(_run())
 
 
+def _probe_types_defaults():
+    """host_defaults.default_sql (section 2.3) renders a Python default to its SQL literal by type, and
+    diff_result (section 4.7) assembles the four-key result. Both pure."""
+    from honest_persist.host_defaults import default_sql
+    from honest_persist.types import diff_result
+
+    bad = []
+    cases = [("ada", "'ada'"), (True, "TRUE"), (False, "FALSE"), (3, "3"), (1.5, "1.5"), (None, None), ([1], None)]
+    for value, expected in cases:
+        if default_sql(value) != expected:
+            bad.append(f"default_sql({value!r}) should be {expected!r}: {default_sql(value)!r}")
+
+    result = diff_result(["op"], {"a": ["b"]}, [0], ["amb"])
+    if result != {"operations": ["op"], "dependencies": {"a": ["b"]}, "execution_order": [0], "ambiguities": ["amb"]}:
+        bad.append(f"diff_result should assemble the four-key result exactly: {result}")
+    return bad
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -2276,6 +2294,7 @@ def run():
         "transaction": _probe_transaction(),
         "instrument": _probe_instrument(),
         "instrumented": _probe_instrumented(),
+        "types_defaults": _probe_types_defaults(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():
