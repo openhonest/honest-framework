@@ -231,7 +231,15 @@ def _check_validate(case):
 def _check_diff(case):
     result = diff(case["current"], case["target"], case.get("decisions"))
     if "expect_fault" in case:
-        return "err" in result and result["err"]["code"] == case["expect_fault"], f"got {result.get('err')}"
+        if "err" not in result or result["err"]["code"] != case["expect_fault"]:
+            return False, f"got {result.get('err')}"
+        if "expect_fault_message" in case and result["err"].get("message") != case["expect_fault_message"]:
+            return False, f"fault message: {result['err'].get('message')!r}"
+        if "expect_fault_category" in case and result["err"].get("category") != case["expect_fault_category"]:
+            return False, f"fault category: {result['err'].get('category')!r}"
+        if "expect_fault_detail" in case and result["err"].get("detail") != case["expect_fault_detail"]:
+            return False, f"fault detail: {result['err'].get('detail')!r}"
+        return True, ""
     if "err" in result:
         return False, f"unexpected fault {result['err']['code']}"
     ok = True

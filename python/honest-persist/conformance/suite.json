@@ -4585,6 +4585,1873 @@
     "ALTER TABLE _tmp RENAME TO t",
     "CREATE INDEX idx_ab ON t (a, b)"
    ]
+  },
+  {
+   "id": "diff-gen-rename-col",
+   "current": {
+    "t": {
+     "columns": {
+      "old": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "new": {
+       "type": "text",
+       "renamed_from": "old"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "rename_column",
+     "table": "t",
+     "details": {
+      "from": "old",
+      "to": "new"
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-alter-type",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "integer"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "alter_column",
+     "table": "t",
+     "details": {
+      "column": "c",
+      "changes": {
+       "type": {
+        "from": "text",
+        "to": "integer"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-alter-nullable",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text",
+       "nullable": true
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text",
+       "nullable": false
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "alter_column",
+     "table": "t",
+     "details": {
+      "column": "c",
+      "changes": {
+       "nullable": {
+        "from": true,
+        "to": false
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-alter-default",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "integer",
+       "default": null
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "integer",
+       "default": 5
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "alter_column",
+     "table": "t",
+     "details": {
+      "column": "c",
+      "changes": {
+       "default": {
+        "from": null,
+        "to": 5
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-drop-col",
+   "current": {
+    "t": {
+     "columns": {
+      "a": {
+       "type": "text"
+      },
+      "b": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "a": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_column",
+     "table": "t",
+     "details": {
+      "column": "b"
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-add-col",
+   "current": {
+    "t": {
+     "columns": {
+      "a": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "a": {
+       "type": "text"
+      },
+      "b": {
+       "type": "integer",
+       "nullable": false
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "add_column",
+     "table": "t",
+     "details": {
+      "column": "b",
+      "definition": {
+       "type": "integer",
+       "nullable": false
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-fk-add",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "uuid"
+      }
+     }
+    },
+    "o": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "a": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "b": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "uuid",
+       "references": "o.id"
+      }
+     }
+    },
+    "o": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "a": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "b": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "add_foreign_key",
+     "table": "t",
+     "details": {
+      "column": "c",
+      "references": "o.id"
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-fk-drop",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "uuid",
+       "references": "o.id"
+      }
+     }
+    },
+    "o": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "a": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "b": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "uuid"
+      }
+     }
+    },
+    "o": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "a": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "b": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_foreign_key",
+     "table": "t",
+     "details": {
+      "column": "c",
+      "references": "o.id"
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-fk-change",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "uuid",
+       "references": "a.id"
+      }
+     }
+    },
+    "o": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "a": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "b": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "uuid",
+       "references": "b.id"
+      }
+     }
+    },
+    "o": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "a": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "b": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_foreign_key",
+     "table": "t",
+     "details": {
+      "column": "c",
+      "references": "a.id"
+     }
+    },
+    {
+     "op": "add_foreign_key",
+     "table": "t",
+     "details": {
+      "column": "c",
+      "references": "b.id"
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-index-add",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     },
+     "indexes": {
+      "ix": {
+       "columns": [
+        "c"
+       ]
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "add_index",
+     "table": "t",
+     "details": {
+      "index": "ix",
+      "definition": {
+       "columns": [
+        "c"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-index-drop",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     },
+     "indexes": {
+      "ix": {
+       "columns": [
+        "c"
+       ]
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_index",
+     "table": "t",
+     "details": {
+      "index": "ix"
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-index-change",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     },
+     "indexes": {
+      "ix": {
+       "columns": [
+        "c"
+       ]
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     },
+     "indexes": {
+      "ix": {
+       "columns": [
+        "c"
+       ],
+       "unique": true
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_index",
+     "table": "t",
+     "details": {
+      "index": "ix"
+     }
+    },
+    {
+     "op": "add_index",
+     "table": "t",
+     "details": {
+      "index": "ix",
+      "definition": {
+       "columns": [
+        "c"
+       ],
+       "unique": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-constraint-add",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "integer"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "integer"
+      }
+     },
+     "constraints": {
+      "k": {
+       "type": "check",
+       "expression": "c > 0"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "add_constraint",
+     "table": "t",
+     "details": {
+      "constraint": "k",
+      "definition": {
+       "type": "check",
+       "expression": "c > 0"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-constraint-drop",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "integer"
+      }
+     },
+     "constraints": {
+      "k": {
+       "type": "check",
+       "expression": "c > 0"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "integer"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_constraint",
+     "table": "t",
+     "details": {
+      "constraint": "k"
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-drop-table",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    },
+    "u": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_table",
+     "table": "u",
+     "details": {}
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-rename-table",
+   "current": {
+    "old_t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "target": {
+    "new_t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      },
+      "x": {
+       "type": "text"
+      }
+     },
+     "renamed_from": "old_t"
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "rename_table",
+     "table": "old_t",
+     "details": {
+      "new_name": "new_t"
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-view-add",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "views": {
+     "v": {
+      "definition": "SELECT 1",
+      "depends_on": [
+       "t"
+      ]
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "create_view",
+     "table": "",
+     "details": {
+      "view": "v",
+      "definition": {
+       "definition": "SELECT 1",
+       "depends_on": [
+        "t"
+       ]
+      },
+      "depends_on": [
+       "t"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-view-drop",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "views": {
+     "v": {
+      "definition": "SELECT 1",
+      "depends_on": [
+       "t"
+      ]
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_view",
+     "table": "",
+     "details": {
+      "view": "v",
+      "depends_on": [
+       "t"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-view-change",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "views": {
+     "v": {
+      "definition": "SELECT 1",
+      "depends_on": [
+       "t"
+      ]
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "views": {
+     "v": {
+      "definition": "SELECT 2",
+      "depends_on": [
+       "t"
+      ]
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_view",
+     "table": "",
+     "details": {
+      "view": "v",
+      "depends_on": [
+       "t"
+      ]
+     }
+    },
+    {
+     "op": "create_view",
+     "table": "",
+     "details": {
+      "view": "v",
+      "definition": {
+       "definition": "SELECT 2",
+       "depends_on": [
+        "t"
+       ]
+      },
+      "depends_on": [
+       "t"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-trigger-add",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "triggers": {
+     "tr": {
+      "table": "t",
+      "definition": "X"
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "create_trigger",
+     "table": "t",
+     "details": {
+      "trigger": "tr",
+      "definition": {
+       "table": "t",
+       "definition": "X"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-trigger-drop",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "triggers": {
+     "tr": {
+      "table": "t",
+      "definition": "X"
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_trigger",
+     "table": "t",
+     "details": {
+      "trigger": "tr"
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-trigger-change",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "triggers": {
+     "tr": {
+      "table": "t",
+      "definition": "X"
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "triggers": {
+     "tr": {
+      "table": "t",
+      "definition": "Y"
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_trigger",
+     "table": "t",
+     "details": {
+      "trigger": "tr"
+     }
+    },
+    {
+     "op": "create_trigger",
+     "table": "t",
+     "details": {
+      "trigger": "tr",
+      "definition": {
+       "table": "t",
+       "definition": "Y"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-function-add",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "procedures": {
+     "f": {
+      "kind": "function",
+      "definition": "D"
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "create_function",
+     "table": "",
+     "details": {
+      "function": "f",
+      "definition": {
+       "kind": "function",
+       "definition": "D"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-function-drop",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "procedures": {
+     "f": {
+      "kind": "function",
+      "definition": "D"
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_function",
+     "table": "",
+     "details": {
+      "function": "f"
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-function-replace",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "procedures": {
+     "f": {
+      "kind": "function",
+      "definition": "D"
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "procedures": {
+     "f": {
+      "kind": "function",
+      "definition": "E"
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "replace_function",
+     "table": "",
+     "details": {
+      "function": "f",
+      "definition": {
+       "kind": "function",
+       "definition": "E"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-procedure-add",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "procedures": {
+     "p": {
+      "kind": "procedure",
+      "definition": "D"
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "create_function",
+     "table": "",
+     "details": {
+      "function": "p",
+      "definition": {
+       "kind": "procedure",
+       "definition": "D"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-alter-nullable-default",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text",
+       "nullable": false
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "alter_column",
+     "table": "t",
+     "details": {
+      "column": "c",
+      "changes": {
+       "nullable": {
+        "from": true,
+        "to": false
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-cycle",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "views": {
+     "a": {
+      "definition": "x",
+      "depends_on": [
+       "b",
+       "t"
+      ]
+     },
+     "b": {
+      "definition": "y",
+      "depends_on": [
+       "a",
+       "t"
+      ]
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "views": {
+     "a": {
+      "definition": "x2",
+      "depends_on": [
+       "b",
+       "t"
+      ]
+     },
+     "b": {
+      "definition": "y2",
+      "depends_on": [
+       "a",
+       "t"
+      ]
+     }
+    }
+   },
+   "expect_fault": "schema_cycle"
+  },
+  {
+   "id": "diff-gen-broken-ref",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "uuid"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "uuid",
+       "references": "ghost.id"
+      }
+     }
+    }
+   },
+   "expect_fault": "schema_invalid"
+  },
+  {
+   "id": "diff-gen-alter-null-from-false",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text",
+       "nullable": false
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "alter_column",
+     "table": "t",
+     "details": {
+      "column": "c",
+      "changes": {
+       "nullable": {
+        "from": false,
+        "to": true
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-alter-default-both",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "integer",
+       "default": 1
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "integer",
+       "default": 2
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "alter_column",
+     "table": "t",
+     "details": {
+      "column": "c",
+      "changes": {
+       "default": {
+        "from": 1,
+        "to": 2
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-fk-unchanged",
+   "current": {
+    "t": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "u": {
+     "columns": {
+      "c": {
+       "type": "uuid",
+       "references": "t.id"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "id": {
+       "type": "uuid"
+      }
+     }
+    },
+    "u": {
+     "columns": {
+      "c": {
+       "type": "uuid",
+       "references": "t.id"
+      },
+      "x": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "add_column",
+     "table": "u",
+     "details": {
+      "column": "x",
+      "definition": {
+       "type": "text"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-function-no-kind",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "procedures": {
+     "f": {
+      "definition": "D"
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "create_function",
+     "table": "",
+     "details": {
+      "function": "f",
+      "definition": {
+       "definition": "D"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-rename-hint-not-dropped",
+   "current": {
+    "t": {
+     "columns": {
+      "a": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "a": {
+       "type": "text"
+      },
+      "b": {
+       "type": "text",
+       "renamed_from": "nonexistent"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "add_column",
+     "table": "t",
+     "details": {
+      "column": "b",
+      "definition": {
+       "type": "text",
+       "renamed_from": "nonexistent"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-function-replace-no-kind",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "procedures": {
+     "f": {
+      "definition": "D"
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "procedures": {
+     "f": {
+      "definition": "E"
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "replace_function",
+     "table": "",
+     "details": {
+      "function": "f",
+      "definition": {
+       "definition": "E"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-gen-procedure-change",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "procedures": {
+     "p": {
+      "kind": "procedure",
+      "definition": "D"
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "procedures": {
+     "p": {
+      "kind": "procedure",
+      "definition": "E"
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "drop_function",
+     "table": "",
+     "details": {
+      "function": "p"
+     }
+    },
+    {
+     "op": "create_function",
+     "table": "",
+     "details": {
+      "function": "p",
+      "definition": {
+       "kind": "procedure",
+       "definition": "E"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-cycle-full",
+   "current": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "views": {
+     "a": {
+      "definition": "x",
+      "depends_on": [
+       "b",
+       "t"
+      ]
+     },
+     "b": {
+      "definition": "y",
+      "depends_on": [
+       "a",
+       "t"
+      ]
+     }
+    }
+   },
+   "target": {
+    "tables": {
+     "t": {
+      "columns": {
+       "id": {
+        "type": "uuid"
+       }
+      }
+     }
+    },
+    "views": {
+     "a": {
+      "definition": "x2",
+      "depends_on": [
+       "b",
+       "t"
+      ]
+     },
+     "b": {
+      "definition": "y2",
+      "depends_on": [
+       "a",
+       "t"
+      ]
+     }
+    }
+   },
+   "expect_fault": "schema_cycle",
+   "expect_fault_message": "Schema dependency graph contains a cycle",
+   "expect_fault_category": "server",
+   "expect_fault_detail": {
+    "operations": [
+     {
+      "op": "drop_view",
+      "table": "",
+      "details": {
+       "view": "a",
+       "depends_on": [
+        "b",
+        "t"
+       ]
+      }
+     },
+     {
+      "op": "create_view",
+      "table": "",
+      "details": {
+       "view": "a",
+       "definition": {
+        "definition": "x2",
+        "depends_on": [
+         "b",
+         "t"
+        ]
+       },
+       "depends_on": [
+        "b",
+        "t"
+       ]
+      }
+     },
+     {
+      "op": "drop_view",
+      "table": "",
+      "details": {
+       "view": "b",
+       "depends_on": [
+        "a",
+        "t"
+       ]
+      }
+     },
+     {
+      "op": "create_view",
+      "table": "",
+      "details": {
+       "view": "b",
+       "definition": {
+        "definition": "y2",
+        "depends_on": [
+         "a",
+         "t"
+        ]
+       },
+       "depends_on": [
+        "a",
+        "t"
+       ]
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "diff-broken-ref-full",
+   "current": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "uuid"
+      }
+     }
+    }
+   },
+   "target": {
+    "t": {
+     "columns": {
+      "c": {
+       "type": "uuid",
+       "references": "ghost.id"
+      }
+     }
+    }
+   },
+   "expect_fault": "schema_invalid",
+   "expect_fault_message": "Schema has broken references",
+   "expect_fault_detail": {
+    "errors": [
+     "t.c references unknown table 'ghost'"
+    ]
+   },
+   "expect_fault_category": "server"
+  },
+  {
+   "id": "diff-normalize-malformed",
+   "current": {},
+   "target": {
+    "tables": {
+     "columns": {
+      "a": {
+       "type": "text"
+      }
+     }
+    },
+    "extra": {
+     "columns": {
+      "b": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "expect_operations": [
+    {
+     "op": "create_table",
+     "table": "extra",
+     "details": {
+      "columns": {
+       "b": {
+        "type": "text"
+       }
+      }
+     }
+    },
+    {
+     "op": "create_table",
+     "table": "tables",
+     "details": {
+      "columns": {
+       "a": {
+        "type": "text"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "diff-constraint-missing-column",
+   "current": {},
+   "target": {
+    "t": {
+     "columns": {
+      "a": {
+       "type": "text"
+      }
+     },
+     "constraints": {
+      "ck": {
+       "type": "check",
+       "columns": [
+        "nonexistent"
+       ],
+       "expression": "x"
+      }
+     }
+    }
+   },
+   "expect_fault": "schema_invalid",
+   "expect_fault_message": "Schema has broken references",
+   "expect_fault_category": "server",
+   "expect_fault_detail": {
+    "errors": [
+     "t.ck: constraint names missing column 'nonexistent'"
+    ]
+   }
   }
  ],
  "value_oracle_exempt": [
