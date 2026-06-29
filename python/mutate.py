@@ -247,8 +247,9 @@ def _fqmn(path, module):
     return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
 
 
-def _src_files(module):
-    return sorted((ROOT / f"honest-{module}" / "src" / f"honest_{module}").rglob("*.py"))
+def _src_files(module, only=None):
+    files = sorted((ROOT / f"honest-{module}" / "src" / f"honest_{module}").rglob("*.py"))
+    return [f for f in files if only is None or only in f.name]
 
 
 def _set_aside(module):
@@ -256,11 +257,11 @@ def _set_aside(module):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
-def _mutants(module):
+def _mutants(module, only=None):
     """Every mutant of every source file, each tagged with the dotted module name and real path so a
-    worker can override it in memory."""
+    worker can override it in memory. `only` (a filename substring) narrows to one file for fast iteration."""
     mutants = []
-    for path in _src_files(module):
+    for path in _src_files(module, only):
         source = path.read_text(encoding="utf-8")
         relpath, fqmn = str(path.relative_to(ROOT)), _fqmn(path, module)
         for mutant in enumerate_mutants(source):
@@ -268,11 +269,12 @@ def _mutants(module):
     return mutants
 
 
-def _run_module(module):
+def _run_module(module, only=None):
     """Fan the mutants across killable warm workers. Each worker runs one mutant at a time; a mutant that
     runs past the deadline (one no in-worker signal could stop) has its worker SIGKILLed and replaced,
-    and is counted as caught. A surviving mutant is one whose worker reported the suite still passing."""
-    mutants = _mutants(module)
+    and is counted as caught. A surviving mutant is one whose worker reported the suite still passing.
+    `only` (a filename substring) narrows mutation to one source file for fast iteration."""
+    mutants = _mutants(module, only)
     pending = list(reversed(mutants))  # pop() from the end
     workers = [_Worker(module) for _ in range(min(_WORKERS, len(mutants) or 1))]
     survivors = []
@@ -317,7 +319,9 @@ def _run_module(module):
 def main(modules):
     status = 0
     for module in modules:
-        report = _run_module(module)
+        # `module:filename-substring` narrows mutation to matching source files for fast iteration.
+        module, _, only = module.partition(":")
+        report = _run_module(module, only or None)
         print(f"mutate: honest-{module} — {report['caught']} caught, {report['set_aside']} set aside, {len(report['undeclared'])} undeclared of {report['total']} mutants")
         for survivor in report["undeclared"]:
             print(f"  SURVIVED  {survivor['operator']}  {survivor['label']}")

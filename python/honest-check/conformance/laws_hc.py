@@ -116,6 +116,11 @@ def _probe_config():
     nondict = normalize_config({"rules": {"disable": ["HC003"], "HC003": "notamapping", "HC-OR003": {"min_run": 4}}})
     if nondict["rule_config"] != {"HC-OR003": {"min_run": 4}}:
         bad.append(f"only mapping rule values are kept as rule_config: {nondict['rule_config']}")
+    # "disable" is dropped from rule_config by *name*, even when its value is a mapping with .items —
+    # so the exclusion is the name check, not only the has-items check.
+    disable_map = normalize_config({"rules": {"disable": {"HC003": True}, "HC-OR003": {"min_run": 4}}})
+    if disable_map["rule_config"] != {"HC-OR003": {"min_run": 4}}:
+        bad.append(f"disable is excluded from rule_config by name even when a mapping: {disable_map['rule_config']}")
     if empty_config()["severity"] != "warning":
         bad.append("empty_config default severity wrong")
     configured = normalize_config({"rules": {"disable": ["HC003"], "HC-OR003": {"min_run": 4}}, "startup": {"on_error": "halt"}})
@@ -402,6 +407,88 @@ def _probe_suppression():
     return bad
 
 
+def _probe_suppression_internals():
+    """Pin the pure suppression functions directly (section 7): directive parsing, comment-only
+    collection in line order, range building, and inclusive range membership. The end-to-end
+    downgrade-to-info path is covered by _probe_suppression; this pins the internals the pipeline
+    relies on so the parse/collect/membership logic is not merely exercised but proved."""
+    from honest_parse import parse_python
+
+    from honest_check.suppression import (
+        _collect_directives,
+        _parse_directive,
+        build_suppressions,
+        is_suppressed,
+    )
+
+    bad = []
+
+    # Valid directives return (verb, frozenset(rules)). Multi-rule works comma-separated, comma+space,
+    # space-separated, and comma-without-space — the comma becomes a space (not deleted) and the
+    # line tail is kept whole (split maxsplit keeps every rule).
+    valid = {
+        "# honest: ignore HC-P003": ("ignore", frozenset({"HC-P003"})),
+        "# honest: disable HC-P003": ("disable", frozenset({"HC-P003"})),
+        "# honest: enable HC-P003": ("enable", frozenset({"HC-P003"})),
+        "# honest: disable HC-P003, HC-P001": ("disable", frozenset({"HC-P003", "HC-P001"})),
+        "# honest: disable HC-P003,HC-P001": ("disable", frozenset({"HC-P003", "HC-P001"})),
+        "# honest: disable HC-P003 HC-P001": ("disable", frozenset({"HC-P003", "HC-P001"})),
+    }
+    for text, expected in valid.items():
+        got = _parse_directive(text)
+        if got != expected:
+            bad.append(f"_parse_directive({text!r}) -> {got!r}, want {expected!r}")
+
+    # None for: a plain comment, a comment whose body only starts with a verb after a non-"honest:"
+    # prefix (the tag offset must match exactly), a bare "honest:" with no verb, and an unknown verb.
+    for text in (
+        "# just a comment",
+        "# xxxxxxxignore HC-P003",
+        "# honest:",
+        "# honest: frobnicate HC-P003",
+    ):
+        got = _parse_directive(text)
+        if got is not None:
+            bad.append(f"_parse_directive({text!r}) -> {got!r}, want None")
+
+    # _collect_directives keeps only real comment nodes: a directive inside a string literal is ignored,
+    # a plain comment does not crash collection, and the kept directive carries its 1-based line.
+    src = b'x = "# honest: disable HC-P003"\n# honest: ignore HC-P001\n# plain comment\n'
+    collected = _collect_directives(parse_python(src).root_node, src)
+    if collected != [(2, "ignore", frozenset({"HC-P001"}))]:
+        bad.append(f"_collect_directives (string-literal ignored, plain kept safe): {collected}")
+
+    # Order is load-bearing: a disable then a later enable forms a closed range; an enable *before*
+    # a disable is a no-op and the disable runs to EOF. The two orderings give different ranges, so
+    # the directives must be processed in line order.
+    de = b"# honest: disable HC-P003\nclass A:\n    pass\n# honest: enable HC-P003\n"
+    inline, ranges = build_suppressions(parse_python(de).root_node, de, 4)
+    if inline != {} or ranges != {"HC-P003": [(1, 4)]}:
+        bad.append(f"build_suppressions disable->enable closed range: {inline} {ranges}")
+    ed = b"# honest: enable HC-P003\nclass A:\n    pass\n# honest: disable HC-P003\n"
+    inline2, ranges2 = build_suppressions(parse_python(ed).root_node, ed, 4)
+    if inline2 != {} or ranges2 != {"HC-P003": [(4, 4)]}:
+        bad.append(f"build_suppressions enable(noop)->disable-to-EOF: {inline2} {ranges2}")
+
+    # An inline ignore records the comment's own line and opens no range.
+    ign = b"class A:  # honest: ignore HC-P003\n    pass\n"
+    inline3, ranges3 = build_suppressions(parse_python(ign).root_node, ign, 2)
+    if inline3 != {1: {"HC-P003"}} or ranges3 != {}:
+        bad.append(f"build_suppressions inline ignore: {inline3} {ranges3}")
+
+    # is_suppressed: inclusive at both range endpoints, excluded one line outside either end.
+    rng = {"HC-P003": [(5, 10)]}
+    for line, want in {3: False, 4: False, 5: True, 7: True, 10: True, 11: False}.items():
+        got = is_suppressed("HC-P003", line, {}, rng)
+        if got != want:
+            bad.append(f"is_suppressed at line {line}: {got}, want {want}")
+    if not is_suppressed("HC-P003", 1, {1: {"HC-P003"}}, {}):
+        bad.append("is_suppressed should honour an inline ignore on the line")
+    if is_suppressed("HC-P999", 7, {}, rng):
+        bad.append("is_suppressed should be False for a rule with no suppressions")
+    return bad
+
+
 def _probe_determinism():
     """HC-2: the same source yields the same diagnostics on every run."""
     sources = [_CLEAN, _VIOLATION, "if x == 1:\n    y = 1\nelif x == 2:\n    y = 2\nelse:\n    y = 3\n"]
@@ -467,6 +554,7 @@ def run():
         "lsp": _probe_lsp(),
         "startup": _probe_startup(),
         "suppression": _probe_suppression(),
+        "suppression_internals": _probe_suppression_internals(),
         "watchlist": _probe_watchlist(),
         "determinism": _probe_determinism(),
     }

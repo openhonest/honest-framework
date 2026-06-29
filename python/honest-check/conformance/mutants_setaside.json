@@ -1,0 +1,4 @@
+{
+ "honest-check/src/honest_check/suppression.py:remove@directives.sort(key=lambda directive: directive[0])": "tree-sitter yields comment nodes in source (== line) order, so _collect_directives already builds the list in line order; sorting by line is identity. Battery-verified that walk order equals line order across nested functions, classes, if/else, blank lines, and trailing comments, so removing the sort cannot change the output.",
+ "honest-check/src/honest_check/suppression.py:0->-1@directives.sort(key=lambda directive: directive[0])": "Sorting by the rules frozenset (index -1) instead of the line (index 0): the input is already in line order (battery-verified), and frozenset '<' is the subset relation — disjoint or equal rule sets compare False both ways, so list.sort is stable and preserves the existing line order. The output is identical to sorting by line."
+}
