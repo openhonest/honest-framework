@@ -2311,6 +2311,77 @@ def _probe_django_loader():
     return asyncio.run(_run())
 
 
+def _probe_deps():
+    """Operation dependency ordering (section 5.4): the _DEPENDS_ON / _MUST_PRECEDE rule tables, the
+    relatedness test, build_dependencies, and topological_sort (order, deterministic tie-break, cycle)."""
+    from honest_persist.deps import _related, _runs_before, _subject, build_dependencies, topological_sort
+    from honest_persist.types import operation
+
+    bad = []
+    # Every _DEPENDS_ON rule: the dependency runs before the dependent (same table -> related), and not
+    # the reverse — so emptying/swapping a rule-table entry now fails.
+    depends_on = [("add_foreign_key", "create_table"), ("add_column", "create_table"), ("add_index", "create_table"), ("add_index", "add_column"), ("add_constraint", "create_table"), ("add_constraint", "add_column"), ("create_trigger", "create_table")]
+    for dependent, dependency in depends_on:
+        before, after = operation(dependency, "t", {}), operation(dependent, "t", {})
+        if not _runs_before(before, after):
+            bad.append(f"{dependency} must run before {dependent}")
+        if _runs_before(after, before):
+            bad.append(f"{dependent} must not run before {dependency}")
+    # create_view depends on a create_table AND on another create_view it declares (the second
+    # dependency in the create_view rule): the depended-on view must run first.
+    base_view = operation("create_view", "", {"view": "base"})
+    derived_view = operation("create_view", "", {"view": "derived", "depends_on": ["base"]})
+    if not _runs_before(base_view, derived_view):
+        bad.append("a view that depends on another view must run after it")
+    # ...and on the table it reads (the first dependency in the create_view rule).
+    view_on_table = operation("create_view", "", {"view": "v", "depends_on": ["t"]})
+    if not _runs_before(operation("create_table", "t", {}), view_on_table):
+        bad.append("a view that depends on a table must run after the table is created")
+    # Every _MUST_PRECEDE rule: the drop runs before the table/column drop.
+    must_precede = [("drop_foreign_key", "drop_table"), ("drop_foreign_key", "drop_column"), ("drop_index", "drop_table"), ("drop_index", "drop_column"), ("drop_constraint", "drop_table"), ("drop_constraint", "drop_column"), ("drop_column", "drop_table"), ("drop_view", "drop_table"), ("drop_trigger", "drop_table")]
+    for early, late in must_precede:
+        if not _runs_before(operation(early, "t", {}), operation(late, "t", {})):
+            bad.append(f"{early} must run before {late}")
+
+    # _related's three branches: same table, a foreign-key reference, and a depends_on declaration.
+    _subject_view = operation("create_view", "", {"view": "v", "depends_on": ["t"]})
+    if _subject(_subject_view) != "v":
+        bad.append("_subject should prefer the view name over the table")
+    if _subject(operation("create_trigger", "tbl", {"trigger": "tg"})) != "tg":
+        bad.append("_subject should prefer the trigger name over the table")
+    if _subject(operation("create_function", "", {"function": "fn"})) != "fn":
+        bad.append("_subject should prefer the function name")
+    if _subject(operation("add_column", "tbl", {"column": "c"})) != "tbl":
+        bad.append("_subject falls back to the table when there is no named object")
+    if not _related(operation("add_foreign_key", "t", {"references": "o.id"}), operation("create_table", "o", {})):
+        bad.append("a foreign-key reference should relate to the referenced table")
+    if _related(operation("add_foreign_key", "t", {"references": "o.id"}), operation("create_table", "x", {})):
+        bad.append("a foreign key must relate only to the table it actually references, not any table")
+    if not _related(_subject_view, operation("create_table", "t", {})):
+        bad.append("a depends_on declaration should relate to the named object")
+    if _related(operation("add_column", "t", {}), operation("create_table", "u", {})):
+        bad.append("unrelated operations on different tables must not relate")
+
+    # build_dependencies + topological_sort: create_table before add_foreign_key, deterministic order.
+    ops = [operation("add_foreign_key", "t", {"references": "o.id"}), operation("create_table", "t", {}), operation("create_table", "o", {})]
+    deps = build_dependencies(ops)
+    if sorted(deps[0]) != [1, 2] or deps[1] != [] or deps[2] != []:
+        bad.append(f"add_foreign_key (index 0) should depend on both create_tables: {deps}")
+    order = topological_sort(ops, deps)
+    if order != [1, 2, 0]:
+        bad.append(f"topological_sort should run the create_tables first, ties by index: {order}")
+    # Deterministic tie-break (ready.sort()): when finishing node 1 frees node 0, the lower index 0
+    # must come before the already-ready higher index 2 — [1, 0, 2], not [1, 2, 0].
+    tie = [object(), object(), object()]  # three opaque nodes; order is by index only
+    if topological_sort(tie, {0: [1], 1: [], 2: []}) != [1, 0, 2]:
+        bad.append(f"topological_sort should break ties by index deterministically: {topological_sort(tie, {0: [1], 1: [], 2: []})}")
+    # A two-node cycle has no valid order.
+    cyclic = [operation("create_view", "", {"view": "a", "depends_on": ["b"]}), operation("create_view", "", {"view": "b", "depends_on": ["a"]})]
+    if topological_sort(cyclic, build_dependencies(cyclic)) is not None:
+        bad.append("a dependency cycle should have no topological order")
+    return bad
+
+
 def _probe_types_defaults():
     """host_defaults.default_sql (section 2.3) renders a Python default to its SQL literal by type, and
     diff_result (section 4.7) assembles the four-key result. Both pure."""
@@ -2366,6 +2437,7 @@ def run():
         "instrument": _probe_instrument(),
         "instrumented": _probe_instrumented(),
         "types_defaults": _probe_types_defaults(),
+        "deps": _probe_deps(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():
