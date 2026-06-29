@@ -2044,6 +2044,11 @@ _case("hc009_floordiv", "from honest_type import vocabulary, predicate\nV = voca
 # Every HTTP response type is recognised by HC-P017 (a function producing it without a @link/emits).
 for _resp in ("Response", "JSONResponse", "HTMLResponse", "PlainTextResponse", "RedirectResponse", "StreamingResponse", "FileResponse"):
     _case(f"p017_{_resp}", f"def h(req):\n    return {_resp}(x)\n", must_fire=("HC-P017",))
+# A cache annotated '# honest: profiled' is exempt from HC-P006 (the profiled-comment detector).
+_case("p006_profiled_exempt", "from functools import lru_cache\n@lru_cache  # honest: profiled\ndef f(x):\n    return x\n", must_not_fire=("HC-P006",))
+# A module container touched only by a non-mutating method (.get) is a constant lookup table, not
+# hidden state: HC-P004 must not fire (pins the obj/attr/_MUTATING_METHODS conjunction).
+_case("p004_nonmutating_method_clean", "d = {}\nd.get(0)\ndef f():\n    return d\n", must_not_fire=("HC-P004",))
 _RULE_MESSAGES += [
     ('HC-P004', 'd = {}\nd.append(1)\ndef f():\n    return d\n', "Reads module-level mutable state 'd' inside a non-boundary function. Module-level mutable state is hidden state — pass it as a parameter or move it into persist."),
     ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(q)})\n", "Predicate types 'a' and 'b' may overlap — cannot be checked statically; verified by honest-test."),
