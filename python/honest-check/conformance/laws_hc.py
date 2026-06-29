@@ -330,6 +330,28 @@ def _probe_lsp():
 # --------------------------------------------------------------------------- startup
 
 
+# Each startup-eligible rule (section 2.3), with a snippet that triggers it and the severity it
+# emits at. A directive that empties or drops any member of _STARTUP_ELIGIBLE stops that rule
+# being collected; the per-rule assertion below catches it. HC-SYN is covered by _SYNTAX_ERROR.
+_STARTUP_ELIGIBLE_CASES = [
+    ("error", ["HC001"], "from honest_type import chain\ndef step(x):\n    return x\nc = chain(step)\n"),
+    ("error", ["HC002"], "from honest_type import vocabulary, link, chain\nA = vocabulary({'a': {'x'}})\nB = vocabulary({'b': {'y'}})\n@link(accepts=A, emits=A)\ndef first(x):\n    return x\n@link(accepts=B, emits=B)\ndef second(x):\n    return x\nc = chain(first, second)\n"),
+    ("error", ["HC003"], "from honest_type import vocabulary\nV = vocabulary({'a': {'x', 'y'}, 'b': {'y', 'z'}})\n"),
+    ("error", ["HC006"], "from honest_type import vocabulary, composed\nV = vocabulary({'a': {'x'}}, composed_types=[composed('combo', requires={'ghost': 1})])\n"),
+    ("error", ["HC007"], "from honest_type import chain\nc = chain()\n"),
+    ("info", ["HC011"], "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p)})\n"),
+    ("error", ["HC-SM01", "HC-SM02"], "from honest_type import state_machine, vocabulary\nm = state_machine(states=vocabulary({'s': {'open', 'closed'}}), events=vocabulary({'e': {'shut'}}), initial='open', terminal=['closed'], transitions={('bad', 'badev'): 'closed'})\n"),
+    ("error", ["HC-SM05"], "from honest_type import state_machine, vocabulary\nm = state_machine(states=vocabulary({'s': {'open', 'closed'}}), events=vocabulary({'e': {'shut'}}), initial='ghost', terminal=['closed'], transitions={('open', 'shut'): 'closed'})\n"),
+]
+
+
+def _startup_stderr(path, **kwargs):
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        startup_check([str(path)], **kwargs)
+    return err.getvalue()
+
+
 def _probe_startup():
     bad = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -339,27 +361,50 @@ def _probe_startup():
         dirty.write_text(_SYNTAX_ERROR, encoding="utf-8")  # HC-SYN is startup-eligible
 
         startup_check([str(clean)])  # clean: returns, no handler
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            startup_check([str(dirty)], on_error="warn")
-        if "HC" not in err.getvalue():
+        if "HC" not in _startup_stderr(dirty, on_error="warn"):
             bad.append("startup_check warn should print to stderr")
+        # A clean tree must not invoke the handler at all: with on_error='raise' it must return,
+        # not raise (the `if not diagnostics: return` guard is load-bearing).
+        try:
+            startup_check([str(clean)], on_error="raise")
+        except HonestCheckError:
+            bad.append("startup_check on a clean tree must not invoke the error handler")
         try:
             startup_check([str(dirty)], on_error="raise")
             bad.append("startup_check raise should raise HonestCheckError")
         except HonestCheckError:
             pass
+        # halt prints the report to stderr AND exits with code 1 (not 0, not 2).
+        halt_err = io.StringIO()
         try:
-            with contextlib.redirect_stderr(io.StringIO()):
+            with contextlib.redirect_stderr(halt_err):
                 startup_check([str(dirty)], on_error="halt")
             bad.append("startup_check halt should SystemExit")
-        except SystemExit:
-            pass
+        except SystemExit as exit_signal:
+            if exit_signal.code != 1:
+                bad.append(f"startup_check halt should exit with code 1, got {exit_signal.code}")
+            if "HC" not in halt_err.getvalue():
+                bad.append("startup_check halt should print the report to stderr before exiting")
         # Directory input exercises the rglob branch of _collect.
         startup_check([tmp], on_error="warn")
-        # A severity that does not match the finding filters it out (the collect skip branch).
-        with contextlib.redirect_stderr(io.StringIO()):
-            startup_check([str(dirty)], on_error="warn", severity="warning")
+        # A severity that does not match the finding filters it out: HC-SYN is an error, so asking
+        # for warnings yields nothing. (Pins the AND in the collect filter: an `or` would still
+        # collect the eligible-but-wrong-severity finding.)
+        if _startup_stderr(dirty, on_error="warn", severity="warning") != "":
+            bad.append("a severity mismatch should filter the finding out, producing no output")
+
+        # Every startup-eligible rule is actually collected at the severity it emits. Emptying or
+        # dropping a member of _STARTUP_ELIGIBLE silences exactly one rule, caught here.
+        rule_file = Path(tmp) / "rule.py"
+        for severity, rules, source in _STARTUP_ELIGIBLE_CASES:
+            rule_file.write_text(source, encoding="utf-8")
+            report = _startup_stderr(rule_file, on_error="warn", severity=severity)
+            for rule in rules:
+                if rule not in report:
+                    bad.append(f"startup_check should collect eligible rule {rule}: {report!r}")
+            # The SM snippet emits two findings; the report joins them with a newline (not concatenated).
+            if len(rules) > 1 and report.count("\n") < len(rules):
+                bad.append(f"_format_report should join findings with newlines: {report!r}")
     return bad
 
 
