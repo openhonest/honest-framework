@@ -2064,6 +2064,9 @@ _case("p004_boundary_call_form", "@boundary()\ndef f():\n    open('x')\n", must_
 _case("p004_boundary_spaces", "from honest_type import link\n@link(boundary = True)\ndef f(x):\n    open('x')\n", must_not_fire=("HC-P004",))
 # HC-A002: an authorizing link whose guard references the registered derivation is satisfied (no fault).
 _case("a002_guard_refs_derivation_clean", "from honest_type import link\n@link(authorizes=True)\ndef f(x):\n    return session_actor\np = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('session_actor'))\nregister_auth_provider(p)\n", must_not_fire=("HC-A002",))
+# A DECORATED non-boundary link with I/O must still fire HC-P004: pins the boundary-decorator detector
+# (emptying its match strings would make every decorated function look like a boundary and suppress it).
+_case("p004_decorated_nonboundary_io", "from honest_type import link\n@link(accepts=A, emits=B)\ndef f(x):\n    open('x')\n", must_fire=("HC-P004", "HC008"))
 _RULE_MESSAGES += [
     ('HC-P004', 'd = {}\nd.append(1)\ndef f():\n    return d\n', "Reads module-level mutable state 'd' inside a non-boundary function. Module-level mutable state is hidden state — pass it as a parameter or move it into persist."),
     ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(q)})\n", "Predicate types 'a' and 'b' may overlap — cannot be checked statically; verified by honest-test."),
