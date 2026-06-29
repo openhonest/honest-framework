@@ -183,7 +183,8 @@
     "detail": {
      "word": "manifest",
      "layer": "framework"
-    }
+    },
+    "message": "Set member 'manifest' is a reserved word at the framework layer"
    }
   },
   {
@@ -199,7 +200,69 @@
     ]
    },
    "expect": "error",
-   "error_contains": "share"
+   "error_contains": [
+    "share",
+    "a token must match exactly zero or one type"
+   ]
+  },
+  {
+   "id": "vocab-empty",
+   "declarations": {},
+   "expect": "error",
+   "error_contains": "recognizes nothing and is non-conformant"
+  },
+  {
+   "id": "composed-captures-unknown-base",
+   "declarations": {
+    "fmt": [
+     "currency"
+    ]
+   },
+   "composed_types": [
+    {
+     "name": "cp",
+     "requires": {
+      "fmt": "currency"
+     },
+     "captures": "nope"
+    }
+   ],
+   "expect": "error",
+   "error_contains": "captures unknown base type 'nope'"
+  },
+  {
+   "id": "composed-capture-ambiguity-equal",
+   "declarations": {
+    "fmt": [
+     "currency"
+    ],
+    "intt": [
+     "2",
+     "3"
+    ]
+   },
+   "composed_types": [
+    {
+     "name": "c1",
+     "requires": {
+      "fmt": "currency"
+     },
+     "captures": "intt"
+    },
+    {
+     "name": "c2",
+     "requires": {
+      "fmt": "currency"
+     },
+     "captures": "intt"
+    }
+   ],
+   "expect": "error",
+   "error_contains": [
+    "both capture",
+    "compatible requirements",
+    "ambiguously captured by both"
+   ]
   },
   {
    "id": "classify-binding",

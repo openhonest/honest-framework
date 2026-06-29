@@ -162,17 +162,19 @@ def _composed(spec):
 def _check_construction(case):
     caught = None
     try:
-        vocabulary({name: set(members) for name, members in case["declarations"].items()})
+        composed = [_composed(spec) for spec in case.get("composed_types", [])]
+        vocabulary({name: set(members) for name, members in case["declarations"].items()}, composed_types=composed)
         result, message = "ok", ""
     except VocabularyError as exc:
         result, message, caught = "error", str(exc), exc
     if "expect_fault" in case:
         got = getattr(caught, "fault", None) or {}
-        expected = case["expect_fault"]
-        ok = all(got.get(field) == value for field, value in expected.items())
+        ok = all(got.get(field) == value for field, value in case["expect_fault"].items())
         return ok, f"got {result} fault={getattr(caught, 'fault', None)}"
-    ok = result == case["expect"] and case.get("error_contains", "") in message
-    return ok, f"got {result} ({message[:50]})"
+    needles = case.get("error_contains", [])
+    needles = [needles] if isinstance(needles, str) else needles
+    ok = result == case["expect"] and all(needle in message for needle in needles)
+    return ok, f"got {result} ({message[:60]})"
 
 
 def _check_classify(case):
