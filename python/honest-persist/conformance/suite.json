@@ -4521,6 +4521,70 @@
    },
    "dialect": "postgresql",
    "expect_sql": "CREATE TABLE t (c text)"
+  },
+  {
+   "id": "tosql-alter-multi-change",
+   "to_sql": {
+    "op": "alter_column",
+    "table": "t",
+    "details": {
+     "column": "c",
+     "changes": {
+      "type": {
+       "to": "boolean"
+      },
+      "nullable": {
+       "to": false
+      },
+      "default": {
+       "to": "5"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t ALTER COLUMN c TYPE boolean; ALTER TABLE t ALTER COLUMN c SET NOT NULL; ALTER TABLE t ALTER COLUMN c SET DEFAULT 5"
+  },
+  {
+   "id": "reconstruct-sql-multicol-index",
+   "reconstruct_sql": {
+    "table": "t",
+    "target_table": {
+     "columns": {
+      "id": {
+       "type": "uuid",
+       "primary_key": true
+      },
+      "a": {
+       "type": "text"
+      },
+      "b": {
+       "type": "text"
+      }
+     },
+     "indexes": {
+      "idx_ab": {
+       "columns": [
+        "a",
+        "b"
+       ]
+      }
+     }
+    },
+    "common_columns": [
+     "id",
+     "a"
+    ],
+    "temp_name": "_tmp"
+   },
+   "dialect": "sqlite",
+   "expect_statements": [
+    "CREATE TABLE _tmp (id text PRIMARY KEY, a text, b text)",
+    "INSERT INTO _tmp (id, a) SELECT id, a FROM t",
+    "DROP TABLE t",
+    "ALTER TABLE _tmp RENAME TO t",
+    "CREATE INDEX idx_ab ON t (a, b)"
+   ]
   }
  ],
  "value_oracle_exempt": [

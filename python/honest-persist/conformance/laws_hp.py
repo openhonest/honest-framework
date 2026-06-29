@@ -15,7 +15,9 @@ apply, build fake connections, and feed deliberately-malformed CHECK strings.
 
 import asyncio
 import copy
+import io
 import sqlite3
+from contextlib import redirect_stderr
 
 from honest_test import law, verify_laws
 
@@ -216,13 +218,15 @@ class _FailingConn(_ReconControl):
     def __init__(self, fail_on):
         self.executed = []
         self._fail_on = fail_on
+        self.paused = 0
+        self.resumed = 0
         self._record()
 
     async def pause_push(self):
-        pass
+        self.paused += 1
 
     async def resume_push(self):
-        pass
+        self.resumed += 1
 
     async def execute(self, sql):
         if self._fail_on in sql:
@@ -255,6 +259,10 @@ def _probe_apply():
         joined = " ; ".join(full.executed)
         if not result["success"] or "INSERT INTO" not in joined or "CREATE" not in joined:
             bad.append(f"reconstruction did not copy data / recreate index: {full.executed}")
+        # A reconstructed op's own in-place DDL must NOT also run (the post-reconstruction continue skips
+        # the to_sql path); the rebuild replaces it.
+        if any("ALTER COLUMN" in s for s in full.executed):
+            bad.append(f"a reconstructed op must not also execute its in-place DDL: {full.executed}")
         if full.paused < 1 or full.resumed < 1:
             bad.append("reconstruction did not pause/resume sync push")
         # §5.5: foreign-key checks are disabled BEFORE the transaction (the pragma is connection-scoped,
@@ -273,18 +281,44 @@ def _probe_apply():
         failed = await apply(plan, _RECON_TARGET, failing, "sqlite")
         if failed["success"] or "rollback" not in failing.calls or "commit" in failing.calls or "enable_fk" not in failing.calls:
             bad.append(f"a failed reconstruction must roll back and re-enable foreign keys, not commit: {failing.calls}")
+        if failing.resumed < 1:
+            bad.append("a reconstruction that raises must still resume sync push (the exception path)")
 
-        # §5.5 step 6: a foreign key left dangling after the rebuild rolls back, re-enables, and fails.
+        # §5.5 step 6: a foreign key left dangling after the rebuild rolls back, re-enables, fails with a
+        # naming error, and emits a FAILED reconstruct_table migration event.
         fk = _FkViolationConn()
-        fk_result = await apply(plan, _RECON_TARGET, fk, "sqlite")
+        fk_emitted = []
+
+        async def _fk_emit(event_type, aggregate_type, aggregate_id, payload):
+            fk_emitted.append((payload.get("operation"), payload.get("success"), payload.get("fault_code")))
+            return {"ok": {}}
+
+        fk_result = await apply(plan, _RECON_TARGET, fk, "sqlite", emit=_fk_emit, db_id="d")
         if fk_result["success"] or "rollback" not in fk.calls or "commit" in fk.calls or "enable_fk" not in fk.calls:
             bad.append(f"a post-reconstruction FK violation must roll back and re-enable foreign keys: {fk.calls}")
+        if "foreign keys left dangling after reconstruction" not in (fk_result["error"] or ""):
+            bad.append(f"the FK-dangling failure should name its cause: {fk_result['error']}")
+        if ("reconstruct_table", False, "reconstruction_failed") not in fk_emitted:
+            bad.append(f"a failed reconstruction should emit a failed reconstruct_table event: {fk_emitted}")
+        if fk.resumed < 1:
+            bad.append("a reconstruction with a dangling foreign key must still resume sync push (the FK path)")
 
-        # Two reconstruction ops on one table reconstruct it once (the already-done skip).
+        # Two reconstruction ops on one table reconstruct it ONCE (the already-done skip): exactly one
+        # transaction is begun, not one per op.
         two = {"t": {"columns": {"id": {"type": "text"}, "keep": {"type": "integer"}}}}
         plan2 = diff(_RECON_CURRENT, two)
         conn2 = _Conn()
         await apply(plan2, two, conn2, "sqlite")
+        if conn2.calls.count("begin") != 1:
+            bad.append(f"two reconstruction ops on one table should reconstruct it once: {conn2.calls}")
+
+        # A no-emit apply (emit defaults to None) must produce no migration-event errors on stderr —
+        # the emit-None guard short-circuits before touching the (absent) emit.
+        no_emit_err = io.StringIO()
+        with redirect_stderr(no_emit_err):
+            await apply(diff(_RECON_CURRENT, _RECON_TARGET), _RECON_TARGET, _Conn(), "sqlite")
+        if no_emit_err.getvalue():
+            bad.append(f"a no-emit apply should not touch emit (no stderr): {no_emit_err.getvalue()!r}")
 
         # An unknown operation has no renderer: apply must report it in full, not silently skip.
         unknown_plan = {"operations": [operation("frobnicate", "t", {})], "execution_order": [0], "ambiguities": [], "dependencies": {}}
@@ -320,19 +354,27 @@ def _probe_apply():
         recon_emitted = []
 
         async def _recon_emit(event_type, aggregate_type, aggregate_id, payload):
-            recon_emitted.append((aggregate_id, payload.get("operation")))
+            recon_emitted.append((payload.get("operation"), payload.get("sql")))
             return {"ok": {}}
 
         await apply(diff(_RECON_CURRENT, _RECON_TARGET), _RECON_TARGET, _Conn(), "sqlite", emit=_recon_emit, db_id="db2")
-        if not any(op == "reconstruct_table" for _, op in recon_emitted):
+        recon_event = next((sql for op, sql in recon_emitted if op == "reconstruct_table"), None)
+        if recon_event is None:
             bad.append(f"a reconstruction should emit a reconstruct_table migration event: {recon_emitted}")
+        elif "; " not in recon_event:
+            bad.append(f"the reconstruct_table event sql should join its statements with '; ': {recon_event!r}")
 
-        # A failing emit is swallowed — instrumentation must never break a migration.
+        # A failing emit is swallowed — instrumentation must never break a migration — and logs to stderr.
         async def _boom_emit(*args):
             raise RuntimeError("emit down")
 
-        if not (await apply(ok_plan, {"t": {"columns": {"id": {"type": "text"}}}}, _Conn(), "postgresql", emit=_boom_emit, db_id="db1"))["success"]:
+        captured = io.StringIO()
+        with redirect_stderr(captured):
+            swallowed = await apply(ok_plan, {"t": {"columns": {"id": {"type": "text"}}}}, _Conn(), "postgresql", emit=_boom_emit, db_id="db1")
+        if not swallowed["success"]:
             bad.append("a failing emit must not break the migration")
+        if "migration event emit failed" not in captured.getvalue():
+            bad.append(f"a swallowed emit failure should be logged to stderr: {captured.getvalue()!r}")
 
         # A normal (non-reconstruction) DDL that raises halts apply.
         add_plan = diff({}, {"t": {"columns": {"id": {"type": "text"}}}})
