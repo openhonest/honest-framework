@@ -606,56 +606,219 @@
    "id": "value-build-transaction-event",
    "value_case": {
     "function": "build_transaction_event",
-    "args": ["users_db", 2, "ok", null, 1500, "req-1"],
-    "expected": {"db_id": "users_db", "write_count": 2, "outcome": "ok", "failed_at": null, "duration_ns": 1500, "request_id": "req-1"}
+    "args": [
+     "users_db",
+     2,
+     "ok",
+     null,
+     1500,
+     "req-1"
+    ],
+    "expected": {
+     "db_id": "users_db",
+     "write_count": 2,
+     "outcome": "ok",
+     "failed_at": null,
+     "duration_ns": 1500,
+     "request_id": "req-1"
+    }
    }
   },
   {
    "id": "value-validate-checks-native",
    "value_case": {
     "function": "validate_checks",
-    "args": [{"t": {"columns": {"x": {"type": "integer", "check": "x @@ 1"}}}}, "postgresql"],
-    "expected": {"ok": {"t": {"columns": {"x": {"type": "integer", "check": "x @@ 1"}}}}}
+    "args": [
+     {
+      "t": {
+       "columns": {
+        "x": {
+         "type": "integer",
+         "check": "x @@ 1"
+        }
+       }
+      }
+     },
+     "postgresql"
+    ],
+    "expected": {
+     "ok": {
+      "t": {
+       "columns": {
+        "x": {
+         "type": "integer",
+         "check": "x @@ 1"
+        }
+       }
+      }
+     }
+    }
    }
   },
   {
    "id": "value-validate-checks-reject",
    "value_case": {
     "function": "validate_checks",
-    "args": [{"t": {"columns": {"x": {"type": "integer", "check": "x @@ 1"}}}}, "turso"],
-    "expected": {"err": {"code": "uncompilable_check", "message": "CHECK on 't' can be neither natively enforced on 'turso' nor compiled: x @@ 1", "category": "server", "detail": {"table": "t", "expression": "x @@ 1", "dialect": "turso"}}}
+    "args": [
+     {
+      "t": {
+       "columns": {
+        "x": {
+         "type": "integer",
+         "check": "x @@ 1"
+        }
+       }
+      }
+     },
+     "turso"
+    ],
+    "expected": {
+     "err": {
+      "code": "uncompilable_check",
+      "message": "CHECK on 't' can be neither natively enforced on 'turso' nor compiled: x @@ 1",
+      "category": "server",
+      "detail": {
+       "table": "t",
+       "expression": "x @@ 1",
+       "dialect": "turso"
+      }
+     }
+    }
    }
   },
   {
    "id": "value-dialect-enforces-check-native",
-   "value_case": {"function": "dialect_enforces_check", "args": ["postgresql"], "expected": true}
+   "value_case": {
+    "function": "dialect_enforces_check",
+    "args": [
+     "postgresql"
+    ],
+    "expected": true
+   }
   },
   {
    "id": "value-dialect-enforces-check-nonnative",
-   "value_case": {"function": "dialect_enforces_check", "args": ["turso"], "expected": false}
+   "value_case": {
+    "function": "dialect_enforces_check",
+    "args": [
+     "turso"
+    ],
+    "expected": false
+   }
   },
   {
    "id": "value-table-checks",
    "value_case": {
     "function": "table_checks",
-    "args": [{"columns": {"price": {"type": "integer", "check": "price > 0"}, "qty": {"type": "integer"}}, "constraints": {"sane": {"type": "check", "expression": "qty <= 1000"}}}],
-    "expected": ["price > 0", "qty <= 1000"]
+    "args": [
+     {
+      "columns": {
+       "price": {
+        "type": "integer",
+        "check": "price > 0"
+       },
+       "qty": {
+        "type": "integer"
+       }
+      },
+      "constraints": {
+       "sane": {
+        "type": "check",
+        "expression": "qty <= 1000"
+       }
+      }
+     }
+    ],
+    "expected": [
+     "price > 0",
+     "qty <= 1000"
+    ]
    }
   },
   {
    "id": "value-enforce-checks-ok",
    "value_case": {
     "function": "enforce_checks",
-    "args": [{"products": {"columns": {"price": {"type": "integer", "check": "price > 0"}, "qty": {"type": "integer"}}, "constraints": {"sane": {"type": "check", "expression": "qty <= 1000"}}}}, "products", {"price": 5, "qty": 10}, "turso"],
-    "expected": {"ok": {"price": 5, "qty": 10}}
+    "args": [
+     {
+      "products": {
+       "columns": {
+        "price": {
+         "type": "integer",
+         "check": "price > 0"
+        },
+        "qty": {
+         "type": "integer"
+        }
+       },
+       "constraints": {
+        "sane": {
+         "type": "check",
+         "expression": "qty <= 1000"
+        }
+       }
+      }
+     },
+     "products",
+     {
+      "price": 5,
+      "qty": 10
+     },
+     "turso"
+    ],
+    "expected": {
+     "ok": {
+      "price": 5,
+      "qty": 10
+     }
+    }
    }
   },
   {
    "id": "value-enforce-checks-violation",
    "value_case": {
     "function": "enforce_checks",
-    "args": [{"products": {"columns": {"price": {"type": "integer", "check": "price > 0"}, "qty": {"type": "integer"}}, "constraints": {"sane": {"type": "check", "expression": "qty <= 1000"}}}}, "products", {"price": 0, "qty": 10}, "turso"],
-    "expected": {"err": {"code": "check_violation", "message": "Row violates CHECK (price > 0)", "category": "client", "detail": {"expression": "price > 0", "row": {"price": 0, "qty": 10}}}}
+    "args": [
+     {
+      "products": {
+       "columns": {
+        "price": {
+         "type": "integer",
+         "check": "price > 0"
+        },
+        "qty": {
+         "type": "integer"
+        }
+       },
+       "constraints": {
+        "sane": {
+         "type": "check",
+         "expression": "qty <= 1000"
+        }
+       }
+      }
+     },
+     "products",
+     {
+      "price": 0,
+      "qty": 10
+     },
+     "turso"
+    ],
+    "expected": {
+     "err": {
+      "code": "check_violation",
+      "message": "Row violates CHECK (price > 0)",
+      "category": "client",
+      "detail": {
+       "expression": "price > 0",
+       "row": {
+        "price": 0,
+        "qty": 10
+       }
+      }
+     }
+    }
    }
   },
   {
@@ -3399,6 +3562,111 @@
      }
     }
    }
+  },
+  {
+   "id": "exports-public-surface",
+   "exports": true,
+   "expect_names": [
+    "diff",
+    "validate_schema",
+    "apply",
+    "to_sql",
+    "requires_reconstruction",
+    "reconstruction_sql",
+    "parse_check",
+    "check_holds",
+    "dialect_enforces_check",
+    "table_checks",
+    "enforce_checks",
+    "validate_checks",
+    "select",
+    "insert",
+    "update",
+    "delete",
+    "raw",
+    "checked_select",
+    "checked_insert",
+    "checked_update",
+    "checked_delete",
+    "execute",
+    "execute_one",
+    "execute_scalar",
+    "execute_many",
+    "transaction",
+    "operation",
+    "diff_result",
+    "Column",
+    "Index",
+    "Constraint",
+    "Table",
+    "Operation",
+    "Query",
+    "Ambiguity",
+    "DiffResult",
+    "POOL_FAULT_CODES",
+    "pool_fault",
+    "extract_table",
+    "sql_hash",
+    "build_query_event",
+    "build_migration_event",
+    "build_pool_event",
+    "build_transaction_event",
+    "instrumented_execute",
+    "emit_pool_event",
+    "POOL_LIFECYCLES",
+    "resolve_pool_key",
+    "empty_pool_registry",
+    "get_pool",
+    "is_idle",
+    "reap_idle",
+    "recreate_ephemeral",
+    "new_pool",
+    "acquire_connection",
+    "release_connection",
+    "lease_connection",
+    "open_pool",
+    "close_pool",
+    "should_retry",
+    "connect_with_retry",
+    "inspect",
+    "migrate",
+    "cutover_phases",
+    "cutover_advance",
+    "cutover_read_target",
+    "cutover_plan",
+    "copy_batch_query",
+    "bulk_copy_table",
+    "mirror_write",
+    "expand_schema",
+    "range_overlaps",
+    "range_contains",
+    "range_adjacent",
+    "array_append",
+    "array_set",
+    "array_remove",
+    "array_reindex",
+    "map_put",
+    "map_remove",
+    "closure_insert",
+    "closure_descendants",
+    "closure_ancestors",
+    "closure_delete",
+    "closure_move",
+    "enum_seed_queries",
+    "empty_write_queue",
+    "enqueue_write",
+    "merge_pending",
+    "drain_queue",
+    "queue_to_jsonl",
+    "queue_from_jsonl",
+    "backoff_delay",
+    "is_stalled",
+    "save_queue",
+    "load_queue",
+    "supervise_drain",
+    "enqueue_durable",
+    "run_drain_loop"
+   ]
   }
  ],
  "value_oracle_exempt": [

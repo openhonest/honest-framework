@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+import honest_persist
 from honest_persist import (
     apply,
     check_holds,
@@ -248,7 +249,22 @@ def _check_diff(case):
     return ok, f"ops={[(o['op'], o['table']) for o in result['operations']]} ambiguities={result['ambiguities']}"
 
 
+def _check_exports(case):
+    """The package's public surface (section 1) is exactly __all__: the listed names, no more and no
+    fewer, and every one resolvable as a real attribute. Catches a name emptied or dropped from
+    __all__, the whole __all__ removed, and a re-export import deleted."""
+    names = getattr(honest_persist, "__all__", None)
+    if names is None:
+        return False, "__all__ is missing"
+    expect = case["expect_names"]
+    if sorted(names) != sorted(expect):
+        return False, f"__all__ differs: {sorted(set(names) ^ set(expect))}"
+    missing = [n for n in names if not hasattr(honest_persist, n)]
+    return not missing, f"__all__ names not importable: {missing}"
+
+
 _CHECKERS = {
+    "exports": _check_exports,
     "diff": _check_diff,
     "to_sql": _check_to_sql,
     "apply": _check_apply,
@@ -264,6 +280,8 @@ _CHECKERS = {
 
 
 def _kind(case):
+    if "exports" in case:
+        return "exports"
     if "checked_query" in case:
         return "checked_query"
     if "execute" in case:
