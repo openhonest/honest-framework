@@ -653,14 +653,18 @@ def _probe_checked():
         bad.append("unknown where column should fault unknown_column")
     if checked_select(schema, "users", order_by=["-ghost"]).get("err", {}).get("code") != "unknown_column":
         bad.append("unknown order_by column should fault unknown_column")
-    if checked_select(schema, "ghost").get("err", {}).get("code") != "unknown_table":
-        bad.append("unknown table should fault unknown_table")
-    if checked_select(schema, "users", joins=[{"table": "ghost", "on": "x"}]).get("err", {}).get("code") != "unknown_table":
-        bad.append("unknown join table should fault unknown_table")
-    # the unknown_column fault names the offending column(s) and the declared set.
-    detail = checked_select(schema, "users", columns=["emial", "id"]).get("err", {}).get("detail", {})
-    if detail.get("columns") != ["emial"] or "email" not in detail.get("declared", []):
-        bad.append(f"unknown_column detail should name the bad column and the declared set: {detail}")
+    if checked_select(schema, "ghost").get("err") != {"code": "unknown_table", "message": "Table 'ghost' is not declared in the schema", "category": "server", "detail": {"table": "ghost"}}:
+        bad.append(f"an unknown table should fault unknown_table in full: {checked_select(schema, 'ghost')}")
+    if checked_select(schema, "users", joins=[{"table": "ghost", "on": "x"}]).get("err") != {"code": "unknown_table", "message": "Join table 'ghost' is not declared in the schema", "category": "server", "detail": {"table": "ghost"}}:
+        bad.append(f"an unknown join table should fault unknown_table in full: {checked_select(schema, 'users', joins=[{'table': 'ghost', 'on': 'x'}])}")
+    # the unknown_column fault names the offending column(s), the table, and the declared set, with the
+    # server category and the full message.
+    col_err = checked_select(schema, "users", columns=["emial", "id"]).get("err", {})
+    if col_err.get("category") != "server" or col_err.get("message") != "Column(s) ['emial'] not declared on table 'users'":
+        bad.append(f"unknown_column fault should carry its message and server category: {col_err}")
+    detail = col_err.get("detail", {})
+    if detail.get("columns") != ["emial"] or detail.get("table") != "users" or "email" not in detail.get("declared", []):
+        bad.append(f"unknown_column detail should name the bad column, table, and declared set: {detail}")
 
     # insert / update / delete: ok and unknown-column paths; the where=None branch on update and delete.
     if "ok" not in checked_insert(schema, "users", {"id": 1, "email": "a@b.co"}):
@@ -669,6 +673,10 @@ def _probe_checked():
         bad.append("unknown insert column should fault")
     if "ok" not in checked_update(schema, "users", {"status": "active"}, {"id": 1}):
         bad.append("valid checked_update should be ok")
+    # a multi-column update joins its SET assignments with ', ' (pins the set_clause separator)
+    multi_update = checked_update(schema, "users", {"status": "active", "email": "x"}, {"id": 1})
+    if "ok" not in multi_update or multi_update["ok"]["sql"] != "UPDATE users SET status = :set_status, email = :set_email WHERE id = :id":
+        bad.append(f"a multi-column update should comma-join its SET assignments: {multi_update}")
     if "ok" not in checked_update(schema, "users", {"status": "active"}, None):
         bad.append("checked_update with where=None should be ok")
     if checked_update(schema, "users", {"nope": 1}, {"id": 1}).get("err", {}).get("code") != "unknown_column":
@@ -915,9 +923,25 @@ def _probe_instrumented():
         q = {"sql": "SELECT id FROM users WHERE id = :id", "params": {"id": 1}}
         conn = _RowsConn([{"id": 1}, {"id": 2}], 2)
 
-        # No emit wired in: run and return, no event.
-        if await instrumented_execute(q, conn, None, "users_db", "select", "r1", True) != [{"id": 1}, {"id": 2}]:
+        # No emit wired in: run and return the rows, no event, and no stderr (the emit-None fast path
+        # never touches the absent emit).
+        no_emit_err = io.StringIO()
+        with redirect_stderr(no_emit_err):
+            no_emit_rows = await instrumented_execute(q, conn, None, "users_db", "select", "r1", True)
+        if no_emit_rows != [{"id": 1}, {"id": 2}]:
             bad.append("with no emit, instrumented_execute should just return the rows")
+        if no_emit_err.getvalue():
+            bad.append(f"a no-emit instrumented_execute should not touch emit (no stderr): {no_emit_err.getvalue()!r}")
+
+        # A failing emit is swallowed and logged to stderr; the query result is unaffected.
+        async def down_emit(event_type, aggregate_type, aggregate_id, payload):
+            raise RuntimeError("emit is down")
+
+        down_err = io.StringIO()
+        with redirect_stderr(down_err):
+            down_rows = await instrumented_execute(q, conn, down_emit, "users_db", "select", "r1", True)
+        if down_rows != [{"id": 1}, {"id": 2}] or "query event emit failed" not in down_err.getvalue():
+            bad.append(f"a failing query-event emit should be swallowed and logged: {down_rows}, {down_err.getvalue()!r}")
 
         # Success: one hf.persist.query event, keyed db:table, fault_code null, row_count set.
         calls = []
@@ -1238,8 +1262,16 @@ def _probe_pool_events():
         async def emit_down(event_type, aggregate_type, aggregate_id, payload):
             raise ValueError("emit is down")
 
-        await emit_pool_event(emit_down, "x", "error", 1, 0, 1, None, "pool_exhausted", "saturated")
-        await emit_pool_event(None, "x", "created", 1, 1, 0, None, None, None)
+        pool_down_err = io.StringIO()
+        with redirect_stderr(pool_down_err):
+            await emit_pool_event(emit_down, "x", "error", 1, 0, 1, None, "pool_exhausted", "saturated")
+        if "pool event emit failed" not in pool_down_err.getvalue():
+            bad.append(f"a failing pool-event emit should be swallowed and logged: {pool_down_err.getvalue()!r}")
+        none_err = io.StringIO()
+        with redirect_stderr(none_err):
+            await emit_pool_event(None, "x", "created", 1, 1, 0, None, None, None)
+        if none_err.getvalue():
+            bad.append(f"a no-emit pool event should not touch emit (no stderr): {none_err.getvalue()!r}")
         return bad
 
     return asyncio.run(_run())
@@ -1346,21 +1378,30 @@ def _probe_supervisor():
         events = []
 
         async def emit(event_type, aggregate_type, aggregate_id, payload):
-            events.append(event_type)
+            events.append((event_type, aggregate_type, aggregate_id, payload))
 
         async def emit_down(event_type, aggregate_type, aggregate_id, payload):
             raise ValueError("emit is down")
 
-        for sink, label in ((emit, "emit"), (None, "no emit"), (emit_down, "failing emit")):
+        down_err = io.StringIO()
+        none_err = io.StringIO()
+        for sink, label, capture in ((emit, "emit", io.StringIO()), (None, "no emit", none_err), (emit_down, "failing emit", down_err)):
             raised = False
             try:
-                await supervise_drain(insert_only, conn, boom, "id", 7 * hour, 0, sink)
+                with redirect_stderr(capture):
+                    await supervise_drain(insert_only, conn, boom, "id", 7 * hour, 0, sink)
             except RuntimeError:
                 raised = True
             if not raised:
                 bad.append(f"a stalled queue should still raise the fault with {label}")
-        if "hf.persist.queue_stalled" not in events:
-            bad.append("a stalled queue should emit hf.persist.queue_stalled")
+        if none_err.getvalue():
+            bad.append(f"a no-emit stalled queue should not touch emit (no stderr): {none_err.getvalue()!r}")
+        if not events or events[0][:3] != ("hf.persist.queue_stalled", "persist", "write_queue"):
+            bad.append(f"a stalled queue should emit hf.persist.queue_stalled for the write_queue: {events}")
+        elif events[0][3] != {"queue_depth": len(insert_only), "stalled_for_ns": 7 * hour, "fault_code": "queue_stalled"}:
+            bad.append(f"the queue_stalled payload should carry the depth, stall time, and fault code: {events[0][3]}")
+        if "queue_stalled emit failed" not in down_err.getvalue():
+            bad.append(f"a swallowed queue_stalled emit failure should log to stderr: {down_err.getvalue()!r}")
         return bad
 
     return asyncio.run(_run())
@@ -1489,7 +1530,7 @@ def _probe_connection_pool():
         created = []
 
         async def emit_created(event_type, aggregate_type, aggregate_id, payload):
-            created.append(payload["event"])
+            created.append(payload)
 
         def classify(exc):
             return "unresolvable_dsn"
@@ -1509,8 +1550,10 @@ def _probe_connection_pool():
             conn.close()
 
         opened = await open_pool("main", flaky_connect, classify, close_unused, 2, 3, 10, sleep, emit_created)
-        if "ok" not in opened or opened["ok"]["size"] != 2 or created != ["retry", "created"]:
-            bad.append(f"open_pool should establish each connection resiliently and emit created: {opened}, {created}")
+        if "ok" not in opened or opened["ok"]["size"] != 2 or [p["event"] for p in created] != ["retry", "created"]:
+            bad.append(f"open_pool should establish each connection resiliently and emit created: {opened}, {[p['event'] for p in created]}")
+        elif (created[-1]["pool_size"], created[-1]["active"], created[-1]["waiting"]) != (2, 0, 0):
+            bad.append(f"the created pool event should report the pool size and no active/waiting: {created[-1]}")
 
         # A connection that cannot be established closes the ones already opened — none leak — and
         # returns the establishment fault.
@@ -1608,7 +1651,7 @@ def _probe_connect_retry():
         retries_seen = []
 
         async def emit(event_type, aggregate_type, aggregate_id, payload):
-            retries_seen.append(payload["event"])
+            retries_seen.append(payload)
 
         slept = []
 
@@ -1616,8 +1659,10 @@ def _probe_connect_retry():
             slept.append(delay_ms)
 
         opened = await connect_with_retry({"database": "main"}, flaky, classify, 3, 10, sleep, emit)
-        if "ok" not in opened or retries_seen != ["retry"] or slept != [20]:
+        if "ok" not in opened or [p["event"] for p in retries_seen] != ["retry"] or slept != [20]:
             bad.append(f"a transient failure should retry once, sleep the backoff, then connect: {opened}, {retries_seen}, {slept}")
+        elif (retries_seen[0]["pool_size"], retries_seen[0]["active"], retries_seen[0]["waiting"]) != (0, 0, 0):
+            bad.append(f"a retry pool event should report no pool counters yet (0/0/0): {retries_seen[0]}")
         else:
             conn = opened["ok"]
             await conn.execute("CREATE TABLE t (x INTEGER)")
@@ -1633,14 +1678,16 @@ def _probe_connect_retry():
         down_events = []
 
         async def emit_down(event_type, aggregate_type, aggregate_id, payload):
-            down_events.append(payload["event"])
+            down_events.append(payload)
 
         async def sleep_noop(delay_ms):
             return None
 
         failed = await connect_with_retry({"database": "main"}, down, classify, 2, 10, sleep_noop, emit_down)
-        if failed.get("err", {}).get("code") != "unresolvable_dsn" or down_events != ["retry", "retry", "error"]:
-            bad.append(f"an unresolvable DSN should exhaust its retries and emit error: {failed}, {down_events}")
+        if failed.get("err", {}).get("code") != "unresolvable_dsn" or [p["event"] for p in down_events] != ["retry", "retry", "error"]:
+            bad.append(f"an unresolvable DSN should exhaust its retries and emit error: {failed}, {[p['event'] for p in down_events]}")
+        elif (down_events[-1]["pool_size"], down_events[-1]["active"], down_events[-1]["waiting"]) != (0, 0, 0):
+            bad.append(f"an error pool event should report no pool counters (0/0/0): {down_events[-1]}")
 
         # A rejected credential fails fast: no retry, no sleep.
         async def denied(selector):
