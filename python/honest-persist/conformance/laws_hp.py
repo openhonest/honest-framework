@@ -2313,7 +2313,76 @@ def _probe_django_loader():
         class Meta:
             app_label = "shop"
 
+    # A model covering every _DJANGO_TO_SQL internal type, so each non-text mapping is pinned; plus the
+    # Big/Small auto primary-key variants in their own models.
+    class AllTypes(models.Model):
+        c = models.CharField(max_length=1)
+        slug = models.SlugField()
+        email = models.EmailField()
+        i = models.IntegerField()
+        bi = models.BigIntegerField()
+        si = models.SmallIntegerField()
+        pi = models.PositiveIntegerField()
+        psi = models.PositiveSmallIntegerField()
+        f = models.FloatField()
+        b = models.BooleanField()
+        u = models.UUIDField()
+        dt = models.DateTimeField()
+        d = models.DateField()
+        t = models.TimeField()
+        dec = models.DecimalField(max_digits=5, decimal_places=2)
+        bin = models.BinaryField()
+        j = models.JSONField()
+        txt = models.TextField()
+
+        class Meta:
+            app_label = "t"
+
+    class BigPk(models.Model):
+        id = models.BigAutoField(primary_key=True)
+
+        class Meta:
+            app_label = "t"
+
+    class SmallPk(models.Model):
+        id = models.SmallAutoField(primary_key=True)
+
+        class Meta:
+            app_label = "t"
+
     bad = []
+    all_cols = load_schema_from_django(AllTypes)["t_alltypes"]["columns"]
+    all_expected = {
+        "id": {"type": "integer", "nullable": False, "primary_key": True},
+        "c": {"type": "text", "nullable": False}, "slug": {"type": "text", "nullable": False}, "email": {"type": "text", "nullable": False},
+        "i": {"type": "integer", "nullable": False}, "bi": {"type": "integer", "nullable": False}, "si": {"type": "integer", "nullable": False},
+        "pi": {"type": "integer", "nullable": False}, "psi": {"type": "integer", "nullable": False},
+        "f": {"type": "real", "nullable": False}, "b": {"type": "boolean", "nullable": False}, "u": {"type": "uuid", "nullable": False},
+        "dt": {"type": "timestamptz", "nullable": False}, "d": {"type": "date", "nullable": False}, "t": {"type": "time", "nullable": False},
+        "dec": {"type": "numeric", "nullable": False}, "bin": {"type": "bytea", "nullable": False}, "j": {"type": "jsonb", "nullable": False},
+        "txt": {"type": "text", "nullable": False},
+    }
+    if all_cols != all_expected:
+        bad.append(f"django type map wrong: {all_cols}")
+    if load_schema_from_django(BigPk)["t_bigpk"]["columns"]["id"]["type"] != "integer":
+        bad.append("a BigAutoField primary key should map to integer")
+    if load_schema_from_django(SmallPk)["t_smallpk"]["columns"]["id"]["type"] != "integer":
+        bad.append("a SmallAutoField primary key should map to integer")
+
+    # An explicit AutoField primary key (the default id is BigAutoField), a standalone unique column,
+    # and an unmapped field type that falls back to text.
+    class Cov(models.Model):
+        id = models.AutoField(primary_key=True)
+        uniq = models.CharField(max_length=1, unique=True)
+        dur = models.DurationField()
+
+        class Meta:
+            app_label = "t"
+
+    cov = load_schema_from_django(Cov)["t_cov"]["columns"]
+    if cov != {"id": {"type": "integer", "nullable": False, "primary_key": True}, "uniq": {"type": "text", "nullable": False, "unique": True}, "dur": {"type": "text", "nullable": False}}:
+        bad.append(f"AutoField/unique/unmapped-fallback wrong: {cov}")
+
     order = load_schema_from_django(Customer, Order).get("shop_order", {}).get("columns", {})
     expected = {
         "id": {"type": "integer", "nullable": False, "primary_key": True},
