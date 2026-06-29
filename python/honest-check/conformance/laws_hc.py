@@ -94,11 +94,28 @@ def _probe_formats():
 # --------------------------------------------------------------------------- config
 
 
+def _probe_exports():
+    import honest_check
+
+    bad = []
+    expect = ["Diagnostic", "check_source", "startup_check", "HonestCheckError"]
+    if sorted(getattr(honest_check, "__all__", [])) != sorted(expect):
+        bad.append(f"__all__ should be exactly the public surface: {getattr(honest_check, '__all__', None)}")
+    missing = [n for n in expect if not hasattr(honest_check, n)]
+    if missing:
+        bad.append(f"__all__ names not importable: {missing}")
+    return bad
+
+
 def _probe_config():
     bad = []
     full = normalize_config({"check": {"paths": ["src/"], "exclude": ["x/**"], "severity": "error"}, "rules": {"disable": ["HC003"]}})
-    if full["paths"] != ["src/"] or full["severity"] != "error" or full["disable"] != ["HC003"]:
+    if full["paths"] != ["src/"] or full["severity"] != "error" or full["disable"] != ["HC003"] or full["exclude"] != ["x/**"]:
         bad.append(f"normalize_config wrong: {full}")
+    # A per-rule value that is not a mapping (no .items) is not kept as rule_config; only dict configs are.
+    nondict = normalize_config({"rules": {"disable": ["HC003"], "HC003": "notamapping", "HC-OR003": {"min_run": 4}}})
+    if nondict["rule_config"] != {"HC-OR003": {"min_run": 4}}:
+        bad.append(f"only mapping rule values are kept as rule_config: {nondict['rule_config']}")
     if empty_config()["severity"] != "warning":
         bad.append("empty_config default severity wrong")
     configured = normalize_config({"rules": {"disable": ["HC003"], "HC-OR003": {"min_run": 4}}, "startup": {"on_error": "halt"}})
@@ -442,6 +459,7 @@ def _probe_routes():
 
 def run():
     probes = {
+        "exports": _probe_exports(),
         "routes": _probe_routes(),
         "formats": _probe_formats(),
         "config": _probe_config(),

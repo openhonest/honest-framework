@@ -18,14 +18,18 @@ from honest_check import check_source
 
 
 def _triples(diagnostics):
-    return [{"rule": d["rule"], "severity": d["severity"], "line": d["line"]} for d in diagnostics]
+    return [{"rule": d["rule"], "severity": d["severity"], "line": d["line"], "col": d["col"], "message": d["message"]} for d in diagnostics]
 
 
 def _present(expected, actual):
+    # rule/severity/line are always matched; col and message are matched only when the case asserts
+    # them (so a case can pin a diagnostic's exact column and message, catching those mutations).
     return any(
         a["rule"] == expected["rule"]
         and a["severity"] == expected["severity"]
         and a["line"] == expected["line"]
+        and ("col" not in expected or a["col"] == expected["col"])
+        and ("message" not in expected or a["message"] == expected["message"])
         for a in actual
     )
 
