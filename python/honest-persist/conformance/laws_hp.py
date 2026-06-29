@@ -1821,6 +1821,14 @@ def _probe_abstractions():
         loose = expand_schema({"r": {"columns": {"s": {"type": "range", "bound_type": "text"}}}})
         if loose["r"]["columns"]["s_lower"] != {"type": "text"}:
             bad.append(f"a range without nullability should give a plain bound column: {loose}")
+        # A range with no bound_type at all defaults its bounds to integer (the bound_type default).
+        nobt = expand_schema({"r2": {"columns": {"s": {"type": "range"}}}})["r2"]["columns"]
+        if nobt["s_lower"] != {"type": "integer"}:
+            bad.append(f"a range without bound_type should default to integer bounds: {nobt}")
+        # A range column ADDS its CHECK to the table's EXISTING constraints, never replacing them.
+        with_existing = expand_schema({"t2": {"columns": {"id": {"type": "integer", "primary_key": True}, "span": {"type": "range", "bound_type": "integer"}}, "constraints": {"existing": {"type": "check", "expression": "id > 0"}}}})
+        if with_existing["t2"].get("constraints") != {"existing": {"type": "check", "expression": "id > 0"}, "span_range": {"type": "check", "expression": "span_lower <= span_upper"}}:
+            bad.append(f"a range CHECK should be added to, not replace, the existing constraints: {with_existing['t2'].get('constraints')}")
 
         # the predicates build parameterized conditions over the bound columns.
         if range_overlaps("span", 3, 9) != {"sql": "span_lower <= :span_ub AND span_upper >= :span_lb", "params": {"span_ub": 9, "span_lb": 3}}:
@@ -1902,6 +1910,29 @@ def _probe_arrays_maps():
         mj = mapped.get("_hp_map_u_prefs", {}).get("columns", {})
         if mj.get("owner_id") != {"type": "integer", "nullable": False} or mj.get("key") != {"type": "text", "nullable": False}:
             bad.append(f"expand_schema should generate the map junction from the table primary-key owner type: {mj}")
+        # element_type / key_type / value_type other than the text default are carried into the junction.
+        intarr = expand_schema({"p": {"columns": {"id": {"type": "text", "primary_key": True}, "xs": {"type": "array", "element_type": "integer"}}}})
+        if intarr["_hp_array_p_xs"]["columns"]["value"] != {"type": "integer", "nullable": False}:
+            bad.append(f"an array element_type should set the junction value type: {intarr['_hp_array_p_xs']['columns'].get('value')}")
+        intmap = expand_schema({"u": {"columns": {"uid": {"type": "integer", "primary_key": True}, "m": {"type": "map", "key_type": "integer", "value_type": "integer"}}}})
+        if intmap["_hp_map_u_m"]["columns"] != {"owner_id": {"type": "integer", "nullable": False}, "key": {"type": "integer", "nullable": False}, "value": {"type": "integer", "nullable": False}}:
+            bad.append(f"map key_type/value_type should set the junction column types: {intmap['_hp_map_u_m']['columns']}")
+        # element_type/key_type/value_type defaults to text when undeclared (the get defaults).
+        if expand_schema({"p": {"columns": {"id": {"type": "text", "primary_key": True}, "xs": {"type": "array"}}}})["_hp_array_p_xs"]["columns"]["value"] != {"type": "text", "nullable": False}:
+            bad.append("an array with no element_type should default the junction value to text")
+        if expand_schema({"u": {"columns": {"id": {"type": "integer", "primary_key": True}, "m": {"type": "map"}}}})["_hp_map_u_m"]["columns"] != {"owner_id": {"type": "integer", "nullable": False}, "key": {"type": "text", "nullable": False}, "value": {"type": "text", "nullable": False}}:
+            bad.append("a map with no key/value type should default both to text")
+        # _owner_type: a table-level text primary key types the owner_id text (not the integer fallback),
+        # and a primary-key column with no declared type falls back to integer (column- and table-level).
+        if expand_schema({"d": {"columns": {"k": {"type": "text"}, "xs": {"type": "array", "element_type": "text"}}, "primary_key": ["k"]}})["_hp_array_d_xs"]["columns"]["owner_id"] != {"type": "text", "nullable": False}:
+            bad.append("a table-level primary key should type the junction owner_id")
+        if expand_schema({"e": {"columns": {"k": {"primary_key": True}, "xs": {"type": "array", "element_type": "text"}}}})["_hp_array_e_xs"]["columns"]["owner_id"] != {"type": "integer", "nullable": False}:
+            bad.append("a column-level primary key with no type defaults the owner to integer")
+        if expand_schema({"g": {"columns": {"k": {}, "xs": {"type": "array", "element_type": "text"}}, "primary_key": ["k"]}})["_hp_array_g_xs"]["columns"]["owner_id"] != {"type": "integer", "nullable": False}:
+            bad.append("a table-level primary key column with no type defaults the owner to integer")
+        # array_set builds the full UPDATE over the junction.
+        if array_set("posts", "tags", "p1", 0, "y") != {"sql": "UPDATE _hp_array_posts_tags SET value = :set_value WHERE owner_id = :owner_id AND ordinal = :ordinal", "params": {"set_value": "y", "owner_id": "p1", "ordinal": 0}}:
+            bad.append(f"array_set full query wrong: {array_set('posts', 'tags', 'p1', 0, 'y')}")
 
         # No declared primary key falls back to an integer owner_id.
         noid = expand_schema({"t": {"columns": {"xs": {"type": "array", "element_type": "integer"}}}})
@@ -1969,8 +2000,8 @@ def _probe_hierarchy():
         if expanded["nodes"]["columns"]["parent"] != {"type": "text", "nullable": True}:
             bad.append(f"expand_schema should make the hierarchy column a nullable parent: {expanded['nodes']}")
         closure = expanded.get("_hp_closure_nodes", {}).get("columns", {})
-        if closure.get("ancestor") != {"type": "text", "nullable": False} or closure.get("depth") != {"type": "integer", "nullable": False}:
-            bad.append(f"expand_schema should generate the closure table: {closure}")
+        if closure != {"ancestor": {"type": "text", "nullable": False}, "descendant": {"type": "text", "nullable": False}, "depth": {"type": "integer", "nullable": False}}:
+            bad.append(f"expand_schema should generate the closure table (ancestor/descendant/depth, node-typed): {closure}")
 
         # build a real tree on SQLite: A root, B under A, C under B, D root.
         conn = _SqliteConn()
@@ -2047,6 +2078,10 @@ def _probe_enums():
             bad.append(f"enum_seed_queries (sqlite) wrong: {enum_seed_queries(expanded, 'sqlite')}")
         if enum_seed_queries(expanded, "postgresql")[0]["sql"] != "INSERT INTO _hp_enum_orders_status (value) VALUES (:value) ON CONFLICT DO NOTHING":
             bad.append(f"enum_seed_queries (postgresql) wrong: {enum_seed_queries(expanded, 'postgresql')}")
+        if enum_seed_queries(expanded, "turso")[0]["sql"] != "INSERT OR IGNORE INTO _hp_enum_orders_status (value) VALUES (:value)":
+            bad.append(f"enum_seed_queries (turso) should use INSERT OR IGNORE: {enum_seed_queries(expanded, 'turso')}")
+        if enum_seed_queries(expanded, "mysql")[0]["sql"] != "INSERT INTO _hp_enum_orders_status (value) VALUES (:value)":
+            bad.append(f"enum_seed_queries on an unmapped dialect should fall back to plain INSERT: {enum_seed_queries(expanded, 'mysql')}")
 
         # migrate to real SQLite with foreign keys enforced: declared values pass, others are rejected.
         conn = _SqliteConn()
