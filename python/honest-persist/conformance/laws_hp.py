@@ -2448,6 +2448,53 @@ def _probe_django_loader():
     return asyncio.run(_run())
 
 
+def _probe_ambiguity():
+    """Ambiguity detection (section 5.3): the Levenshtein edit distance, the confidence scoring
+    (1.0 types match + similar names, 0.7 types match, 0.0 types differ; below 0.5 not reported), and
+    the full possible_rename record with its exclusions."""
+    from honest_persist.ambiguity import _confidence, _levenshtein, detect_ambiguities
+
+    bad = []
+    for left, right, expected in [("", "abc", 3), ("a", "", 1), ("abc", "", 3), ("abc", "abc", 0), ("abc", "abd", 1), ("abc", "ab", 1), ("kitten", "sitting", 3), ("ab", "ba", 2), ("ab", "abcd", 2)]:
+        if _levenshtein(left, right) != expected:
+            bad.append(f"_levenshtein({left!r}, {right!r}) should be {expected}: {_levenshtein(left, right)}")
+
+    text = {"type": "text"}
+    if _confidence(text, {"type": "integer"}, "a", "a") != 0.0:
+        bad.append("differing types give confidence 0.0")
+    if _confidence(text, text, "emial", "email") != 1.0:
+        bad.append("matching types and similar names give 1.0")
+    if _confidence(text, text, "first_name", "surname") != 0.7:
+        bad.append("matching types but distant names give 0.7")
+    # Names at edit distance exactly 3 are NOT similar (the <= 2 boundary): confidence 0.7, not 1.0.
+    if _levenshtein("cat", "dog") != 3 or _confidence(text, text, "cat", "dog") != 0.7:
+        bad.append(f"names at distance 3 are not similar (0.7, not 1.0): {_confidence(text, text, 'cat', 'dog')}")
+
+    # A drop+add of a same-typed, similar-named column is one possible_rename, recorded in full.
+    found = detect_ambiguities({"t": {"columns": {"emial": text}}}, {"t": {"columns": {"email": text}}}, {})
+    if found != [{
+        "type": "possible_rename", "table": "t", "from_column": "emial", "to_column": "email",
+        "confidence": 1.0, "message": "Column 'emial' dropped and 'email' added in 't' with matching type; possible rename.",
+    }]:
+        bad.append(f"a possible rename should be recorded in full: {found}")
+    # Below 0.5 (differing types) is not reported; renamed_from and a decision both exclude it.
+    if detect_ambiguities({"t": {"columns": {"a": text}}}, {"t": {"columns": {"b": {"type": "integer"}}}}, {}):
+        bad.append("a drop+add with differing types is below threshold and not reported")
+    if detect_ambiguities({"t": {"columns": {"emial": text}}}, {"t": {"columns": {"email": {**text, "renamed_from": "emial"}}}}, {}):
+        bad.append("a renamed_from hint resolves the ambiguity")
+    if detect_ambiguities({"t": {"columns": {"emial": text}}}, {"t": {"columns": {"email": text}}}, {"t.email": "rename"}):
+        bad.append("a decisions entry resolves the ambiguity")
+    # A hinted rename source must be removed from `dropped` (the hinted set): with src renamed to dst,
+    # src must not become a false ambiguity against another, same-typed added column.
+    if detect_ambiguities({"t": {"columns": {"src": text}}}, {"t": {"columns": {"dst": {**text, "renamed_from": "src"}, "extra": text}}}, {}):
+        bad.append("a hinted rename source must be excluded from the dropped set")
+    # A renamed target must be removed from `added`: with src renamed to dst, dst must not become a
+    # false ambiguity against another, same-typed dropped column.
+    if detect_ambiguities({"t": {"columns": {"src": text, "other": text}}}, {"t": {"columns": {"dst": {**text, "renamed_from": "src"}}}}, {}):
+        bad.append("a renamed target must be excluded from the added set")
+    return bad
+
+
 def _probe_deps():
     """Operation dependency ordering (section 5.4): the _DEPENDS_ON / _MUST_PRECEDE rule tables, the
     relatedness test, build_dependencies, and topological_sort (order, deterministic tie-break, cycle)."""
@@ -2575,6 +2622,7 @@ def run():
         "instrumented": _probe_instrumented(),
         "types_defaults": _probe_types_defaults(),
         "deps": _probe_deps(),
+        "ambiguity": _probe_ambiguity(),
     }
     violations = [v for g in groups for v in g["violations"]]
     for name, messages in probes.items():
