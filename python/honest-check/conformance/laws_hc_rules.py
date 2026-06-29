@@ -1955,6 +1955,53 @@ def _probe_rule_messages() -> list[str]:
     return bad
 
 
+# --- Vocabulary-member and conditional-branch coverage (section 9.6): one case per bounded-set
+# member so emptying any member is caught, plus the conditional message branches. ---
+_case("p004_mut_append", "d = {}\nd.append()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_add", "d = {}\nd.add()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_update", "d = {}\nd.update()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_pop", "d = {}\nd.pop()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_popitem", "d = {}\nd.popitem()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_clear", "d = {}\nd.clear()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_insert", "d = {}\nd.insert()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_remove", "d = {}\nd.remove()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_extend", "d = {}\nd.extend()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_setdefault", "d = {}\nd.setdefault()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_discard", "d = {}\nd.discard()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_sort", "d = {}\nd.sort()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_mut_reverse", "d = {}\nd.reverse()\ndef f():\n    return d\n", must_fire=("HC-P004",))
+_case("p004_listcomp", "c = [x for x in y]\nc.append(1)\ndef f():\n    return c\n", must_fire=("HC-P004",))
+_case("p004_setcomp", "c = {x for x in y}\nc.add(1)\ndef f():\n    return c\n", must_fire=("HC-P004",))
+_case("p004_dictcomp", "c = {k: v for k, v in y}\nc.clear()\ndef f():\n    return c\n", must_fire=("HC-P004",))
+_case("p006_cache_cache", "@cache\ndef f(self):\n    return 1\n", must_fire=("HC-P006",))
+_case("p006_cache_memoize", "@memoize\ndef f(self):\n    return 1\n", must_fire=("HC-P006",))
+_case("p006_cache_cached_property", "@cached_property\ndef f(self):\n    return 1\n", must_fire=("HC-P006",))
+_case("p011_useEffect", "def setup():\n    useEffect(h)\n", must_fire=("HC-P011",))
+_case("p011_useLayoutEffect", "def setup():\n    useLayoutEffect(h)\n", must_fire=("HC-P011",))
+_case("p011_removeEventListener", "def setup():\n    removeEventListener(h)\n", must_fire=("HC-P011",))
+_case("p011_ngOnInit", "def setup():\n    ngOnInit(h)\n", must_fire=("HC-P011",))
+_case("p011_ngOnDestroy", "def setup():\n    ngOnDestroy(h)\n", must_fire=("HC-P011",))
+_case("p011_componentDidMount", "def setup():\n    componentDidMount(h)\n", must_fire=("HC-P011",))
+_case("p011_componentDidUpdate", "def setup():\n    componentDidUpdate(h)\n", must_fire=("HC-P011",))
+_case("p011_componentWillUnmount", "def setup():\n    componentWillUnmount(h)\n", must_fire=("HC-P011",))
+_case("p013_tenant_id", "from honest_type import vocabulary, binding, link, predicate\nV = vocabulary({'k': predicate(p)})\nB = binding({'k': 'tenant_id'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n", must_fire=("HC-P013",))
+_case("p013_credential", "from honest_type import vocabulary, binding, link, predicate\nV = vocabulary({'k': predicate(p)})\nB = binding({'k': 'credential'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n", must_fire=("HC-P013",))
+_case("hc009_float", "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: float(s) > 0)})\n", must_fire=("HC009",))
+_case("hc009_index", "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: s[0])})\n", must_fire=("HC009",))
+_case("hc009_division", "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: s / 2)})\n", must_fire=("HC009",))
+_case("p003_base_ABC", "class C(ABC):\n    pass\n", must_not_fire=("HC-P003",))
+_case("p003_base_Exception", "class C(Exception):\n    pass\n", must_not_fire=("HC-P003",))
+_case("p003_base_BaseException", "class C(BaseException):\n    pass\n", must_not_fire=("HC-P003",))
+_case("p003_base_Error", "class C(Error):\n    pass\n", must_not_fire=("HC-P003",))
+_RULE_MESSAGES += [
+    ('HC-P004', 'd = {}\nd.append(1)\ndef f():\n    return d\n', "Reads module-level mutable state 'd' inside a non-boundary function. Module-level mutable state is hidden state — pass it as a parameter or move it into persist."),
+    ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(q)})\n", "Predicate types 'a' and 'b' may overlap — cannot be checked statically; verified by honest-test."),
+    ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': {'x'}, 'b': predicate(q)})\n", "Set type and predicate type ('a', 'b') may overlap on a Set value — the predicate is not evaluated here; verified by honest-test."),
+    ('HC006', "from honest_type import vocabulary, composed\nV = vocabulary({'a': {'x'}}, composed_types=[composed('combo', captures='ghost')])\n", "Composed type 'combo' captures unknown base type 'ghost'. Declare the base type in the vocabulary, or correct its name."),
+    ('HC-P003', 'class Widget:  # honest: ignore HC-P003\n    pass\n', 'HC-P003 suppressed by directive.'),
+]
+
+
 def run() -> int:
     failed = 0
     passed = 0
