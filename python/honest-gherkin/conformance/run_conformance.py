@@ -11,6 +11,7 @@ import json
 import sys
 from pathlib import Path
 
+import honest_gherkin
 from honest_gherkin import (
     compile_pattern,
     empty_registry,
@@ -18,6 +19,7 @@ from honest_gherkin import (
     match_step,
     parse_feature,
     register_step,
+    step_fault,
 )
 
 
@@ -72,11 +74,35 @@ def _check_fold(case):
     return ok, f"got {report}"
 
 
-_CHECKERS = {"parse": _check_parse, "compile": _check_compile, "match": _check_match, "fold": _check_fold}
+def _check_vocab(case):
+    """A bounded vocabulary (sections 2.1, 7) is exactly the closed set the spec names: the attribute
+    on the package must equal the expected members, frozen. Catches any member dropped, emptied, or
+    drifted from its named constant, and the whole set going missing."""
+    actual = getattr(honest_gherkin, case["vocab"], None)
+    expect = frozenset(case["expect_members"])
+    return actual == expect, f"{case['vocab']} = {actual!r}, expected {expect!r}"
+
+
+def _check_stepfault(case):
+    """step_fault (section 7) carries a fault as data: the exact four-key StepFault dict, never raised.
+    Catches any key renamed/emptied, any field swapped, and the field order of arguments."""
+    spec = case["stepfault"]
+    result = step_fault(spec["code"], spec["detail"], spec.get("scenario_name", ""), spec.get("step_text", ""))
+    return result == case["expect"], f"got {result!r}"
+
+
+_CHECKERS = {
+    "parse": _check_parse,
+    "compile": _check_compile,
+    "match": _check_match,
+    "fold": _check_fold,
+    "vocab": _check_vocab,
+    "stepfault": _check_stepfault,
+}
 
 
 def _kind(case):
-    for name in ("compile", "match", "fold"):
+    for name in ("compile", "match", "fold", "vocab", "stepfault"):
         if name in case:
             return name
     return "parse"

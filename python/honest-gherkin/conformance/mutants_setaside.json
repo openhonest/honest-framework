@@ -1,0 +1,3 @@
+{
+ "honest-gherkin/src/honest_gherkin/ir.py:False->True@class Step(TypedDict, total=False):": "TypedDict total= is a static-only annotation; at runtime total=True and total=False produce an identical class whose instances are plain dicts with no required-key enforcement. parse builds every Step with all four keys, so no constructible input distinguishes the two."
+}

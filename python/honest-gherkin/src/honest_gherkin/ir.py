@@ -12,14 +12,16 @@ STEP_KIND_WHEN = "when"
 STEP_KIND_THEN = "then"
 STEP_KIND_AND = "and"
 STEP_KIND_BUT = "but"
-STEP_KINDS = frozenset({"given", "when", "then", "and", "but"})
+# Built from the named constants so the set and its members are one source of truth (section 2.1):
+# a member can never drift from its constant, and dropping a constant breaks the import, not silently.
+STEP_KINDS = frozenset({STEP_KIND_GIVEN, STEP_KIND_WHEN, STEP_KIND_THEN, STEP_KIND_AND, STEP_KIND_BUT})
 
 FAULT_STEP_UNMATCHED = "step_unmatched"
 FAULT_AMBIGUOUS_STEP = "ambiguous_step"
 FAULT_ASSERTION_FAILED = "assertion_failed"
 FAULT_STEP_ERRORED = "step_errored"
 FAULT_BAD_FEATURE_SYNTAX = "bad_feature_syntax"
-FAULT_CODES = frozenset({"step_unmatched", "ambiguous_step", "assertion_failed", "step_errored", "bad_feature_syntax"})
+FAULT_CODES = frozenset({FAULT_STEP_UNMATCHED, FAULT_AMBIGUOUS_STEP, FAULT_ASSERTION_FAILED, FAULT_STEP_ERRORED, FAULT_BAD_FEATURE_SYNTAX})
 
 STEP_STATUSES = frozenset({"ok", "failed", "unmatched", "ambiguous", "errored"})
 SCENARIO_STATUSES = frozenset({"ok", "err", "skipped"})
