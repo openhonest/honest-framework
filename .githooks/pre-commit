@@ -24,3 +24,13 @@ if [ -n "$py" ] || [ -n "$feat" ]; then
     echo "feature gate (one gherkin per function)…"
     "$root/python/feature-gate.sh" || exit 1
 fi
+
+# The mutation gate fires on staged module source: every staged src file must be mutation-adequate
+# (each surviving mutant caught by a conformance case or declared equivalent in mutants_setaside.json).
+# File-scoped — it mutates only the changed files, not their whole module — so a single-file edit stays
+# fast; the whole-tree backstop (mutate-all.sh) runs in CI. mutate-affected.sh self-filters to src, so
+# a conformance-only or non-Python change never reaches it. This is the heaviest gate, so it runs last.
+if [ -n "$py" ]; then
+    echo "mutation gate (staged source is mutation-adequate)…"
+    "$root/python/mutate-affected.sh" || exit 1
+fi
