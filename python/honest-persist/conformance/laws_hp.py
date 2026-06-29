@@ -790,8 +790,9 @@ def _probe_transaction():
         # failure on the first write: rollback, no commit, no second write, failed_at = 0.
         first = _TxConn(0)
         r = await transaction([w1, w2], first)
-        if r.get("err", {}).get("code") != "write_failed" or r["err"]["detail"]["failed_at"] != 0:
-            bad.append(f"failure should be write_failed at index 0: {r}")
+        err_w = r.get("err", {})
+        if err_w.get("code") != "write_failed" or err_w.get("category") != "server" or not err_w.get("message") or err_w.get("detail", {}).get("failed_at") != 0:
+            bad.append(f"failure should be a write_failed server fault at index 0 with a message: {r}")
         if first.log != ["begin", ("execute", w1["sql"]), "rollback"]:
             bad.append(f"rollback path should stop at the failing write: {first.log}")
 
@@ -827,12 +828,24 @@ def _probe_transaction():
         if not fail_events or fail_events[0]["outcome"] != "constraint_violation" or fail_events[0]["failed_at"] != 1:
             bad.append(f"a failed transaction should emit constraint_violation with failed_at: {fail_events}")
 
-        # A failing emit is swallowed — the transaction result is unaffected (instrumentation never breaks a write).
+        # A failing emit is swallowed — the transaction result is unaffected — and logged to stderr.
         async def down_emit(event_type, aggregate_type, aggregate_id, payload):
             raise RuntimeError("emit is down")
 
-        if await transaction([w1], _TxConn(None), down_emit, "users_db", "req-3") != {"ok": {"results": [1]}}:
+        down_err = io.StringIO()
+        with redirect_stderr(down_err):
+            down_result = await transaction([w1], _TxConn(None), down_emit, "users_db", "req-3")
+        if down_result != {"ok": {"results": [1]}}:
             bad.append("a failing transaction-event emit must not break the transaction")
+        if "transaction event emit failed" not in down_err.getvalue():
+            bad.append(f"a swallowed transaction-emit failure should log to stderr: {down_err.getvalue()!r}")
+
+        # A no-emit transaction (emit defaults to None) touches no emit and writes no stderr.
+        no_emit_err = io.StringIO()
+        with redirect_stderr(no_emit_err):
+            await transaction([w1], _TxConn(None))
+        if no_emit_err.getvalue():
+            bad.append(f"a no-emit transaction should not touch emit (no stderr): {no_emit_err.getvalue()!r}")
         return bad
 
     return asyncio.run(_run())
@@ -1238,9 +1251,17 @@ def _probe_write_queue():
     persists the queue to the backend through the injected execute — exercised against real SQLite
     for insert, update, and delete."""
     from honest_persist import drain_queue, empty_write_queue, enqueue_write, execute, merge_pending, raw, select
+    from honest_persist.queue import is_stalled
 
     async def _run():
         bad = []
+        # is_stalled fires once the failure has persisted for the six-hour limit. The boundary is pinned
+        # with the literal STALL_NS (6 * 3600 * 1e9 = 21_600_000_000_000) so a shift of any factor or the
+        # >= comparator is caught: exactly at the limit stalls, one nanosecond short does not.
+        if is_stalled(0, 21_600_000_000_000) is not True:
+            bad.append("is_stalled should fire exactly at the six-hour limit")
+        if is_stalled(0, 21_599_999_999_999) is not False:
+            bad.append("is_stalled should not fire one nanosecond before the limit")
 
         # Read transparency: pending writes fold into a SELECT by primary key; other tables ignored.
         rows = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
@@ -1690,8 +1711,11 @@ def _probe_migrate():
         renamed = {"acct": {"columns": {"email": {"type": "text", "nullable": True}}}}
         refused = await migrate(renamed, amb, "sqlite")
         still = await inspect(amb, "sqlite")
-        if refused.get("err", {}).get("code") != "migration_ambiguous" or "emial" not in still["ok"]["acct"]["columns"]:
-            bad.append(f"migrate should refuse an ambiguous diff without applying: {refused}, {still}")
+        err_amb = refused.get("err", {})
+        if err_amb.get("code") != "migration_ambiguous" or err_amb.get("message") != "Diff is ambiguous; a human must resolve the renames before applying" or err_amb.get("category") != "server" or "ambiguities" not in (err_amb.get("detail") or {}):
+            bad.append(f"the ambiguous-diff fault should be fully named with its ambiguities: {refused}")
+        if "emial" not in still["ok"]["acct"]["columns"]:
+            bad.append(f"migrate should refuse an ambiguous diff without applying: {still}")
 
         # An invalid target schema fails at the diff, before any apply.
         broken = _SqliteConn()
@@ -1703,8 +1727,8 @@ def _probe_migrate():
         # An unsupported dialect has no inspector.
         nodb = _SqliteConn()
         unknown = await migrate({}, nodb, "oracle")
-        if unknown.get("err", {}).get("code") != "unsupported_dialect":
-            bad.append(f"migrate should fault on an unsupported dialect: {unknown}")
+        if unknown.get("err") != {"code": "unsupported_dialect", "message": "no schema inspector for dialect 'oracle'", "category": "server", "detail": {}}:
+            bad.append(f"the unsupported-dialect fault should be fully named: {unknown}")
 
         # §6.2: a CHECK that can be neither natively enforced nor compiled is refused at construction,
         # before any DDL touches the database, not silently dropped to surface at the first write.
@@ -2170,8 +2194,8 @@ def _probe_cutover():
         for conn in (source, dest):
             got = await conn.execute("SELECT v FROM nums WHERE id = 9")
             both.append(got["rows"][0]["v"] if got["rows"] else None)
-        if "source" not in results or both != ["mir", "mir"]:
-            bad.append(f"mirror_write should write both databases: {results}, {both}")
+        if "source" not in results or "destination" not in results or both != ["mir", "mir"]:
+            bad.append(f"mirror_write should return both the source and destination results: {results}, {both}")
         return bad
 
     return asyncio.run(_run())
