@@ -29,6 +29,7 @@ from honest_persist import (
     to_sql,
     validate_schema,
 )
+from honest_persist.apply import _columns_added
 from honest_persist.types import operation
 
 _DIALECTS = ("postgresql", "sqlite", "turso")
@@ -285,10 +286,53 @@ def _probe_apply():
         conn2 = _Conn()
         await apply(plan2, two, conn2, "sqlite")
 
-        # An unknown operation has no renderer: apply must report it, not silently skip.
+        # An unknown operation has no renderer: apply must report it in full, not silently skip.
         unknown_plan = {"operations": [operation("frobnicate", "t", {})], "execution_order": [0], "ambiguities": [], "dependencies": {}}
-        if (await apply(unknown_plan, {"t": {"columns": {}}}, _Conn(), "postgresql"))["success"]:
-            bad.append("apply should fail on an operation with no renderer")
+        unknown_result = await apply(unknown_plan, {"t": {"columns": {}}}, _Conn(), "postgresql")
+        if unknown_result != {"success": False, "executed_sql": [], "operations_applied": 0, "error": "no renderer for 'frobnicate'", "error_operation": 0}:
+            bad.append(f"apply on an op with no renderer should report it in full: {unknown_result}")
+
+        # Unresolved ambiguities block apply entirely, with the full result and its error message.
+        amb_plan = {"operations": [operation("drop_column", "t", {"column": "c"})], "execution_order": [0], "ambiguities": [{"kind": "x"}], "dependencies": {}}
+        amb_result = await apply(amb_plan, {"t": {"columns": {}}}, _Conn(), "postgresql")
+        if amb_result != {"success": False, "executed_sql": [], "operations_applied": 0, "error": "unresolved ambiguities; resolve before applying", "error_operation": None}:
+            bad.append(f"apply should refuse to run with unresolved ambiguities: {amb_result}")
+
+        # _columns_added: only add_column ops on the named table contribute (so a newly-added column is
+        # not copied from the old table during reconstruction).
+        added = _columns_added([operation("add_column", "t", {"column": "new"}), operation("add_column", "other", {"column": "x"}), operation("drop_column", "t", {"column": "old"})], "t")
+        if added != {"new"}:
+            bad.append(f"_columns_added should be only the add_column columns on this table: {added}")
+
+        # The injected emit receives one hf.persist.migration per applied op, keyed by db_id:table.
+        emitted = []
+
+        async def _rec_emit(event_type, aggregate_type, aggregate_id, payload):
+            emitted.append((event_type, aggregate_type, aggregate_id))
+            return {"ok": {}}
+
+        ok_plan = diff({}, {"t": {"columns": {"id": {"type": "text"}}}})
+        await apply(ok_plan, {"t": {"columns": {"id": {"type": "text"}}}}, _Conn(), "postgresql", emit=_rec_emit, db_id="db1")
+        if emitted != [("hf.persist.migration", "schema", "db1:t")]:
+            bad.append(f"apply should emit one hf.persist.migration per op, keyed by db_id:table: {emitted}")
+
+        # A reconstruction emits its own reconstruct_table migration event through the same emit.
+        recon_emitted = []
+
+        async def _recon_emit(event_type, aggregate_type, aggregate_id, payload):
+            recon_emitted.append((aggregate_id, payload.get("operation")))
+            return {"ok": {}}
+
+        await apply(diff(_RECON_CURRENT, _RECON_TARGET), _RECON_TARGET, _Conn(), "sqlite", emit=_recon_emit, db_id="db2")
+        if not any(op == "reconstruct_table" for _, op in recon_emitted):
+            bad.append(f"a reconstruction should emit a reconstruct_table migration event: {recon_emitted}")
+
+        # A failing emit is swallowed — instrumentation must never break a migration.
+        async def _boom_emit(*args):
+            raise RuntimeError("emit down")
+
+        if not (await apply(ok_plan, {"t": {"columns": {"id": {"type": "text"}}}}, _Conn(), "postgresql", emit=_boom_emit, db_id="db1"))["success"]:
+            bad.append("a failing emit must not break the migration")
 
         # A normal (non-reconstruction) DDL that raises halts apply.
         add_plan = diff({}, {"t": {"columns": {"id": {"type": "text"}}}})

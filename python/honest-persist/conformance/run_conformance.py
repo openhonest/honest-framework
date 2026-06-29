@@ -209,7 +209,9 @@ def _check_requires(case):
 
 def _check_reconstruction_sql(case):
     spec = case["reconstruct_sql"]
-    statements = reconstruction_sql(spec["table"], spec["target_table"], spec["common_columns"], case["dialect"])
+    statements = reconstruction_sql(spec["table"], spec["target_table"], spec["common_columns"], case["dialect"], temp_name=spec.get("temp_name"))
+    if "expect_statements" in case:
+        return statements == case["expect_statements"], f"got {statements}"
     joined = " ; ".join(statements)
     ok = all(needle in joined for needle in case.get("expect_contains", []))
     return ok, f"got {statements}"

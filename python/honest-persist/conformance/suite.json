@@ -3667,6 +3667,860 @@
     "enqueue_durable",
     "run_drain_loop"
    ]
+  },
+  {
+   "id": "tosql-gen-ct-pk",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "id": {
+       "type": "uuid",
+       "primary_key": true
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (id uuid PRIMARY KEY)"
+  },
+  {
+   "id": "tosql-gen-ct-notnull",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "a": {
+       "type": "text",
+       "nullable": false
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (a text NOT NULL)"
+  },
+  {
+   "id": "tosql-gen-ct-unique",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "a": {
+       "type": "text",
+       "unique": true
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (a text UNIQUE)"
+  },
+  {
+   "id": "tosql-gen-ct-default",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "a": {
+       "type": "integer",
+       "default": 0
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (a integer DEFAULT 0)"
+  },
+  {
+   "id": "tosql-gen-ct-references",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "a": {
+       "type": "uuid",
+       "references": "other.id"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (a uuid REFERENCES other(id))"
+  },
+  {
+   "id": "tosql-gen-ct-check",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "a": {
+       "type": "integer",
+       "check": "a > 0"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (a integer CHECK (a > 0))"
+  },
+  {
+   "id": "tosql-gen-ct-constraint",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "a": {
+       "type": "integer"
+      }
+     },
+     "constraints": {
+      "c1": {
+       "type": "check",
+       "expression": "a > 0"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (a integer, CONSTRAINT c1 CHECK (a > 0))"
+  },
+  {
+   "id": "tosql-gen-type-uuid-postgresql",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "uuid"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (c uuid)"
+  },
+  {
+   "id": "tosql-gen-type-timestamptz-postgresql",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "timestamptz"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (c timestamptz)"
+  },
+  {
+   "id": "tosql-gen-type-boolean-postgresql",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "boolean"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (c boolean)"
+  },
+  {
+   "id": "tosql-gen-type-jsonb-postgresql",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "jsonb"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (c jsonb)"
+  },
+  {
+   "id": "tosql-gen-type-text-postgresql",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (c text)"
+  },
+  {
+   "id": "tosql-gen-type-uuid-sqlite",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "uuid"
+      }
+     }
+    }
+   },
+   "dialect": "sqlite",
+   "expect_sql": "CREATE TABLE t (c text)"
+  },
+  {
+   "id": "tosql-gen-type-timestamptz-sqlite",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "timestamptz"
+      }
+     }
+    }
+   },
+   "dialect": "sqlite",
+   "expect_sql": "CREATE TABLE t (c text)"
+  },
+  {
+   "id": "tosql-gen-type-boolean-sqlite",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "boolean"
+      }
+     }
+    }
+   },
+   "dialect": "sqlite",
+   "expect_sql": "CREATE TABLE t (c integer)"
+  },
+  {
+   "id": "tosql-gen-type-jsonb-sqlite",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "jsonb"
+      }
+     }
+    }
+   },
+   "dialect": "sqlite",
+   "expect_sql": "CREATE TABLE t (c text)"
+  },
+  {
+   "id": "tosql-gen-type-text-sqlite",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "dialect": "sqlite",
+   "expect_sql": "CREATE TABLE t (c text)"
+  },
+  {
+   "id": "tosql-gen-type-uuid-turso",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "uuid"
+      }
+     }
+    }
+   },
+   "dialect": "turso",
+   "expect_sql": "CREATE TABLE t (c text)"
+  },
+  {
+   "id": "tosql-gen-type-timestamptz-turso",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "timestamptz"
+      }
+     }
+    }
+   },
+   "dialect": "turso",
+   "expect_sql": "CREATE TABLE t (c text)"
+  },
+  {
+   "id": "tosql-gen-type-boolean-turso",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "boolean"
+      }
+     }
+    }
+   },
+   "dialect": "turso",
+   "expect_sql": "CREATE TABLE t (c integer)"
+  },
+  {
+   "id": "tosql-gen-type-jsonb-turso",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "jsonb"
+      }
+     }
+    }
+   },
+   "dialect": "turso",
+   "expect_sql": "CREATE TABLE t (c text)"
+  },
+  {
+   "id": "tosql-gen-type-text-turso",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {
+       "type": "text"
+      }
+     }
+    }
+   },
+   "dialect": "turso",
+   "expect_sql": "CREATE TABLE t (c text)"
+  },
+  {
+   "id": "tosql-gen-drop-table",
+   "to_sql": {
+    "op": "drop_table",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "postgresql",
+   "expect_sql": "DROP TABLE t"
+  },
+  {
+   "id": "tosql-gen-rename-table",
+   "to_sql": {
+    "op": "rename_table",
+    "table": "t",
+    "details": {
+     "new_name": "t2"
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t RENAME TO t2"
+  },
+  {
+   "id": "tosql-gen-add-column",
+   "to_sql": {
+    "op": "add_column",
+    "table": "t",
+    "details": {
+     "column": "c",
+     "definition": {
+      "type": "text",
+      "nullable": false
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t ADD COLUMN c text NOT NULL"
+  },
+  {
+   "id": "tosql-gen-drop-column",
+   "to_sql": {
+    "op": "drop_column",
+    "table": "t",
+    "details": {
+     "column": "c"
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t DROP COLUMN c"
+  },
+  {
+   "id": "tosql-gen-rename-column",
+   "to_sql": {
+    "op": "rename_column",
+    "table": "t",
+    "details": {
+     "from": "a",
+     "to": "b"
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t RENAME COLUMN a TO b"
+  },
+  {
+   "id": "tosql-gen-alter-type",
+   "to_sql": {
+    "op": "alter_column",
+    "table": "t",
+    "details": {
+     "column": "c",
+     "changes": {
+      "type": {
+       "to": "boolean"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t ALTER COLUMN c TYPE boolean"
+  },
+  {
+   "id": "tosql-gen-alter-null-true",
+   "to_sql": {
+    "op": "alter_column",
+    "table": "t",
+    "details": {
+     "column": "c",
+     "changes": {
+      "nullable": {
+       "to": true
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t ALTER COLUMN c DROP NOT NULL"
+  },
+  {
+   "id": "tosql-gen-alter-null-false",
+   "to_sql": {
+    "op": "alter_column",
+    "table": "t",
+    "details": {
+     "column": "c",
+     "changes": {
+      "nullable": {
+       "to": false
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t ALTER COLUMN c SET NOT NULL"
+  },
+  {
+   "id": "tosql-gen-alter-default-set",
+   "to_sql": {
+    "op": "alter_column",
+    "table": "t",
+    "details": {
+     "column": "c",
+     "changes": {
+      "default": {
+       "to": "5"
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t ALTER COLUMN c SET DEFAULT 5"
+  },
+  {
+   "id": "tosql-gen-alter-default-drop",
+   "to_sql": {
+    "op": "alter_column",
+    "table": "t",
+    "details": {
+     "column": "c",
+     "changes": {
+      "default": {
+       "to": null
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t ALTER COLUMN c DROP DEFAULT"
+  },
+  {
+   "id": "tosql-gen-add-index",
+   "to_sql": {
+    "op": "add_index",
+    "table": "t",
+    "details": {
+     "index": "idx",
+     "definition": {
+      "columns": [
+       "a",
+       "b"
+      ]
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE INDEX idx ON t (a, b)"
+  },
+  {
+   "id": "tosql-gen-add-index-unique",
+   "to_sql": {
+    "op": "add_index",
+    "table": "t",
+    "details": {
+     "index": "idx",
+     "definition": {
+      "columns": [
+       "a"
+      ],
+      "unique": true
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE UNIQUE INDEX idx ON t (a)"
+  },
+  {
+   "id": "tosql-gen-drop-index",
+   "to_sql": {
+    "op": "drop_index",
+    "table": "t",
+    "details": {
+     "index": "idx"
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "DROP INDEX idx"
+  },
+  {
+   "id": "tosql-gen-add-fk",
+   "to_sql": {
+    "op": "add_foreign_key",
+    "table": "t",
+    "details": {
+     "column": "oid",
+     "references": "other.id"
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t ADD CONSTRAINT fk_t_oid FOREIGN KEY (oid) REFERENCES other (id)"
+  },
+  {
+   "id": "tosql-gen-drop-fk",
+   "to_sql": {
+    "op": "drop_foreign_key",
+    "table": "t",
+    "details": {
+     "column": "oid"
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t DROP CONSTRAINT fk_t_oid"
+  },
+  {
+   "id": "tosql-gen-add-constraint",
+   "to_sql": {
+    "op": "add_constraint",
+    "table": "t",
+    "details": {
+     "constraint": "c1",
+     "definition": {
+      "expression": "a > 0"
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t ADD CONSTRAINT c1 CHECK (a > 0)"
+  },
+  {
+   "id": "tosql-gen-drop-constraint",
+   "to_sql": {
+    "op": "drop_constraint",
+    "table": "t",
+    "details": {
+     "constraint": "c1"
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "ALTER TABLE t DROP CONSTRAINT c1"
+  },
+  {
+   "id": "requires-alter_column-sqlite",
+   "reconstruct_op": {
+    "op": "alter_column",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "sqlite",
+   "expect": true
+  },
+  {
+   "id": "requires-alter_column-turso",
+   "reconstruct_op": {
+    "op": "alter_column",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "turso",
+   "expect": true
+  },
+  {
+   "id": "requires-alter_column-postgres",
+   "reconstruct_op": {
+    "op": "alter_column",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "postgresql",
+   "expect": false
+  },
+  {
+   "id": "requires-add_foreign_key-sqlite",
+   "reconstruct_op": {
+    "op": "add_foreign_key",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "sqlite",
+   "expect": true
+  },
+  {
+   "id": "requires-add_foreign_key-turso",
+   "reconstruct_op": {
+    "op": "add_foreign_key",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "turso",
+   "expect": true
+  },
+  {
+   "id": "requires-add_foreign_key-postgres",
+   "reconstruct_op": {
+    "op": "add_foreign_key",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "postgresql",
+   "expect": false
+  },
+  {
+   "id": "requires-drop_foreign_key-sqlite",
+   "reconstruct_op": {
+    "op": "drop_foreign_key",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "sqlite",
+   "expect": true
+  },
+  {
+   "id": "requires-drop_foreign_key-turso",
+   "reconstruct_op": {
+    "op": "drop_foreign_key",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "turso",
+   "expect": true
+  },
+  {
+   "id": "requires-drop_foreign_key-postgres",
+   "reconstruct_op": {
+    "op": "drop_foreign_key",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "postgresql",
+   "expect": false
+  },
+  {
+   "id": "requires-drop_constraint-sqlite",
+   "reconstruct_op": {
+    "op": "drop_constraint",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "sqlite",
+   "expect": true
+  },
+  {
+   "id": "requires-drop_constraint-turso",
+   "reconstruct_op": {
+    "op": "drop_constraint",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "turso",
+   "expect": true
+  },
+  {
+   "id": "requires-drop_constraint-postgres",
+   "reconstruct_op": {
+    "op": "drop_constraint",
+    "table": "t",
+    "details": {}
+   },
+   "dialect": "postgresql",
+   "expect": false
+  },
+  {
+   "id": "reconstruct-sql-full",
+   "reconstruct_sql": {
+    "table": "users",
+    "target_table": {
+     "columns": {
+      "id": {
+       "type": "uuid",
+       "primary_key": true
+      },
+      "name": {
+       "type": "text",
+       "nullable": false
+      }
+     },
+     "indexes": {
+      "idx_name": {
+       "columns": [
+        "name"
+       ],
+       "unique": true
+      },
+      "idx_id": {
+       "columns": [
+        "id"
+       ]
+      }
+     }
+    },
+    "common_columns": [
+     "id",
+     "name"
+    ],
+    "temp_name": "_tmp_u"
+   },
+   "dialect": "sqlite",
+   "expect_statements": [
+    "CREATE TABLE _tmp_u (id text PRIMARY KEY, name text NOT NULL)",
+    "INSERT INTO _tmp_u (id, name) SELECT id, name FROM users",
+    "DROP TABLE users",
+    "ALTER TABLE _tmp_u RENAME TO users",
+    "CREATE UNIQUE INDEX idx_name ON users (name)",
+    "CREATE INDEX idx_id ON users (id)"
+   ]
+  },
+  {
+   "id": "reconstruct-sql-no-common",
+   "reconstruct_sql": {
+    "table": "users",
+    "target_table": {
+     "columns": {
+      "id": {
+       "type": "uuid",
+       "primary_key": true
+      },
+      "name": {
+       "type": "text",
+       "nullable": false
+      }
+     },
+     "indexes": {
+      "idx_name": {
+       "columns": [
+        "name"
+       ],
+       "unique": true
+      },
+      "idx_id": {
+       "columns": [
+        "id"
+       ]
+      }
+     }
+    },
+    "common_columns": [],
+    "temp_name": "_tmp_u"
+   },
+   "dialect": "sqlite",
+   "expect_statements": [
+    "CREATE TABLE _tmp_u (id text PRIMARY KEY, name text NOT NULL)",
+    "DROP TABLE users",
+    "ALTER TABLE _tmp_u RENAME TO users",
+    "CREATE UNIQUE INDEX idx_name ON users (name)",
+    "CREATE INDEX idx_id ON users (id)"
+   ]
+  },
+  {
+   "id": "tosql-constraint-no-expression",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "a": {
+       "type": "integer"
+      }
+     },
+     "constraints": {
+      "c1": {
+       "type": "check",
+       "expression": ""
+      }
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (a integer)"
+  },
+  {
+   "id": "tosql-column-default-type",
+   "to_sql": {
+    "op": "create_table",
+    "table": "t",
+    "details": {
+     "columns": {
+      "c": {}
+     }
+    }
+   },
+   "dialect": "postgresql",
+   "expect_sql": "CREATE TABLE t (c text)"
   }
  ],
  "value_oracle_exempt": [
