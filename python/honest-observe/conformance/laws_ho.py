@@ -660,10 +660,14 @@ def _probe_threshold_engine():
     checks = [
         ("gt over", condition_met(0.06, {"operator": "gt", "value": 0.05}), True),
         ("gt under", condition_met(0.04, {"operator": "gt", "value": 0.05}), False),
+        ("gt equal", condition_met(5, {"operator": "gt", "value": 5}), False),     # strict: not >=
         ("lt under", condition_met(3, {"operator": "lt", "value": 5}), True),
         ("lt over", condition_met(7, {"operator": "lt", "value": 5}), False),
+        ("lt equal", condition_met(5, {"operator": "lt", "value": 5}), False),     # strict: not <=
         ("gte equal", condition_met(5, {"operator": "gte", "value": 5}), True),
+        ("gte under", condition_met(4, {"operator": "gte", "value": 5}), False),
         ("lte equal", condition_met(5, {"operator": "lte", "value": 5}), True),
+        ("lte over", condition_met(6, {"operator": "lte", "value": 5}), False),
     ]
     for label, got, want in checks:
         if got != want:
@@ -711,8 +715,16 @@ def _probe_builtin_metrics():
         bad.append("the percentile of one value should be that value")
     if _percentile(list(range(1, 101)), 99) != 99:
         bad.append(f"p99 of 1..100 should be 99: {_percentile(list(range(1, 101)), 99)}")
+    if _percentile(list(range(1, 101)), 98) != 98 or _percentile(list(range(1, 101)), 100) != 100:
+        bad.append("p98 of 1..100 should be 98 and p100 should be 100 (pins the percentile arithmetic)")
+    if _percentile(list(range(1, 102)), 100) != 101:
+        bad.append(f"p100 of 1..101 should be 101 (pins the p/100 rank divisor): {_percentile(list(range(1, 102)), 100)}")
 
     metrics = builtin_metrics()
+    # Every built-in metric's internal name matches its registry key (pins the name argument).
+    for key, metric_decl in metrics.items():
+        if metric_decl["name"] != key:
+            bad.append(f"built-in metric {key!r} should carry its own name: {metric_decl['name']!r}")
     canonical = [
         {"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:00Z", "payload": {"result": "ok", "duration_ns": 100}},
         {"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:01Z", "payload": {"result": "err", "duration_ns": 300}},
@@ -723,6 +735,14 @@ def _probe_builtin_metrics():
         bad.append("request.rate_per_minute should count the requests")
     if compute_metric(metrics["request.p99_duration_ns"], canonical) != 300:
         bad.append("request.p99_duration_ns should be the 99th-percentile duration")
+    # Over 100 distinct durations the metric's hardcoded 99th percentile is pinned (a 2-sample input
+    # cannot distinguish p98/p99/p100).
+    hundred = [{"event_type": "hf.request.canonical", "timestamp": "t", "payload": {"result": "ok", "duration_ns": n}} for n in range(1, 101)]
+    if compute_metric(metrics["request.p99_duration_ns"], hundred) != 99:
+        bad.append(f"request.p99_duration_ns over 1..100 should be 99: {compute_metric(metrics['request.p99_duration_ns'], hundred)}")
+    hundred_ms = [{"event_type": "hf.browser.response", "timestamp": "t", "payload": {"duration_ms": n}} for n in range(1, 101)]
+    if compute_metric(metrics["browser.response.p99_duration_ms"], hundred_ms) != 99:
+        bad.append(f"browser.response.p99_duration_ms over 1..100 should be 99: {compute_metric(metrics['browser.response.p99_duration_ms'], hundred_ms)}")
     # The empty-log path of the rate value (the no-division branch).
     if compute_metric(metrics["request.error_rate"], []) != 0.0:
         bad.append("request.error_rate over an empty log should be zero")
@@ -739,11 +759,13 @@ def _probe_builtin_metrics():
     links = [
         {"event_type": "hf.link.executed", "timestamp": "2026-01-01T00:00:00Z", "payload": {"mutations": 1, "nondeterminism": True}},
         {"event_type": "hf.link.executed", "timestamp": "2026-01-01T00:00:01Z", "payload": {"mutations": 2, "nondeterminism": False}},
+        {"event_type": "hf.link.executed", "timestamp": "2026-01-01T00:00:02Z", "payload": {"mutations": 0, "nondeterminism": True}},
     ]
     if compute_metric(metrics["honesty.mutation_count"], links) != 3:
         bad.append("honesty.mutation_count should sum the mutations")
-    if compute_metric(metrics["honesty.nondeterminism_count"], links) != 1:
-        bad.append("honesty.nondeterminism_count should count the nondeterministic links")
+    # Two nondeterministic, one deterministic — distinguishes counting the True case from the False case.
+    if compute_metric(metrics["honesty.nondeterminism_count"], links) != 2:
+        bad.append(f"honesty.nondeterminism_count should count the nondeterministic links: {compute_metric(metrics['honesty.nondeterminism_count'], links)}")
 
     responses = [
         {"event_type": "hf.browser.response", "timestamp": "2026-01-01T00:00:00Z", "payload": {"duration_ms": 100}},
@@ -764,10 +786,16 @@ def _probe_threshold_projection():
 
     alert = {"message_type": "hf.alert.high_error_rate", "recipient": {"type": "role", "id": "on_call"}, "dom_surface": "banner"}
     declared = threshold_projection("high_error_rate", "request.error_rate", {"operator": "gt", "value": 0.05}, "5m", "10m", alert, remediation="investigate", enabled=True)
-    if declared["projection_id"] != "high_error_rate" or declared["metric"] != "request.error_rate" or declared["remediation"] != "investigate":
-        bad.append(f"threshold_projection should carry the id, metric name, and remediation: {declared}")
+    if declared != {
+        "projection_id": "high_error_rate", "metric": "request.error_rate", "condition": {"operator": "gt", "value": 0.05},
+        "window": "5m", "cooldown": "10m", "alert": alert, "enabled": True, "remediation": "investigate",
+    }:
+        bad.append(f"threshold_projection full shape wrong: {declared}")
     if "remediation" in threshold_projection("p", "m", {"operator": "gt", "value": 1}, "1m", "1m", alert):
         bad.append("threshold_projection should omit remediation when not supplied")
+    # enabled defaults to True, so a projection declared without it still evaluates and can fire.
+    if threshold_projection("p", "m", {"operator": "gt", "value": 1}, "1m", "1m", alert)["enabled"] is not True:
+        bad.append("threshold_projection enabled should default to True")
 
     metric = builtin_metrics()["request.error_rate"]
     over = [
