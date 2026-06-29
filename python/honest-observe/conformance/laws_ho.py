@@ -781,21 +781,26 @@ def _probe_rejection():
     }:
         bad.append(f"rejection record wrong: {record}")
 
+    # The full schema dict is pinned exactly: every column definition (type, nullable, primary_key),
+    # the primary key, and all three forensic indexes with their columns.
+    expected_table = {
+        "columns": {
+            "rejection_id": {"type": "text", "primary_key": True, "nullable": False},
+            "received_at": {"type": "text", "nullable": False},
+            "source": {"type": "text", "nullable": False},
+            "reason_code": {"type": "text", "nullable": False},
+            "reason_detail": {"type": "text", "nullable": False},
+            "raw_event": {"type": "text", "nullable": False},
+            "translator_version": {"type": "text", "nullable": False},
+        },
+        "primary_key": ["rejection_id"],
+        "indexes": {"idx_source": {"columns": ["source"]}, "idx_reason": {"columns": ["reason_code"]}, "idx_received": {"columns": ["received_at"]}},
+    }
     schema = rejection_log_schema()
-    if list(schema.keys()) != ["honest_rejection_log"]:
-        bad.append(f"rejection_log_schema should be a one-table persist schema: {list(schema.keys())}")
-    table = schema["honest_rejection_log"]
-    expected_columns = ["rejection_id", "received_at", "source", "reason_code", "reason_detail", "raw_event", "translator_version"]
-    if list(table["columns"].keys()) != expected_columns:
-        bad.append(f"rejection-log columns should mirror the rejection record: {list(table['columns'].keys())}")
-    if table["columns"]["rejection_id"].get("primary_key") is not True or table.get("primary_key") != ["rejection_id"]:
-        bad.append("rejection_id should be the primary key")
-    if table["indexes"].get("idx_source", {}).get("columns") != ["source"]:
-        bad.append("the rejection log should be indexed by source for per-source forensics")
-
-    manifest = rejection_log_manifest()
-    if manifest.get("table") != "honest_rejection_log" or manifest.get("append_only") is not True or manifest.get("schema") != table:
-        bad.append(f"rejection_log_manifest should declare an append-only honest_rejection_log: {manifest}")
+    if schema != {"honest_rejection_log": expected_table}:
+        bad.append(f"rejection_log_schema wrong: {schema}")
+    if rejection_log_manifest() != {"table": "honest_rejection_log", "append_only": True, "schema": expected_table}:
+        bad.append(f"rejection_log_manifest wrong: {rejection_log_manifest()}")
     return bad
 
 
