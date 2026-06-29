@@ -1532,6 +1532,28 @@ def _pa(src: str):
     return parse_python(b).root_node, b
 
 
+# A diagnostic that could be reported twice but is deduplicated to one: pins each rule's `seen` set
+# (a missing seen.add or `key in seen` skip would emit the duplicate). Each source triggers the same
+# finding twice (a name read twice, or two identical link pairings).
+_DEDUP_CASES = [
+    ("HC-P004", "d = {}\nd[0] = 1\ndef f():\n    return d[0] + d[1]\n"),
+    ("HC004", "from honest_type import vocabulary, binding, link\nV = vocabulary({'a': {'x'}, 'b': {'y'}})\nB = binding({'a': 's1'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n@link(accepts=V, binds=B)\ndef g(x):\n    return x\n"),
+    ("HC005", "from honest_type import vocabulary, binding, link\nV = vocabulary({'a': {'x'}})\nB = binding({'a': 's1', 'ghost': 's2'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n@link(accepts=V, binds=B)\ndef g(x):\n    return x\n"),
+    ("HC-P013", "from honest_type import vocabulary, binding, link, predicate\nV = vocabulary({'db': predicate(p)})\nB = binding({'db': 'db_id'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n@link(accepts=V, binds=B)\ndef g(x):\n    return x\n"),
+    ("HC-P014", "from honest_type import vocabulary, binding, link\nV = vocabulary({'a': {'x'}, 'b': {'x'}, 'c': {'q'}})\nB = binding({'a': 'slot1', 'b': 'slot2', 'ghost': 'slotg'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n@link(accepts=V, binds=B)\ndef g(x):\n    return x\n"),
+]
+
+
+def _probe_dedup() -> list[str]:
+    """Each duplicate-prone finding is reported exactly once (the rule's `seen` dedup is load-bearing)."""
+    bad = []
+    for rule, source in _DEDUP_CASES:
+        n = sum(1 for d in check_source(source, "f.py") if d["rule"] == rule)
+        if n != 1:
+            bad.append(f"{rule} should be deduplicated to one diagnostic, got {n}")
+    return bad
+
+
 def _probe_declgraph_extractors() -> list[str]:
     """Pin the declaration-graph extractors directly with exact-output assertions (sections 3.3-3.4).
 
@@ -2012,6 +2034,11 @@ _case("p003_base_Error", "class C(Error):\n    pass\n", must_not_fire=("HC-P003"
 _case("hc004_requires_keeps_type", "from honest_type import vocabulary, binding, link, composed\nV = vocabulary({'a': {'x'}, 'b': {'y'}}, composed_types=[composed('combo', requires={'b': 1})])\nB = binding({'a': 's1'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n", must_not_fire=("HC004",))
 _case("hc004_captures_keeps_type", "from honest_type import vocabulary, binding, link, composed\nV = vocabulary({'a': {'x'}, 'b': {'y'}}, composed_types=[composed('combo', captures='b')])\nB = binding({'a': 's1'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n", must_not_fire=("HC004",))
 _case("p004_boundary_link_io_clean", "from honest_type import link\n@link(accepts=A, emits=B, boundary=True)\ndef f(x):\n    open('x')\n", must_not_fire=("HC-P004", "HC008"))
+# A pairing whose binding name is undefined must be skipped cleanly by every pairing rule (the
+# `vocab not in vocabularies or binding not in bindings` guard); without it, indexing bindings raises.
+_case("pairing_undefined_binding_clean", "from honest_type import vocabulary, link\nV = vocabulary({'a': {'x'}})\n@link(accepts=V, binds=Ghost)\ndef f(x):\n    return x\n")
+# Floor division // in a predicate is a risky operation (HC009), like /.
+_case("hc009_floordiv", "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: s // 2)})\n", must_fire=("HC009",))
 _RULE_MESSAGES += [
     ('HC-P004', 'd = {}\nd.append(1)\ndef f():\n    return d\n', "Reads module-level mutable state 'd' inside a non-boundary function. Module-level mutable state is hidden state — pass it as a parameter or move it into persist."),
     ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(q)})\n", "Predicate types 'a' and 'b' may overlap — cannot be checked statically; verified by honest-test."),
@@ -2062,6 +2089,14 @@ def run() -> int:
     if message_bad:
         failed += 1
         print(f"FAIL HC-rule [rule_messages]: {message_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    dedup_bad = _probe_dedup()
+    if dedup_bad:
+        failed += 1
+        print(f"FAIL HC-rule [dedup]: {dedup_bad}")
     else:
         passed += 1
 
