@@ -1522,6 +1522,8 @@ def _probe_internal_helpers() -> list[str]:
         bad.append("_longest_common_run must be contiguous: a broken run counts 1")
     if _longest_common_run(["a", "b"], ["b", "a"]) != 1:
         bad.append("_longest_common_run of a reordered pair is at most 1")
+    if _longest_common_run(["a", "b"], ["b"]) != 1:
+        bad.append("_longest_common_run must seed each row from zero (a match after a miss counts 1)")
 
     return bad
 
@@ -2039,12 +2041,18 @@ _case("p004_boundary_link_io_clean", "from honest_type import link\n@link(accept
 _case("pairing_undefined_binding_clean", "from honest_type import vocabulary, link\nV = vocabulary({'a': {'x'}})\n@link(accepts=V, binds=Ghost)\ndef f(x):\n    return x\n")
 # Floor division // in a predicate is a risky operation (HC009), like /.
 _case("hc009_floordiv", "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: s // 2)})\n", must_fire=("HC009",))
+# Every HTTP response type is recognised by HC-P017 (a function producing it without a @link/emits).
+for _resp in ("Response", "JSONResponse", "HTMLResponse", "PlainTextResponse", "RedirectResponse", "StreamingResponse", "FileResponse"):
+    _case(f"p017_{_resp}", f"def h(req):\n    return {_resp}(x)\n", must_fire=("HC-P017",))
 _RULE_MESSAGES += [
     ('HC-P004', 'd = {}\nd.append(1)\ndef f():\n    return d\n', "Reads module-level mutable state 'd' inside a non-boundary function. Module-level mutable state is hidden state — pass it as a parameter or move it into persist."),
     ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(q)})\n", "Predicate types 'a' and 'b' may overlap — cannot be checked statically; verified by honest-test."),
     ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': {'x'}, 'b': predicate(q)})\n", "Set type and predicate type ('a', 'b') may overlap on a Set value — the predicate is not evaluated here; verified by honest-test."),
     ('HC006', "from honest_type import vocabulary, composed\nV = vocabulary({'a': {'x'}}, composed_types=[composed('combo', captures='ghost')])\n", "Composed type 'combo' captures unknown base type 'ghost'. Declare the base type in the vocabulary, or correct its name."),
     ('HC-P003', 'class Widget:  # honest: ignore HC-P003\n    pass\n', 'HC-P003 suppressed by directive.'),
+    ('HC009', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: float(s) > 0)})\n", "Predicate 'a' may throw on non-matching input: ['float()']. Guard the access or wrap in try/except."),
+    ('HC009', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: s[0])})\n", "Predicate 'a' may throw on non-matching input: ['index']. Guard the access or wrap in try/except."),
+    ('HC009', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: s / 2)})\n", "Predicate 'a' may throw on non-matching input: ['division']. Guard the access or wrap in try/except."),
 ]
 
 
