@@ -49,10 +49,10 @@ def _probe_build_event():
     if result["ok"].get("meta") != {"release": "r1"}:
         bad.append("meta should attach when supplied")
 
-    # empty required field (event_type) -> invalid_event naming it.
+    # empty required field (event_type) -> invalid_event naming it; the full fault is pinned.
     result = build_event(**{**_BASE, "event_type": ""})
-    if result.get("err", {}).get("code") != "invalid_event" or "event_type" not in result["err"]["detail"]["missing"]:
-        bad.append(f"an empty required field should fault invalid_event: {result}")
+    if result != {"err": {"code": "invalid_event", "message": "Event is missing required field(s): ['event_type']", "category": "server", "detail": {"missing": ["event_type"]}}}:
+        bad.append(f"an empty required field should fault invalid_event in full: {result}")
 
     # an empty aggregate_id is also caught (a different required field).
     if build_event(**{**_BASE, "aggregate_id": ""}).get("err", {}).get("code") != "invalid_event":
@@ -118,6 +118,11 @@ def _probe_projection():
     # No filter -> every event folds.
     if apply_projection(events, fold, {"sum": 0, "count": 0})["count"] != 3:
         bad.append("an unfiltered projection should fold every event")
+
+    # from_ts excludes events strictly before it; an event AT from_ts is included (pins the < boundary).
+    from_boundary = apply_projection(events, fold, {"sum": 0, "count": 0}, from_ts="2026-01-02T00:00:00Z")
+    if from_boundary["count"] != 2:
+        bad.append(f"from_ts should include an event at the boundary (>= from_ts): {from_boundary}")
 
     # Empty log -> initial state, untouched.
     if apply_projection([], fold, {"sum": 0, "count": 0}) != {"sum": 0, "count": 0}:
@@ -196,8 +201,8 @@ def _probe_emit():
         # Append failure -> emit_failed wrapping the cause.
         rt4 = _Runtime(append_ok=False)
         failed = await emit("hf.chain.completed", "chain", "c1", {}, context, rt4)
-        if failed.get("err", {}).get("code") != "emit_failed" or failed["err"]["detail"]["cause"]["code"] != "log_write_failed":
-            bad.append(f"an append failure should become emit_failed wrapping the cause: {failed}")
+        if failed != {"err": {"code": "emit_failed", "message": "Failed to append event to the log", "category": "server", "detail": {"cause": {"code": "log_write_failed", "message": "boom", "category": "server", "detail": None}}}}:
+            bad.append(f"an append failure should become emit_failed wrapping the cause in full: {failed}")
         return bad
 
     return asyncio.run(_run())
@@ -339,6 +344,8 @@ def _probe_snapshot():
         bad.append("should_snapshot should fire at or past the interval")
     if should_snapshot(999, 1000) is not False:
         bad.append("should_snapshot should not fire below the interval")
+    if should_snapshot(1, 1) is not True:
+        bad.append("should_snapshot should fire at an interval of 1 (pins the > 0 positive-interval check)")
     if should_snapshot(5000, None) is not False or should_snapshot(5000, 0) is not False:
         bad.append("should_snapshot should never fire without a positive interval")
 
@@ -454,7 +461,7 @@ def _probe_browser():
         bad.append(f"a complete browser event should be ok: {ok_event}")
     else:
         env = ok_event["ok"]
-        if env["source"] != "browser" or env["session_id"] != "sess-1" or env["request_id"] != "req_abc":
+        if env["source"] != "browser" or env["session_id"] != "sess-1" or env["request_id"] != "req_abc" or env["payload"] != {"changed_keys": ["filters"]}:
             bad.append(f"browser envelope wrong: {env}")
         if "aggregate_type" in env or "sequence" in env:
             bad.append("a browser event has no aggregate or sequence fields")
@@ -462,8 +469,8 @@ def _probe_browser():
     if "request_id" in no_req["ok"]:
         bad.append("request_id must be absent when not supplied")
     bad_event = build_browser_event("hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "", {}, "uuid-v4-3")
-    if bad_event.get("err", {}).get("code") != "invalid_event":
-        bad.append(f"an empty required field (session_id) should fault invalid_event: {bad_event}")
+    if bad_event != {"err": {"code": "invalid_event", "message": "Browser event is missing required field(s): ['session_id']", "category": "client", "detail": {"missing": ["session_id"]}}}:
+        bad.append(f"an empty required field (session_id) should fault invalid_event in full: {bad_event}")
 
     # §8.4 the four automatic browser events.
     classify = browser_classify("#row-1", "hf-format", ["currency", "usd"], {"format": "currency"}, 1200, request_id="req_abc")
