@@ -511,6 +511,37 @@ def _probe_statemachine():
     overlap = state_machine({"a"}, {"go", "GO"}, {("a", "go"): "a"}, "a")
     if not sm_module.test_adversarial_transitions(overlap):
         bad.append("an event whose neighbour is also a declared event must be flagged")
+
+    # Findings are records, not just counts: assert each detector's code and detail exactly.
+    if test_valid_transitions(ghost) != [{"code": "transition_incorrect", "detail": {"state": "ghost", "event": "e"}}]:
+        bad.append(f"transition_incorrect finding record wrong: {test_valid_transitions(ghost)}")
+
+    accept_all = state_machine({"a", "b"}, {"e"}, {("a", "e"): "a"}, "a")
+    saved_t = sm_module.transition
+    sm_module.transition = lambda m, s, e: ok({"state": "a"})
+    try:
+        invalid_findings = test_invalid_transitions(accept_all)
+    finally:
+        sm_module.transition = saved_t
+    if invalid_findings != [{"code": "invalid_transition_accepted", "detail": {"state": "b", "event": "e"}}]:
+        bad.append(f"invalid_transition_accepted finding record wrong: {invalid_findings}")
+
+    # Adversarial findings carry the neighbour, capped at 24 chars: inject an always-accepting
+    # transition over a long state and event so neighbours (all >= 39 chars here) are flagged, and
+    # assert the code and the exact cap on both the state and event paths.
+    long_state, long_event = "s" * 40, "e" * 40
+    big = state_machine({long_state}, {long_event}, {(long_state, long_event): long_state}, long_state)
+    sm_module.transition = lambda m, s, e: ok({"state": long_state})
+    try:
+        adv = sm_module.test_adversarial_transitions(big)
+    finally:
+        sm_module.transition = saved_t
+    state_hits = [f for f in adv if f["code"] == "adversarial_state_accepted"]
+    event_hits = [f for f in adv if f["code"] == "adversarial_event_accepted"]
+    if not state_hits or max(len(f["detail"]["neighbour"]) for f in state_hits) != 24:
+        bad.append("adversarial_state_accepted findings should cap the neighbour at 24 chars")
+    if not event_hits or max(len(f["detail"]["neighbour"]) for f in event_hits) != 24:
+        bad.append("adversarial_event_accepted findings should cap the neighbour at 24 chars")
     return bad
 
 
