@@ -1,0 +1,7 @@
+{
+ "honest-observe/src/honest_observe/devtools.py:1000000->1000001@_NS_PER_MS = 1_000_000": "_NS_PER_MS is a division denominator for a millisecond display rounded to one decimal (_ms) or whole ms (_whole_ms); shifting it by 1 part in a million leaves every rounded display string identical. Verified _ms unchanged.",
+ "honest-observe/src/honest_observe/devtools.py:1000000->999999@_NS_PER_MS = 1_000_000": "As above: a 1-part-in-a-million change to the ms denominator does not alter any rounded display string. Verified.",
+ "honest-observe/src/honest_observe/devtools.py:12->13@return timestamp.split(\"T\")[1].rstrip(\"Z\")[:12]": "The framework timestamps are millisecond-precision ISO (HH:MM:SS.mmm), so after rstrip('Z') the clock portion is exactly 12 characters; [:12] and [:13] return the same string. Verified on a ms timestamp.",
+ "honest-observe/src/honest_observe/devtools.py:string->empty@return timestamp.split(\"T\")[1].rstrip(\"Z\")[:12]#1": "Emptying the 'Z' in rstrip('Z') is a no-op here: the trailing Z sits at index 12 of the split clock portion, so the [:12] slice already excludes it. The result is identical. Verified on a ms timestamp.",
+ "honest-observe/src/honest_observe/devtools.py:remove@return None": "Removing the trailing `return None` in _request_id_of (reached when an event carries no request_id anywhere) lets it fall off its end and return None implicitly \u2014 identical."
+}

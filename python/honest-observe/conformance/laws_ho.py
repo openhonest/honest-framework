@@ -566,23 +566,43 @@ def _probe_inspect():
     resp = {"event_type": "hf.browser.response", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.166Z", "payload": {"status": 200, "swap_target": "#content-area", "duration_ms": 163, "request_id": "req_abc"}}
     classify = {"event_type": "hf.browser.classify", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.171Z", "payload": {"element": "#content-area", "attribute": "hf-format", "duration_ns": 3000000}}
     foreign = {"event_type": "hf.dom.changed", "source": "browser", "request_id": "other", "timestamp": "2026-03-15T14:23:07.500Z", "payload": {"changed_keys": ["x"]}}
+    # A non-request event that merely shares the aggregate_id must NOT be picked as the canonical: the
+    # lookup needs aggregate_type == "request" AND aggregate_id == request_id (pins the `and`).
+    decoy = {"event_type": "hf.link.executed", "aggregate_type": "link", "aggregate_id": "req_abc", "timestamp": "2026-03-15T14:23:07.000Z", "payload": {"link_name": "x"}}
 
-    trace = format_inspect("req_abc", [dom_before, req, canonical, resp, classify, foreign])
-    if not trace.startswith("Request: req_abc\nPOST /api/items → 200  total: 166ms"):
-        bad.append(f"inspect header wrong: {trace.splitlines()[:2]}")
-    if trace.count("BROWSER") != 2 or trace.count("SERVER") != 1:
-        bad.append(f"inspect should read BROWSER -> SERVER -> BROWSER: {trace}")
-    if "  link  validate_filters  ok  0.8ms" not in trace or "  link  pay  err  0.3ms  declined" not in trace:
-        bad.append(f"server lines should render the link_sequence with fault on error: {trace}")
-    if "other" in trace:
-        bad.append("an event with a different request_id must be excluded")
-    if not trace.endswith("Total: 166ms  (server: 16ms  network: 147ms  browser: 3ms)"):
-        bad.append(f"timing breakdown wrong: {trace}")
+    # The full trace is pinned exactly: every separator, the BROWSER -> SERVER -> BROWSER ordering,
+    # each browser detail line, the server link_sequence with the fault on the errored link, the
+    # foreign-request exclusion, the aggregate-id decoy exclusion, and the timing footer.
+    trace = format_inspect("req_abc", [decoy, dom_before, req, canonical, resp, classify, foreign])
+    expected_trace = (
+        "Request: req_abc\n"
+        "POST /api/items → 200  total: 166ms\n\n"
+        "BROWSER\n"
+        "  14:23:07.001  dom.changed  ['filters']\n"
+        "  14:23:07.003  browser.request  POST /api/items\n\n"
+        "SERVER\n"
+        "  link  validate_filters  ok  0.8ms\n"
+        "  link  build_query  ok  0.4ms\n"
+        "  link  pay  err  0.3ms  declined\n\n"
+        "BROWSER\n"
+        "  14:23:07.166  browser.response  200  #content-area  163ms\n"
+        "  14:23:07.171  browser.classify  #content-area  hf-format\n\n"
+        "Total: 166ms  (server: 16ms  network: 147ms  browser: 3ms)"
+    )
+    if trace != expected_trace:
+        bad.append(f"inspect trace wrong:\n{trace!r}\nexpected:\n{expected_trace!r}")
 
     # A request with no browser side: server block alone, network and browser zero.
     server_only = format_inspect("req_abc", [canonical])
     if "BROWSER" in server_only or not server_only.endswith("Total: 16ms  (server: 16ms  network: 0ms  browser: 0ms)"):
         bad.append(f"a server-only request should render the server block alone: {server_only}")
+
+    # A browser event at exactly the canonical timestamp belongs to the after section (>=) and appears
+    # exactly once — pinning the < / >= boundary of the before/after split.
+    at_canonical = {"event_type": "hf.dom.changed", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.023Z", "payload": {"changed_keys": ["edge"]}}
+    edge = format_inspect("req_abc", [canonical, at_canonical])
+    if edge.count("dom.changed  ['edge']") != 1 or edge.count("BROWSER") != 1:
+        bad.append(f"an event at the canonical timestamp should appear once, in the after section: {edge}")
     return bad
 
 
@@ -606,9 +626,25 @@ def _probe_query():
     if result != {"ok": {"n": 2}}:
         bad.append(f"a known projection should run its fold over the filtered events: {result}")
 
+    # A projection declaring an aggregate_id filter folds only that id; one declaring an aggregate_type
+    # filter folds only that type — so both the aggregate_type and aggregate_id the runner threads
+    # through are independently pinned.
+    by_id = {"p": declare_projection("p", None, lambda state, event: state + 1, 0, aggregate_id="o1")}
+    by_type = {"p": declare_projection("p", None, lambda state, event: state + 1, 0, aggregate_type="order")}
+    mixed_events = [
+        {"event_type": "x", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "t", "payload": {}},
+        {"event_type": "x", "aggregate_type": "refund", "aggregate_id": "o1", "timestamp": "t", "payload": {}},
+        {"event_type": "x", "aggregate_type": "order", "aggregate_id": "o2", "timestamp": "t", "payload": {}},
+    ]
+    if run_named_projection(by_id, "p", mixed_events) != {"ok": 2}:
+        bad.append(f"an aggregate_id filter should fold only that id: {run_named_projection(by_id, 'p', mixed_events)}")
+    if run_named_projection(by_type, "p", mixed_events) != {"ok": 2}:
+        bad.append(f"an aggregate_type filter should fold only that type: {run_named_projection(by_type, 'p', mixed_events)}")
+
+    # An unknown name is a full fault as data — code, message, category, and detail all pinned.
     missing = run_named_projection(registry, "nope", events)
-    if missing.get("err", {}).get("code") != "unknown_projection" or missing["err"]["detail"]["name"] != "nope":
-        bad.append(f"an unknown projection name should be a fault as data: {missing}")
+    if missing != {"err": {"code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "detail": {"name": "nope"}}}:
+        bad.append(f"an unknown projection name should be a complete fault as data: {missing}")
     return bad
 
 
