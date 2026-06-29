@@ -40,7 +40,20 @@ from honest_check.formats import (
     render,
     supported_formats,
 )
-from honest_check.lsp import _read_message, dispatch, serve, to_lsp_diagnostic
+from honest_check.lsp import (
+    _code_actions,
+    _definition_location,
+    _document_symbols,
+    _hover_contents,
+    _on_initialize,
+    _publish,
+    _read_message,
+    _response,
+    _write_message,
+    dispatch,
+    serve,
+    to_lsp_diagnostic,
+)
 from honest_check.watchlists import IO_WATCH_LIST, NONDETERMINISTIC_WATCH_LIST, matches_watchlist
 
 _CLEAN = "def add(a, b):\n    return a + b\n"
@@ -485,6 +498,195 @@ def _probe_lsp():
     return bad
 
 
+_HC_P003_MESSAGE = (
+    "Class 'Widget' has no declared base. Honest Code permits class definitions only as subclasses "
+    "of TypedDict, Protocol, ABC, or a declared Exception. Use a TypedDict for data shapes or a pure function."
+)
+
+
+def _probe_lsp_exact():
+    """Pin the exact JSON-RPC payloads the LSP helpers build (section 2.2). The handler tests above
+    assert routing and a few fields; here every response/notification dict, every offset conversion,
+    and the severity/kind maps are pinned exactly, so a swapped key, an emptied string, or an
+    off-by-one in the 1-based <-> 0-based conversion is caught."""
+    bad = []
+
+    # to_lsp_diagnostic: 1-based honest-check -> 0-based LSP, end character one past the start.
+    if to_lsp_diagnostic(diagnostic("HC003", "error", "f.py", 3, 5, "msg")) != {
+        "range": {"start": {"line": 2, "character": 4}, "end": {"line": 2, "character": 5}},
+        "severity": 1,
+        "code": "HC003",
+        "source": "honest-check",
+        "message": "msg",
+    }:
+        bad.append(f"to_lsp_diagnostic exact payload wrong: {to_lsp_diagnostic(diagnostic('HC003', 'error', 'f.py', 3, 5, 'msg'))}")
+    # The max(..., 0) floor: a 1-based (1, 1) clamps to (0, 0), not (-1)/(1).
+    start = to_lsp_diagnostic(diagnostic("X", "warning", "u", 1, 1, "m"))["range"]["start"]
+    if start != {"line": 0, "character": 0}:
+        bad.append(f"to_lsp_diagnostic should clamp the 1-based origin to (0, 0): {start}")
+    # The severity map, including the default for an off-vocabulary severity.
+    for sev, code in (("error", 1), ("warning", 2), ("info", 3), ("bogus", 3)):
+        if to_lsp_diagnostic(diagnostic("X", sev, "u", 2, 2, "m"))["severity"] != code:
+            bad.append(f"to_lsp_diagnostic severity map: {sev} should be {code}")
+
+    # _on_initialize: the full capability advertisement.
+    _store, init_msgs = _on_initialize({}, 1, {})
+    if init_msgs != [{
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "capabilities": {
+                "textDocumentSync": 1,
+                "hoverProvider": True,
+                "definitionProvider": True,
+                "workspaceSymbolProvider": True,
+                "codeActionProvider": True,
+            },
+            "serverInfo": {"name": "honest-check", "version": "0.1"},
+        },
+    }]:
+        bad.append(f"_on_initialize capabilities payload wrong: {init_msgs}")
+
+    # _response and _publish: the JSON-RPC envelope and the publishDiagnostics notification.
+    if _response(5, {"k": 1}) != {"jsonrpc": "2.0", "id": 5, "result": {"k": 1}}:
+        bad.append(f"_response envelope wrong: {_response(5, {'k': 1})}")
+    if _publish("u.py", "") != {
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {"uri": "u.py", "diagnostics": []},
+    }:
+        bad.append(f"_publish notification of a clean doc wrong: {_publish('u.py', '')}")
+
+    # _hover_contents: markdown of the rule and message on the line, None elsewhere.
+    if _hover_contents(_VIOLATION, "f.py", {"line": 0}) != {
+        "kind": "markdown",
+        "value": f"**HC-P003**: {_HC_P003_MESSAGE}",
+    }:
+        bad.append(f"_hover_contents exact payload wrong: {_hover_contents(_VIOLATION, 'f.py', {'line': 0})}")
+    if _hover_contents(_VIOLATION, "f.py", {"line": 50}) is not None:
+        bad.append("_hover_contents off a flagged line should be None")
+
+    # _definition_location: the identifier at (3, 4) ('V' in 'x = V') resolves to its assignment target.
+    if _definition_location(_DEFN_DOC, "d.py", {"line": 3, "character": 4}) != {
+        "uri": "d.py",
+        "range": {"start": {"line": 2, "character": 0}, "end": {"line": 2, "character": 1}},
+    }:
+        bad.append(f"_definition_location exact payload wrong: {_definition_location(_DEFN_DOC, 'd.py', {'line': 3, 'character': 4})}")
+    if _definition_location(_DEFN_DOC, "d.py", {"line": 4, "character": 4}) is not None:
+        bad.append("_definition_location of an undefined name should be None")
+    if _definition_location(_DEFN_DOC, "d.py", {"line": 0, "character": 3}) is not None:
+        bad.append("_definition_location at a non-identifier position should be None")
+
+    # _document_symbols: each declaration with its SymbolKind (vocabulary 5, binding 8, chain 12).
+    if _document_symbols(_SYMBOL_DOC, "s.py") != [
+        {"name": "Colors", "kind": 5, "location": {"uri": "s.py", "range": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 6}}}},
+        {"name": "Bind", "kind": 8, "location": {"uri": "s.py", "range": {"start": {"line": 2, "character": 0}, "end": {"line": 2, "character": 4}}}},
+        {"name": "Flow", "kind": 12, "location": {"uri": "s.py", "range": {"start": {"line": 3, "character": 0}, "end": {"line": 3, "character": 4}}}},
+    ]:
+        bad.append(f"_document_symbols exact payload wrong: {_document_symbols(_SYMBOL_DOC, 's.py')}")
+
+    # _code_actions: a suppression edit appended at the end of the diagnostic's line.
+    if _code_actions(_VIOLATION, "f.py", {"start": {"line": 0}, "end": {"line": 0}}) != [{
+        "title": "Suppress HC-P003 with a directive",
+        "kind": "quickfix",
+        "edit": {"changes": {"f.py": [{
+            "range": {"start": {"line": 0, "character": 13}, "end": {"line": 0, "character": 13}},
+            "newText": "  # honest: ignore HC-P003",
+        }]}},
+    }]:
+        bad.append(f"_code_actions exact payload wrong: {_code_actions(_VIOLATION, 'f.py', {'start': {'line': 0}, 'end': {'line': 0}})}")
+    # A range that does not cover the diagnostic line yields nothing.
+    if _code_actions(_VIOLATION, "f.py", {"start": {"line": 5}, "end": {"line": 5}}) != []:
+        bad.append("_code_actions outside the diagnostic line should be empty")
+
+    # _read_message / _write_message framing round-trip.
+    payload = {"jsonrpc": "2.0", "id": 7, "method": "x"}
+    sink = io.BytesIO()
+    _write_message(sink, payload)
+    framed = sink.getvalue()
+    body = json.dumps(payload).encode("utf-8")
+    if framed != f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body:
+        bad.append(f"_write_message framing wrong: {framed!r}")
+    if _read_message(io.BytesIO(framed)) != payload:
+        bad.append("_read_message should parse a framed message back to its dict")
+    # A header block with no Content-Length leaves the length at its 0 default: the zero-length body
+    # reads as EOF -> None (pins `content_length = 0` and the empty-body guard).
+    if _read_message(io.BytesIO(b"X-Foo: bar\r\n\r\nbody")) is not None:
+        bad.append("_read_message with no Content-Length header should be None")
+
+    # _node_at uses a half-open span: a position exactly at an identifier's end_point does NOT match.
+    # 'V' in 'x = V' spans (3,4)..(3,5); position (3,5) is past it, so there is no definition.
+    if _definition_location(_DEFN_DOC, "d.py", {"line": 3, "character": 5}) is not None:
+        bad.append("_node_at end_point is exclusive: a position at the span end should not match")
+
+    # _document_symbols maps validate_all to SymbolKind 12 (Function), like chain.
+    va_symbols = _document_symbols("W = validate_all()\n", "v.py")
+    if [(s["name"], s["kind"]) for s in va_symbols] != [("W", 12)]:
+        bad.append(f"_document_symbols should map validate_all to kind 12: {va_symbols}")
+
+    # _code_actions over a wider range: a violation on a line strictly inside [start, end] is offered,
+    # which pins the `end` lookup (not collapsed to start_line) and the inclusive range comparison.
+    multi = "\n\nclass Widget:\n    pass\n"  # HC-P003 on line 3 (1-based) -> diagnostic_line 2
+    actions = _code_actions(multi, "m.py", {"start": {"line": 0}, "end": {"line": 5}})
+    if len(actions) != 1 or actions[0]["edit"]["changes"]["m.py"][0]["range"]["start"]["line"] != 2:
+        bad.append(f"_code_actions should offer a fix for a diagnostic inside a wider range: {actions}")
+
+    # dispatch routes 'initialize' to the capability advertisement (pins the handler-table key).
+    routed = dispatch({}, "initialize", 1, {})[1]
+    if not routed or routed[0].get("result", {}).get("capabilities", {}).get("hoverProvider") is not True:
+        bad.append(f"dispatch('initialize') should route to the capabilities response: {routed}")
+
+    # serve: 'exit' stops the loop before later messages are processed (pins the exit check); and a
+    # request's id is carried back on its response (pins message.get('id')).
+    exit_first = _frame({"method": "exit"}) + _frame({"method": "textDocument/didOpen", "params": {"textDocument": {"uri": "f.py", "text": _VIOLATION}}})
+    sink = io.BytesIO()
+    serve(io.BytesIO(exit_first), sink)
+    if b"publishDiagnostics" in sink.getvalue():
+        bad.append("serve should stop at 'exit' and not process the following didOpen")
+    id_stream = _frame({"jsonrpc": "2.0", "id": 42, "method": "shutdown", "params": {}}) + _frame({"method": "exit"})
+    sink = io.BytesIO()
+    serve(io.BytesIO(id_stream), sink)
+    if b'"id": 42' not in sink.getvalue():
+        bad.append("serve should carry a request's id onto its response")
+
+    # didClose: the exact clearing notification (an empty diagnostic set) and the document dropped.
+    closed, close_msgs = dispatch({"f.py": _VIOLATION}, "textDocument/didClose", None, {"textDocument": {"uri": "f.py"}})
+    if close_msgs != [{
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {"uri": "f.py", "diagnostics": []},
+    }] or "f.py" in closed:
+        bad.append(f"didClose exact notification wrong: {close_msgs}")
+
+    # serve threads params through: a didOpen publishes diagnostics for the document's own uri.
+    open_stream = _frame({"method": "textDocument/didOpen", "params": {"textDocument": {"uri": "x.py", "text": _VIOLATION}}}) + _frame({"method": "exit"})
+    sink = io.BytesIO()
+    serve(io.BytesIO(open_stream), sink)
+    if b'"uri": "x.py"' not in sink.getvalue():
+        bad.append("serve should publish diagnostics for the opened document's uri")
+
+    # _hover_contents defaults a missing position line to 0 (-> honest-check line 1).
+    if _hover_contents(_VIOLATION, "f.py", {}) != {"kind": "markdown", "value": f"**HC-P003**: {_HC_P003_MESSAGE}"}:
+        bad.append("_hover_contents should default a missing line to 0 (honest-check line 1)")
+
+    # _definition_location defaults missing line/character to 0: on a doc with an identifier at (0,0)
+    # the empty position resolves there (line 0), not line 1.
+    defn_doc = "V = make()\nx = V\n"
+    loc = _definition_location(defn_doc, "u.py", {})
+    if (loc or {}).get("range", {}).get("start", {}).get("line") != 0:
+        bad.append(f"_definition_location should default the position to (0, 0): {loc}")
+
+    # _code_actions defaults a missing start line to 0, so a line-0 diagnostic is still in range.
+    if len(_code_actions(_VIOLATION, "f.py", {"start": {}, "end": {"line": 0}})) != 1:
+        bad.append("_code_actions should default a missing start line to 0")
+
+    # didChange uses the LAST content change (full-text sync), not the first.
+    changed, _ = dispatch({}, "textDocument/didChange", None, {"textDocument": {"uri": "f.py"}, "contentChanges": [{"text": "FIRST"}, {"text": "LAST"}]})
+    if changed.get("f.py") != "LAST":
+        bad.append(f"didChange should apply the last content change: {changed.get('f.py')!r}")
+    return bad
+
+
 # --------------------------------------------------------------------------- startup
 
 
@@ -805,6 +1007,7 @@ def run():
         "config": _probe_config(),
         "cli": _probe_cli(),
         "lsp": _probe_lsp(),
+        "lsp_exact": _probe_lsp_exact(),
         "startup": _probe_startup(),
         "suppression": _probe_suppression(),
         "suppression_internals": _probe_suppression_internals(),
