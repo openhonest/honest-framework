@@ -68,17 +68,38 @@ from honest_check.rules import (
     _self_attr_writes,
 )
 from honest_check.declgraph import (
+    assigned_name,
+    authorizing_links,
+    build_vocabulary_definitions,
+    constructor_calls,
+    extract_bindings,
+    extract_chains,
+    extract_composed_types,
+    extract_links,
+    extract_routes,
+    extract_state_machines,
+    extract_vocabularies,
     function_calls,
+    function_name,
+    function_role,
     keyword_args,
+    link_decorator_call,
+    module_assignments,
     positional_arg_count,
+    registered_provider_signature,
     resolve_aliases,
     string_value,
     string_list,
     transition_table,
+    vocab_binding_pairings,
+    vocab_expr_type_names,
+    vocabulary_base_types,
     vocabulary_members,
     _derivation_signature,
     _dictionary_arg,
     _parse_composed,
+    _recognizer,
+    _route_key,
 )
 from honest_parse import parse_python, node_text, walk as _w
 
@@ -1489,6 +1510,399 @@ def _probe_internal_helpers() -> list[str]:
     return bad
 
 
+def _pa(src: str):
+    """Parse to (root, source_bytes)."""
+    b = src.encode()
+    return parse_python(b).root_node, b
+
+
+def _probe_declgraph_extractors() -> list[str]:
+    """Pin the declaration-graph extractors directly with exact-output assertions (sections 3.3-3.4).
+
+    The rule cases above drive these extractors indirectly through check_source, but never assert the
+    extracted structures themselves, so a dropped append, a flipped guard, or a swapped dict key can
+    leave the rule verdict unchanged. Here each extractor is fed a crafted source and its full output
+    is pinned, with discriminating malformed inputs for the defensive branches.
+    """
+    bad: list[str] = []
+
+    # resolve_aliases: from-imports (dotted + aliased), import-as and bare import for the module forms,
+    # and the negatives (a non-honest aliased import, a non-honest from-import, a plain import).
+    root, b = _pa(
+        "from honest_type import vocabulary, binding, composed, chain, classify, state_machine, predicate\n"
+        "from honest_type import link as lk\n"
+        "import honest_type as ht\n"
+        "import honest_type\n"
+        "import json as j\n"
+        "from other_mod import vocabulary as v\n"
+        "import os\n"
+    )
+    names, modules = resolve_aliases(root, b)
+    if names != {
+        "vocabulary": "vocabulary", "binding": "binding", "composed": "composed", "chain": "chain",
+        "classify": "classify", "state_machine": "state_machine", "predicate": "predicate", "lk": "link",
+    }:
+        bad.append(f"resolve_aliases names wrong: {names}")
+    if modules != {"ht", "honest_type"}:
+        bad.append(f"resolve_aliases modules wrong: {modules}")
+
+    aliases = (names, modules)
+
+    # constructor_calls: the bare-identifier form and the module-attribute form (ht.chain), and the
+    # negatives (a chain via an unknown module, a non-honest identifier call).
+    root, b = _pa(
+        "from honest_type import chain\n"
+        "import honest_type as ht\n"
+        "c1 = chain(a)\nc2 = ht.chain(a)\nc3 = zz.chain(a)\nc4 = other(a)\n"
+    )
+    al = resolve_aliases(root, b)
+    chains = constructor_calls(root, b, al, "chain")
+    if len(chains) != 2:
+        bad.append(f"constructor_calls(chain) should find the identifier and module-attribute forms: {len(chains)}")
+
+    # assigned_name: an assignment target, and the no-assignment / non-identifier-target negatives.
+    root, b = _pa(
+        "from honest_type import vocabulary\n"
+        "V = vocabulary({'a': {'x'}})\nvocabulary({'b': {'y'}})\no.attr = vocabulary({'c': {'z'}})\n"
+    )
+    al = resolve_aliases(root, b)
+    calls = constructor_calls(root, b, al, "vocabulary")
+    assigned = [assigned_name(c, b) for c in calls]
+    if assigned != ["V", None, None]:
+        bad.append(f"assigned_name should read an identifier target only: {assigned}")
+
+    # vocabulary_base_types + _recognizer: set / predicate / ref recognizers, an empty-string key kept,
+    # and a non-string (integer) key skipped.
+    root, b = _pa(
+        "from honest_type import vocabulary\n"
+        "V = vocabulary({'s': {'x', 'y'}, 'r': other, 'p': pred(z), 5: {'q'}})\n"
+    )
+    al = resolve_aliases(root, b)
+    call = constructor_calls(root, b, al, "vocabulary")[0]
+    base = vocabulary_base_types(call, b)
+    if set(base) != {"s", "r", "p"}:
+        bad.append(f"vocabulary_base_types keys wrong (int key skipped): {sorted(base)}")
+    if base["s"] != ("set", frozenset({"x", "y"})) or base["r"] != ("ref", "other") or base["p"][0] != "predicate":
+        bad.append(f"_recognizer tagging wrong: {base}")
+    if vocabulary_members(call, b) != {"x", "y"}:
+        bad.append(f"vocabulary_members should union only Set members: {vocabulary_members(call, b)}")
+    # A non-vocabulary (no dict) call yields no base types.
+    root2, b2 = _pa("from honest_type import vocabulary\nV = vocabulary()\n")
+    al2 = resolve_aliases(root2, b2)
+    if vocabulary_base_types(constructor_calls(root2, b2, al2, "vocabulary")[0], b2) != {}:
+        bad.append("vocabulary_base_types of a no-dict call should be {}")
+
+    # extract_vocabularies: base + composed records + composed_names, keyed by var name.
+    root, b = _pa(
+        "from honest_type import vocabulary, composed\n"
+        "V = vocabulary({'a': {'x'}}, composed_types=[composed('combo', requires={'a': 1}, captures='b')])\n"
+        "vocabulary({'unnamed': {'q'}})\n"
+    )
+    al = resolve_aliases(root, b)
+    vocabs = extract_vocabularies(root, b, al)
+    if set(vocabs) != {"V"} or vocabs["V"]["composed_names"] != {"combo"}:
+        bad.append(f"extract_vocabularies should key by name, skipping the unnamed call: {set(vocabs)}")
+    if vocabs["V"]["base"] != {"a": ("set", frozenset({"x"}))}:
+        bad.append(f"extract_vocabularies base wrong: {vocabs['V']['base']}")
+    composed = vocabs["V"]["composed"]
+    if len(composed) != 1 or composed[0]["name"] != "combo" or composed[0]["requires"] != {"a"} or composed[0]["captures"] != "b":
+        bad.append(f"extract_composed_types record wrong: {composed}")
+
+    # _parse_composed: name via keyword (no positional string), requires keys, and a maybe()-wrapped capture.
+    root, b = _pa(
+        "from honest_type import composed\n"
+        "c = composed(name='kw', requires={'t': 1}, captures=maybe('integer'))\n"
+    )
+    al = resolve_aliases(root, b)
+    comp_call = constructor_calls(root, b, al, "composed")[0]
+    rec = _parse_composed(comp_call, b)
+    if rec["name"] != "kw" or rec["requires"] != {"t"} or rec["captures"] != "integer":
+        bad.append(f"_parse_composed kw/maybe wrong: {rec}")
+    # extract_composed_types skips a non-composed element and a non-call element.
+    root, b = _pa(
+        "from honest_type import vocabulary, composed\n"
+        "V = vocabulary({'a': {'x'}}, composed_types=[composed('ok'), other('no'), 5])\n"
+    )
+    al = resolve_aliases(root, b)
+    only = extract_composed_types(constructor_calls(root, b, al, "vocabulary")[0], b, al)
+    if [r["name"] for r in only] != ["ok"]:
+        bad.append(f"extract_composed_types should keep only composed(...) calls: {[r['name'] for r in only]}")
+
+    # extract_bindings: table of type->slot, name-None skip, and non-string key/value skip.
+    root, b = _pa(
+        "from honest_type import binding\n"
+        "B = binding({'t': 'slot', 5: 'x', 'u': 9})\n"
+        "binding({'t': 'unnamed'})\n"
+    )
+    al = resolve_aliases(root, b)
+    bindings = extract_bindings(root, b, al)
+    if set(bindings) != {"B"} or bindings["B"]["table"] != {"t": "slot"}:
+        bad.append(f"extract_bindings table wrong (non-string and unnamed skipped): {bindings}")
+
+    # build_vocabulary_definitions + vocab_expr_type_names: a defined vocab, a merge (a | b),
+    # an inline vocabulary call, a parenthesized merge, and a non-identifier-left skip.
+    root, b = _pa(
+        "from honest_type import vocabulary\n"
+        "A = vocabulary({'a': {'x'}})\n"
+        "Bv = vocabulary({'b': {'y'}})\n"
+        "M = A | Bv\n"
+        "P = (A | vocabulary({'c': {'z'}}))\n"
+        "o.attr = vocabulary({'d': {'w'}})\n"
+    )
+    al = resolve_aliases(root, b)
+    defs = build_vocabulary_definitions(root, b, al)
+    if defs.get("A") != {"a"} or defs.get("M") != {"a", "b"} or defs.get("P") != {"a", "c"}:
+        bad.append(f"build_vocabulary_definitions merge/paren wrong: {defs}")
+    if "o.attr" in defs or any(not isinstance(k, str) or "." in k for k in defs):
+        bad.append(f"build_vocabulary_definitions should skip non-identifier targets: {sorted(defs)}")
+
+    # link_decorator_call + extract_links: accepts/emits resolved, boundary flag true vs default false.
+    root, b = _pa(
+        "from honest_type import vocabulary, link\n"
+        "A = vocabulary({'a': {'x'}})\n"
+        "Bv = vocabulary({'b': {'y'}})\n"
+        "@link(accepts=A, emits=Bv, boundary=True)\n"
+        "def f(d):\n    return d\n"
+        "@link(accepts=A, emits=A)\n"
+        "def g(d):\n    return d\n"
+        "def plain():\n    return 1\n"
+    )
+    al = resolve_aliases(root, b)
+    defs = build_vocabulary_definitions(root, b, al)
+    links = extract_links(root, b, al, defs)
+    if set(links) != {"f", "g"}:
+        bad.append(f"extract_links should find only @link functions: {sorted(links)}")
+    if links["f"]["accepts"] != {"a"} or links["f"]["emits"] != {"b"} or links["f"]["boundary"] is not True:
+        bad.append(f"extract_links f wrong: {links['f']}")
+    if links["g"]["boundary"] is not False:
+        bad.append(f"extract_links g boundary should default False: {links['g']}")
+    if "location" not in links["f"] or links["f"]["location"][0] <= 0:
+        bad.append(f"extract_links should carry a 1-based location: {links['f']}")
+
+    # link_decorator_call negatives: a plain (undecorated) function, and a function decorated by a
+    # non-link call, both yield None.
+    root2, b2 = _pa("def plain():\n    return 1\n@other()\ndef h():\n    return 2\n")
+    al2 = resolve_aliases(root2, b2)
+    funcs = {function_name(n, b2): n for n in _w(root2) if n.type == "function_definition"}
+    if link_decorator_call(funcs["plain"], b2, al2) is not None:
+        bad.append("link_decorator_call(plain) should be None")
+    if link_decorator_call(funcs["h"], b2, al2) is not None:
+        bad.append("link_decorator_call(non-link decorator) should be None")
+
+    # function_role: every role decorator is recognised (bare and call forms), plus the non-role and
+    # undecorated negatives. Each of the five _ROLE_DECORATORS members must be honoured.
+    for role in ("link", "recognizer", "boundary", "helper", "orchestrator"):
+        root, b = _pa(f"@{role}\ndef f():\n    return 1\n")
+        fn = next(n for n in _w(root) if n.type == "function_definition")
+        if function_role(fn, b) != role:
+            bad.append(f"function_role should recognise the @{role} decorator: {function_role(fn, b)}")
+    root, b = _pa(
+        "@orchestrator()\ndef bb():\n    return 1\n"
+        "@staticmethod\ndef c():\n    return 1\n"
+        "def d():\n    return 1\n"
+    )
+    funcs = {function_name(n, b): n for n in _w(root) if n.type == "function_definition"}
+    if function_role(funcs["bb"], b) != "orchestrator":
+        bad.append("function_role should read the call form of a role decorator")
+    if function_role(funcs["c"], b) is not None or function_role(funcs["d"], b) is not None:
+        bad.append("function_role of a non-role / undecorated function should be None")
+    if function_name(funcs["bb"], b) != "bb":
+        bad.append("function_name wrong")
+
+    # function_calls: bare-identifier callees inside the body only.
+    root, b = _pa("def f():\n    g()\n    obj.method()\n    h(1)\n    return g\n")
+    fn = next(n for n in _w(root) if n.type == "function_definition")
+    if function_calls(fn, b) != {"g", "h"}:
+        bad.append(f"function_calls should collect bare-identifier callees: {function_calls(fn, b)}")
+
+    # vocab_binding_pairings: the @link(accepts=, binds=) form and the classify(_, vocab, bind) positional form.
+    root, b = _pa(
+        "from honest_type import link, classify\n"
+        "@link(accepts=Voc, binds=Bind)\n"
+        "def f(d):\n    return d\n"
+        "classify(thing, Voc2, Bind2)\n"
+    )
+    al = resolve_aliases(root, b)
+    pairs = vocab_binding_pairings(root, b, al)
+    if sorted(pairs) != [("Voc", "Bind"), ("Voc2", "Bind2")]:
+        bad.append(f"vocab_binding_pairings wrong: {pairs}")
+
+    # authorizing_links: a function decorated @link(authorizes=True), and the authorizes!=True negative.
+    root, b = _pa(
+        "from honest_type import link\n"
+        "@link(authorizes=True)\n"
+        "def guard(d):\n    return d\n"
+        "@link(authorizes=False)\n"
+        "def open_(d):\n    return d\n"
+    )
+    al = resolve_aliases(root, b)
+    auth = [name for name, _node in authorizing_links(root, b, al)]
+    if auth != ["guard"]:
+        bad.append(f"authorizing_links should find only authorizes=True: {auth}")
+
+    # registered_provider_signature: a registered inline AuthProvider with a lookup derivation -> its name;
+    # a literal derivation -> ''; no registration -> None.
+    root, b = _pa(
+        "p = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('session_actor'))\n"
+        "register_auth_provider(p)\n"
+    )
+    if registered_provider_signature(root, b, resolve_aliases(root, b)) != "session_actor":
+        bad.append("registered_provider_signature should read the lookup derivation name")
+    root, b = _pa(
+        "p = AuthProvider(derivation_expression=GuardExpressionTemplate.literal('x'))\n"
+        "register_auth_provider(p)\n"
+    )
+    if registered_provider_signature(root, b, resolve_aliases(root, b)) != "":
+        bad.append("registered_provider_signature of a literal derivation should be ''")
+    root, b = _pa("x = 1\n")
+    if registered_provider_signature(root, b, resolve_aliases(root, b)) is not None:
+        bad.append("registered_provider_signature with no registration should be None")
+    # _derivation_signature: a lookup call -> name; a non-lookup method -> ''.
+    root, b = _pa("GuardExpressionTemplate.lookup('sig')\n")
+    look = next(n for n in _w(root) if n.type == "call")
+    if _derivation_signature(look, b) != "sig":
+        bad.append("_derivation_signature(lookup) should return the signature name")
+    root, b = _pa("GuardExpressionTemplate.literal('x')\n")
+    lit = next(n for n in _w(root) if n.type == "call")
+    if _derivation_signature(lit, b) != "":
+        bad.append("_derivation_signature(non-lookup) should be ''")
+    # A lookup with no string argument exhausts the arg loop and returns '' (not the bare name).
+    root, b = _pa("GuardExpressionTemplate.lookup(some_var)\n")
+    look2 = next(n for n in _w(root) if n.type == "call")
+    if _derivation_signature(look2, b) != "":
+        bad.append("_derivation_signature(lookup with no string arg) should be ''")
+
+    # positional_arg_count: positionals counted, keyword args AND comments excluded.
+    root, b = _pa("f(a, b, kw=1)\n")
+    calln = next(n for n in _w(root) if n.type == "call")
+    if positional_arg_count(calln) != 2:
+        bad.append(f"positional_arg_count should exclude keyword args: {positional_arg_count(calln)}")
+    root, b = _pa("f(\n    a,\n    # a comment in the args\n    b,\n    kw=1,\n)\n")
+    calln = next(n for n in _w(root) if n.type == "call")
+    if positional_arg_count(calln) != 2:
+        bad.append(f"positional_arg_count should exclude comments and keywords: {positional_arg_count(calln)}")
+    # keyword_args: only keyword_argument children become entries; positional args are not read as names.
+    kw_map = keyword_args(calln, b)
+    if list(kw_map) != ["kw"] or node_text(kw_map["kw"], b) != "1":
+        bad.append(f"keyword_args should map only keyword arguments to their value nodes: {list(kw_map)}")
+
+    # extract_chains: identifier links collected; a non-identifier argument is skipped.
+    root, b = _pa("from honest_type import chain\nc = chain(first, second, helper())\n")
+    al = resolve_aliases(root, b)
+    chains = extract_chains(root, b, al)
+    if len(chains) != 1 or chains[0]["name"] != "c" or chains[0]["links"] != ["first", "second"]:
+        bad.append(f"extract_chains wrong: {chains}")
+
+    # extract_routes + _route_key: a valid two-string-tuple key paired with an identifier chain, with a
+    # non-tuple key, a one-string tuple, and a non-identifier value all skipped; and a non-ROUTES dict.
+    root, b = _pa(
+        "ROUTES = {('GET', '/a'): handler, 'x': skip1, ('POST',): skip2, ('PUT', '/b'): 'notid'}\n"
+        "OTHER = {('GET', '/c'): handler}\n"
+    )
+    routes = extract_routes(root, b)
+    if routes != [{"method": "GET", "path": "/a", "chain": "handler"}]:
+        bad.append(f"extract_routes wrong: {routes}")
+    root, b = _pa("ROUTES = {('GET', '/a'): h}\n")
+    key_pair = next(n for n in _w(root) if n.type == "tuple")
+    if _route_key(key_pair, b) != ("GET", "/a"):
+        bad.append(f"_route_key wrong: {_route_key(key_pair, b)}")
+
+    # extract_state_machines: states/events members, initial, terminal set, transitions table.
+    root, b = _pa(
+        "from honest_type import state_machine, vocabulary\n"
+        "m = state_machine(states=vocabulary({'s': {'open', 'closed'}}), events=vocabulary({'e': {'shut'}}),"
+        " initial='open', terminal=['closed'], transitions={('open', 'shut'): 'closed'})\n"
+    )
+    al = resolve_aliases(root, b)
+    machines = extract_state_machines(root, b, al)
+    if len(machines) != 1:
+        bad.append(f"extract_state_machines should find one machine: {len(machines)}")
+    else:
+        m = machines[0]
+        if (m["name"], m["states"], m["events"], m["initial"], m["terminal"], m["transitions"]) != (
+            "m", {"open", "closed"}, {"shut"}, "open", {"closed"}, [("open", "shut", "closed")]
+        ):
+            bad.append(f"extract_state_machines parts wrong: {m}")
+    # string_list accepts both a list and a tuple literal, keeping only string elements.
+    root, b = _pa("x = ['a', 'b', 5]\n")
+    lst = next(n for n in _w(root) if n.type == "list")
+    if string_list(lst, b) != ["a", "b"]:
+        bad.append(f"string_list of a list should keep only string elements: {string_list(lst, b)}")
+    root, b = _pa("x = ('a', 'b')\n")
+    tup = next(n for n in _w(root) if n.type == "tuple")
+    if string_list(tup, b) != ["a", "b"]:
+        bad.append(f"string_list of a tuple should keep only string elements: {string_list(tup, b)}")
+    root, b = _pa("x = {('s', 'e'): 'n', ('only',): 'skip', 5: 'skip2'}\n")
+    dct = next(n for n in _w(root) if n.type == "dictionary")
+    if transition_table(dct, b) != [("s", "e", "n")]:
+        bad.append(f"transition_table should keep only two-string-tuple keys: {transition_table(dct, b)}")
+
+    # module_assignments: top-level assignments only (not one nested in a function body).
+    root, b = _pa("A = 1\ndef f():\n    B = 2\n    return B\nC = 3\n")
+    ma_targets = [node_text(a.child_by_field_name("left"), b) for a in module_assignments(root)]
+    if ma_targets != ["A", "C"]:
+        bad.append(f"module_assignments should be top-level only: {ma_targets}")
+
+    # vocabulary_base_types: a ** spread in the base-types dict is not a pair and is skipped (the
+    # pair-type guard; without it a splat has no key field and the extractor would crash).
+    root, b = _pa("from honest_type import vocabulary\nV = vocabulary({**base, 'a': {'x'}})\n")
+    al = resolve_aliases(root, b)
+    if vocabulary_base_types(constructor_calls(root, b, al, "vocabulary")[0], b) != {"a": ("set", frozenset({"x"}))}:
+        bad.append("vocabulary_base_types should skip a ** spread (non-pair) in the dict")
+
+    # transition_table arity: a two-string tuple is kept; a one-element, a three-element, and tuples
+    # with a non-string element in either position are all dropped (pins len == 2 and parts[0]/parts[1]).
+    for literal, expected in (
+        ("{('s', 'e'): 'n'}", [("s", "e", "n")]),
+        ("{('only',): 'n'}", []),
+        ("{('a', 'b', 'c'): 'n'}", []),
+        ("{(5, 'e'): 'n'}", []),
+        ("{('s', 5): 'n'}", []),
+    ):
+        root, b = _pa(f"x = {literal}\n")
+        dct = next(n for n in _w(root) if n.type == "dictionary")
+        if transition_table(dct, b) != expected:
+            bad.append(f"transition_table({literal}) should be {expected}: {transition_table(dct, b)}")
+
+    # classify positional boundaries (vocab = positional[1] needs >= 2; binding = positional[2] needs >= 3):
+    # full positional, vocab-positional + keyword bind, and binding-positional + keyword vocab all pair;
+    # and a keyword vocab that does NOT collapse the positional vocab assignment (the AND, not OR).
+    for src, expected in (
+        ("classify(t, V, B)\n", [("V", "B")]),               # >= 2 and >= 3 both reached
+        ("classify(t, V, bind=B)\n", [("V", "B")]),          # vocab positional[1] (>= 2), binding keyword
+        ("classify(t, x, B, vocab=V)\n", [("V", "B")]),      # keyword vocab kept (AND): positional[1] not used for vocab
+        ("classify(t, bind=B)\n", []),                       # only one positional: vocab stays None, no pair
+        ("classify(t, V, vocab=Vk)\n", []),                  # binding stays None (len 2 < 3), no pair
+    ):
+        root, b = _pa("from honest_type import classify\n" + src)
+        al = resolve_aliases(root, b)
+        if sorted(vocab_binding_pairings(root, b, al)) != expected:
+            bad.append(f"vocab_binding_pairings({src.strip()}) should be {expected}: {vocab_binding_pairings(root, b, al)}")
+
+    # function_role reads the last dotted segment of a decorator call name (mod.boundary() -> boundary).
+    root, b = _pa("@mod.boundary()\ndef x():\n    return 1\n")
+    fr = next(n for n in _w(root) if n.type == "function_definition")
+    if function_role(fr, b) != "boundary":
+        bad.append(f"function_role should read the last dotted segment of a decorator: {function_role(fr, b)}")
+
+    # registered_provider_signature: a dotted AuthProvider (mod.AuthProvider) is recognised by its last
+    # segment, and only the *registered* provider var's assignment is read (an earlier unrelated
+    # AuthProvider must be skipped, not returned).
+    root, b = _pa(
+        "other = mod.AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('wrong'))\n"
+        "p = mod.AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('right'))\n"
+        "register_auth_provider(p)\n"
+    )
+    if registered_provider_signature(root, b, resolve_aliases(root, b)) != "right":
+        bad.append("registered_provider_signature should read the dotted AuthProvider of the registered var only")
+    # Registered, but the provider var is assigned to something that is not an AuthProvider -> ''.
+    root, b = _pa("p = SomethingElse(x=1)\nregister_auth_provider(p)\n")
+    if registered_provider_signature(root, b, resolve_aliases(root, b)) != "":
+        bad.append("registered_provider_signature of a non-AuthProvider assignment should be ''")
+
+    return bad
+
+
 def run() -> int:
     failed = 0
     passed = 0
@@ -1514,6 +1928,14 @@ def run() -> int:
     if helper_bad:
         failed += 1
         print(f"FAIL HC-rule [internal_helpers]: {helper_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    extractor_bad = _probe_declgraph_extractors()
+    if extractor_bad:
+        failed += 1
+        print(f"FAIL HC-rule [declgraph_extractors]: {extractor_bad}")
     else:
         passed += 1
 
