@@ -206,13 +206,22 @@ def _check_classify(case):
 
 
 def _check_merge(case):
+    def build(decls, composed):
+        return vocabulary({name: set(members) for name, members in decls.items()}, composed_types=[_composed(spec) for spec in composed])
+
+    va = build(case["merge_a"], case.get("merge_a_composed", []))
+    vb = build(case["merge_b"], case.get("merge_b_composed", []))
     try:
-        merge(_vocab(case["merge_a"]), _vocab(case["merge_b"]))
+        merged = merge(va, vb)
         result, message = "ok", ""
     except VocabularyError as exc:
-        result, message = "error", str(exc)
-    ok = result == case["expect"] and case.get("error_contains", "") in message
-    return ok, f"got {result} ({message[:50]})"
+        merged, result, message = None, "error", str(exc)
+    needles = case.get("error_contains", [])
+    needles = [needles] if isinstance(needles, str) else needles
+    ok = result == case["expect"] and all(needle in message for needle in needles)
+    if case["expect"] == "ok":
+        ok = ok and isinstance(merged, dict) and "base_types" in merged and "composed_types" in merged
+    return ok, f"got {result} ({message[:60]})"
 
 
 def _check_chainrun(case):

@@ -146,16 +146,30 @@ def _ht8_purity(subject):
 
 
 def _construction_rejected(subject):
-    """The subject is a (build thunk, expected-substring) pair; constructing it must raise
-    VocabularyError carrying the substring."""
+    """The subject is a (build thunk, expected-substring(s)) pair; constructing it must raise
+    VocabularyError carrying every expected substring."""
     build, expect = subject["build"], subject["expect"]
+    expects = [expect] if isinstance(expect, str) else expect
     try:
         build()
     except VocabularyError as exc:
-        if expect in str(exc):
-            return []
-        return [f"raised VocabularyError but message missing {expect!r}: {exc}"]
+        missing = [needle for needle in expects if needle not in str(exc)]
+        if missing:
+            return [f"raised VocabularyError but message missing {missing}: {exc}"]
+        return []
     return ["construction succeeded; expected VocabularyError"]
+
+
+def _catch_all_admits_discriminating():
+    """A predicate accepting a middling fraction of the corpus (~63%) is a discriminating type, not a
+    catch-all, and must construct (section 13.3). Pins the 95% threshold's acceptance count — a doubled
+    or off-by-one count would wrongly reject it. A live predicate, so it lives here, not in suite.json."""
+    bad = []
+    try:
+        vocabulary({"midfreq": predicate(lambda token: len(token) <= 10)})
+    except VocabularyError as exc:
+        bad.append(f"a ~63%-accepting predicate must construct, not be rejected as a catch-all: {exc}")
+    return bad
 
 
 # --------------------------------------------------------------------------- engine contract law
@@ -214,7 +228,7 @@ CONSTRUCTION_SUBJECTS = [
     ("reserved_crosslang", {"build": lambda: vocabulary({"t": {"class"}}), "expect": "reserved"}),
     ("reserved_python", {"build": lambda: vocabulary({"t": {"lambda"}}), "expect": "reserved"}),
     ("set_overlap", {"build": lambda: vocabulary({"a": {"x"}, "b": {"x"}}), "expect": "share"}),
-    ("catch_all_predicate", {"build": lambda: vocabulary({"anything": predicate(lambda token: True)}), "expect": "nearly all"}),
+    ("catch_all_predicate", {"build": lambda: vocabulary({"anything": predicate(lambda token: True)}), "expect": ["nearly all", "discriminating type (HC011)"]}),
     (
         "ambiguous_capture",
         {
@@ -414,13 +428,14 @@ def run():
         verify_laws(SM_LAWS, SM_CONSTRUCTION_SUBJECTS),
         verify_laws(SM_VOCAB_LAWS, [("vocabulary_states", {})]),
     ]
-    direct = _reservation_layer_law()
+    directs = [("HT-4", "reservation_layer total", _reservation_layer_law()), ("HT-engine", "catch-all admits a discriminating predicate", _catch_all_admits_discriminating())]
 
-    passed = sum(g["passed"] for g in groups) + (1 if not direct else 0)
+    passed = sum(g["passed"] for g in groups) + sum(1 for _, _, messages in directs if not messages)
     violations = [v for g in groups for v in g["violations"]]
-    if direct:
-        violations.append({"law": "HT-4", "statement": "reservation_layer total", "subject": "direct", "messages": direct})
-    total = sum(g["total"] for g in groups) + 1
+    for law_id, statement, messages in directs:
+        if messages:
+            violations.append({"law": law_id, "statement": statement, "subject": "direct", "messages": messages})
+    total = sum(g["total"] for g in groups) + len(directs)
 
     for v in violations:
         print(f"FAIL {v['law']} [{v['subject']}]: {v['messages']}")

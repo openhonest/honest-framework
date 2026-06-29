@@ -265,6 +265,37 @@
    ]
   },
   {
+   "id": "composed-different-captures-no-conflict",
+   "declarations": {
+    "fmt": [
+     "currency"
+    ],
+    "intt": [
+     "2"
+    ],
+    "cc": [
+     "USD"
+    ]
+   },
+   "composed_types": [
+    {
+     "name": "c1",
+     "requires": {
+      "fmt": "currency"
+     },
+     "captures": "intt"
+    },
+    {
+     "name": "c2",
+     "requires": {
+      "fmt": "currency"
+     },
+     "captures": "cc"
+    }
+   ],
+   "expect": "ok"
+  },
+  {
    "id": "classify-binding",
    "declarations": {
     "currency_code": [
@@ -711,6 +742,38 @@
      "number"
     ]
    },
+   "expect": "ok"
+  },
+  {
+   "id": "merge-ok-with-composed",
+   "merge_a": {
+    "a": [
+     "x"
+    ]
+   },
+   "merge_a_composed": [
+    {
+     "name": "ca",
+     "requires": {
+      "a": "x"
+     },
+     "captures": "a"
+    }
+   ],
+   "merge_b": {
+    "b": [
+     "y"
+    ]
+   },
+   "merge_b_composed": [
+    {
+     "name": "cb",
+     "requires": {
+      "b": "y"
+     },
+     "captures": "b"
+    }
+   ],
    "expect": "ok"
   },
   {
