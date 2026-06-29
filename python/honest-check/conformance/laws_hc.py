@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 from honest_check import HonestCheckError, check_source, startup_check
-from honest_check.cli import _find_config, _load_config, main as cli_main, watch
+from honest_check.cli import _discover_files, _find_config, _load_config, main as cli_main, watch
 from honest_check.rules import is_fixable
 from honest_check.config import (
     empty_config,
@@ -164,9 +164,19 @@ def _probe_cli():
             bad.append(f"violation should exit 1 with output, got {code} {out[:60]}")
         # A clean file in a format that emits nothing produces no output line.
         _run_cli([str(clean), "--format", "github"])
-        # --rule / --no-rule / --severity filtering still parse and run.
-        _run_cli([str(dirty), "--rule", "HC003", "--severity", "info"])
-        code, _, _ = _run_cli([str(dirty), "--no-rule", "HC003", "--no-rule", "HC-P003"])
+        # --no-rule suppresses a rule: dirty's only finding (HC-P003) drops, so the run passes.
+        code, _, _ = _run_cli([str(dirty), "--no-rule", "HC-P003"])
+        if code != 0:
+            bad.append(f"--no-rule HC-P003 should suppress the only error and exit 0, got {code}")
+        # --rule keeps only the named rule: asking for a different rule filters HC-P003 out.
+        code, _, _ = _run_cli([str(dirty), "--rule", "HC-SYN"])
+        if code != 0:
+            bad.append(f"--rule HC-SYN should keep only HC-SYN, filtering out HC-P003, exit 0, got {code}")
+        # Every --severity choice is accepted (not an argparse usage error).
+        for sev in ("error", "warning", "info"):
+            code, _, _ = _run_cli([str(dirty), "--severity", sev])
+            if code == 2:
+                bad.append(f"--severity {sev} should be an accepted choice, got a usage error")
         # Explicit valid config is read and normalized.
         cfg = Path(tmp) / "honest-check.toml"
         cfg.write_text('[check]\nseverity = "error"\n', encoding="utf-8")
@@ -174,17 +184,22 @@ def _probe_cli():
         # A malformed config is an exit-2 usage failure.
         bad_cfg = Path(tmp) / "bad.toml"
         bad_cfg.write_text("this is = = not toml", encoding="utf-8")
-        code, _, _ = _run_cli([str(dirty), "--config", str(bad_cfg)])
-        if code != 2:
-            bad.append(f"malformed config should exit 2, got {code}")
-        # A path that cannot be read is an exit-2 failure.
-        code, _, _ = _run_cli([str(Path(tmp) / "does_not_exist.py")])
-        if code != 2:
-            bad.append(f"missing source file should exit 2, got {code}")
+        code, _, err = _run_cli([str(dirty), "--config", str(bad_cfg)])
+        if code != 2 or "cannot load config" not in err:
+            bad.append(f"malformed config should exit 2 with a message, got {code} {err[:60]}")
+        # A path that cannot be read is an exit-2 failure with a message.
+        code, _, err = _run_cli([str(Path(tmp) / "does_not_exist.py")])
+        if code != 2 or "cannot read source" not in err:
+            bad.append(f"missing source file should exit 2 with a message, got {code} {err[:60]}")
         # --fix reports that nothing is auto-fixable (honest-check's rules need restructuring).
         code, _, err = _run_cli([str(dirty), "--fix"])
-        if code != 1 or "auto-fixable" not in err:
-            bad.append(f"--fix should run and report no auto-fixable corrections: {code} {err[:60]}")
+        if code != 1 or "auto-fixable" not in err or "restructuring" not in err:
+            bad.append(f"--fix should run and report no auto-fixable corrections: {code} {err[:80]}")
+        # Directory input: _discover_files expands a directory to its sorted .py files, honouring excludes.
+        if _discover_files([str(tmp)], []) != sorted([clean, dirty]):
+            bad.append(f"_discover_files should expand a directory to its .py files: {_discover_files([str(tmp)], [])}")
+        if _discover_files([str(tmp)], ["*/dirty.py"]) != [clean]:
+            bad.append("_discover_files should drop files matching an exclude glob")
         # --watch runs the check; with no trigger stream (EOF) it runs once and returns its code.
         code, _, _ = _run_cli([str(clean), "--watch"])
         if code != 0:
@@ -212,8 +227,9 @@ def _probe_cli():
         saved = os.getcwd()
         os.chdir(tmp)
         try:
-            if _find_config(None) is None:
-                bad.append("ancestor search did not find honest-check.toml")
+            found_cfg = _find_config(None)
+            if found_cfg is None or not found_cfg.is_file():
+                bad.append(f"ancestor search should return the real honest-check.toml file: {found_cfg}")
             _run_cli(["src.py"])
         finally:
             os.chdir(saved)
@@ -229,6 +245,70 @@ def _probe_cli():
             bad.append("--lsp should return the server's exit code")
     finally:
         sys.stdin, sys.stdout = saved_in, saved_out
+
+    # main(None) reads sys.argv[1:] — the program name dropped, the real arguments kept. With a dirty
+    # first path and a clean second, both are checked, so the run fails (exit 1). argv[0:] would treat
+    # the program name as a path (exit 2); argv[2:] would drop the dirty path (exit 0).
+    with tempfile.TemporaryDirectory() as tmp:
+        clean = Path(tmp) / "clean.py"
+        clean.write_text(_CLEAN, encoding="utf-8")
+        dirty = Path(tmp) / "dirty.py"
+        dirty.write_text(_VIOLATION, encoding="utf-8")
+        saved_argv = sys.argv
+        # argv[0] is a name that resolves to no file or directory, so argv[0:] (keeping it as a path)
+        # fails to read it and exits 2, distinct from the real argv[1:] exit 1.
+        sys.argv = ["prog-does-not-exist.invalid", str(dirty), str(clean)]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = cli_main(None)
+            if code != 1:
+                bad.append(f"main(None) should read sys.argv[1:] and check both paths (exit 1), got {code}")
+        finally:
+            sys.argv = saved_argv
+
+        # The --watch dispatch reads the trigger stream (sys.stdin.buffer) only when --watch is given.
+        # Inject a stdin buffer and check whether main consumed it: a plain run must leave it untouched.
+        for flag, should_consume in (([], False), (["--watch"], True)):
+            buffer = io.BytesIO(b"trigger\n")
+            saved_in = sys.stdin
+            sys.stdin = type("_S", (), {"buffer": buffer})()
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    cli_main([*flag, str(clean)])
+            finally:
+                sys.stdin = saved_in
+            if (buffer.tell() > 0) != should_consume:
+                bad.append(f"--watch={bool(flag)} should consume stdin={should_consume}, consumed={buffer.tell() > 0}")
+
+    # --help renders the full help: the program name, the description, and every argument's help string.
+    # COLUMNS is widened so argparse does not wrap a phrase across lines.
+    saved_cols = os.environ.get("COLUMNS")
+    os.environ["COLUMNS"] = "200"
+    help_out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(help_out), contextlib.redirect_stderr(io.StringIO()):
+            cli_main(["--help"])
+    except SystemExit:
+        pass
+    finally:
+        if saved_cols is None:
+            os.environ.pop("COLUMNS", None)
+        else:
+            os.environ["COLUMNS"] = saved_cols
+    help_text = help_out.getvalue()
+    for phrase in (
+        "usage: honest-check",  # the program name in the usage line (prog=)
+        "pre-auto-generation honesty gate",
+        "files or directories to check",
+        "run as a Language Server over stdio",
+        "path to honest-check.toml",
+        "run only this rule (repeatable)",
+        "suppress this rule (repeatable)",
+        "apply auto-fixable corrections",
+        "re-run on each trigger line from stdin",
+    ):
+        if phrase not in help_text:
+            bad.append(f"--help should include {phrase!r}")
     return bad
 
 
