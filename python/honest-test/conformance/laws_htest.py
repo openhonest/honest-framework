@@ -655,17 +655,20 @@ def _probe_value():
         if not result["proved"] or result["fault"] is not None:
             bad.append(f"a matching oracle should prove cleanly: {case} -> {result}")
 
-    # Each oracle fails as data on a mismatch — assertion_failed, never a raised exception.
+    # Each oracle fails as data on a mismatch — assertion_failed, never a raised exception — and the
+    # fault carries the oracle's diagnostic message (so emptying any assert message is caught).
     mismatched = [
-        {"function": "double", "input": 21, "expected": 99},
-        {"function": "ok_fn", "input": 1, "fault": "bad"},
-        {"function": "err_fn", "input": 1, "ok": True},
-        {"function": "box_fn", "input": 1, "field": {"name": "n", "value": 999}},
+        ({"function": "double", "input": 21, "expected": 99}, "expected 99"),
+        ({"function": "ok_fn", "input": 1, "fault": "bad"}, "expected fault"),
+        ({"function": "err_fn", "input": 1, "ok": True}, "expected an ok result"),
+        ({"function": "box_fn", "input": 1, "field": {"name": "n", "value": 999}}, "expected field"),
     ]
-    for case in mismatched:
+    for case, fragment in mismatched:
         result = run_value_case(case, functions)
         if result["proved"] or result["fault"]["code"] != "assertion_failed":
             bad.append(f"a mismatched oracle should fail with assertion_failed: {case} -> {result}")
+        elif fragment not in result["fault"]["detail"]:
+            bad.append(f"the assertion fault should carry its diagnostic message: {fragment!r} not in {result['fault']['detail']!r}")
 
     # An unknown function and a raising function are both step_errored, not crashes.
     unknown = run_value_case({"function": "missing", "input": 1, "expected": 1}, functions)
@@ -675,10 +678,13 @@ def _probe_value():
     if raising["proved"] or raising["fault"]["code"] != "step_errored":
         bad.append(f"a raising function should be step_errored: {raising}")
 
-    # A case declaring no oracle is rejected (not silently proved).
+    # A case declaring no oracle is rejected (not silently proved): a clear assertion fault naming the
+    # missing oracle, not a step_errored crash from dispatching the empty kind.
     no_oracle = run_value_case({"function": "double", "input": 1}, functions)
     if no_oracle["proved"]:
         bad.append(f"a case with no oracle must not be proved: {no_oracle}")
+    elif no_oracle["fault"]["code"] != "assertion_failed" or "declares no oracle" not in no_oracle["fault"]["detail"]:
+        bad.append(f"a no-oracle case should be a clear assertion fault naming the missing oracle: {no_oracle}")
 
     # check_oracle is reusable on a result directly; run_value_cases maps over a list.
     check_oracle({"expected": 4}, 4)
