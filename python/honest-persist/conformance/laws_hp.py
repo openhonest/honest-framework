@@ -412,30 +412,79 @@ def _probe_check():
         "NOT",              # NOT with no clause
         "age > 1 AND",      # junction with no right operand
         "age @ 1",          # unsupported token
+        "x ( 1",            # a non-comparison op after a term (the type==op AND value-in-ops guard)
+        "> 5",              # an operator where a term is expected (left is None)
+        "x >",              # a comparison with no right term
+        "(x > 1) y",        # trailing token after a complete parse (the consume-to-end check)
+        "x > -",            # a trailing minus: the negative-literal lookahead must not overrun
+        "AND x > 1",        # a junction starting with its keyword (the operand is None)
     ]
     for expression in malformed:
         result = parse_check(expression)
         if "err" not in result or result["err"]["code"] != "uncompilable_check":
             bad.append(f"parse_check({expression!r}) should be uncompilable: {result}")
-    # Every supported comparison operator evaluates (the bounded operator vocabulary).
-    operators = {">": (2, 1), "<": (1, 2), ">=": (2, 2), "<=": (2, 2), "=": (1, 1), "!=": (1, 2), "<>": (1, 2)}
-    for op, (a, b) in operators.items():
-        tree = parse_check(f"x {op} {b}")
-        if "ok" not in tree or not check_holds(tree["ok"], {"x": a}):
-            bad.append(f"operator {op!r} did not evaluate true for ({a} {op} {b})")
-    # AND / OR / NOT / IN, with a string literal and parentheses.
-    combos = {
-        "x > 0 AND y < 10": {"x": 1, "y": 1, "_": True},
-        "x > 5 OR y < 5": {"x": 1, "y": 1, "_": True},
-        "NOT x > 5": {"x": 1, "_": True},
-        "x IN (1, 2, 3)": {"x": 2, "_": True},
-        "name = 'ok'": {"name": "ok", "_": True},
-        "(x > 0 OR x < 0) AND x != 0": {"x": 1, "_": True},
+    # The two parse faults are named in full: an unsupported token and an otherwise-uncompilable parse.
+    if parse_check("age @ 1").get("err") != {"code": "uncompilable_check", "message": "CHECK uses an unsupported token: age @ 1", "category": "server", "detail": {"expression": "age @ 1"}}:
+        bad.append(f"an unsupported token should fault in full: {parse_check('age @ 1')}")
+    if parse_check("age >").get("err") != {"code": "uncompilable_check", "message": "CHECK cannot be compiled: age >", "category": "server", "detail": {"expression": "age >"}}:
+        bad.append(f"an uncompilable parse should fault in full: {parse_check('age >')}")
+
+    # _number reads an int or a float by the presence of a decimal point.
+    from honest_persist.check import _number
+    if _number("5") != 5 or not isinstance(_number("5"), int) or _number("1.5") != 1.5 or not isinstance(_number("1.5"), float):
+        bad.append(f"_number should read int vs float by the decimal point: {_number('5')!r}, {_number('1.5')!r}")
+
+    # Every comparison operator evaluates correctly on BOTH sides of its boundary, so each maps to the
+    # exact operator (a true-only test cannot tell > from >=).
+    op_cases = {
+        ">": [(2, 1, True), (2, 2, False), (1, 2, False)],
+        "<": [(1, 2, True), (2, 2, False), (2, 1, False)],
+        ">=": [(2, 1, True), (2, 2, True), (1, 2, False)],
+        "<=": [(1, 2, True), (2, 2, True), (2, 1, False)],
+        "=": [(1, 1, True), (1, 2, False)],
+        "!=": [(1, 2, True), (1, 1, False)],
+        "<>": [(1, 2, True), (1, 1, False)],
     }
-    for expression, row in combos.items():
+    for op, cases in op_cases.items():
+        for a, b, expected in cases:
+            tree = parse_check(f"x {op} {b}")
+            if "ok" not in tree or check_holds(tree["ok"], {"x": a}) is not expected:
+                bad.append(f"operator {op!r}: ({a} {op} {b}) should be {expected}: {tree}")
+
+    # AND / OR / NOT / IN, string literals, negatives and floats — each with a DISCRIMINATING row where
+    # dropping or misreading a clause/operand would flip the result.
+    combos = [
+        ("x > 0 AND y < 10", {"x": 1, "y": 99}, False), ("x > 0 AND y < 10", {"x": 1, "y": 1}, True),
+        ("x > 5 OR y < 5", {"x": 1, "y": 9}, False), ("x > 5 OR y < 5", {"x": 9, "y": 9}, True),
+        ("NOT x > 5", {"x": 9}, False), ("NOT x > 5", {"x": 1}, True),
+        ("x IN (1, 2, 3)", {"x": 2}, True), ("x IN (1, 2, 3)", {"x": 9}, False),
+        ("name = 'ok'", {"name": "ok"}, True), ("name = 'ok'", {"name": "no"}, False),
+        ("x > -5", {"x": -3}, True), ("x > -5", {"x": -9}, False),
+        ("x > 1.5", {"x": 2}, True), ("x > 1.5", {"x": 1}, False),
+        ("(x > 0 OR x < 0) AND x != 0", {"x": 1}, True), ("(x > 0 OR x < 0) AND x != 0", {"x": 0}, False),
+        ("x>=2", {"x": 2}, True), ("x>=2", {"x": 1}, False),   # a two-char op with no surrounding spaces
+        ("a_b > 0", {"a_b": 1}, True), ("a_b > 0", {"a_b": -1}, False),   # name with an underscore
+        ("abc123 > 0", {"abc123": 1}, True),   # name with digits (the alnum continuation)
+        # Keywords are case-insensitive: lowercase forms must still be recognised as AND/OR/NOT/IN
+        # (this is what exercises the keyword vocabulary and the keyword-uppercasing — an uppercase
+        # keyword in the source matches by value even if the membership/uppercasing is broken).
+        ("x > 0 and y < 10", {"x": 1, "y": 99}, False), ("x > 0 and y < 10", {"x": 1, "y": 1}, True),
+        ("x > 5 or y < 5", {"x": 1, "y": 1}, True), ("x > 5 or y < 5", {"x": 1, "y": 9}, False),
+        ("not x > 5", {"x": 9}, False), ("not x > 5", {"x": 1}, True),
+        ("x in (1, 2, 3)", {"x": 2}, True), ("x in (1, 2, 3)", {"x": 9}, False),
+        ("-5 < x", {"x": 0}, True), ("-5 < x", {"x": -9}, False),   # a negative literal on the left
+        ("x > 0 AND -3 < y", {"x": 1, "y": 0}, True), ("x > 0 AND -3 < y", {"x": 1, "y": -9}, False),   # negative mid-expression
+        ("_x > 0", {"_x": 1}, True), ("_x > 0", {"_x": -1}, False),   # a name beginning with underscore
+        ("name = ''", {"name": ""}, True), ("name = ''", {"name": "x"}, False),   # an empty string literal
+    ]
+    for expression, row, expected in combos:
         tree = parse_check(expression)
-        if "ok" not in tree or check_holds(tree["ok"], row) is not row["_"]:
-            bad.append(f"check {expression!r} did not hold for {row}")
+        if "ok" not in tree or check_holds(tree["ok"], row) is not expected:
+            bad.append(f"check {expression!r} for {row} should be {expected}: {tree}")
+    # An unclosed string literal is tokenized to the end without an index overrun, not a crash.
+    unclosed = parse_check("name = 'oops")
+    if "ok" not in unclosed and "err" not in unclosed:
+        bad.append(f"an unclosed string should be handled, not crash: {unclosed}")
     return bad
 
 
@@ -461,14 +510,20 @@ def _probe_enforce_checks():
     }
     if table_checks(table) != ["price > 0", "qty <= 1000"]:
         bad.append(f"table_checks should collect column then table CHECKs: {table_checks(table)}")
+    # A table-level constraint contributes only when it is BOTH a check AND carries an expression: a
+    # non-check constraint, or a check with no expression, is excluded.
+    selective = {"columns": {}, "constraints": {"uq": {"type": "unique", "columns": ["a"]}, "empty": {"type": "check", "expression": ""}, "real": {"type": "check", "expression": "a > 0"}}}
+    if table_checks(selective) != ["a > 0"]:
+        bad.append(f"table_checks should take only check constraints that carry an expression: {table_checks(selective)}")
 
     schema = {"products": table}
-    # Non-native dialect: a satisfying row passes; a violating row is a check_violation fault.
+    # Non-native dialect: a satisfying row passes; a violating row is a check_violation fault, named in
+    # full with the failing expression and the offending row.
     if "ok" not in enforce_checks(schema, "products", {"price": 5, "qty": 10}, "turso"):
         bad.append("a row satisfying every CHECK should pass enforcement")
     violation = enforce_checks(schema, "products", {"price": 0, "qty": 10}, "turso")
-    if violation.get("err", {}).get("code") != "check_violation" or violation["err"]["category"] != "client":
-        bad.append(f"a row violating a CHECK should be a client check_violation: {violation}")
+    if violation.get("err") != {"code": "check_violation", "message": "Row violates CHECK (price > 0)", "category": "client", "detail": {"expression": "price > 0", "row": {"price": 0, "qty": 10}}}:
+        bad.append(f"a row violating a CHECK should be a full client check_violation: {violation}")
 
     # Native dialect: the database enforces, so the pure layer trusts it (no row evaluation).
     if "ok" not in enforce_checks(schema, "products", {"price": 0, "qty": 10}, "postgresql"):
@@ -479,6 +534,13 @@ def _probe_enforce_checks():
     uncompilable = enforce_checks(bad_schema, "t", {"x": 1}, "turso")
     if uncompilable.get("err", {}).get("code") != "uncompilable_check":
         bad.append(f"an uncompilable CHECK on a non-native dialect should fault: {uncompilable}")
+    # validate_checks names the construction-time fault in full (table, expression, dialect).
+    from honest_persist import validate_checks
+    if validate_checks(bad_schema, "turso").get("err") != {"code": "uncompilable_check", "message": "CHECK on 't' can be neither natively enforced on 'turso' nor compiled: x @ 1", "category": "server", "detail": {"table": "t", "expression": "x @ 1", "dialect": "turso"}}:
+        bad.append(f"validate_checks should name the uncompilable CHECK in full: {validate_checks(bad_schema, 'turso')}")
+    # On a native dialect validate_checks trusts the database (no compilation attempted).
+    if "ok" not in validate_checks(bad_schema, "postgresql"):
+        bad.append("validate_checks should pass an uncompilable CHECK on a native dialect")
 
     # checked_insert wires enforcement: a violating row on a non-native dialect is refused.
     refused = checked_insert(schema, "products", {"price": 0, "qty": 1}, "turso")
