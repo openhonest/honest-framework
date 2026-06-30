@@ -98,4 +98,4 @@ B (state spec)  ── independent; unblocks DOM and alerts (both need state)
 - No internal contradiction: every cross-reference resolves to a section that exists and agrees.
 - No duplicated ownership: each mechanism is specified in exactly one module; others reference it.
 - The built artifacts that already encode the concept (honest-check HC-A001/A002; honest-type `state_machine`) either match the spec or are listed as follow-up implementation changes.
-- The spec is out of Draft, with the A0/B0 decisions recorded in it.
+- The spec states the **present design only** — no version/Draft/status lines, no "removed / previously / re-authored / under reconciliation" notes. It reads as if the design were always this way. (The change history lives here in the plan and in commit messages, never in the spec.)
