@@ -607,3 +607,13 @@ Feature: honest-check — Python supplement
     Given a JavaScript class node
     When _class_base reads its heritage
     Then it returns the extended superclass name, or nothing when there is no heritage
+
+  Scenario: _js_call_name reads the callee name of a JavaScript call
+    Given a JavaScript call node
+    When _js_call_name reads its callee
+    Then it returns the identifier for a plain call or the property for a member call
+
+  Scenario: check_hc_p011_js flags a JavaScript lifecycle hook
+    Given JavaScript source that calls a lifecycle hook
+    When check_hc_p011_js runs
+    Then it reports HC-P011 naming the hook

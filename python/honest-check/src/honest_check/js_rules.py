@@ -19,6 +19,22 @@ from honest_parse import line_col, node_text, walk
 # including a bare class implicitly extending Object, is inheritance and is rejected.
 _ALLOWED_JS_CLASS_BASES = frozenset({"Error"})
 
+# Section 5.7 — framework lifecycle hooks. Their presence wires behaviour to a hidden lifecycle
+# instead of to server-rendered HTML / HTMX attributes (honest-DOM anti-patterns, honest-DOM §6).
+_JS_LIFECYCLE_HOOKS = frozenset(
+    {
+        "useEffect",
+        "useLayoutEffect",
+        "componentDidMount",
+        "componentDidUpdate",
+        "componentWillUnmount",
+        "ngOnInit",
+        "ngOnDestroy",
+        "addEventListener",
+        "removeEventListener",
+    }
+)
+
 
 def _is_class_node(node) -> bool:
     """Whether a node is a JavaScript class definition: a named `class_declaration`, or an anonymous
@@ -77,4 +93,38 @@ def check_hc_p003_js(root, source: bytes, path: str) -> list[Diagnostic]:
                     f"Class '{name}' inherits from '{base}'. Use composition over inheritance.",
                 )
             )
+    return out
+
+
+def _js_call_name(call_node, source: bytes) -> str:
+    """The callee name of a JavaScript call: 'foo' for foo(), 'bar' for obj.bar()."""
+    fn = call_node.child_by_field_name("function")
+    if fn is None:
+        return ""
+    if fn.type == "member_expression":
+        return node_text(fn.child_by_field_name("property"), source)
+    return node_text(fn, source)
+
+
+def check_hc_p011_js(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P011 (JavaScript) — a framework lifecycle hook (section 5.7). useEffect, addEventListener and
+    their kin wire behaviour to a hidden lifecycle; use HTMX attributes or server-rendered HTML."""
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "call_expression":
+            continue
+        name = _js_call_name(node, source)
+        if name not in _JS_LIFECYCLE_HOOKS:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P011",
+                "error",
+                path,
+                line,
+                col,
+                f"Lifecycle hook '{name}'. Use HTMX attributes or server-rendered HTML.",
+            )
+        )
     return out

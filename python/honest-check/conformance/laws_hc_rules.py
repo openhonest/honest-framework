@@ -108,7 +108,7 @@ from honest_check.declgraph import (
 )
 from honest_parse import parse_python, parse_javascript, node_text, walk as _w
 from honest_check.rules import language_for_path
-from honest_check.js_rules import _class_base, _class_name, _is_class_node
+from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name
 
 
 def _rules(source: str) -> list[str]:
@@ -145,6 +145,13 @@ _js_case("js_p003_extends_other", "class Widget extends Gadget {}", must_fire=("
 _js_case("js_p003_extends_error_clean", "class MyErr extends Error {}", must_not_fire=("HC-P003",))
 _js_case("js_p003_anonymous_extends", "const C = class extends Y {};", must_fire=("HC-P003",))
 _js_case("js_pure_function_clean", "function add(a, b) {\n    return a + b;\n}\n", must_not_fire=("HC-P003",))
+
+
+# ----------------------------------------------------------------- HC-P011 (JavaScript)
+
+_js_case("js_p011_add_event_listener", "el.addEventListener('click', h);", must_fire=("HC-P011",))
+_js_case("js_p011_use_effect", "useEffect(fn);", must_fire=("HC-P011",))
+_js_case("js_p011_plain_method_clean", "el.appendChild(node);", must_not_fire=("HC-P011",))
 
 
 # ----------------------------------------------------------------- HC-P003 class shapes
@@ -1503,6 +1510,32 @@ def _probe_javascript() -> list[str]:
     bare_class = next(n for n in _w(bare_root) if _is_class_node(n))
     if _class_base(bare_class, b"class Widget {}") is not None:
         bad.append("_class_base of a class with no heritage should be None")
+
+    # HC-P011: a lifecycle hook (plain call and member call) fires as an error; a plain method does not.
+    hook = [d for d in check_source("el.addEventListener('click', h);", "f.js") if d["rule"] == "HC-P011"]
+    if not hook or hook[0]["message"] != "Lifecycle hook 'addEventListener'. Use HTMX attributes or server-rendered HTML.":
+        bad.append(f"JS HC-P011 message drifted: {hook}")
+    if not hook or hook[0]["severity"] != "error":
+        bad.append(f"JS HC-P011 should be an error: {hook}")
+    # _js_call_name: a plain call's identifier callee, a member call's property, and "" off a non-call.
+    call_root = parse_javascript(b"useEffect(fn);").root_node
+    plain_call = next(n for n in _w(call_root) if n.type == "call_expression")
+    if _js_call_name(plain_call, b"useEffect(fn);") != "useEffect":
+        bad.append("_js_call_name of a plain call should be the identifier")
+    member_root = parse_javascript(b"el.addEventListener(h);").root_node
+    member_call = next(n for n in _w(member_root) if n.type == "call_expression")
+    if _js_call_name(member_call, b"el.addEventListener(h);") != "addEventListener":
+        bad.append("_js_call_name of a member call should be the property")
+    if _js_call_name(call_root, b"useEffect(fn);") != "":
+        bad.append("_js_call_name of a non-call node should be ''")
+    # Every lifecycle-hook member fires (section 9.6 vocabulary-member coverage): a hardcoded list,
+    # independent of the rule's frozenset, so emptying any member is caught.
+    for hook in (
+        "useEffect", "useLayoutEffect", "componentDidMount", "componentDidUpdate",
+        "componentWillUnmount", "ngOnInit", "ngOnDestroy", "addEventListener", "removeEventListener",
+    ):
+        if "HC-P011" not in [d["rule"] for d in check_source(f"obj.{hook}(a);", "f.js")]:
+            bad.append(f"HC-P011 should fire for lifecycle hook {hook!r}")
     return bad
 
 
