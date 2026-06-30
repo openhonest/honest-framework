@@ -430,6 +430,8 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-OR003 | Warning | ✓ | Suspected duplication between orchestrators |
 | HC-A001 | Warning | ✓ | No AuthProvider registered; actor-using operations unverifiable |
 | HC-A002 | Error | ✓ | Actor trusted from request input instead of the boundary |
+| HC-HF001 | Error | ✓ | feature_state references a flag not declared in FEATURES |
+| HC-HF002 | Warning | ✓ | Handler table missing an entry for a declared flag state |
 
 #### HC001 — Link missing vocabulary
 
@@ -1042,6 +1044,22 @@ FUNCTION check_HC_A002(link, provider_registered):
             f"Link '{link.name}' declares authorizes=True but does not use the "
             f"boundary-resolved actor ('actor'). Actor identity must come from the "
             f"boundary, not be trusted from request input.")
+```
+
+#### HC-HF001 / HC-HF002 — Feature-flag references
+
+The two feature-flag rules are specified in full in honest-features §7; honest-check implements them. Both read the module-scope `FEATURES` vocabulary and the `feature_state(state, "flag")` call sites, and are checked only when `FEATURES` is a readable module-scope dict literal.
+
+- **HC-HF001 (error)** — a `feature_state(state, "flag")` call whose flag (the second positional, a string literal) is not a key in `FEATURES`. An undeclared flag raises `KeyError` at runtime.
+- **HC-HF002 (warning)** — a handler table dispatched as `TABLE[feature_state(state, "flag")]` whose dict literal is missing an entry for one of `FEATURES["flag"]["states"]`. A missing entry raises `KeyError` when the flag enters that state.
+
+```
+FUNCTION check_HC_HF001(features, calls):
+    IF features is empty: RETURN          // no readable FEATURES to verify against
+    FOR EACH (flag, call) IN calls:
+        IF flag NOT IN features:
+            EMIT error(HC-HF001, call.location,
+                f"feature_state references '{flag}', which is not a declared flag in FEATURES.")
 ```
 
 ### 4.3 Test Time (Deferred to honest-test)

@@ -542,3 +542,43 @@ Feature: honest-check — Python supplement
     Given an input stream and an output stream
     When serve runs the loop
     Then it reads each request, dispatches it, and writes the replies until exit or end of input
+
+  Scenario: feature_vocabulary reads the module's FEATURES flag vocabulary
+    Given a source with a module-scope FEATURES dict literal
+    When feature_vocabulary reads it
+    Then it returns each flag mapped to its declared set of states
+
+  Scenario: _states_of reads the states of one FEATURES entry
+    Given a flag specification dict
+    When _states_of reads its states pair
+    Then it returns the string members of the states set or list, or an empty set
+
+  Scenario: _feature_state_flag reads the flag argument of a feature_state call
+    Given a syntax node
+    When _feature_state_flag inspects it
+    Then it returns the second positional string argument of a feature_state call, else nothing
+
+  Scenario: feature_state_calls finds every feature_state call site
+    Given a parsed source
+    When feature_state_calls walks it
+    Then it returns each feature_state call's flag and node where the flag is a string literal
+
+  Scenario: handler_table_dispatches finds every handler-table dispatch on a flag
+    Given a parsed source
+    When handler_table_dispatches walks it
+    Then it returns each handler-table dispatch's table name, flag, and node
+
+  Scenario: module_dict_keys reads the keys of a module-scope dict literal
+    Given a name and a parsed source
+    When module_dict_keys looks the name up
+    Then it returns the string keys of that module-scope dict literal, or nothing
+
+  Scenario: check_hc_hf001 flags a feature_state call on an undeclared flag
+    Given a source that calls feature_state with a flag not in FEATURES
+    When check_hc_hf001 runs
+    Then it reports HC-HF001 at the call site
+
+  Scenario: check_hc_hf002 flags a handler table missing a declared state
+    Given a handler table keyed on a flag that omits one of its states
+    When check_hc_hf002 runs
+    Then it reports HC-HF002 naming the missing states

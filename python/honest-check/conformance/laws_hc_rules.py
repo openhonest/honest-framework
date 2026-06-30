@@ -80,8 +80,12 @@ from honest_check.declgraph import (
     extract_routes,
     extract_state_machines,
     extract_vocabularies,
+    feature_state_calls,
+    feature_vocabulary,
     function_calls,
     function_name,
+    handler_table_dispatches,
+    module_dict_keys,
     function_role,
     is_provider_registered,
     keyword_args,
@@ -97,6 +101,7 @@ from honest_check.declgraph import (
     vocabulary_base_types,
     vocabulary_members,
     _dictionary_arg,
+    _feature_state_flag,
     _parse_composed,
     _recognizer,
     _route_key,
@@ -877,6 +882,104 @@ _case(
 )
 
 
+# ----------------------------------------------------------------- HC-HF001 / HC-HF002 feature flags
+
+_FEAT = "FEATURES = {'new_checkout': {'states': {'on', 'off'}, 'default': 'off'}}\n"
+
+# HF001 — feature_state referencing a flag not declared in FEATURES is an error.
+_case(
+    "hf001_undeclared_flag",
+    _FEAT + "def f(state, m):\n    return feature_state(state, 'ghost')\n",
+    must_fire=("HC-HF001",),
+)
+_case(
+    "hf001_declared_flag_clean",
+    _FEAT + "def f(state, m):\n    return feature_state(state, 'new_checkout')\n",
+    must_not_fire=("HC-HF001",),
+)
+_case(
+    "hf001_no_features_skip",
+    "def f(state, m):\n    return feature_state(state, 'ghost')\n",
+    must_not_fire=("HC-HF001",),  # no in-module FEATURES to verify against
+)
+_case(
+    "hf001_nonstring_flag_clean",
+    _FEAT + "def f(state, flag):\n    return feature_state(state, flag)\n",
+    must_not_fire=("HC-HF001",),  # flag is a variable, not a literal — nothing to check
+)
+_case(
+    "hf001_features_not_dict_skip",
+    "FEATURES = build()\ndef f(state, m):\n    return feature_state(state, 'ghost')\n",
+    must_not_fire=("HC-HF001",),  # FEATURES is not a dict literal — vocabulary unreadable
+)
+
+# HF002 — a handler table keyed on a flag must cover every declared state of that flag.
+_HANDLERS_PARTIAL = "HANDLERS = {'on': h1}\n"
+_HANDLERS_FULL = "HANDLERS = {'on': h1, 'off': h2}\n"
+_case(
+    "hf002_missing_handler",
+    _FEAT + _HANDLERS_PARTIAL + "def f(state, m):\n    return HANDLERS[feature_state(state, 'new_checkout')](m)\n",
+    must_fire=("HC-HF002",),
+)
+_case(
+    "hf002_complete_handler_clean",
+    _FEAT + _HANDLERS_FULL + "def f(state, m):\n    return HANDLERS[feature_state(state, 'new_checkout')](m)\n",
+    must_not_fire=("HC-HF002",),
+)
+_case(
+    "hf002_table_not_dict_skip",
+    _FEAT + "def f(state, m):\n    return get_handlers()[feature_state(state, 'new_checkout')](m)\n",
+    must_not_fire=("HC-HF002",),  # the table is not a module dict literal — unreadable
+)
+_case(
+    "hf002_undeclared_flag_skip",
+    _FEAT + _HANDLERS_PARTIAL + "def f(state, m):\n    return HANDLERS[feature_state(state, 'ghost')](m)\n",
+    must_fire=("HC-HF001",),
+    must_not_fire=("HC-HF002",),  # undeclared flag is HF001's job
+)
+_case(
+    "hf002_states_as_list",
+    "FEATURES = {'new_checkout': {'states': ['on', 'off'], 'default': 'off'}}\n"
+    + _HANDLERS_PARTIAL
+    + "def f(state, m):\n    return HANDLERS[feature_state(state, 'new_checkout')](m)\n",
+    must_fire=("HC-HF002",),  # states declared as a list still enumerate
+)
+_case(
+    "hf001_too_few_args_clean",
+    _FEAT + "def f(state):\n    return feature_state(state)\n",
+    must_not_fire=("HC-HF001",),  # one argument — no flag literal to check
+)
+# Malformed FEATURES shapes the vocabulary extractor must read without crashing or mis-firing:
+# a top-level spread, a non-dict entry, a spec-level spread, a spec whose states are a name, a
+# spec with no states pair, and a non-states pair before the states pair.
+_case(
+    "hf_vocabulary_odd_shapes",
+    "FEATURES = {**base, "
+    "'nc': {'default': 'off', 'states': {'on', 'off'}}, "
+    "'bad': 'x', "
+    "'nostates': {'default': 'a'}, "
+    "'namedstates': {'states': REF, 'default': 'a'}, "
+    "'sp': {**inner, 'states': {'on', 'off'}, 'default': 'on'}}\n"
+    "def f(state, m):\n    return feature_state(state, 'nc')\n",
+    must_not_fire=("HC-HF001", "HC-HF002"),
+)
+_case(
+    "hf002_table_not_dict_module",
+    _FEAT + "HANDLERS = make()\ndef f(state, m):\n    return HANDLERS[feature_state(state, 'new_checkout')](m)\n",
+    must_not_fire=("HC-HF002",),  # HANDLERS is bound to a call, not a dict literal — unreadable
+)
+_case(
+    "hf002_subscript_variants_clean",
+    _FEAT
+    + _HANDLERS_FULL
+    + "def f(state, m):\n"
+    "    x = HANDLERS['on']\n"  # index is not a feature_state call
+    "    y = get()[feature_state(state, 'new_checkout')]\n"  # table is not an identifier
+    "    return HANDLERS[feature_state(state, 'new_checkout')](m)\n",
+    must_not_fire=("HC-HF002",),
+)
+
+
 # ----------------------------------------------------------------- HC-OR001 / HC-OR003
 
 _case(
@@ -1337,6 +1440,89 @@ _case(
 
 # ----------------------------------------------------------------- direct-call probes
 
+def _probe_feature_extractors() -> list[str]:
+    """Pin the exact output of the feature-flag declgraph extractors (honest-features sections 2, 7).
+
+    The HF rule cases drive these through check_source, but assert only the diagnostics. Pinning each
+    extractor's return value directly catches mutations to the guards and the excluded-argument tuple
+    that leave the diagnostics unchanged. Pure: source in, data out.
+    """
+    bad: list[str] = []
+
+    def vocab(src):
+        b = src.encode()
+        return feature_vocabulary(parse_python(b).root_node, b)
+
+    def flags(src):
+        b = src.encode()
+        return [f for f, _ in feature_state_calls(parse_python(b).root_node, b)]
+
+    def dispatches(src):
+        b = src.encode()
+        return [(t, f) for t, f, _ in handler_table_dispatches(parse_python(b).root_node, b)]
+
+    def dict_keys(name, src):
+        b = src.encode()
+        return module_dict_keys(name, parse_python(b).root_node, b)
+
+    # feature_vocabulary — set and list states; only FEATURES is read.
+    if vocab("FEATURES = {'nc': {'states': {'on', 'off'}, 'default': 'off'}, 'pr': {'states': ['a', 'b'], 'default': 'a'}}\n") != {"nc": frozenset({"on", "off"}), "pr": frozenset({"a", "b"})}:
+        bad.append("feature_vocabulary should read set and list states")
+    if vocab("OTHER = {'x': {'states': {'a', 'b'}, 'default': 'a'}}\n") != {}:
+        bad.append("feature_vocabulary should ignore a non-FEATURES assignment")
+    if vocab("FEATURES = make()\n") != {}:
+        bad.append("feature_vocabulary of a non-dict FEATURES should be empty")
+    if vocab("FEATURES: dict\n") != {}:
+        bad.append("feature_vocabulary of an annotation-only FEATURES should be empty")
+    if vocab("FEATURES = {1: {'states': {'a', 'b'}, 'default': 'a'}, 'nc': {'states': {'on', 'off'}, 'default': 'off'}}\n") != {"nc": frozenset({"on", "off"})}:
+        bad.append("feature_vocabulary should skip a non-string flag key")
+    if vocab("FEATURES = {**base, 'bad': 'x', 'nc': {'states': {'on', 'off'}, 'default': 'off'}}\n") != {"nc": frozenset({"on", "off"})}:
+        bad.append("feature_vocabulary should skip a non-dict spec and a spread")
+    if vocab("FEATURES = {'ns': {'default': 'a'}, 'nm': {'states': REF, 'default': 'a'}}\n") != {"ns": frozenset(), "nm": frozenset()}:
+        bad.append("feature_vocabulary states should be empty when absent or not a set/list")
+    # states declared as a tuple are not a Set/list recognizer, so they are ignored (not read as members).
+    if vocab("FEATURES = {'tp': {'states': ('on', 'off'), 'default': 'on'}}\n") != {"tp": frozenset()}:
+        bad.append("feature_vocabulary should ignore tuple-valued states")
+    if vocab("FEATURES = {'al': {'aliases': {'x', 'y'}, 'states': {'on', 'off'}, 'default': 'on'}}\n") != {"al": frozenset({"on", "off"})}:
+        bad.append("feature_vocabulary must read states, not another set-valued pair")
+    if vocab("FEATURES = {'sp': {**inner, 'states': {'on', 'off'}, 'default': 'on'}}\n") != {"sp": frozenset({"on", "off"})}:
+        bad.append("feature_vocabulary should skip a spec-level spread")
+
+    # feature_state_calls — literal flag extracted; non-call, too-few args, non-literal flag, a comment
+    # between args, and a star-splat before the flag yield nothing or the right flag.
+    if flags("def f(s):\n    feature_state(s, 'a')\n    feature_state(s, 'b')\n") != ["a", "b"]:
+        bad.append("feature_state_calls should list each string flag")
+    if flags("def f(s):\n    other(s, 'a')\n") != []:
+        bad.append("feature_state_calls should ignore a non-feature_state call")
+    if flags("def f(s):\n    feature_state(s)\n") != []:
+        bad.append("feature_state_calls should ignore a one-argument call")
+    if flags("def f(s, g):\n    feature_state(s, g)\n") != []:
+        bad.append("feature_state_calls should ignore a non-literal flag")
+    if flags("def f(s):\n    feature_state(s,  # note\n        'a')\n") != ["a"]:
+        bad.append("feature_state_calls should skip a comment between arguments")
+    if flags("def f(s):\n    feature_state(*s, 'a')\n") != []:
+        bad.append("feature_state_calls should not count a flag after a star-splat as the second positional")
+
+    # handler_table_dispatches — TABLE[feature_state(...)] captured; literal index and non-identifier
+    # table yield nothing.
+    if dispatches("def f(s, m):\n    return T[feature_state(s, 'a')](m)\n") != [("T", "a")]:
+        bad.append("handler_table_dispatches should capture a flag dispatch")
+    if dispatches("def f(s, m):\n    return T['lit'](m)\n") != []:
+        bad.append("handler_table_dispatches should ignore a literal index")
+    if dispatches("def f(s, m):\n    return get()[feature_state(s, 'a')](m)\n") != []:
+        bad.append("handler_table_dispatches should ignore a non-identifier table")
+
+    # module_dict_keys — keys of a dict literal; a non-dict binding and a missing name yield None.
+    if dict_keys("H", "H = {'on': a, 'off': b}\n") != frozenset({"on", "off"}):
+        bad.append("module_dict_keys should read a dict literal's keys")
+    if dict_keys("H", "H = make()\n") is not None:
+        bad.append("module_dict_keys of a non-dict binding should be None")
+    if dict_keys("H", "X = {'on': a}\n") is not None:
+        bad.append("module_dict_keys of a missing name should be None")
+
+    return bad
+
+
 def _probe_internal_helpers() -> list[str]:
     """Branches in pure declgraph helpers that no check_source path reaches.
 
@@ -1444,6 +1630,11 @@ def _probe_internal_helpers() -> list[str]:
     # body-None guard appears in several declgraph extractors; this pins the declgraph one.
     if function_calls(integer, src_b) != set():
         bad.append("function_calls(non-func) should be set()")
+
+    # _feature_state_flag(None) -> None. handler_table_dispatches passes the subscript's index node,
+    # which a parsed subscript always carries, so the None guard is unreachable through check_source.
+    if _feature_state_flag(None, src_b) is not None:
+        bad.append("_feature_state_flag(None) should be None")
 
     # The arguments-None guards on the call-shaped accessors. A non-call node has no
     # "arguments" field, so each returns its empty default. Real constructor calls always
@@ -1990,6 +2181,8 @@ _RULE_MESSAGES += [
     ('HC009', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(lambda s: s / 2)})\n", "Predicate 'a' may throw on non-matching input: ['division']. Guard the access or wrap in try/except."),
     ('HC-P003', 'class C(Gadget):\n    pass\n', "Class 'C' inherits from 'Gadget'. Use composition over inheritance."),
     ('HC007', 'from honest_type import chain\nchain()\n', "Chain '<anonymous>' has no links. Add at least one @link to the chain, or remove the chain."),
+    ('HC-HF001', _FEAT + "def f(state, m):\n    return feature_state(state, 'ghost')\n", "feature_state references 'ghost', which is not a declared flag in FEATURES."),
+    ('HC-HF002', _FEAT + _HANDLERS_PARTIAL + "def f(state, m):\n    return HANDLERS[feature_state(state, 'new_checkout')](m)\n", "Handler table 'HANDLERS' is missing an entry for these states of 'new_checkout': ['off']."),
 ]
 
 # Diagnostic severity per rule (pins the severity literal in each diagnostic() call).
@@ -2008,6 +2201,8 @@ _RULE_SEVERITIES += [
     ("HC003", "info", "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(p)})\n"),
     ("HC003", "info", "from honest_type import vocabulary, predicate\nV = vocabulary({'a': {'x'}, 'b': predicate(p)})\n"),
     ("HC006", "error", "from honest_type import vocabulary, composed\nV = vocabulary({'a': {'x'}}, composed_types=[composed('combo', captures='ghost')])\n"),
+    ("HC-HF001", "error", _FEAT + "def f(state, m):\n    return feature_state(state, 'ghost')\n"),
+    ("HC-HF002", "warning", _FEAT + _HANDLERS_PARTIAL + "def f(state, m):\n    return HANDLERS[feature_state(state, 'new_checkout')](m)\n"),
 ]
 
 
@@ -2078,6 +2273,14 @@ def run() -> int:
     if extractor_bad:
         failed += 1
         print(f"FAIL HC-rule [declgraph_extractors]: {extractor_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    feature_bad = _probe_feature_extractors()
+    if feature_bad:
+        failed += 1
+        print(f"FAIL HC-rule [feature_extractors]: {feature_bad}")
     else:
         passed += 1
 

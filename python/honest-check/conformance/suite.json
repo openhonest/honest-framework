@@ -624,6 +624,42 @@
         "diagnostics": []
       }
     },
+    {
+      "id": "HC-HF001-undeclared-flag",
+      "category": "HC-HF001",
+      "input": {
+        "language": "python",
+        "source": "FEATURES = {'new_checkout': {'states': {'on', 'off'}, 'default': 'off'}}\ndef f(state, m):\n    return feature_state(state, 'ghost')\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-HF001",
+            "severity": "error",
+            "line": 3,
+            "message": "feature_state references 'ghost', which is not a declared flag in FEATURES."
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-HF002-missing-handler",
+      "category": "HC-HF002",
+      "input": {
+        "language": "python",
+        "source": "FEATURES = {'new_checkout': {'states': {'on', 'off'}, 'default': 'off'}}\nHANDLERS = {'on': h1}\ndef f(state, m):\n    return HANDLERS[feature_state(state, 'new_checkout')](m)\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-HF002",
+            "severity": "warning",
+            "line": 4,
+            "message": "Handler table 'HANDLERS' is missing an entry for these states of 'new_checkout': ['off']."
+          }
+        ]
+      }
+    },
     {"id": "value-check-source-clean", "value_case": {"function": "check_source", "args": ["x = 1\n", "f.py"], "expected": []}},
     {"id": "value-check-source-class", "value_case": {"function": "check_source", "args": ["class Foo: pass\n", "f.py"], "expected": [{"rule": "HC-P003", "severity": "error", "path": "f.py", "line": 1, "col": 1, "message": "Class 'Foo' has no declared base. Honest Code permits class definitions only as subclasses of TypedDict, Protocol, ABC, or a declared Exception. Use a TypedDict for data shapes or a pure function."}]}}
   ],

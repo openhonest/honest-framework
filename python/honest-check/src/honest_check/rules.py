@@ -25,7 +25,10 @@ from honest_check.declgraph import (
     extract_links,
     extract_state_machines,
     extract_vocabularies,
+    feature_state_calls,
+    feature_vocabulary,
     function_calls,
+    handler_table_dispatches,
     function_name,
     function_role,
     functions_by_name,
@@ -33,6 +36,7 @@ from honest_check.declgraph import (
     keyword_args,
     link_decorator_call,
     module_assignments,
+    module_dict_keys,
     positional_arg_count,
     resolve_aliases,
     string_value,
@@ -978,6 +982,68 @@ def check_hc_a002(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+def check_hc_hf001(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-HF001 — feature_state references a flag not declared in FEATURES (error, honest-features section 7).
+
+    Every feature_state(state, "flag") call must name a flag declared in the module's FEATURES
+    vocabulary; an undeclared flag raises KeyError at runtime. Checked only when FEATURES is a readable
+    module-scope dict literal — there is nothing to verify against otherwise.
+    """
+    vocab = feature_vocabulary(root, source)
+    if not vocab:
+        return []
+    out: list[Diagnostic] = []
+    for flag, node in feature_state_calls(root, source):
+        if flag in vocab:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-HF001",
+                "error",
+                path,
+                line,
+                col,
+                f"feature_state references '{flag}', which is not a declared flag in FEATURES.",
+            )
+        )
+    return out
+
+
+def check_hc_hf002(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-HF002 — a handler table is missing an entry for a declared flag state (warning, honest-features section 7).
+
+    A handler table keyed on feature_state(state, "flag") must declare a handler for every state in
+    FEATURES["flag"]["states"]; a missing entry raises KeyError at dispatch time when the flag enters
+    that state. Checked when both the flag and the table are readable module-scope literals.
+    """
+    vocab = feature_vocabulary(root, source)
+    if not vocab:
+        return []
+    out: list[Diagnostic] = []
+    for table_name, flag, node in handler_table_dispatches(root, source):
+        if flag not in vocab:
+            continue  # HC-HF001 handles the undeclared flag
+        keys = module_dict_keys(table_name, root, source)
+        if keys is None:
+            continue  # the table is not a module dict literal — nothing to verify against
+        missing = sorted(vocab[flag] - keys)
+        if not missing:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-HF002",
+                "warning",
+                path,
+                line,
+                col,
+                f"Handler table '{table_name}' is missing an entry for these states of '{flag}': {missing}.",
+            )
+        )
+    return out
+
+
 def _produced_slot_keys(func_node, source: bytes) -> set[str]:
     """Manifest slot keys a link body writes: subscript-assign targets and dict-literal keys."""
     keys: set[str] = set()
@@ -1511,6 +1577,8 @@ _ALL_CHECKS = (
     check_hc011,
     check_hc_a001,
     check_hc_a002,
+    check_hc_hf001,
+    check_hc_hf002,
     check_hc_or001,
     check_hc_or003,
     check_hc_p017,

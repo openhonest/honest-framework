@@ -343,6 +343,100 @@ def module_assignments(root):
     return out
 
 
+def _states_of(spec_node, source: bytes) -> frozenset:
+    """The declared states of one FEATURES entry (honest-features section 2): the string members of
+    its `states` set/list literal. Empty if there is no readable `states` pair. Pure."""
+    for pair in spec_node.named_children:
+        if pair.type != "pair":
+            continue
+        if string_value(pair.child_by_field_name("key"), source) != "states":
+            continue
+        value = pair.child_by_field_name("value")
+        if value is not None and value.type in ("set", "list"):
+            return frozenset(m for m in (string_value(e, source) for e in value.named_children) if m is not None)
+    return frozenset()
+
+
+def feature_vocabulary(root, source: bytes) -> dict:
+    """The FEATURES vocabulary declared at module scope (honest-features section 2): {flag: frozenset(states)}.
+    Empty if there is no module-scope `FEATURES = {...}` dict literal. Pure."""
+    out: dict = {}
+    for assignment in module_assignments(root):
+        left = assignment.child_by_field_name("left")
+        if left.type != "identifier" or node_text(left, source) != "FEATURES":
+            continue
+        right = assignment.child_by_field_name("right")
+        if right is None or right.type != "dictionary":
+            continue
+        for pair in right.named_children:
+            if pair.type != "pair":
+                continue
+            flag = string_value(pair.child_by_field_name("key"), source)
+            spec = pair.child_by_field_name("value")
+            if flag is None or spec.type != "dictionary":
+                continue
+            out[flag] = _states_of(spec, source)
+    return out
+
+
+def _feature_state_flag(node, source: bytes):
+    """The flag argument of a `feature_state(state, "flag")` call (honest-features section 7): the
+    second positional argument when it is a string literal, else None. None if `node` is None or is
+    not such a call. Pure."""
+    if node is None or node.type != "call":
+        return None
+    fn = node.child_by_field_name("function")
+    if fn.type != "identifier" or node_text(fn, source) != "feature_state":
+        return None
+    args = node.child_by_field_name("arguments")
+    positional = [c for c in args.named_children if c.type not in ("keyword_argument", "comment", "list_splat", "dictionary_splat")]
+    if len(positional) < 2 or positional[1].type != "string":
+        return None
+    return string_value(positional[1], source)
+
+
+def feature_state_calls(root, source: bytes) -> list:
+    """Every `feature_state(state, "flag")` call site with a string-literal flag (honest-features
+    section 7): (flag, call_node). Pure."""
+    out = []
+    for node in walk(root):
+        flag = _feature_state_flag(node, source)
+        if flag is not None:
+            out.append((flag, node))
+    return out
+
+
+def handler_table_dispatches(root, source: bytes) -> list:
+    """Every `TABLE[feature_state(state, "flag")]` dispatch (honest-features section 7 HF002):
+    (table_name, flag, subscript_node). Pure."""
+    out = []
+    for node in walk(root):
+        if node.type != "subscript":
+            continue
+        table = node.child_by_field_name("value")
+        if table.type != "identifier":
+            continue
+        flag = _feature_state_flag(node.child_by_field_name("subscript"), source)
+        if flag is not None:
+            out.append((node_text(table, source), flag, node))
+    return out
+
+
+def module_dict_keys(name: str, root, source: bytes):
+    """The string keys of a module-scope `name = {...}` dict literal, or None if `name` is not
+    assigned a dict literal at module scope. Pure."""
+    for assignment in module_assignments(root):
+        left = assignment.child_by_field_name("left")
+        if left.type != "identifier" or node_text(left, source) != name:
+            continue
+        right = assignment.child_by_field_name("right")
+        if right is not None and right.type == "dictionary":
+            return frozenset(
+                k for k in (string_value(p.child_by_field_name("key"), source) for p in right.named_children if p.type == "pair") if k is not None
+            )
+    return None
+
+
 def vocab_expr_type_names(node, source: bytes, vocab_defs) -> set[str]:
     """Resolve a vocabulary expression to its set of type names.
 
