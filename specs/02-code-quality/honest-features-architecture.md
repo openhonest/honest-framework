@@ -22,7 +22,7 @@ honest-features eliminates all of these problems:
 - Flags are declared in code as a vocabulary. The full set is always visible.
 - State is ephemeral in-memory data, initialized from defaults at startup.
 - State changes happen via a single HMAC-protected API endpoint. No restart. No redeploy.
-- Tests set flag state directly on the in-memory dict. No environment manipulation.
+- Tests build a state value and pass it in. No environment manipulation, no shared mutable state between cases.
 
 ### 1.2 What honest-features Does Not Cover
 
@@ -35,7 +35,7 @@ honest-features eliminates all of these problems:
 
 - **honest-type:** The flag vocabulary is a honest-type vocabulary. Flag names and states are Sets. honest-check can verify that every call site references a declared flag name and a declared state.
 - **honest-check:** Provides rule HF001 (see §7): every `feature_state()` call site must reference a flag name declared in `FEATURES`.
-- **honest-test:** Tests set `_state` directly. honest-test fixture support resets `_state` to defaults between test cases.
+- **honest-test:** Tests build a state value with `initial_state` and override the flags under test. Each case gets a fresh value, so there is nothing to reset between cases.
 - **honest-observe:** State change events and evaluation events are emitted to the honest-observe event log. honest-features emits; honest-observe owns the log.
 
 ---
@@ -121,8 +121,8 @@ CHECKOUT_HANDLERS: dict[str, Callable] = {
     "off": _legacy_checkout_handler,
 }
 
-def handle_checkout(manifest: dict) -> dict:
-    return CHECKOUT_HANDLERS[feature_state("new_checkout")](manifest)
+def handle_checkout(state: dict, manifest: dict) -> dict:
+    return CHECKOUT_HANDLERS[feature_state(state, "new_checkout")](manifest)
 ```
 
 ### 4.1 Handler Table Rules
@@ -142,8 +142,8 @@ PRICING_HANDLERS: dict[str, Callable] = {
     "control": pricing_handler_control,
 }
 
-def handle_pricing(manifest: dict) -> dict:
-    return PRICING_HANDLERS[feature_state("pricing")](manifest)
+def handle_pricing(state: dict, manifest: dict) -> dict:
+    return PRICING_HANDLERS[feature_state(state, "pricing")](manifest)
 ```
 
 ---
@@ -227,12 +227,17 @@ honest-features ships these as **pure functions over the state value** — `init
 
 ### 5.3 FastAPI Implementation
 
+The route is the integration boundary. It holds the threaded state value on the application (initialized once at startup with `initial_state(FEATURES)`), reads the clock and the request, calls the pure functions, and is the single mutator of the held value.
+
 ```python
 # routes/features.py
 
-from fastapi import APIRouter, HTTPException
+import time
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from features import FEATURES, _state, verify_signature, load_secret
+from features import FEATURES, load_secret
+from honest_features import validate_toggle, verify_signature, apply_toggle, changed_event
+from honest_observe import emit
 
 router = APIRouter()
 
@@ -243,18 +248,18 @@ class FeatureToggleRequest(BaseModel):
     signature: str
 
 @router.post("/hf/features/set")
-def set_feature(req: FeatureToggleRequest) -> dict:
-    if req.flag not in FEATURES:
-        raise HTTPException(400, f"Unknown flag: {req.flag}")
-    if req.state not in FEATURES[req.flag]["states"]:
-        raise HTTPException(400, f"Invalid state '{req.state}' for flag '{req.flag}'")
+def set_feature(req: FeatureToggleRequest, request: Request) -> dict:
+    checked = validate_toggle(FEATURES, req.flag, req.state)
+    if "err" in checked:
+        raise HTTPException(400, checked["err"]["message"])
     if not verify_signature(
-        load_secret(), req.flag, req.state, req.timestamp, req.signature
+        load_secret(), req.flag, req.state, req.timestamp, req.signature, now=int(time.time())
     ):
         raise HTTPException(403, "Invalid or expired signature")
-    previous = _state[req.flag]
-    _state[req.flag] = req.state
-    return {"flag": req.flag, "state": req.state, "previous": previous}
+    change = apply_toggle(request.app.state.features, req.flag, req.state)
+    request.app.state.features = change["state"]   # the single mutator of the held value
+    emit(changed_event(req.flag, change["previous"], req.state, req.timestamp, request.client.host))
+    return {"flag": req.flag, "state": req.state, "previous": change["previous"]}
 ```
 
 ### 5.4 Secret Loading
@@ -292,38 +297,28 @@ def toggle(base_url: str, secret: bytes, flag: str, state: str) -> dict:
 
 ## 6. Testing Integration
 
-Because `_state` is a plain dict, tests manipulate flag state directly. No API calls. No environment manipulation. No process restart.
+Because the flag state is a value, tests build it and pass it in. No API calls. No environment manipulation. No shared state to reset.
 
-### 6.1 Direct State Manipulation
+### 6.1 State as a Test Input
 
 ```python
-from features import _state, FEATURES
+from honest_features import initial_state
+from features import FEATURES
 
 def test_new_checkout_on():
-    _state["new_checkout"] = "on"
-    result = handle_checkout(manifest)
+    state = {**initial_state(FEATURES), "new_checkout": "on"}
+    result = handle_checkout(state, manifest)
     assert result == expected_new
 
 def test_new_checkout_off():
-    _state["new_checkout"] = "off"
-    result = handle_checkout(manifest)
+    state = {**initial_state(FEATURES), "new_checkout": "off"}
+    result = handle_checkout(state, manifest)
     assert result == expected_legacy
 ```
 
-### 6.2 Reset Fixture
+### 6.2 No Reset Needed
 
-A pytest fixture resets all flags to defaults between test cases:
-
-```python
-import pytest
-from features import _state, FEATURES
-
-@pytest.fixture(autouse=True)
-def reset_features():
-    yield
-    for flag, spec in FEATURES.items():
-        _state[flag] = spec["default"]
-```
+Each test builds its own state value from `initial_state(FEATURES)`, so there is no shared mutable state to reset between cases. The autouse reset fixture a module-global design would require does not exist — the value model removes the need for it.
 
 ### 6.3 Testing every combination
 
@@ -337,21 +332,21 @@ Because each flag's states are a finite Set, honest-test can list all combinatio
 
 **Severity:** Error
 
-Every `feature_state("flag_name")` call site must reference a flag name declared as a key in `FEATURES`. A call referencing an undeclared flag is a programming error: it will raise `KeyError` at runtime.
+Every `feature_state(state, "flag_name")` call site must reference a flag name declared as a key in `FEATURES`. A call referencing an undeclared flag is a programming error: it will raise `KeyError` at runtime.
 
-honest-check walks the AST, finds all `feature_state(...)` calls, extracts the string argument, and verifies it is a key in the `FEATURES` dict in the same module or in the imported `features` module.
+honest-check walks the AST, finds all `feature_state(...)` calls, extracts the flag-name argument (the second positional), and verifies it is a key in the `FEATURES` dict in the same module or in the imported `features` module.
 
 **Violation example:**
 
 ```python
-feature_state("not_a_real_flag")  # HC-HF001: 'not_a_real_flag' not in FEATURES
+feature_state(state, "not_a_real_flag")  # HC-HF001: 'not_a_real_flag' not in FEATURES
 ```
 
 ### Rule HF002: Missing Handler Table Entry
 
 **Severity:** Warning
 
-A handler table keyed on `feature_state("flag_name")` must contain an entry for every state declared in `FEATURES["flag_name"]["states"]`. A missing entry will raise `KeyError` at dispatch time when the flag enters that state.
+A handler table keyed on `feature_state(state, "flag_name")` must contain an entry for every state declared in `FEATURES["flag_name"]["states"]`. A missing entry will raise `KeyError` at dispatch time when the flag enters that state.
 
 ---
 
@@ -427,7 +422,7 @@ The middleware intercepts each request, extracts a stable identity (user ID, ses
 # middleware/ab.py
 
 import hashlib
-from features import FEATURES, _state
+from features import FEATURES
 
 def assign_variant(flag: str, identity: str) -> str:
     """Deterministically assign a variant for this identity.
@@ -456,33 +451,33 @@ class ABMiddleware:
             identity = extract_identity(scope)  # user_id, session_id, or anon token
             for flag in self.ab_flags:
                 variant = assign_variant(flag, identity)
-                # Store in request-scoped state, not in global _state
+                # Store in request-scoped state, not in the held flag value
                 scope.setdefault("ab_assignments", {})[flag] = variant
         await self.app(scope, receive, send)
 ```
 
 ### 9.4 Request-Scoped State
 
-A/B variant assignment must not mutate the global `_state` dict. The global state is process-level; variant assignment is request-level. The middleware stores assignments in request scope. A request-aware `feature_state()` wrapper reads from request scope first, falling back to global state:
+A/B variant assignment must not mutate the held flag value. The held value is process-level; variant assignment is request-level. The middleware stores assignments in request scope. A request-aware wrapper reads from request scope first, falling back to a `feature_state` lookup on the held value:
 
 ```python
 # middleware/ab.py (continued)
 
 from contextvars import ContextVar
+from honest_features import feature_state
 
 _request_assignments: ContextVar[dict] = ContextVar("ab_assignments", default={})
 
-def feature_state_for_request(flag: str) -> str:
+def feature_state_for_request(state: dict, flag: str) -> str:
     """Return the variant for this flag in the current request context.
 
     If this flag has an A/B assignment for the current request, return it.
-    Otherwise fall back to global feature_state().
+    Otherwise fall back to a feature_state lookup on the held value.
     """
     assignments = _request_assignments.get()
     if flag in assignments:
         return assignments[flag]
-    from features import feature_state
-    return feature_state(flag)
+    return feature_state(state, flag)
 ```
 
 Request handlers use `feature_state_for_request()` instead of `feature_state()` when A/B middleware is active. Handler tables are unchanged.
@@ -556,8 +551,8 @@ All other honest-features behaviour — HMAC toggle API, handler tables, honest-
 
 | Level | Requirement |
 |---|---|
-| **Core** | `FEATURES` vocabulary dict; `_state` in-memory dict; `feature_state()` lookup; HMAC-protected `/hf/features/set` endpoint with timestamp replay protection; handler table pattern at all flag dispatch points |
-| **Full** | Core + honest-observe emission on state change and evaluation; honest-test reset fixture; `reset_features` autouse fixture |
+| **Core** | `FEATURES` vocabulary dict; flag state as a threaded value (`initial_state`); `feature_state()` lookup; HMAC-protected `/hf/features/set` endpoint with timestamp replay protection; handler table pattern at all flag dispatch points |
+| **Full** | Core + honest-observe emission on state change and evaluation; tests build the state value with `initial_state` |
 | **Complete** | Full + honest-check HF001 and HF002 rules; honest-test exhaustive combination generation from flag vocabulary |
 
 ### 10.2 Conformance Checks
@@ -565,8 +560,8 @@ All other honest-features behaviour — HMAC toggle API, handler tables, honest-
 A conformant implementation satisfies all of the following:
 
 - `FEATURES` is declared at module scope as a plain dict with `states` (set) and `default` (str) per entry
-- `_state` is initialized from `FEATURES` defaults at import time with no I/O
-- `feature_state()` raises `KeyError` for undeclared flag names — not a silent default
+- The flag state is a value built by `initial_state(FEATURES)` with no I/O and held by the application — never a module global
+- `feature_state(state, flag)` raises `KeyError` for undeclared flag names — not a silent default
 - The toggle endpoint verifies HMAC signature using `hmac.compare_digest` — not string equality
 - The toggle endpoint enforces a timestamp replay window
 - No call site uses `if/else` conditional on flag state — all dispatch is via handler tables
@@ -577,14 +572,15 @@ A conformant implementation satisfies all of the following:
 
 ## 11. Reference Implementation
 
-The Python/FastAPI reference implementation is at `honest-py/honest/features/`.
+The Python reference implementation is the `honest-features` package at `python/honest-features/`. It ships pure functions only; the application supplies the `FEATURES` vocabulary, holds the state value, and wires the route.
 
 Key files:
 
 | File | Purpose |
 |---|---|
-| `features.py` | Vocabulary, `_state`, `feature_state()`, HMAC utilities |
-| `routes/features.py` | FastAPI toggle endpoint |
-| `tools/feature_toggle.py` | Caller-side utility |
-| `conftest.py` | `reset_features` pytest fixture |
-| `tests/test_features.py` | Conformance tests |
+| `src/honest_features/vocabulary.py` | `validate_vocabulary`, `initial_state`, `feature_state` |
+| `src/honest_features/toggle.py` | `validate_toggle`, `apply_toggle` |
+| `src/honest_features/signature.py` | `build_signature`, `verify_signature` |
+| `src/honest_features/events.py` | `changed_event`, `evaluated_event` |
+| `routes/features.py` (application) | the toggle route — integration boundary holding the state value |
+| `tools/feature_toggle.py` (application) | caller-side utility |
