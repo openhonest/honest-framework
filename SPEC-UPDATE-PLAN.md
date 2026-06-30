@@ -107,13 +107,12 @@ Both specs are rewritten and the spec layer is internally consistent:
 - **honest-check** — HC-A001/HC-A002 reworded to the boundary model (actor must come from the boundary, not request input).
 - **honest-test** — §4.7 reworded to probe `resolve_actor` over six authentication classes; authorization-for-target is ordinary link logic.
 
-### Follow-up implementation changes (built code now intentionally lags the spec)
+### Follow-up implementation changes — DONE
 
-The spec leads; these built artifacts still encode the old model and must be brought to the new spec when auth/state are implemented (each is mutation-adequate today against its old behaviour, so nothing is gate-breaking now):
+Both built artifacts were reconciled to the boundary-auth spec (each still mutation-adequate after the change):
 
-- **honest-check `rules.py` HC-A002** — currently "authorizing link references the derivation in its guard"; spec now "actor taken from request input." Rule + its conformance/laws cases need rewriting.
-- **honest-check HC-A001** — wording aligns; confirm the detection (no provider + an operation that uses an actor) still matches.
-- **honest-test `authhonesty.py`** — currently seven token classes incl. `valid_authorized`/`valid_unauthorized`; spec now six authentication classes (`valid` + five faults). Code + `specs/features/honest-test.feature` (the "seven token classes" scenario) + conformance need updating together.
+- **honest-check HC-A001/HC-A002** (`8321067`) — HC-A002 now flags an authorizing link that does not use the boundary-resolved `actor`; the derivation-signature machinery (`registered_provider_signature`, `_derivation_signature`) was replaced by `is_provider_registered`. Concrete mechanism introduced and recorded in the auth + honest-check specs: the framework passes the resolved actor inward as the reserved name `actor`, and the link must reference it. honest-check at 0 undeclared (3879/189), 100% coverage, Honest.
+- **honest-test `authhonesty.py`** (`db6528b`) — `test_auth_honesty(provider)` probes `resolve_actor` over six authentication classes (`valid` + revoked/expired/malformed/missing/forged), with a malformed token rejected by the `actor_recognizer`; per-provider, not per-link. Feature scenarios + suite.json value cases updated. honest-test at 0 undeclared (1905/85), 100% coverage, Honest.
 
 ## Definition of done (per track)
 
