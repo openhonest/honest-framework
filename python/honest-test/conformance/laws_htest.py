@@ -362,16 +362,16 @@ def _probe_determinism():
 
 
 def _probe_auth_honesty():
-    """Auth honesty (§4.7): for an authorizing link, the seven token classes must each produce their
-    declared outcome. The class set, the fault-to-HTTP map, the default expectations, and the per-class
-    decision are pure; the token generator and chain run are injected."""
+    """Authentication honesty (§4.7): the boundary validator (resolve_actor) must resolve each token class to
+    its declared outcome, and the recognizer must reject a malformed token. The class set, the fault-to-HTTP
+    map, the default expectations, and the per-class decision are pure; the provider is injected."""
     from honest_test import auth_expected_status, auth_honesty_finding, auth_token_classes, map_fault_to_http, test_auth_honesty
 
     bad = []
 
     classes = auth_token_classes()
-    if classes[0] != "valid_authorized" or len(classes) != 7 or "forged" not in classes:
-        bad.append(f"the seven token classes are the smallest contract probe: {classes}")
+    if classes[0] != "valid" or len(classes) != 6 or "forged" not in classes:
+        bad.append(f"the token classes are the smallest contract probe: {classes}")
 
     # A fault maps to its HTTP status by category (§4.7); a server fault is 500 and an unrecognised
     # category falls back to 500 (the dict's server value and the .get default are distinct sites).
@@ -383,65 +383,78 @@ def _probe_auth_honesty():
         bad.append("an unrecognised category should fall back to 500")
 
     # Default expectations, overridable by the provider's fault_mapping.
-    if auth_expected_status("valid_authorized") != "ok" or auth_expected_status("revoked") != 401 or auth_expected_status("valid_unauthorized") != 403:
+    if auth_expected_status("valid") != "ok" or auth_expected_status("revoked") != 401 or auth_expected_status("malformed") != 400:
         bad.append("default auth expectations wrong")
-    if auth_expected_status("malformed", {"malformed": 401}) != 401:
+    if auth_expected_status("missing", {"missing": 403}) != 403:
         bad.append("a provider fault_mapping should override the default expectation")
 
     # The per-class decision.
-    if auth_honesty_finding("g", "valid_authorized", ok({}), "ok") is not None:
-        bad.append("an accepted valid authorized token is honest")
-    rejected = auth_honesty_finding("g", "valid_authorized", {"err": fault("x", "y", "client")}, "ok")
+    if auth_honesty_finding("p", "valid", ok({}), "ok") is not None:
+        bad.append("a resolved valid token is honest")
+    rejected = auth_honesty_finding("p", "valid", {"err": fault("x", "y", "client")}, "ok")
     if rejected is None:
-        bad.append("rejecting a valid authorized token is a failure")
-    elif rejected["code"] != "auth_honesty" or "rejected a valid authorized token" not in rejected["message"]:
-        bad.append(f"the rejected-valid-authorized finding should name the cause: {rejected}")
-    if auth_honesty_finding("g", "revoked", {"err": fault("guard_failed", "no", "unauthenticated")}, 401) is not None:
+        bad.append("rejecting a valid token is a failure")
+    elif rejected["code"] != "auth_honesty" or "rejected a valid token" not in rejected["message"]:
+        bad.append(f"the rejected-valid finding should name the cause: {rejected}")
+    if auth_honesty_finding("p", "revoked", {"err": fault("guard_failed", "no", "unauthenticated")}, 401) is not None:
         bad.append("a revoked token faulting 401 is honest")
-    if auth_honesty_finding("g", "expired", ok({}), 401) is None:
-        bad.append("accepting an expired token (expected 401) is a failure")
-    if auth_honesty_finding("g", "forged", {"err": fault("guard_failed", "no", "forbidden")}, 401) is None:
+    if auth_honesty_finding("p", "expired", ok({}), 401) is None:
+        bad.append("resolving an expired token (expected 401) is a failure")
+    if auth_honesty_finding("p", "forged", {"err": fault("guard_failed", "no", "forbidden")}, 401) is None:
         bad.append("a forged token faulting the wrong status is a failure")
 
-    # Orchestration over the seven classes with an injected provider and chain run.
-    @link(authorizes=True)
-    def guarded(manifest):
-        return ok(manifest)
+    # Orchestration over the classes with an injected provider (recognizer + resolve_actor). A malformed
+    # token is rejected by the recognizer; every other class goes through resolve_actor.
+    category = {"revoked": "unauthenticated", "expired": "unauthenticated", "missing": "unauthenticated", "forged": "unauthenticated"}
 
-    @link()
-    def open_link(manifest):
-        return ok(manifest)
+    def resolve_correct(token):
+        return ok({}) if token == "valid" else {"err": fault("guard_failed", "no", category[token])}
 
-    category = {"valid_unauthorized": "forbidden", "revoked": "unauthenticated", "expired": "unauthenticated", "malformed": "client", "missing": "unauthenticated", "forged": "unauthenticated"}
+    correct_provider = {
+        "name": "p",
+        "generate": lambda class_name: class_name,
+        "actor_recognizer": lambda token: token != "malformed",
+        "resolve_actor": resolve_correct,
+        "fault_mapping": {},
+    }
+    if test_auth_honesty(correct_provider):
+        bad.append(f"an honest provider should report no auth findings: {test_auth_honesty(correct_provider)}")
 
-    def run_correct(token):
-        return ok({}) if token == "valid_authorized" else {"err": fault("guard_failed", "no", category[token])}
+    # A provider whose resolve_actor accepts an expired token is dishonest; the finding names the provider.
+    def resolve_broken(token):
+        return ok({}) if token in ("valid", "expired") else {"err": fault("guard_failed", "no", category[token])}
 
-    provider = {"generate": lambda class_name: class_name, "fault_mapping": {}}
-    if test_auth_honesty(guarded, provider, run_correct):
-        bad.append(f"an honest authorizing link should report no auth findings: {test_auth_honesty(guarded, provider, run_correct)}")
+    broken_findings = test_auth_honesty({**correct_provider, "resolve_actor": resolve_broken})
+    if not broken_findings:
+        bad.append("a provider that resolves an expired token should fail auth honesty")
+    elif broken_findings[0]["subject"] != "p":
+        bad.append(f"the finding subject should be the provider name: {broken_findings[0]}")
 
-    def run_broken(token):
-        return ok({}) if token in ("valid_authorized", "expired") else {"err": fault("guard_failed", "no", category[token])}
+    # A provider with no name uses the default subject 'auth'.
+    no_name = {k: v for k, v in correct_provider.items() if k != "name"}
+    no_name_findings = test_auth_honesty({**no_name, "resolve_actor": resolve_broken})
+    if not no_name_findings or no_name_findings[0]["subject"] != "auth":
+        bad.append(f"a provider with no name should use the default subject 'auth': {no_name_findings}")
 
-    if not test_auth_honesty(guarded, provider, run_broken):
-        bad.append("a link that accepts an expired token should fail auth honesty")
-    if test_auth_honesty(open_link, provider, run_correct) != []:
-        bad.append("a non-authorizing link has no auth honesty test")
-    if test_auth_honesty(guarded, None, run_correct) != []:
+    # A recognizer that accepts a malformed token is dishonest; the finding is an auth_honesty one naming it.
+    leaky_findings = test_auth_honesty({**correct_provider, "actor_recognizer": lambda token: True})
+    if not leaky_findings:
+        bad.append("a recognizer that accepts a malformed token should fail auth honesty")
+    elif leaky_findings[0]["code"] != "auth_honesty" or "malformed" not in leaky_findings[0]["message"]:
+        bad.append(f"the malformed-recognizer finding should name the cause: {leaky_findings[0]}")
+
+    if test_auth_honesty(None) != []:
         bad.append("no registered provider means no auth honesty test")
 
-    # The provider's fault_mapping overrides the default expectation through test_auth_honesty: revoked
-    # overridden to 403, a link faulting revoked -> forbidden(403) is honest only if the override is
-    # actually read (the default would expect 401, making it a finding).
-    override_provider = {"generate": lambda class_name: class_name, "fault_mapping": {"revoked": 403}}
-
-    def run_override(token):
-        if token == "valid_authorized":
+    # The provider's fault_mapping overrides the default expectation: missing overridden to 403, so a
+    # provider faulting missing -> forbidden(403) is honest only if the override is actually read.
+    def resolve_override(token):
+        if token == "valid":
             return ok({})
-        return {"err": fault("guard_failed", "no", "forbidden" if token == "revoked" else category[token])}
+        return {"err": fault("guard_failed", "no", "forbidden" if token == "missing" else category[token])}
 
-    if test_auth_honesty(guarded, override_provider, run_override):
+    override_provider = {**correct_provider, "fault_mapping": {"missing": 403}, "resolve_actor": resolve_override}
+    if test_auth_honesty(override_provider):
         bad.append("the provider fault_mapping should override the default class expectation")
     return bad
 

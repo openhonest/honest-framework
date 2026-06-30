@@ -1791,8 +1791,7 @@
     "function": "auth_token_classes",
     "args": [],
     "expected": [
-     "valid_authorized",
-     "valid_unauthorized",
+     "valid",
      "revoked",
      "expired",
      "malformed",
@@ -1818,7 +1817,7 @@
    "value_case": {
     "function": "auth_expected_status",
     "args": [
-     "valid_authorized"
+     "valid"
     ],
     "expected": "ok"
    }
@@ -1848,7 +1847,7 @@
     "expected": {
      "code": "auth_honesty",
      "subject": "guard",
-     "message": "Link did not fault correctly for token class 'expired': expected 401, got {'ok': {}}"
+     "message": "did not fault correctly for token class 'expired': expected 401, got {'ok': {}}"
     }
    }
   },
@@ -2266,7 +2265,7 @@
   },
   {
    "function": "test_auth_honesty",
-   "reason": "Section 4.7: takes an injected provider (a token generator) and a chain-run callable, so its inputs are live callables, not JSON values. The seven-class orchestration, the honest and broken links, and the no-provider/non-authorizing no-ops are proved by the auth-honesty probe in laws_htest."
+   "reason": "Section 4.7: takes an injected provider whose generate / actor_recognizer / resolve_actor are live callables, not JSON values. The token-class orchestration, the honest and broken providers, and the no-provider no-op are proved by the auth-honesty probe in laws_htest."
   },
   {
    "function": "write_coverage",
