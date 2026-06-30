@@ -71,38 +71,33 @@ The `states` set of each flag is a Set recognizer in the honest-type sense: fini
 
 ---
 
-## 3. In-Memory State
+## 3. Flag State as a Value
 
-Flag state is ephemeral. It lives in a module-level dict initialized from vocabulary defaults at import time.
+Flag state is ephemeral, and it is a **value**, not module state — the single mutator is the toggle endpoint (the "dynamic config" kind in honest-state's taxonomy). `initial_state` builds it from the vocabulary defaults; the application's startup holds it and the toggle boundary updates it. Threading the state as a value is what keeps `feature_state` a pure lookup and lets honest-features pass its own gate (no hidden module mutable state, the auth/registry pattern).
 
 ```python
-# features.py (continued)
+def initial_state(features: dict) -> dict:
+    """The flag state at startup: each flag at its declared default. Pure, no I/O."""
+    return {flag: spec["default"] for flag, spec in features.items()}
 
-_state: dict[str, str] = {k: v["default"] for k, v in FEATURES.items()}
+def feature_state(state: dict, flag: str) -> str:
+    """The current state of a flag, read from the state value. Pure.
 
-def feature_state(flag: str) -> str:
-    """Return the current state of the named flag.
-
-    Raises KeyError if flag is not declared in FEATURES.
-    This is intentional: an undeclared flag is a programming error.
+    A flag not declared in FEATURES is a programming error caught statically by HF001 (§7), so a
+    flag that reaches here is always present.
     """
-    return _state[flag]
+    return state[flag]
 ```
 
-`feature_state()` is a pure lookup. No I/O. No side effects. No logging. It is the only interface downstream code uses to read flag state.
+`feature_state` is a pure lookup over the state value it is handed. No I/O. No side effects. No module global. It is the only interface downstream code uses to read flag state.
 
 ### 3.1 State Initialization
 
-`_state` is populated at module import. The process of initialization is:
-
-1. Copy default values from `FEATURES` into `_state`.
-2. No environment variables are read. No config files are read. No database is queried.
-
-State initialization is deterministic and requires no I/O.
+`initial_state(features)` copies each flag's declared default. No environment variables, config files, or database are read — initialization is deterministic and requires no I/O. The application calls it once at startup and holds the returned value.
 
 ### 3.2 State Reset
 
-On process restart, `_state` reinitializes from defaults. There is no persistence. This is a feature: a restarted process always starts from a known, declared state. Operators who want persistent flag state must persist it externally and call the toggle API after startup.
+There is no persistence: a fresh `initial_state(features)` is always the declared defaults, so a restarted process starts from a known state. Operators who want persistent flag state persist it externally and replay the toggles after startup.
 
 ---
 
@@ -208,10 +203,7 @@ def build_signature(secret: bytes, flag: str, state: str, timestamp: int) -> str
 **Signature verification (server):**
 
 ```python
-import hmac, hashlib, time
-from fastapi import HTTPException
-
-REPLAY_WINDOW_SECONDS: int = 60  # configurable
+import hmac, hashlib
 
 def verify_signature(
     secret: bytes,
@@ -219,15 +211,19 @@ def verify_signature(
     state: str,
     timestamp: int,
     signature: str,
+    now: int,
+    window: int = 60,
 ) -> bool:
-    if abs(time.time() - timestamp) > REPLAY_WINDOW_SECONDS:
+    if abs(now - timestamp) > window:
         return False
     message = f"{flag}:{state}:{timestamp}".encode()
     expected = hmac.new(secret, message, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
 ```
 
-`hmac.compare_digest` is required. String equality comparison is vulnerable to timing attacks.
+`now` is passed in — reading the clock is I/O and belongs at the boundary, so `verify_signature` stays a pure function the tests can drive at any instant. `hmac.compare_digest` is required: string equality comparison is vulnerable to timing attacks.
+
+honest-features ships these as **pure functions over the state value** — `initial_state`, `feature_state`, `validate_toggle` (the 400 conditions), `apply_toggle`, `build_signature`, and `verify_signature`. The HTTP route below is an integration boundary: it holds the state value, reads the clock and the request, calls the pure functions, and emits the change event. (The FastAPI / pytest / A-B examples in this spec are illustrative integration; they thread the state value rather than a module global.)
 
 ### 5.3 FastAPI Implementation
 
