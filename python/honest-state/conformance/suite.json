@@ -1,0 +1,23 @@
+{
+  "module": "honest-state",
+  "cases": [
+    {"id": "value-state-kinds", "value_case": {"function": "state_kinds", "args": [], "expected": [
+      {"kind": "user", "lives_in": "manifest-declared regions of the DOM", "mutator": "the user"},
+      {"kind": "server", "lives_in": "non-declared regions of the DOM", "mutator": "the alert source (honest-alerts)"},
+      {"kind": "session", "lives_in": "a shared store (scale-out)", "mutator": "the auth provider"},
+      {"kind": "domain", "lives_in": "the database", "mutator": "an ordinary honest-persist boundary write"},
+      {"kind": "cache", "lives_in": "at an I/O boundary", "mutator": "refresh-from-source"},
+      {"kind": "transient", "lives_in": "the chain manifest, in-memory", "mutator": "a link's return value"},
+      {"kind": "static_config", "lives_in": "process memory, frozen at startup", "mutator": "startup"},
+      {"kind": "dynamic_config", "lives_in": "an external flag store", "mutator": "the flag service"},
+      {"kind": "contended", "lives_in": "behind a queue", "mutator": "the queue's single consumer"}
+    ]}},
+    {"id": "value-mutator-user", "value_case": {"function": "mutator_of", "args": ["user"], "expected": {"ok": "the user"}}},
+    {"id": "value-mutator-contended", "value_case": {"function": "mutator_of", "args": ["contended"], "expected": {"ok": "the queue's single consumer"}}},
+    {"id": "value-mutator-unknown", "value_case": {"function": "mutator_of", "args": ["nope"], "expected": {"err": {"code": "unknown_state_kind", "message": "'nope' is not a declared kind of state", "category": "client", "detail": "nope"}}}},
+    {"id": "value-law-honest-disjoint", "value_case": {"function": "second_mutator_legitimate", "args": [true, true], "expected": true}},
+    {"id": "value-law-not-disjoint", "value_case": {"function": "second_mutator_legitimate", "args": [true, false], "expected": false}},
+    {"id": "value-law-dishonest", "value_case": {"function": "second_mutator_legitimate", "args": [false, true], "expected": false}},
+    {"id": "value-law-neither", "value_case": {"function": "second_mutator_legitimate", "args": [false, false], "expected": false}}
+  ]
+}

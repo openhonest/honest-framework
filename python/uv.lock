@@ -15,6 +15,7 @@ members = [
     "honest-observe",
     "honest-parse",
     "honest-persist",
+    "honest-state",
     "honest-test",
     "honest-type",
     "honest-workspace",
@@ -166,6 +167,17 @@ requires-dist = [
     { name = "pydantic", marker = "extra == 'pydantic'", specifier = ">=2" },
 ]
 provides-extras = ["pydantic", "django"]
+
+[[package]]
+name = "honest-state"
+version = "0.1.0"
+source = { editable = "honest-state" }
+dependencies = [
+    { name = "honest-type" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "honest-type", editable = "honest-type" }]
 
 [[package]]
 name = "honest-test"

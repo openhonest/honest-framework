@@ -319,7 +319,7 @@ observe    → type, errors                          the event log and projectio
 persist    → type, observe                         schema/query/transaction boundaries
                                                    emit to the event log
 auth       → type                                  authentication (boundary validation): the AuthProvider contract, a value registry, the boundary dispatch
-state      → type, check, test, persist            the kinds of state and the single-mutator rule
+state      → type                                  the kinds of state and the single-mutator law, as data (no primitives; the law is enforced by honest-check)
 features   → type, check, test, observe            feature flags as a bounded vocabulary
 
 # Application-production tier
