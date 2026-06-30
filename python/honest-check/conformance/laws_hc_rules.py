@@ -83,11 +83,11 @@ from honest_check.declgraph import (
     function_calls,
     function_name,
     function_role,
+    is_provider_registered,
     keyword_args,
     link_decorator_call,
     module_assignments,
     positional_arg_count,
-    registered_provider_signature,
     resolve_aliases,
     string_value,
     string_list,
@@ -96,7 +96,6 @@ from honest_check.declgraph import (
     vocab_expr_type_names,
     vocabulary_base_types,
     vocabulary_members,
-    _derivation_signature,
     _dictionary_arg,
     _parse_composed,
     _recognizer,
@@ -836,15 +835,16 @@ _case(
     "a001_no_provider",
     "from honest_type import link\n@link(authorizes=True)\ndef f(x):\n    return x\n",
     must_fire=("HC-A001",),
+    must_not_fire=("HC-A002",),  # no provider -> HC-A001's job, HC-A002 stays silent
 )
 _case(
     "a001_provider_registered_clean",
     "from honest_type import link\n"
     "@link(authorizes=True)\n"
-    "def f(x):\n    return session_actor\n"
-    "p = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('session_actor'))\n"
+    "def f(x):\n    return actor\n"
+    "p = AuthProvider(resolve_actor=validate)\n"
     "register_auth_provider(p)\n",
-    must_not_fire=("HC-A001",),
+    must_not_fire=("HC-A001", "HC-A002"),
 )
 _case(
     "a001_no_authorizing_links_clean",
@@ -852,29 +852,18 @@ _case(
     must_not_fire=("HC-A001",),
 )
 _case(
-    "a002_missing_derivation_reference",
+    "a002_actor_from_input",
     "from honest_type import link\n"
     "@link(authorizes=True)\n"
     "def f(x):\n    return x\n"
-    "p = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('session_actor'))\n"
     "register_auth_provider(p)\n",
     must_fire=("HC-A002",),
 )
 _case(
-    "a002_literal_provider_clean",
+    "a002_uses_boundary_actor_clean",
     "from honest_type import link\n"
     "@link(authorizes=True)\n"
-    "def f(x):\n    return x\n"
-    "p = AuthProvider(derivation_expression=GuardExpressionTemplate.literal('nobody'))\n"
-    "register_auth_provider(p)\n",
-    must_not_fire=("HC-A002", "HC-A001"),
-)
-_case(
-    "a002_provider_no_derivation_kw_clean",
-    "from honest_type import link\n"
-    "@link(authorizes=True)\n"
-    "def f(x):\n    return x\n"
-    "p = AuthProvider()\n"
+    "def f(x):\n    return owns(actor, x)\n"
     "register_auth_provider(p)\n",
     must_not_fire=("HC-A002",),
 )
@@ -882,9 +871,9 @@ _case(
     "a001_provider_not_inline_clean",
     "from honest_type import link\n"
     "@link(authorizes=True)\n"
-    "def f(x):\n    return x\n"
+    "def f(x):\n    return actor\n"
     "register_auth_provider(some_provider)\n",
-    must_not_fire=("HC-A001",),
+    must_not_fire=("HC-A001", "HC-A002"),
 )
 
 
@@ -1323,49 +1312,17 @@ _case(
     "transitions={('a',): 'b', 'flat': 'c', (1, 2): 'd', **more})\n",
     must_not_fire=("HC-SYN",),
 )
-# An auth provider registered with a non-identifier argument, an AuthProvider lookup with
-# a non-string first arg, and a lookup-derivation provider plus a non-AuthProvider call
-# assignment and an unrelated module assignment exercise the provider-resolution skips.
-# Two registrations: one provider var (q) is assigned to a non-AuthProvider call (the
-# fn-not-AuthProvider continue), plus a non-identifier register arg ('literal_arg'), a
-# non-call module assignment (count), and an unrelated call assignment (noise). The real
-# AuthProvider (p) still resolves, so HC-A001 stays silent.
+# A provider registered amid noise (a non-call module assignment, an unrelated call) is detected:
+# the authorizing link uses the boundary actor, so neither HC-A001 nor HC-A002 fires.
 _case(
-    "declgraph_auth_provider_resolution_clean",
+    "declgraph_auth_provider_registered_clean",
     "from honest_type import link\n"
     "@link(authorizes=True)\n"
-    "def f(x):\n    return session_actor\n"
+    "def f(x):\n    return owns(actor, x)\n"
     "count = 5\n"
     "noise = compute()\n"
-    "q = NotAuthProvider()\n"
-    "p = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('session_actor'))\n"
-    "register_auth_provider(q, 'literal_arg')\n"
     "register_auth_provider(p)\n",
-    must_not_fire=("HC-A001",),
-)
-# A lookup-derivation whose argument list has a non-string before the string exercises
-# _derivation_signature's non-string-arg continue; a literal(...) derivation exercises the
-# method != 'lookup' early return.
-_case(
-    "declgraph_auth_lookup_nonstring_then_string_clean",
-    "from honest_type import link\n"
-    "@link(authorizes=True)\n"
-    "def f(x):\n    return session_actor\n"
-    "p = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup(prefix, 'session_actor'))\n"
-    "register_auth_provider(p)\n",
-    must_not_fire=("HC-A001",),
-)
-# A lookup-derivation with NO string argument at all exercises _derivation_signature's
-# loop-exhausted '' return. With an empty signature, authorizing links need no reference,
-# so HC-A002 stays silent.
-_case(
-    "declgraph_auth_lookup_no_string_clean",
-    "from honest_type import link\n"
-    "@link(authorizes=True)\n"
-    "def f(x):\n    return x\n"
-    "p = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup(dynamic))\n"
-    "register_auth_provider(p)\n",
-    must_not_fire=("HC-A002",),
+    must_not_fire=("HC-A001", "HC-A002"),
 )
 
 
@@ -1408,10 +1365,6 @@ def _probe_internal_helpers() -> list[str]:
         bad.append("transition_table(non-dict) should be []")
     if transition_table(None, src_b) != []:
         bad.append("transition_table(None) should be []")
-
-    # _derivation_signature: non-call node -> ''.
-    if _derivation_signature(integer, src_b) != "":
-        bad.append("_derivation_signature(non-call) should be ''")
 
     # _is_value_load: the parent-is-None path returns True. The root node has no parent.
     if _is_value_load(root) is not True:
@@ -1780,37 +1733,13 @@ def _probe_declgraph_extractors() -> list[str]:
     if auth != ["guard"]:
         bad.append(f"authorizing_links should find only authorizes=True: {auth}")
 
-    # registered_provider_signature: a registered inline AuthProvider with a lookup derivation -> its name;
-    # a literal derivation -> ''; no registration -> None.
-    root, b = _pa(
-        "p = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('session_actor'))\n"
-        "register_auth_provider(p)\n"
-    )
-    if registered_provider_signature(root, b, resolve_aliases(root, b)) != "session_actor":
-        bad.append("registered_provider_signature should read the lookup derivation name")
-    root, b = _pa(
-        "p = AuthProvider(derivation_expression=GuardExpressionTemplate.literal('x'))\n"
-        "register_auth_provider(p)\n"
-    )
-    if registered_provider_signature(root, b, resolve_aliases(root, b)) != "":
-        bad.append("registered_provider_signature of a literal derivation should be ''")
+    # is_provider_registered: true iff a register_auth_provider(...) call is present.
+    root, b = _pa("register_auth_provider(p)\n")
+    if is_provider_registered(root, b) is not True:
+        bad.append("is_provider_registered should be True when a provider is registered")
     root, b = _pa("x = 1\n")
-    if registered_provider_signature(root, b, resolve_aliases(root, b)) is not None:
-        bad.append("registered_provider_signature with no registration should be None")
-    # _derivation_signature: a lookup call -> name; a non-lookup method -> ''.
-    root, b = _pa("GuardExpressionTemplate.lookup('sig')\n")
-    look = next(n for n in _w(root) if n.type == "call")
-    if _derivation_signature(look, b) != "sig":
-        bad.append("_derivation_signature(lookup) should return the signature name")
-    root, b = _pa("GuardExpressionTemplate.literal('x')\n")
-    lit = next(n for n in _w(root) if n.type == "call")
-    if _derivation_signature(lit, b) != "":
-        bad.append("_derivation_signature(non-lookup) should be ''")
-    # A lookup with no string argument exhausts the arg loop and returns '' (not the bare name).
-    root, b = _pa("GuardExpressionTemplate.lookup(some_var)\n")
-    look2 = next(n for n in _w(root) if n.type == "call")
-    if _derivation_signature(look2, b) != "":
-        bad.append("_derivation_signature(lookup with no string arg) should be ''")
+    if is_provider_registered(root, b) is not False:
+        bad.append("is_provider_registered should be False with no registration")
 
     # positional_arg_count: positionals counted, keyword args AND comments excluded.
     root, b = _pa("f(a, b, kw=1)\n")
@@ -1925,21 +1854,6 @@ def _probe_declgraph_extractors() -> list[str]:
     if function_role(fr, b) != "boundary":
         bad.append(f"function_role should read the last dotted segment of a decorator: {function_role(fr, b)}")
 
-    # registered_provider_signature: a dotted AuthProvider (mod.AuthProvider) is recognised by its last
-    # segment, and only the *registered* provider var's assignment is read (an earlier unrelated
-    # AuthProvider must be skipped, not returned).
-    root, b = _pa(
-        "other = mod.AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('wrong'))\n"
-        "p = mod.AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('right'))\n"
-        "register_auth_provider(p)\n"
-    )
-    if registered_provider_signature(root, b, resolve_aliases(root, b)) != "right":
-        bad.append("registered_provider_signature should read the dotted AuthProvider of the registered var only")
-    # Registered, but the provider var is assigned to something that is not an AuthProvider -> ''.
-    root, b = _pa("p = SomethingElse(x=1)\nregister_auth_provider(p)\n")
-    if registered_provider_signature(root, b, resolve_aliases(root, b)) != "":
-        bad.append("registered_provider_signature of a non-AuthProvider assignment should be ''")
-
     return bad
 
 
@@ -1948,7 +1862,7 @@ def _probe_declgraph_extractors() -> list[str]:
 # emptied message fragment; one representative violation per rule exercises its message template.
 _RULE_MESSAGES = [
     ('HC-A001', 'from honest_type import link\n@link(authorizes=True)\ndef f(x):\n    return x\n', "No AuthProvider registered, but these links declare authorizes=True and cannot be verified: ['f']. Register a provider, or declare authorizes=False."),
-    ('HC-A002', "from honest_type import link\n@link(authorizes=True)\ndef f(x):\n    return x\np = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('session_actor'))\nregister_auth_provider(p)\n", "Link 'f' declares authorizes=True but its guard does not reference the registered provider's derivation expression 'session_actor'. Actor identity must be derived inside the guard, not trusted from input."),
+    ('HC-A002', "from honest_type import link\n@link(authorizes=True)\ndef f(x):\n    return x\nregister_auth_provider(p)\n", "Link 'f' declares authorizes=True but does not use the boundary-resolved actor ('actor'). Actor identity must come from the boundary, not be trusted from request input."),
     ('HC-OR001', 'from honest_type import orchestrator\n@orchestrator\ndef a():\n    b()\n@orchestrator\ndef b():\n    pass\n', "Orchestrator 'a' calls orchestrator 'b'. Orchestrators do not compose — extract shared logic as a pure helper or a chain."),
     ('HC-OR003', 'from honest_type import orchestrator\n@orchestrator\ndef a():\n    step1()\n    step2()\n    step3()\n@orchestrator\ndef b():\n    step1()\n    step2()\n    step3()\n', "Orchestrators 'a' and 'b' share 3 consecutive operations. Consider extracting the shared sequence as a pure helper (if side-effect-free) or a chain (if I/O is involved). Orchestrators are not composable (HC-OR001)."),
     ('HC-P001', "def f(x):\n    if x == 'a':\n        return 1\n    elif x == 'b':\n        return 2\n    elif x == 'c':\n        return 3\n    return 0\n", 'if/elif/else chain dispatches on value — use dict lookup. See honest-code-principles.md §3.'),
@@ -2062,8 +1976,6 @@ _case("p004_tuple_unpack_local", "d = {}\nd[0] = 1\ndef f():\n    for d, e in it
 # Both boundary decorator forms (@boundary() and @link(boundary = True) with spaces) exempt I/O.
 _case("p004_boundary_call_form", "@boundary()\ndef f():\n    open('x')\n", must_not_fire=("HC-P004",))
 _case("p004_boundary_spaces", "from honest_type import link\n@link(boundary = True)\ndef f(x):\n    open('x')\n", must_not_fire=("HC-P004",))
-# HC-A002: an authorizing link whose guard references the registered derivation is satisfied (no fault).
-_case("a002_guard_refs_derivation_clean", "from honest_type import link\n@link(authorizes=True)\ndef f(x):\n    return session_actor\np = AuthProvider(derivation_expression=GuardExpressionTemplate.lookup('session_actor'))\nregister_auth_provider(p)\n", must_not_fire=("HC-A002",))
 # A DECORATED non-boundary link with I/O must still fire HC-P004: pins the boundary-decorator detector
 # (emptying its match strings would make every decorated function look like a boundary and suppress it).
 _case("p004_decorated_nonboundary_io", "from honest_type import link\n@link(accepts=A, emits=B)\ndef f(x):\n    open('x')\n", must_fire=("HC-P004", "HC008"))

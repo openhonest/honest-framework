@@ -79,16 +79,10 @@ Feature: honest-check — Python supplement
     When authorizing_links scans the link decorators
     Then it returns each function declared to authorize, with its node
 
-  Scenario: _derivation_signature reads the derivation name from a provider expression
-    Given a derivation node
-    When _derivation_signature reads it
-    Then it returns the looked-up derivation name, or empty for a literal expression
-
-  Scenario: registered_provider_signature reports the registered provider's derivation
-    Given a syntax tree and the resolved aliases
-    When registered_provider_signature scans the registrations
-    Then it returns nothing when no provider is registered
-    And empty for a literal no-auth provider, otherwise the derivation name links must reference
+  Scenario: is_provider_registered reports whether an AuthProvider is registered
+    Given a syntax tree
+    When is_provider_registered scans for a register_auth_provider call
+    Then it returns true when a provider is registered and false otherwise
 
   Scenario: positional_arg_count counts a call's positional arguments
     Given a call node

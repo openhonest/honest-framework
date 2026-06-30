@@ -29,11 +29,11 @@ from honest_check.declgraph import (
     function_name,
     function_role,
     functions_by_name,
+    is_provider_registered,
     keyword_args,
     link_decorator_call,
     module_assignments,
     positional_arg_count,
-    registered_provider_signature,
     resolve_aliases,
     string_value,
     vocab_binding_pairings,
@@ -923,7 +923,7 @@ def check_hc_a001(root, source: bytes, path: str) -> list[Diagnostic]:
     links = authorizing_links(root, source, aliases)
     if not links:
         return []
-    if registered_provider_signature(root, source, aliases) is not None:
+    if is_provider_registered(root, source):
         return []
     line, col = line_col(links[0][1])
     names = sorted(name for name, _ in links)
@@ -941,27 +941,26 @@ def check_hc_a001(root, source: bytes, path: str) -> list[Diagnostic]:
 
 
 def check_hc_a002(root, source: bytes, path: str) -> list[Diagnostic]:
-    """HC-A002 — an authorizing link does not reference the provider's derivation (error).
+    """HC-A002 — an authorizing link does not use the boundary-resolved actor (error).
 
-    An authorizing link must derive actor identity via the registered provider's
-    derivation expression. This checks that the link body references the derivation name.
+    Identity is resolved at the boundary (honest-auth) and passed inward as `actor`. An authorizing
+    link must use that boundary actor; one that does not is sourcing identity from request input,
+    which is forgeable.
     """
     aliases = resolve_aliases(root, source)
     links = authorizing_links(root, source, aliases)
     if not links:
         return []
-    signature = registered_provider_signature(root, source, aliases)
-    if signature is None or signature == "":
-        # None: HC-A001 handles it. '': literal (no-auth) derivation — nothing to reference.
-        return []
+    if not is_provider_registered(root, source):
+        return []  # HC-A001 handles the no-provider case
     out: list[Diagnostic] = []
     for name, node in links:
         body = node.child_by_field_name("body")
-        referenced = body is not None and any(
-            sub.type == "identifier" and node_text(sub, source) == signature
+        uses_actor = body is not None and any(
+            sub.type == "identifier" and node_text(sub, source) == "actor"
             for sub in walk(body)
         )
-        if referenced:
+        if uses_actor:
             continue
         line, col = line_col(node)
         out.append(
@@ -971,9 +970,9 @@ def check_hc_a002(root, source: bytes, path: str) -> list[Diagnostic]:
                 path,
                 line,
                 col,
-                f"Link '{name}' declares authorizes=True but its guard does not reference "
-                f"the registered provider's derivation expression '{signature}'. Actor "
-                "identity must be derived inside the guard, not trusted from input.",
+                f"Link '{name}' declares authorizes=True but does not use the boundary-resolved "
+                "actor ('actor'). Actor identity must come from the boundary, not be trusted from "
+                "request input.",
             )
         )
     return out

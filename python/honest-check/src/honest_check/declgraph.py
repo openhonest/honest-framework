@@ -305,51 +305,13 @@ def authorizing_links(root, source: bytes, aliases):
     return out
 
 
-def _derivation_signature(deriv_node, source: bytes) -> str:
-    """The derivation name in GuardExpressionTemplate.lookup('name', ...); '' for literal."""
-    if deriv_node.type != "call":
-        return ""
-    fn = deriv_node.child_by_field_name("function")
-    method = node_text(fn, source).split(".")[-1] if fn is not None else ""
-    if method != "lookup":
-        return ""  # .literal(...) etc. — no derivation expression to reference
-    args = deriv_node.child_by_field_name("arguments")
-    for child in args.named_children:
-        if child.type == "string":
-            return string_value(child, source) or ""
-    return ""
+def is_provider_registered(root, source: bytes) -> bool:
+    """True if the application registers an AuthProvider — a `register_auth_provider(...)` call.
 
-
-def registered_provider_signature(root, source: bytes, aliases):
-    """The registered provider's derivation signature.
-
-    Returns None if no provider is registered; '' if registered with a literal
-    (no-auth) derivation; otherwise the derivation name authorizing links must
-    reference (e.g. 'session_actor'). Auth is a wrapper over a 3rd-party provider:
-    register_auth_provider(p) where p = AuthProvider(derivation_expression=...).
-    """
-    registrations = _calls_by_name(root, source, "register_auth_provider")
-    if not registrations:
-        return None
-    provider_vars: set[str] = set()
-    for call in registrations:
-        args = call.child_by_field_name("arguments")
-        for child in args.named_children:
-            if child.type == "identifier":
-                provider_vars.add(node_text(child, source))
-    for assignment in module_assignments(root):
-        left = assignment.child_by_field_name("left")
-        right = assignment.child_by_field_name("right")
-        if left is None or right is None or left.type != "identifier" or right.type != "call":
-            continue
-        if node_text(left, source) not in provider_vars:
-            continue
-        fn = right.child_by_field_name("function")
-        if fn is None or node_text(fn, source).split(".")[-1] != "AuthProvider":
-            continue
-        deriv = keyword_args(right, source).get("derivation_expression")
-        return _derivation_signature(deriv, source) if deriv is not None else ""
-    return ""  # registered, but provider definition not inline
+    Authentication is a boundary concern: the registered provider validates the credential at the
+    boundary and resolves the actor (honest-auth). honest-check needs only to know whether a provider
+    is present, not how it derives identity."""
+    return bool(_calls_by_name(root, source, "register_auth_provider"))
 
 
 def positional_arg_count(call_node) -> int:

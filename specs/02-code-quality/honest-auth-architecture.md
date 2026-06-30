@@ -175,7 +175,7 @@ Given a fixed backing state and a fixed token, `resolve_actor` produces the same
 
 ### 4.5 Identity is never trusted from input
 
-The only source of an actor is `resolve_actor` at the boundary. No link, route, or query may take an actor identifier from request input (body, query string, form fields, headers other than the verified credential). honest-check enforces this (HC-A002): an operation that acts on behalf of an actor must use the boundary-resolved actor.
+The only source of an actor is `resolve_actor` at the boundary. The framework passes that resolved value inward as `actor`, and a link that acts on behalf of an actor uses that `actor`. No link, route, or query may take an actor identifier from request input (body, query string, form fields, headers other than the verified credential). honest-check enforces this (HC-A002): a link declared `authorizes=True` must use the boundary-resolved `actor`; one that does not is sourcing identity from input.
 
 ### 4.6 Black-box testability
 

@@ -1030,17 +1030,18 @@ FUNCTION check_HC_A001(application_context):
 
 #### HC-A002 — Actor trusted from request input
 
-An operation that acts on behalf of an actor must use the actor resolved at the boundary (honest-auth `resolve_actor`), never an actor identifier read from request input (body, query string, form fields, the manifest). An actor taken from input is forgeable; identity is established once, at the boundary, and flows inward as data.
+A link declared `authorizes=True` must use the actor resolved at the boundary (honest-auth `resolve_actor`), which the framework passes inward as `actor`. A link that does not reference `actor` is sourcing identity from request input (body, query string, form fields, the manifest) — forgeable. Identity is established once, at the boundary, and flows inward as data.
 
 ```
-FUNCTION check_HC_A002(operation, provider):
-    IF provider IS NONE: RETURN          // HC-A001 handles the no-provider case
+FUNCTION check_HC_A002(link, provider_registered):
+    IF NOT provider_registered: RETURN          // HC-A001 handles the no-provider case
+    IF link.authorizes = False: RETURN
 
-    IF operation.actor_source IS request_input:
-        EMIT error(HC-A002, operation.location,
-            f"Operation '{operation.name}' takes its actor from request input. "
-            f"Actor identity must come from the boundary validator "
-            f"('{provider.name}'), not be trusted from input.")
+    IF "actor" NOT referenced_in link.body:
+        EMIT error(HC-A002, link.location,
+            f"Link '{link.name}' declares authorizes=True but does not use the "
+            f"boundary-resolved actor ('actor'). Actor identity must come from the "
+            f"boundary, not be trusted from request input.")
 ```
 
 ### 4.3 Test Time (Deferred to honest-test)

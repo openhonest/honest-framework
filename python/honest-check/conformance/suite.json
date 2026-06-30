@@ -601,14 +601,14 @@
       "category": "HC-A002",
       "input": {
         "language": "python",
-        "source": "from honest_type import link\nsp = AuthProvider(name='p', derivation_expression=GuardExpressionTemplate.lookup('session_actor', args=[Slot('token')]))\nregister_auth_provider(sp)\n@link(accepts=v, emits=v, authorizes=True)\ndef grant(m):\n    return persist_write(m)"
+        "source": "from honest_type import link\nregister_auth_provider(sp)\n@link(accepts=v, emits=v, authorizes=True)\ndef grant(m):\n    return persist_write(m)"
       },
       "expected": {
         "diagnostics": [
           {
             "rule": "HC-A002",
             "severity": "error",
-            "line": 5
+            "line": 4
           }
         ]
       }
