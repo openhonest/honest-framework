@@ -455,63 +455,55 @@ FUNCTION test_chain_contracts(chain, vocabulary, binding):
 
 Client faults from link N+1 are not contract failures. Only server faults indicate a contract violation.
 
-### 4.7 Auth Honesty Test
+### 4.7 Authentication Honesty Test
 
-For every `@link` declared `authorizes=True`, honest-test auto-generates an auth honesty test using the registered `AuthProvider`'s `test_token_generator` (see `honest-auth-architecture.md §2.4`). The test exercises seven token classes and asserts the outcome against the provider's `fault_mapping`.
+When an `AuthProvider` is registered, honest-test auto-generates an authentication-honesty test that probes the provider's boundary validator `resolve_actor` with the provider's `test_token_generator` (see `honest-auth-architecture.md §2.3–2.4`). It exercises the token classes and asserts the outcome against the provider's `fault_mapping`.
 
 ```
-FUNCTION test_auth_honesty(link):
+FUNCTION test_auth_honesty():
     provider ← get_registered_auth_provider()
     IF provider IS NONE: RETURN   // HC-A001 warning covers this case
 
-    IF link.authorizes = False: RETURN
-
-    test_classes ← {
-        "valid_authorized",
-        "valid_unauthorized",
-        "revoked",
-        "expired",
-        "malformed",
-        "missing",
-        "forged",
-    }
+    test_classes ← {"valid", "revoked", "expired", "malformed", "missing", "forged"}
 
     FOR EACH class_name IN test_classes:
-        context ← build_test_context_for_link(link)
+        context ← build_auth_test_context()
         token   ← provider.test_token_generator.generate(class_name, context)
-        manifest ← build_manifest_with_token(link, token, context)
 
-        result ← execute_chain(link.chain, manifest)
+        IF class_name = "malformed":
+            IF provider.actor_recognizer accepts token:
+                EMIT failure("auth_honesty",
+                    f"Provider '{provider.name}' accepted a malformed token at the recognizer.")
+            CONTINUE   // malformed never reaches resolve_actor
 
+        result ← provider.resolve_actor(token)
         expected_http_status ← compute_expected_status(class_name, provider.fault_mapping)
 
-        IF class_name = "valid_authorized":
+        IF class_name = "valid":
             IF "ok" NOT IN result:
                 EMIT failure("auth_honesty",
-                    f"Link '{link.name}' rejected valid authorized token: {result}")
+                    f"Provider '{provider.name}' rejected a valid token: {result}")
         ELSE:
             IF "err" NOT IN result OR map_to_http(result.err) ≠ expected_http_status:
                 EMIT failure("auth_honesty",
-                    f"Link '{link.name}' did not fault correctly for token class "
-                    f"'{class_name}': expected {expected_http_status}, got "
-                    f"{result}.")
+                    f"Provider '{provider.name}' did not fault correctly for token class "
+                    f"'{class_name}': expected {expected_http_status}, got {result}.")
 ```
 
-**Class-to-fault mapping (default, overridable by provider):**
+**Class-to-outcome mapping (default, overridable by provider):**
 
 | Token class | Expected outcome |
 |---|---|
-| `valid_authorized` | `ok` |
-| `valid_unauthorized` | `guard_failed` categorized as `forbidden` → 403 |
-| `revoked` | `guard_failed` categorized as `unauthenticated` → 401 |
-| `expired` | `guard_failed` categorized as `unauthenticated` → 401 |
-| `malformed` | Rejection at `actor_recognizer` → 400 (or 401 if provider prefers) |
-| `missing` | `guard_failed` categorized as `unauthenticated` → 401 |
-| `forged` | `guard_failed` categorized as `unauthenticated` → 401 |
+| `valid` | `ok(actor)` |
+| `revoked` | `err` categorized as `unauthenticated` → 401 |
+| `expired` | `err` categorized as `unauthenticated` → 401 |
+| `malformed` | Rejected at `actor_recognizer` → 400 (or 401 if the provider prefers); never reaches `resolve_actor` |
+| `missing` | `err` categorized as `unauthenticated` → 401 |
+| `forged` | `err` categorized as `unauthenticated` → 401 |
 
-**Rationale.** A provider's correctness claim is only as strong as the behaviours its contract covers. The seven-class probe is the smallest set that exercises the contract. A change to an authorizing link that, say, starts accepting expired tokens fails this test even though the step's output shape is unchanged. Without auth-honesty testing, accepting expired tokens would only surface in an end-to-end test against the deployed application.
+**Rationale.** A provider's correctness claim is only as strong as the behaviours its contract covers. This class set is the smallest that exercises the boundary validator. A provider change that, say, starts accepting expired tokens fails this test even though nothing downstream changed. Whether a *resolved* actor is authorized for a particular target is ordinary business logic — a link's early-return guard or role vocabulary over the resolved actor — and is verified by that link's ordinary tests, not by the provider's token classes.
 
-**Conformance requirement.** Every honest-test implementation must run the auth honesty test on every authorizing link, using the registered provider's generator. An implementation that reports no failures on a link whose authorization is broken (verified against the conformance probe suite in `honest/honest-auth-conformance/`) fails honest-test conformance.
+**Conformance requirement.** Every honest-test implementation must run the authentication-honesty test against the registered provider's `resolve_actor`. An implementation that reports no failures on a provider whose validation is broken (verified against the conformance probe suite in `honest/honest-auth-conformance/`) fails honest-test conformance.
 
 ---
 

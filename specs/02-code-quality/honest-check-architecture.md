@@ -428,8 +428,8 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-R001 | Error | ✓ | Orphan function (no role, not reachable) |
 | HC-OR001 | Error | ✓ | Orchestrator calls another orchestrator |
 | HC-OR003 | Warning | ✓ | Suspected duplication between orchestrators |
-| HC-A001 | Warning | ✓ | No AuthProvider registered; authorizing links unverifiable |
-| HC-A002 | Error | ✓ | Authorizing link does not reference provider's derivation |
+| HC-A001 | Warning | ✓ | No AuthProvider registered; actor-using operations unverifiable |
+| HC-A002 | Error | ✓ | Actor trusted from request input instead of the boundary |
 
 #### HC001 — Link missing vocabulary
 
@@ -1016,34 +1016,31 @@ FUNCTION check_HC_A001(application_context):
     provider ← get_registered_auth_provider()
 
     IF provider IS NONE:
-        authorizing_links ← [L FOR L IN all_links IF L.authorizes = True]
-        IF authorizing_links IS NOT EMPTY:
+        actor_using_ops ← [O FOR O IN all_operations IF O acts on behalf of an actor]
+        IF actor_using_ops IS NOT EMPTY:
             EMIT warning(HC-A001,
                 "No AuthProvider registered. "
-                f"The following links declare authorizes=True but cannot be "
-                f"verified without a provider: {authorizing_links}. "
-                f"Register a provider (e.g., example-auth-pro) or declare "
-                f"authorizes=False on these links.")
+                f"These operations act on behalf of an actor but no boundary "
+                f"validator resolves one: {actor_using_ops}. "
+                f"Register a provider (e.g., example-auth-pro), or remove the "
+                f"actor dependency.")
 ```
 
-**Severity:** Warning. An application without authorization may be intentional (read-only public applications, local development). The warning surfaces the gap without blocking honest-check from passing. HC-A002 (below) is the blocking rule for links that declare they authorize but omit provider integration.
+**Severity:** Warning. An application with no authentication may be intentional (read-only public applications, local development). The warning surfaces the gap without blocking honest-check from passing. HC-A002 (below) is the blocking rule for an operation that takes its actor from request input.
 
-#### HC-A002 — Authorizing link does not reference the provider
+#### HC-A002 — Actor trusted from request input
 
-An `@link` declared `authorizes=True` must reference the registered `AuthProvider`'s derivation in its body. Without the reference, actor identity is trusted from external input (vulnerable to forgery) rather than derived from the provider.
+An operation that acts on behalf of an actor must use the actor resolved at the boundary (honest-auth `resolve_actor`), never an actor identifier read from request input (body, query string, form fields, the manifest). An actor taken from input is forgeable; identity is established once, at the boundary, and flows inward as data.
 
 ```
-FUNCTION check_HC_A002(link, provider):
-    IF link.authorizes = False: RETURN
-    IF provider IS NONE: RETURN   // HC-A001 handles this case
+FUNCTION check_HC_A002(operation, provider):
+    IF provider IS NONE: RETURN          // HC-A001 handles the no-provider case
 
-    IF provider.derivation_name NOT referenced_in link.body:
-        EMIT error(HC-A002, link.location,
-            f"Link '{link.name}' declares authorizes=True but its body does "
-            f"not reference the registered AuthProvider "
-            f"('{provider.name}')'s derivation "
-            f"('{provider.derivation_name}'). Actor identity "
-            f"must be derived from the provider, not trusted from manifest input.")
+    IF operation.actor_source IS request_input:
+        EMIT error(HC-A002, operation.location,
+            f"Operation '{operation.name}' takes its actor from request input. "
+            f"Actor identity must come from the boundary validator "
+            f"('{provider.name}'), not be trusted from input.")
 ```
 
 ### 4.3 Test Time (Deferred to honest-test)
@@ -1323,7 +1320,7 @@ This ensures suppressions are visible in CI and do not silently accumulate.
 | HC-OR001 | Error | Static | — | Orchestrator calls another orchestrator |
 | HC-OR003 | Warning | Static | — | Suspected duplication between orchestrators |
 | HC-A001 | Warning | Static | — | No AuthProvider registered |
-| HC-A002 | Error | Static | — | Authorizing link does not reference provider's derivation |
+| HC-A002 | Error | Static | — | Actor trusted from request input instead of the boundary |
 | HC-P012 | Warning | Test | — | Excessive mocks in test (honest-test) |
 
 **Withdrawn:** *HC-SM06 ("transition writes to undeclared state field")* has been removed. It assumed a state-machine model where a state is a record of fields and transitions are field-writing functions. The canonical model (`honest-state-architecture.md`) defines a state as an atomic name and `transition()` as a pure `(state, event) → next_state` lookup that writes nothing — the caller persists the next state. There are no transition-written fields to police, so the rule described a model the framework does not have. honest-state §4 correctly lists only HC-SM01/02/03/04/05.

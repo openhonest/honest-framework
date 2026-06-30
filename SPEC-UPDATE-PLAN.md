@@ -98,6 +98,23 @@ B (state spec)  ── independent; unblocks DOM and alerts (both need state)
 - Each track ends at a **buildable spec**, not at code. Implementation (auth, state) follows under the normal four-gate bootstrap (shape, conformance, coverage, mutation adequacy), after the A0/B0 decisions are made and the rewrites land.
 - **Spec changes propagate** per the stability rule: a Tier-2 change that touches honest-check rule wording (HC-A001/A002), honest-test (§4.5, token classes), honest-DOM, or honest-type must update those specs in the same pass, and the cross-tier conformance suite where affected.
 
+## Status: specs rewritten
+
+Both specs are rewritten and the spec layer is internally consistent:
+
+- **honest-auth** — boundary-validation model (`AuthProvider` = name + `actor_recognizer` + `resolve_actor` + `test_token_generator` + `fault_mapping`); guard machinery and persist guard-DSL references deleted.
+- **honest-state** — 700 → 113 lines; the single-mutator law, the taxonomy with pointers, and the cross-kind honest-check enforcement. DATAOS mechanics confirmed already owned by honest-DOM; state-machine mechanics already owned by honest-type — referenced, not duplicated.
+- **honest-check** — HC-A001/HC-A002 reworded to the boundary model (actor must come from the boundary, not request input).
+- **honest-test** — §4.7 reworded to probe `resolve_actor` over six authentication classes; authorization-for-target is ordinary link logic.
+
+### Follow-up implementation changes (built code now intentionally lags the spec)
+
+The spec leads; these built artifacts still encode the old model and must be brought to the new spec when auth/state are implemented (each is mutation-adequate today against its old behaviour, so nothing is gate-breaking now):
+
+- **honest-check `rules.py` HC-A002** — currently "authorizing link references the derivation in its guard"; spec now "actor taken from request input." Rule + its conformance/laws cases need rewriting.
+- **honest-check HC-A001** — wording aligns; confirm the detection (no provider + an operation that uses an actor) still matches.
+- **honest-test `authhonesty.py`** — currently seven token classes incl. `valid_authorized`/`valid_unauthorized`; spec now six authentication classes (`valid` + five faults). Code + `specs/features/honest-test.feature` (the "seven token classes" scenario) + conformance need updating together.
+
 ## Definition of done (per track)
 
 - No internal contradiction: every cross-reference resolves to a section that exists and agrees.
