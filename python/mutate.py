@@ -257,6 +257,18 @@ def _set_aside(module):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
+def _baseline_passes(module):
+    """The conformance suite must pass on the UNMUTATED source before adequacy is meaningful (§9.6).
+    A suite that is red for any other reason registers every mutant as caught — the line ran against a
+    failing oracle — and reports false adequacy. Run the runner once on the real source first."""
+    conf = ROOT / f"honest-{module}" / "conformance"
+    result = subprocess.run(
+        [sys.executable, str(conf / "run_conformance.py")],
+        cwd=str(conf), capture_output=True, text=True,
+    )
+    return result.returncode == 0
+
+
 def _mutants(module, only=None):
     """Every mutant of every source file, each tagged with the dotted module name and real path so a
     worker can override it in memory. `only` (a filename substring) narrows to one file for fast iteration."""
@@ -321,6 +333,11 @@ def main(modules):
     for module in modules:
         # `module:filename-substring` narrows mutation to matching source files for fast iteration.
         module, _, only = module.partition(":")
+        if not _baseline_passes(module):
+            print(f"mutate: honest-{module} — the conformance suite does not pass on the unmutated source; "
+                  f"adequacy is undefined until it is green (fix the suite first).", file=sys.stderr)
+            status = 1
+            continue
         report = _run_module(module, only or None)
         print(f"mutate: honest-{module} — {report['caught']} caught, {report['set_aside']} set aside, {len(report['undeclared'])} undeclared of {report['total']} mutants")
         for survivor in report["undeclared"]:
