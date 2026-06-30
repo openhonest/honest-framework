@@ -34,15 +34,17 @@ So honest-state today claims ownership of DATAOS (→ DOM) and state-machine mec
 
 ## Track A — honest-auth: re-home the atomic guard
 
-### A0. Decision required (architecture fork — yours to make)
+### A0. DECIDED — authentication is a boundary concern
 
-How is "derive the actor atomically inside the mutation" expressed now that persist offers no guard DSL? Three candidate models:
+Identity is validated **at the boundary** (the FastAPI middleware, or the equivalent in another stack): the user is verified once at the edge, turned into a plain validated `actor` value, and passed inward as data. The pure business logic never re-checks; it receives the actor like any other input. This is the framework's own *I/O-at-the-boundary* rule applied to authentication — reading a token / hitting a session store is I/O, so it lives at the boundary, not in the middle.
 
-1. **Ordinary-guard model (matches persist's current stance).** The authorizing `@link` derives the actor with an ordinary early-return guard (`derivation_expression` becomes a pure expression the link evaluates), and atomicity is the ordinary transaction the link already runs inside. Drops the "compiled to a backend atomic operation" claim and the §1.2 cross-scope-atomicity guarantee — or downgrades it to "derive inside the same transaction as the write," which the link structure already gives.
-2. **Auth-owned atomic primitive.** Re-introduce a *narrow* atomic derive-and-check primitive, owned by honest-auth (not persist), that the link composes. Keeps the security guarantee; adds a primitive persist deliberately refused — so it must be justified against persist's "no check-and-write primitive" decision and live entirely in auth's surface.
-3. **Persist-transaction model.** Keep `GuardExpressionTemplate` as a declaration, but its meaning is "this derivation runs inside the link's persist transaction," compiled to nothing special — honest-check still verifies the authorizing link references it (HC-A002), and atomicity is whatever isolation the transaction provides (the app's choice, per persist).
+The boundary→commit **gap is accepted**: identity is "good for this request," not re-verified at the instant of the write (nearly all web auth works this way). A stricter verify-at-write mechanism exists as a **separate commercial option and is deliberately out of scope for this FOSS spec — do not describe it here.** If one operation needs a stricter per-write check, that is ordinary code (a plain early-return) inside that operation, not a framework feature.
 
-**Recommendation:** model 3 (or 1) — they keep auth consistent with persist's "no special primitive / isolation is the app's job" and preserve HC-A001/A002 as *static* checks (the link references the derivation), which is all the built honest-check rules actually verify. Model 2 reopens a primitive persist closed on purpose and needs a strong reason.
+Consequences for the rewrite:
+
+- **Delete the atomic-guard machinery** entirely: `GuardExpressionTemplate`, "derive inside the transaction," and every reference to honest-persist's removed guard DSL (§7.5/§7.6).
+- **Auth's surface becomes** validate-at-boundary → produce a validated `actor` value → pass it in. `AuthProvider` shrinks to what a boundary validator needs (recognize/validate a token, map failures to HTTP statuses); the in-transaction derivation clauses go.
+- **Revisit honest-check HC-A001/HC-A002.** Their current wording ("an authorizing link references the identity derivation inside its guard") no longer fits a boundary model. Their boundary-model replacement (e.g. a mutating route must take its actor from the boundary validator, not from request input) is decided as part of the rewrite. Both rules are built and mutation-adequate, so the spec change drives a follow-up rule change.
 
 ### A1. Steps (after A0 is decided)
 
