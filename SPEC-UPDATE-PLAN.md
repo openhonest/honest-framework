@@ -61,13 +61,18 @@ Consequences for the rewrite:
 
 ## Track B — honest-state: reduce to its own law; push mechanics to their homes
 
-### B0. Decision required (ownership boundary — yours to make)
+### B0. DECIDED — honest-state is the law; mechanics live in their home modules (and it stays thin)
 
-What does honest-state **own**, versus reference? Proposed split (confirm or adjust):
+honest-state shrinks to its own unique job: **state the law and enforce it.** It re-describes no mechanism that has a home elsewhere; it names that home. Thin is the expected, correct outcome.
 
-- **honest-state owns:** the foundational law (§1) — the taxonomy of state *kinds*, the single-mutator law and its precise form (honest + disjoint second mutator), the kind→mutator table, and the **cross-kind enforcement** (the honest-check integration §4 and honest-test integration §5 that verify *every declared piece of state has exactly one mutator*, tying together HC-P016 closures, the HC-P004 global-read clause, the boundary-write rule, and DOM-as-single-store).
-- **honest-DOM owns** the DATAOS mechanics (`collect`/`apply`/`observe`, the State Manifest, HTMX integration, refresh recovery) — currently honest-state §2. honest-state keeps only "user state is a kind; its store is the DOM; its single mutator is the user."
-- **honest-type owns** the state-machine mechanism (`state_machine`, `transition()`, data structures, history, terminal states, parallel/guarded machines) — already built. honest-state keeps only "domain state is a kind; its mechanism is a honest-type state machine; its single mutator is `transition()`," referencing honest-type, not re-specifying it.
+- **The law (kept).** There is no "the state": a taxonomy of state *kinds*, each with one store and exactly one mutator (a second mutator of a store is allowed only when it is honest and disjoint — never touches state another mutator owns).
+- **The taxonomy names each kind's home and single mutator, and points there:**
+  - **user / on-screen state → DATAOS** (DOM-as-state), in honest-DOM. The user is the single mutator; the screen is the store. **DATAOS is canonical and normative for every language and framework** — not a Python/HTMX detail.
+  - **server-push state →** honest-alerts (the alert source is the single mutator).
+  - **session / login state →** a shared store visible to all instances, with one authoritative writer.
+  - **domain state →** the database (honest-persist) holds the value; a **honest-type state machine** owns its transitions, with `transition()` as the single mutator. **The type module's state machine is canonical and normative for every language and framework.**
+- **The enforcement (kept).** The honest-check rules and honest-test integration that make every declared piece of state obey one-mutator — tying together HC-P016 (closures), the HC-P004 module-read clause, the boundary-write rule, and DOM-as-single-store. This is the part with no other home and the real reason honest-state is a module.
+- **DATAOS detail moves to honest-DOM; state-machine mechanics are referenced from honest-type (already built), not re-specified.**
 
 ### B1. Steps (after B0 is decided)
 
