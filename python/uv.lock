@@ -11,6 +11,7 @@ members = [
     "honest-auth",
     "honest-check",
     "honest-errors",
+    "honest-features",
     "honest-gherkin",
     "honest-observe",
     "honest-parse",
@@ -99,6 +100,17 @@ requires-dist = [{ name = "honest-parse", editable = "honest-parse" }]
 name = "honest-errors"
 version = "0.1.0"
 source = { editable = "honest-errors" }
+dependencies = [
+    { name = "honest-type" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "honest-type", editable = "honest-type" }]
+
+[[package]]
+name = "honest-features"
+version = "0.1.0"
+source = { editable = "honest-features" }
 dependencies = [
     { name = "honest-type" },
 ]
