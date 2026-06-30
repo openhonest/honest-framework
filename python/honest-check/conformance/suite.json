@@ -625,6 +625,53 @@
       }
     },
     {
+      "id": "HC-P003-js-bare.js",
+      "category": "HC-P003",
+      "input": {
+        "language": "javascript",
+        "source": "class Widget {}"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P003",
+            "severity": "error",
+            "line": 1,
+            "message": "Class 'Widget' has no declared base. Honest Code permits a JavaScript class only as a subclass of Error. Use a plain object for data or a pure function."
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P003-js-extends.js",
+      "category": "HC-P003",
+      "input": {
+        "language": "javascript",
+        "source": "class Widget extends Gadget {}"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P003",
+            "severity": "error",
+            "line": 1,
+            "message": "Class 'Widget' inherits from 'Gadget'. Use composition over inheritance."
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P003-js-extends-error-clean.js",
+      "category": "clean",
+      "input": {
+        "language": "javascript",
+        "source": "class MyError extends Error {}"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
       "id": "HC-HF001-undeclared-flag",
       "category": "HC-HF001",
       "input": {

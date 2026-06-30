@@ -45,7 +45,8 @@ from honest_check.declgraph import (
     vocabulary_base_types,
 )
 from honest_check.diagnostics import Diagnostic, diagnostic
-from honest_parse import first_error_node, line_col, node_text, parse_python, walk
+from honest_check.js_rules import check_hc_p003_js
+from honest_parse import first_error_node, line_col, node_text, parse, walk
 from honest_check.suppression import build_suppressions, is_suppressed
 from honest_check.watchlists import (
     IO_WATCH_LIST,
@@ -1596,6 +1597,27 @@ _ALL_CHECKS = (
     check_hc_p016,
 )
 
+# JavaScript rule registry (section 5). The Honest Code principles are language-agnostic; their
+# JavaScript form is implemented over tree-sitter-javascript nodes. The honest-type-specific rules
+# do not apply to vanilla JavaScript, so this registry holds only the structural rules.
+_JS_CHECKS = (check_hc_p003_js,)
+
+# Section 2.3 — the grammar a file is checked under, by extension. Anything else is Python.
+_LANGUAGE_BY_EXTENSION = {".js": "javascript", ".mjs": "javascript", ".cjs": "javascript"}
+
+_CHECKS_BY_LANGUAGE = {
+    "python": _ALL_CHECKS,
+    "javascript": _JS_CHECKS,
+}
+
+
+def language_for_path(path: str) -> str:
+    """The grammar a path is checked under (section 2.3): JavaScript for .js/.mjs/.cjs, else Python. Pure."""
+    for extension, language in _LANGUAGE_BY_EXTENSION.items():
+        if path.endswith(extension):
+            return language
+    return "python"
+
 
 # Rules with a conservative, provably-safe automatic fix (section 2.1 --fix, section 6.2 fixable).
 # honest-check's rules flag structural dishonesty that requires a human to restructure the code — a
@@ -1610,15 +1632,17 @@ def is_fixable(rule: str) -> bool:
 
 
 def check_source(source: str, path: str) -> list[Diagnostic]:
-    """Parse `source`, run every registered rule, then apply suppressions (section 1, 7)."""
+    """Parse `source` in its path's language, run that language's rules, then apply suppressions
+    (section 1, 5, 7)."""
+    language = language_for_path(path)
     src_bytes = source.encode("utf-8")
-    root = parse_python(src_bytes).root_node
+    root = parse(src_bytes, language).root_node
     syntax = check_hc_syn(root, src_bytes, path)
     if syntax:
         return syntax
 
     raw: list[Diagnostic] = []
-    for check in _ALL_CHECKS:
+    for check in _CHECKS_BY_LANGUAGE[language]:
         raw.extend(check(root, src_bytes, path))
 
     max_line = root.end_point[0] + 1

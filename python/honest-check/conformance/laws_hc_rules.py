@@ -106,7 +106,9 @@ from honest_check.declgraph import (
     _recognizer,
     _route_key,
 )
-from honest_parse import parse_python, node_text, walk as _w
+from honest_parse import parse_python, parse_javascript, node_text, walk as _w
+from honest_check.rules import language_for_path
+from honest_check.js_rules import _class_base, _class_name, _is_class_node
 
 
 def _rules(source: str) -> list[str]:
@@ -121,6 +123,28 @@ _CASES: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = []
 
 def _case(label, source, must_fire=(), must_not_fire=()):
     _CASES.append((label, source, tuple(must_fire), tuple(must_not_fire)))
+
+
+def _js_rules(source: str) -> list[str]:
+    return [d["rule"] for d in check_source(source, "f.js")]
+
+
+# JavaScript cases run through check_source with a .js path, exercising the JavaScript grammar and
+# rule registry (section 5).
+_JS_CASES: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = []
+
+
+def _js_case(label, source, must_fire=(), must_not_fire=()):
+    _JS_CASES.append((label, source, tuple(must_fire), tuple(must_not_fire)))
+
+
+# ----------------------------------------------------------------- HC-P003 (JavaScript)
+
+_js_case("js_p003_bare", "class Widget {}", must_fire=("HC-P003",))
+_js_case("js_p003_extends_other", "class Widget extends Gadget {}", must_fire=("HC-P003",))
+_js_case("js_p003_extends_error_clean", "class MyErr extends Error {}", must_not_fire=("HC-P003",))
+_js_case("js_p003_anonymous_extends", "const C = class extends Y {};", must_fire=("HC-P003",))
+_js_case("js_pure_function_clean", "function add(a, b) {\n    return a + b;\n}\n", must_not_fire=("HC-P003",))
 
 
 # ----------------------------------------------------------------- HC-P003 class shapes
@@ -1440,6 +1464,48 @@ _case(
 
 # ----------------------------------------------------------------- direct-call probes
 
+def _probe_javascript() -> list[str]:
+    """Pin the JavaScript path of check_source (section 5): language dispatch, the HC-P003 messages and
+    severities, suppression via `// honest:`, and the class-shape helpers. The JS cases assert which rule
+    fires; this pins the exact text, the info downgrade, and the helper return values."""
+    bad: list[str] = []
+
+    def js(src):
+        return [d for d in check_source(src, "f.js") if d["rule"] == "HC-P003"]
+
+    bare = js("class Widget {}")
+    if not bare or bare[0]["message"] != "Class 'Widget' has no declared base. Honest Code permits a JavaScript class only as a subclass of Error. Use a plain object for data or a pure function.":
+        bad.append(f"JS HC-P003 bare message drifted: {bare}")
+    if not bare or bare[0]["severity"] != "error":
+        bad.append(f"JS HC-P003 should be an error: {bare}")
+    inh = js("class Widget extends Gadget {}")
+    if not inh or inh[0]["message"] != "Class 'Widget' inherits from 'Gadget'. Use composition over inheritance.":
+        bad.append(f"JS HC-P003 inherits message drifted: {inh}")
+    anon = js("const C = class extends Y {};")
+    if not anon or anon[0]["message"] != "Class '<anonymous>' inherits from 'Y'. Use composition over inheritance.":
+        bad.append(f"JS HC-P003 anonymous message drifted: {anon}")
+    sup = js("class Widget {} // honest: ignore HC-P003")
+    if not sup or sup[0]["severity"] != "info" or sup[0]["message"] != "HC-P003 suppressed by directive.":
+        bad.append(f"JS // honest: suppression should downgrade to info: {sup}")
+
+    for path, language in [("a.js", "javascript"), ("a.mjs", "javascript"), ("a.cjs", "javascript"), ("a.py", "python"), ("noext", "python")]:
+        if language_for_path(path) != language:
+            bad.append(f"language_for_path({path!r}) != {language!r}: {language_for_path(path)}")
+
+    # The class-expression node is a class; the bare `class` keyword token (no body) is not.
+    root = parse_javascript(b"const C = class extends Y {};").root_node
+    class_nodes = [n for n in _w(root) if _is_class_node(n)]
+    if len(class_nodes) != 1:
+        bad.append(f"_is_class_node should match exactly the class expression, not the keyword token: {len(class_nodes)}")
+    if _class_name(class_nodes[0], b"const C = class extends Y {};") != "<anonymous>":
+        bad.append("_class_name of an anonymous class should be '<anonymous>'")
+    bare_root = parse_javascript(b"class Widget {}").root_node
+    bare_class = next(n for n in _w(bare_root) if _is_class_node(n))
+    if _class_base(bare_class, b"class Widget {}") is not None:
+        bad.append("_class_base of a class with no heritage should be None")
+    return bad
+
+
 def _probe_feature_extractors() -> list[str]:
     """Pin the exact output of the feature-flag declgraph extractors (honest-features sections 2, 7).
 
@@ -2259,6 +2325,30 @@ def run() -> int:
             print(f"FAIL HC-rule [{label}]: {problems}")
         else:
             passed += 1
+
+    for label, source, must_fire, must_not_fire in _JS_CASES:
+        total += 1
+        fired = _js_rules(source)
+        problems = []
+        for rule in must_fire:
+            if rule not in fired:
+                problems.append(f"expected {rule}, got {sorted(set(fired))}")
+        for rule in must_not_fire:
+            if rule in fired:
+                problems.append(f"did not expect {rule}, got {sorted(set(fired))}")
+        if problems:
+            failed += 1
+            print(f"FAIL HC-rule [js:{label}]: {problems}")
+        else:
+            passed += 1
+
+    total += 1
+    javascript_bad = _probe_javascript()
+    if javascript_bad:
+        failed += 1
+        print(f"FAIL HC-rule [javascript]: {javascript_bad}")
+    else:
+        passed += 1
 
     total += 1
     helper_bad = _probe_internal_helpers()

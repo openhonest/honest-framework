@@ -582,3 +582,28 @@ Feature: honest-check — Python supplement
     Given a handler table keyed on a flag that omits one of its states
     When check_hc_hf002 runs
     Then it reports HC-HF002 naming the missing states
+
+  Scenario: language_for_path picks the grammar a file is checked under
+    Given a file path
+    When language_for_path reads its extension
+    Then it returns JavaScript for .js, .mjs, and .cjs, and Python otherwise
+
+  Scenario: check_hc_p003_js flags a JavaScript class that is not an Error subclass
+    Given JavaScript source with a class declaration
+    When check_hc_p003_js runs
+    Then it reports HC-P003 unless the class extends Error
+
+  Scenario: _is_class_node recognizes a JavaScript class definition
+    Given a JavaScript syntax node
+    When _is_class_node inspects it
+    Then it is true for a class declaration or a class expression, not the class keyword token
+
+  Scenario: _class_name reads the name of a JavaScript class
+    Given a JavaScript class node
+    When _class_name reads it
+    Then it returns the declared name, or anonymous for a class expression
+
+  Scenario: _class_base reads the superclass of a JavaScript class
+    Given a JavaScript class node
+    When _class_base reads its heritage
+    Then it returns the extended superclass name, or nothing when there is no heritage

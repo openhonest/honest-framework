@@ -18,8 +18,9 @@ _VERBS = frozenset({"ignore", "disable", "enable"})
 
 
 def _parse_directive(comment_text: str):
-    """Parse `# honest: VERB RULE[, RULE...]`; return (verb, frozenset(rules)) or None."""
-    body = comment_text.lstrip("#").strip()
+    """Parse `# honest: VERB RULE[, RULE...]` (or the JavaScript `// honest:` form); return
+    (verb, frozenset(rules)) or None."""
+    body = comment_text.lstrip("#/").strip()
     if not body.startswith("honest:"):
         return None
     rest = body[len("honest:") :].strip()
