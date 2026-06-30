@@ -5,4 +5,4 @@
 # per mutant); run in CI, not on every keystroke.
 set -uo pipefail
 cd "$(dirname "$0")"
-uv run python mutate.py check errors gherkin observe parse persist test type
+uv run python mutate.py auth check errors gherkin observe parse persist test type

@@ -132,18 +132,23 @@ Providers may extend the mapping with additional categories as long as `unauthen
 
 ## 3. Provider Registration
 
-Exactly one provider is active per application instance. Registration occurs at application startup, before any request is served.
+Exactly one provider is active per application instance. Registration occurs at application startup, before any request is served. The registry is a **value**, not module state: `empty_registry()` yields one with no provider, and `register_auth_provider` returns a new registry — registration carries no shared mutable state, so two runs never collide (the honest-gherkin step-registry pattern).
 
 ```
-register_auth_provider(provider: AuthProvider) -> Result
+empty_registry() -> Registry
+register_auth_provider(registry: Registry, provider: AuthProvider) -> Result
 
-Result = ok() | err({code: "already_registered"})
+Result = ok(Registry) | err({code: "already_registered"})
          | err({code: "invalid_provider", detail: ValidationError})
+
+registered_provider(registry: Registry) -> AuthProvider | Nothing
 ```
+
+The application's startup holds the registry and hands it to the boundary, which reads the active provider with `registered_provider`.
 
 ### 3.1 Resolution order
 
-1. If an application calls `register_auth_provider()` during startup, that provider is active.
+1. If an application calls `register_auth_provider()` during startup, that provider is active for the registry it returns.
 2. If no provider is registered, honest-check emits HC-A001 (warning) and honest-test does not auto-generate authentication-honesty tests. Any operation that requires an actor fails HC-A002 (error), since there is no boundary validator to resolve one.
 3. A framework-level configuration may specify `auth.provider = "module.path"` to register a provider automatically from configuration.
 

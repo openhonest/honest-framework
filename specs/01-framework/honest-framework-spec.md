@@ -318,7 +318,7 @@ observe    → type, errors                          the event log and projectio
                                                    composes errors' normalizers
 persist    → type, observe                         schema/query/transaction boundaries
                                                    emit to the event log
-auth       → type, persist                          authentication / authorization
+auth       → type                                  authentication (boundary validation): the AuthProvider contract, a value registry, the boundary dispatch
 state      → type, check, test, persist            the kinds of state and the single-mutator rule
 features   → type, check, test, observe            feature flags as a bounded vocabulary
 

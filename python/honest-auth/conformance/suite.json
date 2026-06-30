@@ -1,0 +1,19 @@
+{
+  "module": "honest-auth",
+  "value_oracle_exempt": [
+    {"function": "authenticate", "reason": "Section 2.2-2.3: takes a provider whose actor_recognizer and resolve_actor are live callables, not JSON values, so it cannot be a value case. Its recognizer-reject, resolve-ok, and resolve-fault branches are proved by the auth laws in laws_ha.py."}
+  ],
+  "cases": [
+    {"id": "value-empty-registry", "value_case": {"function": "empty_registry", "args": [], "expected": {"provider": null}}},
+    {"id": "value-registered-none", "value_case": {"function": "registered_provider", "args": [{"provider": null}], "expected": null}},
+    {"id": "value-registered-held", "value_case": {"function": "registered_provider", "args": [{"provider": {"name": "p"}}], "expected": {"name": "p"}}},
+    {"id": "value-validate-ok", "value_case": {"function": "validate_provider", "args": [{"name": "n", "actor_recognizer": "r", "resolve_actor": "s", "test_token_generator": "g", "fault_mapping": {}}], "expected": {"ok": {"name": "n", "actor_recognizer": "r", "resolve_actor": "s", "test_token_generator": "g", "fault_mapping": {}}}}},
+    {"id": "value-validate-missing", "value_case": {"function": "validate_provider", "args": [{"name": "x"}], "expected": {"err": {"code": "invalid_provider", "message": "AuthProvider is missing required fields: ['actor_recognizer', 'resolve_actor', 'test_token_generator', 'fault_mapping']", "category": "client", "detail": ["actor_recognizer", "resolve_actor", "test_token_generator", "fault_mapping"]}}}},
+    {"id": "value-register-ok", "value_case": {"function": "register_auth_provider", "args": [{"provider": null}, {"name": "n", "actor_recognizer": "r", "resolve_actor": "s", "test_token_generator": "g", "fault_mapping": {}}], "expected": {"ok": {"provider": {"name": "n", "actor_recognizer": "r", "resolve_actor": "s", "test_token_generator": "g", "fault_mapping": {}}}}}},
+    {"id": "value-register-already", "value_case": {"function": "register_auth_provider", "args": [{"provider": {"name": "existing"}}, {"name": "x"}], "expected": {"err": {"code": "already_registered", "message": "an AuthProvider is already registered for this application", "category": "client", "detail": null}}}},
+    {"id": "value-register-invalid", "value_case": {"function": "register_auth_provider", "args": [{"provider": null}, {"name": "x"}], "expected": {"err": {"code": "invalid_provider", "message": "AuthProvider is missing required fields: ['actor_recognizer', 'resolve_actor', 'test_token_generator', 'fault_mapping']", "category": "client", "detail": ["actor_recognizer", "resolve_actor", "test_token_generator", "fault_mapping"]}}}},
+    {"id": "value-fault-status-override", "value_case": {"function": "fault_status", "args": [{"fault_mapping": {"unauthenticated": 419}}, {"category": "unauthenticated"}], "expected": 419}},
+    {"id": "value-fault-status-default", "value_case": {"function": "fault_status", "args": [{"fault_mapping": {}}, {"category": "forbidden"}], "expected": 403}},
+    {"id": "value-fault-status-unknown", "value_case": {"function": "fault_status", "args": [{"fault_mapping": {}}, {"category": "weird"}], "expected": 500}}
+  ]
+}
