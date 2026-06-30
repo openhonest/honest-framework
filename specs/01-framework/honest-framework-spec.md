@@ -336,8 +336,6 @@ Three rules fix this order:
 - **`observe` before `persist`.** Every persistence boundary (execute, apply, transactions) emits to the event log: persist instruments *through* observe. (observe's own emit stores via persist, but it receives that writer at the boundary rather than importing persist, so the dependency runs one way: persist → observe.)
 - **Application tier last.** `page`, `DOM`, `components`, and `alerts` build on the code-quality tier; `components` and `alerts` mount into `page`.
 
-The Python reference has implemented through `parse`, `type`, `check`, `test`, `persist`, and `observe` (the last as its pure foundation); the remaining modules — `gherkin` next — are specified and not yet built.
-
 **`parse` is the real starting point, not `check`.** The gate depends on the parser, so the parser is built and checked by hand first. A language whose grammar tree-sitter does not yet cover must add that grammar to the parser before anything else; the rest of the framework only ever reaches the parser through this one module, never tree-sitter directly.
 
 ### Build the un-checkable parts first, then turn the gate on
