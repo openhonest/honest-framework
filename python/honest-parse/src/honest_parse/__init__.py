@@ -9,6 +9,7 @@ target language is adding a row, not branching control flow.
 
 import types
 
+import tree_sitter_javascript as ts_javascript
 import tree_sitter_python as ts_python
 from tree_sitter import Language, Parser
 
@@ -19,6 +20,7 @@ from tree_sitter import Language, Parser
 _LANGUAGES = types.MappingProxyType(
     {
         "python": Language(ts_python.language()),
+        "javascript": Language(ts_javascript.language()),
     }
 )
 
@@ -31,6 +33,11 @@ def parse(source: bytes, language: str):
 def parse_python(source: bytes):
     """Convenience wrapper for the Python grammar."""
     return parse(source, "python")
+
+
+def parse_javascript(source: bytes):
+    """Convenience wrapper for the JavaScript grammar."""
+    return parse(source, "javascript")
 
 
 def node_text(node, source: bytes) -> str:

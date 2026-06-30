@@ -19,7 +19,7 @@ The conformance directory is outside the honest-check gate, so this file is free
 malformed bytes and unknown languages on purpose.
 """
 
-from honest_parse import first_error_node, line_col, node_text, parse, parse_python, walk
+from honest_parse import first_error_node, line_col, node_text, parse, parse_javascript, parse_python, walk
 
 _CORPUS = [
     "x = 1",
@@ -31,6 +31,16 @@ _CORPUS = [
 ]
 
 _INVALID = ["def f(:", "x = 'abc", "(", "return = "]
+
+_JS_CORPUS = [
+    "const x = 1;",
+    "function f(a, b) {\n    return a + b;\n}\n",
+    "let y = 'hello';\nconst z = [1, 2, 3];\n",
+    "if (a === 1) {\n    b = 2;\n} else {\n    b = 3;\n}\n",
+    "",
+]
+
+_JS_INVALID = ["function f(", "const x = 'abc", "{", "let = "]
 
 
 def _reference_preorder(node):
@@ -112,11 +122,39 @@ def _law_language_vocabulary():
     bad = []
     if parse(b"x = 1", "python").root_node.has_error:
         bad.append("parse(.., 'python') failed on valid source")
+    if parse(b"const x = 1;", "javascript").root_node.has_error:
+        bad.append("parse(.., 'javascript') failed on valid source")
     try:
         parse(b"x = 1", "klingon")
         bad.append("an unknown language should raise KeyError, not be guessed")
     except KeyError:
         pass
+    return bad
+
+
+def _law_javascript():
+    """The JavaScript grammar parses through the shared boundary: node-text round-trip and error
+    detection hold over a JS corpus, the wrapper agrees with parse(.., 'javascript'), and broken JS
+    is detected. honest-DOM (Tier 3) is the JS reference implementation gated through this boundary."""
+    bad = []
+    for src in _JS_CORPUS:
+        source = src.encode("utf-8")
+        root = parse_javascript(source).root_node
+        for node in walk(root):
+            expected = source[node.start_byte : node.end_byte].decode("utf-8", "replace")
+            if node_text(node, source) != expected:
+                bad.append(f"node_text != source slice for a {node.type} node in JS {src!r}")
+        if node_text(root, source) != src:
+            bad.append(f"root node_text does not span the whole JS source {src!r}")
+        if (first_error_node(root) is not None) != root.has_error:
+            bad.append(f"first_error_node disagrees with has_error on valid JS {src!r}")
+    for src in _JS_INVALID:
+        if first_error_node(parse_javascript(src.encode("utf-8")).root_node) is None:
+            bad.append(f"no error node found for invalid JS {src!r}")
+    direct = [n.type for n in walk(parse(b"const x = 1;", "javascript").root_node)]
+    wrapped = [n.type for n in walk(parse_javascript(b"const x = 1;").root_node)]
+    if direct != wrapped:
+        bad.append("parse_javascript disagrees with parse(.., 'javascript')")
     return bad
 
 
@@ -140,6 +178,7 @@ _LAWS = {
     "error_detection": _law_error_detection,
     "determinism": _law_determinism,
     "language_vocabulary": _law_language_vocabulary,
+    "javascript": _law_javascript,
     "utf8_decoding": _law_utf8_decoding,
 }
 

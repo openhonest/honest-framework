@@ -6,3 +6,8 @@ Feature: honest-parse — Python supplement
     Given Python source text
     When parse_python reads it
     Then it returns the syntax tree, using the Python grammar
+
+  Scenario: parse_javascript parses source with the JavaScript grammar
+    Given JavaScript source text
+    When parse_javascript reads it
+    Then it returns the syntax tree, using the JavaScript grammar

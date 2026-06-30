@@ -13,18 +13,18 @@ import json
 import sys
 from pathlib import Path
 
-from honest_parse import first_error_node, node_text, parse_python
+from honest_parse import first_error_node, node_text, parse
 
 
 def _check_error(case):
-    root = parse_python(case["source"].encode("utf-8")).root_node
+    root = parse(case["source"].encode("utf-8"), case.get("language", "python")).root_node
     has_error = first_error_node(root) is not None
     return has_error == case["expect_error"], f"error={has_error}"
 
 
 def _check_text(case):
     source = case["source"].encode("utf-8")
-    root = parse_python(source).root_node
+    root = parse(source, case.get("language", "python")).root_node
     text = node_text(root, source)
     return text == case["expect_root_text"], f"got {text!r}"
 

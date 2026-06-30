@@ -8,6 +8,12 @@
     {"id": "valid-empty", "source": "", "expect_error": false},
     {"id": "syntax-error-def", "source": "def f(:", "expect_error": true},
     {"id": "unterminated-string", "source": "x = 'abc", "expect_error": true},
-    {"id": "root-text-spans-source", "source": "a = 2", "expect_root_text": "a = 2"}
+    {"id": "root-text-spans-source", "source": "a = 2", "expect_root_text": "a = 2"},
+    {"id": "js-valid-const", "language": "javascript", "source": "const x = 1;", "expect_error": false},
+    {"id": "js-valid-function", "language": "javascript", "source": "function f() {\n    return 1;\n}\n", "expect_error": false},
+    {"id": "js-valid-empty", "language": "javascript", "source": "", "expect_error": false},
+    {"id": "js-syntax-error", "language": "javascript", "source": "function f(", "expect_error": true},
+    {"id": "js-unterminated-string", "language": "javascript", "source": "const x = 'abc", "expect_error": true},
+    {"id": "js-root-text-spans-source", "language": "javascript", "source": "let a = 2;", "expect_root_text": "let a = 2;"}
   ]
 }
