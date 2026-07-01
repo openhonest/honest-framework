@@ -24,4 +24,9 @@ node "$pkg/conformance/run.js"
 echo "feature gate (one gherkin per function)…"
 "$root/javascript/feature-gate.sh"
 
+echo "mutation (adequacy)…"
+for f in "$pkg"/src/*.js; do
+  (cd "$root/python" && uv run python "$root/javascript/js_mutate.py" "$f")
+done
+
 echo "honest-dom gate: passed."
