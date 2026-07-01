@@ -18,4 +18,7 @@ echo "test + 100% coverage…"
   --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 \
   --test-coverage-include='src/**' 'test/*.test.js')
 
+echo "feature gate (one gherkin per function)…"
+"$root/javascript/feature-gate.sh"
+
 echo "honest-dom gate: passed."
