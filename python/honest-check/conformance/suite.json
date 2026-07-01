@@ -737,6 +737,35 @@
       }
     },
     {
+      "id": "HC-P006-js-weakmap.js",
+      "category": "HC-P006",
+      "input": {
+        "language": "javascript",
+        "source": "const c = new WeakMap();"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P006",
+            "severity": "warning",
+            "line": 1,
+            "message": "Cache 'WeakMap' detected without profiling evidence. Profile the path it optimises, or dismiss with '// honest: ignore HC-P006'."
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P006-js-map-clean.js",
+      "category": "clean",
+      "input": {
+        "language": "javascript",
+        "source": "const m = new Map();"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
       "id": "HC-P016-js-closure.js",
       "category": "HC-P016",
       "input": {

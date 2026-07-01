@@ -147,6 +147,16 @@ _js_case("js_p003_anonymous_extends", "const C = class extends Y {};", must_fire
 _js_case("js_pure_function_clean", "function add(a, b) {\n    return a + b;\n}\n", must_not_fire=("HC-P003",))
 
 
+# ----------------------------------------------------------------- HC-P006 (JavaScript)
+
+_js_case("js_p006_weakmap", "const c = new WeakMap();", must_fire=("HC-P006",))
+_js_case("js_p006_memoize", "const f = memoize(g);", must_fire=("HC-P006",))
+_js_case("js_p006_memoize_one", "const f = memoizeOne(g);", must_fire=("HC-P006",))
+_js_case("js_p006_map_clean", "const m = new Map();", must_not_fire=("HC-P006",))
+_js_case("js_p006_plain_new_clean", "const d = new Date();", must_not_fire=("HC-P006",))
+_js_case("js_p006_plain_call_clean", "const r = compute(g);", must_not_fire=("HC-P006",))
+
+
 # ----------------------------------------------------------------- HC-P011 (JavaScript)
 
 _js_case("js_p011_add_event_listener", "el.addEventListener('click', h);", must_fire=("HC-P011",))
@@ -1638,6 +1648,14 @@ def _probe_javascript() -> list[str]:
     outer_if = next(n for n in _w(elif_root) if n.type == "if_statement")
     if _js_else_if(outer_if) is None or _js_else_if(outer_if).type != "if_statement":
         bad.append("_js_else_if of an else-if should be the nested if_statement")
+
+    # HC-P006: a WeakMap and a memoize call each report as a warning; a plain Map does not.
+    wm = [d for d in check_source("const c = new WeakMap();", "f.js") if d["rule"] == "HC-P006"]
+    if not wm or wm[0]["severity"] != "warning" or wm[0]["message"] != "Cache 'WeakMap' detected without profiling evidence. Profile the path it optimises, or dismiss with '// honest: ignore HC-P006'.":
+        bad.append(f"JS HC-P006 message/severity drifted: {wm}")
+    mz = [d for d in check_source("const f = memoize(g);", "f.js") if d["rule"] == "HC-P006"]
+    if not mz or mz[0]["message"] != "Cache 'memoize' detected without profiling evidence. Profile the path it optimises, or dismiss with '// honest: ignore HC-P006'.":
+        bad.append(f"JS HC-P006 memoize message drifted: {mz}")
 
     # HC-P016: a nested function reassigning an enclosing let reports as an error naming the captured name.
     clo = [d for d in check_source("function outer() {\n    let x = 0;\n    return () => { x = x + 1; };\n}\n", "f.js") if d["rule"] == "HC-P016"]

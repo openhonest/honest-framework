@@ -32,6 +32,12 @@ _JS_FUNCTION_TYPES = (
     "generator_function",
 )
 
+# Section 5.6 — cache constructs that are caches by nature. A WeakMap's only use is associating data
+# with objects (memoization); memoize/memoizeOne are explicit caches. A bare `new Map()` is a
+# general-purpose collection and is not flagged (see the spec: "used as cache" is not statically decidable).
+_JS_CACHE_CONSTRUCTORS = frozenset({"WeakMap"})
+_JS_CACHE_CALLS = frozenset({"memoize", "memoizeOne"})
+
 # Section 5.7 — framework lifecycle hooks. Their presence wires behaviour to a hidden lifecycle
 # instead of to server-rendered HTML / HTMX attributes (honest-DOM anti-patterns, honest-DOM §6).
 _JS_LIFECYCLE_HOOKS = frozenset(
@@ -117,6 +123,42 @@ def _js_call_name(call_node, source: bytes) -> str:
     if fn.type == "member_expression":
         return node_text(fn.child_by_field_name("property"), source)
     return node_text(fn, source)
+
+
+def _js_cache_construct(node, source: bytes):
+    """The cache a node constructs (section 5.6): a WeakMap `new` expression or a memoize/memoizeOne
+    call. Returns the construct's name, or None."""
+    if node.type == "new_expression":
+        constructor = node_text(node.child_by_field_name("constructor"), source)
+        if constructor in _JS_CACHE_CONSTRUCTORS:
+            return constructor
+    if node.type == "call_expression":
+        name = _js_call_name(node, source)
+        if name in _JS_CACHE_CALLS:
+            return name
+    return None
+
+
+def check_hc_p006_js(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P006 (JavaScript) — a cache construct without profiling evidence (warning, section 5.6). A
+    WeakMap and memoize/memoizeOne are caches by nature; profile the path they optimise, or dismiss."""
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        name = _js_cache_construct(node, source)
+        if name is None:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P006",
+                "warning",
+                path,
+                line,
+                col,
+                f"Cache '{name}' detected without profiling evidence. Profile the path it optimises, or dismiss with '// honest: ignore HC-P006'.",
+            )
+        )
+    return out
 
 
 def check_hc_p011_js(root, source: bytes, path: str) -> list[Diagnostic]:

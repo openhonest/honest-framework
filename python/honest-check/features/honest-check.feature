@@ -618,6 +618,16 @@ Feature: honest-check — Python supplement
     When check_hc_p011_js runs
     Then it reports HC-P011 naming the hook
 
+  Scenario: _js_cache_construct recognizes a cache construct
+    Given a JavaScript syntax node
+    When _js_cache_construct inspects it
+    Then it returns the name of a WeakMap constructor or a memoize call, else nothing
+
+  Scenario: check_hc_p006_js flags a JavaScript cache without profiling evidence
+    Given JavaScript source that constructs a WeakMap or calls memoize
+    When check_hc_p006_js runs
+    Then it reports HC-P006
+
   Scenario: _js_type_check recognizes a typeof or instanceof check
     Given a JavaScript syntax node
     When _js_type_check inspects it

@@ -1163,6 +1163,8 @@ Go's interface system is structurally compliant with Honest Code principles. Emb
 | Ruby | `||=` memoization pattern (`@result ||= compute()`), `Rails.cache.*` |
 | Go | `sync.Map`, package-level map variables used as cache |
 
+The JavaScript implementation flags the constructs that are caches by nature — `new WeakMap()` (a WeakMap's only use is associating data with objects, i.e. memoization) and `memoize` / `memoizeOne` calls. A bare `new Map()` is **not** flagged: a Map is a general-purpose collection, and "used as cache" is not statically decidable without flow analysis, so flagging every Map would be a false positive. As with any warning, `// honest: ignore HC-P006` dismisses it once the path is profiled.
+
 ### 5.7 HC-P011: Lifecycle Hooks
 
 | Language | Hooks to detect |
