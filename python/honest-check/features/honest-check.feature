@@ -647,3 +647,33 @@ Feature: honest-check — Python supplement
     Given JavaScript source with an if/else-if chain on one value
     When check_hc_p001_js runs
     Then it reports HC-P001 when three or more branches compare the same identifier to constants
+
+  Scenario: _js_scope_nodes visits a function's own scope
+    Given a JavaScript node
+    When _js_scope_nodes walks it
+    Then it yields the node and its descendants without descending into nested functions
+
+  Scenario: _js_mutable_decl_names reads the names a let or var declaration binds
+    Given a JavaScript declaration node
+    When _js_mutable_decl_names reads it
+    Then it returns the bound identifier names, or nothing for a const declaration
+
+  Scenario: _js_param_names reads a function's parameter names
+    Given a JavaScript function node
+    When _js_param_names reads it
+    Then it returns the identifier parameter names, single or listed
+
+  Scenario: _js_scope_lets reads the let and var names of a function's own scope
+    Given a JavaScript function node
+    When _js_scope_lets reads it
+    Then it returns the let and var names declared directly in that function
+
+  Scenario: _js_reassigned_names reads the names reassigned in a function's own scope
+    Given a JavaScript function node
+    When _js_reassigned_names reads it
+    Then it returns the identifier names reassigned by assignment or update, not nested functions
+
+  Scenario: check_hc_p016_js flags a closure that mutates an enclosing binding
+    Given a nested JavaScript function reassigning an outer let or var
+    When check_hc_p016_js runs
+    Then it reports HC-P016 unless the name is shadowed by a parameter or local declaration

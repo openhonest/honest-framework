@@ -108,7 +108,7 @@ from honest_check.declgraph import (
 )
 from honest_parse import parse_python, parse_javascript, node_text, walk as _w
 from honest_check.rules import language_for_path
-from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_equality_target, _js_else_if, _js_type_check
+from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_equality_target, _js_else_if, _js_mutable_decl_names, _js_reassigned_names, _js_scope_lets, _js_type_check
 
 
 def _rules(source: str) -> list[str]:
@@ -172,6 +172,34 @@ _js_case("js_p001_mixed_discriminant_clean", 'function f(r, s) {\n    if (r === 
 _js_case("js_p001_single_if_clean", 'function f(r) {\n    if (r === "a") { return 1; }\n}\n', must_not_fire=("HC-P001",))
 _js_case("js_p001_non_equality_chain_clean", 'function f(r) {\n    if (r < 1) { return 1; }\n    else if (r < 2) { return 2; }\n    else if (r < 3) { return 3; }\n}\n', must_not_fire=("HC-P001",))
 _js_case("js_p001_loose_equality_dispatch", 'function f(r) {\n    if (r == "a") { return 1; }\n    else if (r == "b") { return 2; }\n    else if (r == "c") { return 3; }\n}\n', must_fire=("HC-P001",))
+
+
+# ----------------------------------------------------------------- HC-P016 (JavaScript)
+
+_js_case("js_p016_closure_reassign", "function outer() {\n    let x = 0;\n    return () => { x = x + 1; };\n}\n", must_fire=("HC-P016",))
+_js_case("js_p016_update_operator", "function outer() {\n    let n = 0;\n    return () => { n++; };\n}\n", must_fire=("HC-P016",))
+_js_case("js_p016_var_reassign", "function outer() {\n    var v = 0;\n    return () => { v = 1; };\n}\n", must_fire=("HC-P016",))
+_js_case("js_p016_shadowed_param_clean", "function outer() {\n    let x = 0;\n    return (x) => { x = 9; };\n}\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_single_param_shadow_clean", "function outer() {\n    let x = 0;\n    return x => { x = 9; };\n}\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_inner_local_clean", "function outer() {\n    let x = 0;\n    return () => { let x = 5; x = 9; };\n}\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_const_outer_clean", "function outer() {\n    const x = 0;\n    return () => { x = 1; };\n}\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_read_only_clean", "function outer() {\n    let x = 0;\n    return () => x + 1;\n}\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_member_mutation_clean", "function outer() {\n    let o = {};\n    return () => { o.x = 1; };\n}\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_no_nested_clean", "function add(a, b) {\n    let s = a + b;\n    return s;\n}\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_destructured_let_clean", "function outer() {\n    let { a } = o;\n    return () => { a = 1; };\n}\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_member_update_clean", "function outer() {\n    let o = {};\n    return () => { o.x++; };\n}\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_destructured_param", "function outer() {\n    let x = 0;\n    return ({ a }) => { x = 9; };\n}\n", must_fire=("HC-P016",))
+# A for-loop (not a function) reassigning an outer let is not a closure capture; a module-level let
+# reassigned by a function is module state (HC-P004's concern), not HC-P016.
+_js_case("js_p016_for_loop_clean", "function outer() {\n    let x = 0;\n    for (let i = 0; i < 3; i++) { x = i; }\n    return x;\n}\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_module_level_clean", "let x = 0;\nfunction f() { x = 1; }\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_module_for_clean", "for (let i = 0; i < 1; i++) {\n    let y = 0;\n    const g = () => { y = 1; };\n    g();\n}\n", must_not_fire=("HC-P016",))
+_js_case("js_p016_augmented_assign", "function outer() {\n    let x = 0;\n    return () => { x += 1; };\n}\n", must_fire=("HC-P016",))
+# Every function type can be the capturing inner function (section 9.6 coverage of _JS_FUNCTION_TYPES).
+_js_case("js_p016_function_expression", "function outer() {\n    let x = 0;\n    return function () { x = 1; };\n}\n", must_fire=("HC-P016",))
+_js_case("js_p016_object_method", "function outer() {\n    let x = 0;\n    return { m() { x = 1; } };\n}\n", must_fire=("HC-P016",))
+_js_case("js_p016_generator_declaration", "function outer() {\n    let x = 0;\n    function* g() { x = 1; }\n    return g;\n}\n", must_fire=("HC-P016",))
+_js_case("js_p016_generator_expression", "function outer() {\n    let x = 0;\n    return function* () { x = 1; };\n}\n", must_fire=("HC-P016",))
 
 
 # ----------------------------------------------------------------- HC-P003 class shapes
@@ -1610,6 +1638,34 @@ def _probe_javascript() -> list[str]:
     outer_if = next(n for n in _w(elif_root) if n.type == "if_statement")
     if _js_else_if(outer_if) is None or _js_else_if(outer_if).type != "if_statement":
         bad.append("_js_else_if of an else-if should be the nested if_statement")
+
+    # HC-P016: a nested function reassigning an enclosing let reports as an error naming the captured name.
+    clo = [d for d in check_source("function outer() {\n    let x = 0;\n    return () => { x = x + 1; };\n}\n", "f.js") if d["rule"] == "HC-P016"]
+    if not clo or clo[0]["severity"] != "error" or clo[0]["message"] != "Inner function captures ['x'] via closure and mutates it. Closures may not carry mutable state — use pure parameters or move state into persist.":
+        bad.append(f"JS HC-P016 message/severity drifted: {clo}")
+    # _js_scope_lets and _js_reassigned_names return an empty set for a node with no body (defensive;
+    # every real function has a body, so this path is unreachable through check_source).
+    program = parse_javascript(b"const x = 1;").root_node
+    if _js_scope_lets(program, b"const x = 1;") != set():
+        bad.append("_js_scope_lets of a bodyless node should be empty")
+    if _js_reassigned_names(program, b"const x = 1;") != set():
+        bad.append("_js_reassigned_names of a bodyless node should be empty")
+    # _js_mutable_decl_names: a let binds its name; a destructuring pattern and a const bind nothing.
+    def _decl(src, kw):
+        return next(n for n in _w(parse_javascript(src.encode()).root_node) if n.type in ("lexical_declaration", "variable_declaration") and n.children and n.children[0].type == kw)
+    if _js_mutable_decl_names(_decl("let x = 0;", "let"), b"let x = 0;") != {"x"}:
+        bad.append("_js_mutable_decl_names of a let should bind its name")
+    if _js_mutable_decl_names(_decl("let { a } = o;", "let"), b"let { a } = o;") != set():
+        bad.append("_js_mutable_decl_names of a destructuring pattern should be empty")
+    if _js_mutable_decl_names(_decl("const c = 0;", "const"), b"const c = 0;") != set():
+        bad.append("_js_mutable_decl_names of a const should be empty")
+    # _js_reassigned_names: a member assignment and a member update reassign a property, not a binding.
+    def _fn(src):
+        return next(n for n in _w(parse_javascript(src.encode()).root_node) if n.type == "function_declaration")
+    if _js_reassigned_names(_fn("function f() { o.x = 1; }"), b"function f() { o.x = 1; }") != set():
+        bad.append("_js_reassigned_names should ignore a member assignment")
+    if _js_reassigned_names(_fn("function f() { o.y++; }"), b"function f() { o.y++; }") != set():
+        bad.append("_js_reassigned_names should ignore a member update")
     return bad
 
 

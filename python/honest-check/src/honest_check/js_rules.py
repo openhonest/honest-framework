@@ -22,6 +22,16 @@ _ALLOWED_JS_CLASS_BASES = frozenset({"Error"})
 # Section 4.2 / 5.1 — the minimum branch count for an if/else-if chain to count as value dispatch.
 _JS_DISPATCH_BRANCH_THRESHOLD = 3
 
+# The JavaScript function node types — each opens a new scope.
+_JS_FUNCTION_TYPES = (
+    "function_declaration",
+    "function_expression",
+    "arrow_function",
+    "method_definition",
+    "generator_function_declaration",
+    "generator_function",
+)
+
 # Section 5.7 — framework lifecycle hooks. Their presence wires behaviour to a hidden lifecycle
 # instead of to server-rendered HTML / HTMX attributes (honest-DOM anti-patterns, honest-DOM §6).
 _JS_LIFECYCLE_HOOKS = frozenset(
@@ -233,4 +243,107 @@ def check_hc_p001_js(root, source: bytes, path: str) -> list[Diagnostic]:
                 "if/else-if chain dispatches on value — use dict lookup. See honest-code-principles.md §3.",
             )
         )
+    return out
+
+
+def _js_scope_nodes(node):
+    """Yield `node` and its descendants without descending into nested function scopes — the nodes of
+    a single function's own scope."""
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        yield current
+        for child in current.children:
+            if child.type not in _JS_FUNCTION_TYPES:
+                stack.append(child)
+
+
+def _js_mutable_decl_names(decl_node, source: bytes) -> set:
+    """The identifier names a let/var declaration binds. Empty for const — a const binding cannot be
+    reassigned, so it cannot carry mutable closure state."""
+    if decl_node.type == "lexical_declaration" and decl_node.children and decl_node.children[0].type == "const":
+        return set()
+    names = set()
+    for child in decl_node.named_children:
+        name = child.child_by_field_name("name")
+        if name is not None and name.type == "identifier":
+            names.add(node_text(name, source))
+    return names
+
+
+def _js_param_names(func_node, source: bytes) -> set:
+    """The identifier parameter names of a function (single-arrow parameter or a parameter list)."""
+    names = set()
+    single = func_node.child_by_field_name("parameter")
+    if single is not None and single.type == "identifier":
+        names.add(node_text(single, source))
+    params = func_node.child_by_field_name("parameters")
+    if params is not None:
+        for child in params.named_children:
+            if child.type == "identifier":
+                names.add(node_text(child, source))
+    return names
+
+
+def _js_scope_lets(func_node, source: bytes) -> set:
+    """The let/var names declared in a function's own scope (not nested functions)."""
+    names = set()
+    body = func_node.child_by_field_name("body")
+    if body is None:
+        return names
+    for node in _js_scope_nodes(body):
+        if node.type in ("lexical_declaration", "variable_declaration"):
+            names |= _js_mutable_decl_names(node, source)
+    return names
+
+
+def _js_reassigned_names(func_node, source: bytes) -> set:
+    """The identifier names reassigned (=, +=/-=/…, ++/--) in a function's own scope (not nested)."""
+    names = set()
+    body = func_node.child_by_field_name("body")
+    if body is None:
+        return names
+    for node in _js_scope_nodes(body):
+        if node.type in ("assignment_expression", "augmented_assignment_expression"):
+            left = node.child_by_field_name("left")
+            if left is not None and left.type == "identifier":
+                names.add(node_text(left, source))
+        elif node.type == "update_expression":
+            argument = node.child_by_field_name("argument")
+            if argument is not None and argument.type == "identifier":
+                names.add(node_text(argument, source))
+    return names
+
+
+def check_hc_p016_js(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P016 (JavaScript) — a nested function captures an enclosing let/var and reassigns it (section
+    4.2 / 5.x). Closures are the non-class vector for smuggling mutable state; use pure parameters or
+    move the state into persist. A binding the inner function shadows (its own let/var or a parameter)
+    is not a capture."""
+    out: list[Diagnostic] = []
+    for outer in walk(root):
+        if outer.type not in _JS_FUNCTION_TYPES:
+            continue
+        outer_lets = _js_scope_lets(outer, source)
+        if not outer_lets:
+            continue
+        for inner in walk(outer):
+            if inner is outer or inner.type not in _JS_FUNCTION_TYPES:
+                continue
+            shadowed = _js_scope_lets(inner, source) | _js_param_names(inner, source)
+            captured = (_js_reassigned_names(inner, source) & outer_lets) - shadowed
+            if not captured:
+                continue
+            line, col = line_col(inner)
+            out.append(
+                diagnostic(
+                    "HC-P016",
+                    "error",
+                    path,
+                    line,
+                    col,
+                    f"Inner function captures {sorted(captured)} via closure and mutates it. Closures may "
+                    "not carry mutable state — use pure parameters or move state into persist.",
+                )
+            )
     return out
