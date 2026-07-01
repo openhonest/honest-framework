@@ -1,0 +1,10 @@
+{
+  "name": "domx",
+  "version": "0.0.0",
+  "description": "honest-DOM (domx): the client-side DATAOS primitives. Pure functions; the DOM is the authority on state.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test --experimental-test-coverage --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 --test-coverage-include='src/**' 'test/*.test.js'"
+  }
+}
