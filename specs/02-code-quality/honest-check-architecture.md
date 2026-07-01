@@ -1123,6 +1123,8 @@ Note: Go `switch` statements are semantically dict lookups and are HC-P001 compl
 
 A `try`/`finally` (or equivalent) with no catch clause is cleanup, not catching, and is compliant — though a context manager is preferred (HC-P007 / principle *Context Managers Over Instance State*). Boundary functions (`@boundary`, `@link(boundary=True)`, route handlers) may catch.
 
+**Marking a boundary in a language without decorators.** Python and TypeScript mark a boundary with `@boundary` / `@link(boundary=True)`. Vanilla JavaScript has no decorator syntax, so honest-check marks a boundary with a `// honest: boundary` comment on the function's line or the line immediately above it. Inside a function so marked, I/O (HC-P004) and a caught exception (HC-P002) are intentional and are not flagged. This is the same directive comment channel as `// honest: ignore`, so it needs no new syntax.
+
 ### 5.3 HC-P003: Class declaration
 
 | Language | Allowed bases | Violations |

@@ -737,6 +737,64 @@
       }
     },
     {
+      "id": "HC-P004-js-fetch.js",
+      "category": "HC-P004",
+      "input": {
+        "language": "javascript",
+        "source": "function f() { return fetch(u); }"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P004",
+            "severity": "error",
+            "line": 1,
+            "message": "Call 'fetch' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity."
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P004-js-boundary-clean.js",
+      "category": "clean",
+      "input": {
+        "language": "javascript",
+        "source": "// honest: boundary\nfunction f() { return fetch(u); }\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P002-js-try-catch.js",
+      "category": "HC-P002",
+      "input": {
+        "language": "javascript",
+        "source": "function f() { try { g(); } catch (e) { h(); } }"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P002",
+            "severity": "error",
+            "line": 1,
+            "message": "Function 'f' catches an exception in business logic. Let it raise and catch at the boundary (a '// honest: boundary' function), or return a fault as data."
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P002-js-try-finally-clean.js",
+      "category": "clean",
+      "input": {
+        "language": "javascript",
+        "source": "function f() { try { g(); } finally { h(); } }"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
       "id": "HC-P006-js-weakmap.js",
       "category": "HC-P006",
       "input": {

@@ -796,16 +796,28 @@ _EXPECTED_ND_WATCH = frozenset({
     "multiprocessing.current_process", "multiprocessing.cpu_count", "asyncio.get_event_loop",
     "asyncio.current_task", "id",
 })
+_EXPECTED_IO_WATCH_JS = frozenset({
+    "fs.*", "fsp.*",
+    "fetch", "http.request", "https.request", "navigator.sendBeacon",
+    "localStorage.*", "sessionStorage.*", "indexedDB.*", "caches.*",
+    "process.stdout.write", "process.stderr.write", "process.stdin.*",
+    "console.log", "console.error", "console.warn", "console.info", "console.debug",
+    "pg.*", "mongodb.*", "redis.*", "mysql.*", "sqlite3.*",
+})
+_EXPECTED_ND_WATCH_JS = frozenset({
+    "Math.random", "crypto.getRandomValues", "crypto.randomUUID",
+    "Date.now", "performance.now", "process.cwd",
+})
 
 
 def _probe_watchlist():
     bad = []
     io_list = IO_WATCH_LIST["python"]
     # The tables are exactly the normative set (every entry trapped, nothing dropped or emptied).
-    if IO_WATCH_LIST != {"python": _EXPECTED_IO_WATCH}:
-        bad.append(f"IO_WATCH_LIST drifted from the normative set: {IO_WATCH_LIST['python'] ^ _EXPECTED_IO_WATCH}")
-    if NONDETERMINISTIC_WATCH_LIST != {"python": _EXPECTED_ND_WATCH}:
-        bad.append(f"NONDETERMINISTIC_WATCH_LIST drifted: {NONDETERMINISTIC_WATCH_LIST['python'] ^ _EXPECTED_ND_WATCH}")
+    if IO_WATCH_LIST != {"python": _EXPECTED_IO_WATCH, "javascript": _EXPECTED_IO_WATCH_JS}:
+        bad.append("IO_WATCH_LIST drifted from the normative set")
+    if NONDETERMINISTIC_WATCH_LIST != {"python": _EXPECTED_ND_WATCH, "javascript": _EXPECTED_ND_WATCH_JS}:
+        bad.append("NONDETERMINISTIC_WATCH_LIST drifted from the normative set")
 
     # Matcher: the three entry forms, and the boundaries that pin the matching logic.
     if matches_watchlist("", io_list):

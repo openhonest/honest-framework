@@ -40,6 +40,21 @@ IO_WATCH_LIST = {
             "redis.Redis",
         }
     ),
+    "javascript": frozenset(
+        {
+            # Filesystem (Node)
+            "fs.*", "fsp.*",
+            # Network
+            "fetch", "http.request", "https.request", "navigator.sendBeacon",
+            # Storage (browser)
+            "localStorage.*", "sessionStorage.*", "indexedDB.*", "caches.*",
+            # Process / stdio
+            "process.stdout.write", "process.stderr.write", "process.stdin.*",
+            "console.log", "console.error", "console.warn", "console.info", "console.debug",
+            # Database drivers
+            "pg.*", "mongodb.*", "redis.*", "mysql.*", "sqlite3.*",
+        }
+    ),
 }
 
 NONDETERMINISTIC_WATCH_LIST = {
@@ -64,6 +79,16 @@ NONDETERMINISTIC_WATCH_LIST = {
             "asyncio.current_task",
             # Object identity (non-deterministic across runs)
             "id",
+        }
+    ),
+    "javascript": frozenset(
+        {
+            # Randomness
+            "Math.random", "crypto.getRandomValues", "crypto.randomUUID",
+            # Time
+            "Date.now", "performance.now",
+            # Process
+            "process.cwd",
         }
     ),
 }

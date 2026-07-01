@@ -108,7 +108,7 @@ from honest_check.declgraph import (
 )
 from honest_parse import parse_python, parse_javascript, node_text, walk as _w
 from honest_check.rules import language_for_path
-from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_equality_target, _js_else_if, _js_mutable_decl_names, _js_reassigned_names, _js_scope_lets, _js_type_check
+from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_enclosing_function, _js_equality_target, _js_else_if, _js_impure_name, _js_mutable_decl_names, _js_qualified_name, _js_reassigned_names, _js_scope_lets, _js_type_check
 
 
 def _rules(source: str) -> list[str]:
@@ -145,6 +145,35 @@ _js_case("js_p003_extends_other", "class Widget extends Gadget {}", must_fire=("
 _js_case("js_p003_extends_error_clean", "class MyErr extends Error {}", must_not_fire=("HC-P003",))
 _js_case("js_p003_anonymous_extends", "const C = class extends Y {};", must_fire=("HC-P003",))
 _js_case("js_pure_function_clean", "function add(a, b) {\n    return a + b;\n}\n", must_not_fire=("HC-P003",))
+
+
+# ----------------------------------------------------------------- HC-P004 (JavaScript)
+
+_js_case("js_p004_fetch", "function f() { return fetch(u); }", must_fire=("HC-P004",))
+_js_case("js_p004_console", "function f() { console.log(x); }", must_fire=("HC-P004",))
+_js_case("js_p004_member_chain", "function f() { process.stdin.read(); }", must_fire=("HC-P004",))
+_js_case("js_p004_math_random", "function f() { return Math.random(); }", must_fire=("HC-P004",))
+_js_case("js_p004_new_date", "function f() { return new Date(); }", must_fire=("HC-P004",))
+_js_case("js_p004_new_websocket", "function f() { return new WebSocket(u); }", must_fire=("HC-P004",))
+_js_case("js_p004_new_xhr", "function f() { return new XMLHttpRequest(); }", must_fire=("HC-P004",))
+_js_case("js_p004_new_eventsource", "function f() { return new EventSource(u); }", must_fire=("HC-P004",))
+# A boundary comment marks the indented inner function it sits above (pins line-based boundary detection).
+_js_case("js_p004_indented_boundary_clean", "function outer() {\n    // honest: boundary\n    function inner() { return fetch(u); }\n}\n", must_not_fire=("HC-P004",))
+_js_case("js_p004_boundary_above_clean", "// honest: boundary\nfunction f() { return fetch(u); }\n", must_not_fire=("HC-P004",))
+_js_case("js_p004_boundary_same_line_clean", "function f() { return fetch(u); } // honest: boundary\n", must_not_fire=("HC-P004",))
+_js_case("js_p004_non_boundary_comment", "// just a note\nfunction f() { return fetch(u); }\n", must_fire=("HC-P004",))
+_js_case("js_p004_module_scope_clean", "fetch(u);", must_not_fire=("HC-P004",))
+_js_case("js_p004_computed_call_clean", "function f() { obj[k](); }", must_not_fire=("HC-P004",))
+_js_case("js_p004_pure_call_clean", "function f() { return add(a, b); }", must_not_fire=("HC-P004",))
+_js_case("js_p004_plain_new_clean", "function f() { return new Widget(); }", must_not_fire=("HC-P004",))
+
+
+# ----------------------------------------------------------------- HC-P002 (JavaScript)
+
+_js_case("js_p002_try_catch", "function f() { try { g(); } catch (e) { h(); } }", must_fire=("HC-P002",))
+_js_case("js_p002_try_finally_clean", "function f() { try { g(); } finally { h(); } }", must_not_fire=("HC-P002",))
+_js_case("js_p002_catch_in_boundary_clean", "// honest: boundary\nfunction f() { try { g(); } catch (e) { h(); } }\n", must_not_fire=("HC-P002",))
+_js_case("js_p002_module_scope_clean", "try { g(); } catch (e) { h(); }", must_not_fire=("HC-P002",))
 
 
 # ----------------------------------------------------------------- HC-P006 (JavaScript)
@@ -1684,6 +1713,44 @@ def _probe_javascript() -> list[str]:
         bad.append("_js_reassigned_names should ignore a member assignment")
     if _js_reassigned_names(_fn("function f() { o.y++; }"), b"function f() { o.y++; }") != set():
         bad.append("_js_reassigned_names should ignore a member update")
+
+    # HC-P004: an I/O call and a nondeterministic constructor each report as an error.
+    io = [d for d in check_source("function f() { return fetch(u); }", "f.js") if d["rule"] == "HC-P004"]
+    if not io or io[0]["severity"] != "error" or io[0]["message"] != "Call 'fetch' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity.":
+        bad.append(f"JS HC-P004 message/severity drifted: {io}")
+    # _js_qualified_name: identifier, member chain, and '' for a non-name callee.
+    if _js_qualified_name(next(n for n in _w(parse_javascript(b"fetch(u);").root_node) if n.type == "identifier"), b"fetch(u);") != "fetch":
+        bad.append("_js_qualified_name of an identifier should be its text")
+    chain_fn = next(n for n in _w(parse_javascript(b"a.b.c(u);").root_node) if n.type == "member_expression" and node_text(n.child_by_field_name("property"), b"a.b.c(u);") == "c")
+    if _js_qualified_name(chain_fn, b"a.b.c(u);") != "a.b.c":
+        bad.append("_js_qualified_name of a member chain should be dotted")
+    computed = next(n for n in _w(parse_javascript(b"o[k](u);").root_node) if n.type == "subscript_expression")
+    if _js_qualified_name(computed, b"o[k](u);") != "":
+        bad.append("_js_qualified_name of a computed callee should be empty")
+    # A watched constructor reports as 'new X()' (pins the constructor-name format).
+    ctor = [d for d in check_source("function f() { return new WebSocket(u); }", "f.js") if d["rule"] == "HC-P004"]
+    if not ctor or ctor[0]["message"] != "Call 'new WebSocket()' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity.":
+        bad.append(f"JS HC-P004 constructor name format drifted: {ctor}")
+    # _js_impure_name: a non-watched call and a non-watched constructor are not impure.
+    pure_call = next(n for n in _w(parse_javascript(b"add(a, b);").root_node) if n.type == "call_expression")
+    if _js_impure_name(pure_call, b"add(a, b);") is not None:
+        bad.append("_js_impure_name of a pure call should be None")
+    plain_new = next(n for n in _w(parse_javascript(b"new Widget();").root_node) if n.type == "new_expression")
+    if _js_impure_name(plain_new, b"new Widget();") is not None:
+        bad.append("_js_impure_name of a plain constructor should be None")
+    # _js_enclosing_function: None at module level.
+    module_call = next(n for n in _w(parse_javascript(b"fetch(u);").root_node) if n.type == "call_expression")
+    if _js_enclosing_function(module_call) is not None:
+        bad.append("_js_enclosing_function at module level should be None")
+
+    # HC-P002: a caught exception in a non-boundary function reports as an error.
+    tc = [d for d in check_source("function f() { try { g(); } catch (e) { h(); } }", "f.js") if d["rule"] == "HC-P002"]
+    if not tc or tc[0]["severity"] != "error" or tc[0]["message"] != "Function 'f' catches an exception in business logic. Let it raise and catch at the boundary (a '// honest: boundary' function), or return a fault as data.":
+        bad.append(f"JS HC-P002 message/severity drifted: {tc}")
+    # An anonymous function's catch names it '<anonymous>'.
+    anon = [d for d in check_source("const f = () => { try { g(); } catch (e) { h(); } };", "f.js") if d["rule"] == "HC-P002"]
+    if not anon or "'<anonymous>'" not in anon[0]["message"]:
+        bad.append(f"JS HC-P002 anonymous function label drifted: {anon}")
     return bad
 
 

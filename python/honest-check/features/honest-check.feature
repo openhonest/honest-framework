@@ -687,3 +687,38 @@ Feature: honest-check — Python supplement
     Given a nested JavaScript function reassigning an outer let or var
     When check_hc_p016_js runs
     Then it reports HC-P016 unless the name is shadowed by a parameter or local declaration
+
+  Scenario: _js_qualified_name reads the dotted name of a callee
+    Given a JavaScript callee node
+    When _js_qualified_name reads it
+    Then it returns the identifier or dotted member path, or nothing for a computed callee
+
+  Scenario: _js_impure_name reads the watched name of an impure node
+    Given a JavaScript call or new expression
+    When _js_impure_name inspects it
+    Then it returns the watched name of a matching I/O or non-deterministic construct, else nothing
+
+  Scenario: _js_enclosing_function finds the nearest enclosing function
+    Given a JavaScript node
+    When _js_enclosing_function walks its parents
+    Then it returns the nearest enclosing function, or nothing at module level
+
+  Scenario: _js_boundary_lines finds the honest boundary comment lines
+    Given a parsed JavaScript source
+    When _js_boundary_lines scans its comments
+    Then it returns the line numbers carrying a honest boundary directive
+
+  Scenario: _js_is_boundary decides whether a function is a boundary
+    Given a JavaScript function and the boundary comment lines
+    When _js_is_boundary checks it
+    Then it is true when a boundary comment sits on the function's line or the line above it
+
+  Scenario: check_hc_p004_js flags I/O in a non-boundary function
+    Given JavaScript source with an I/O or non-deterministic call in a non-boundary function
+    When check_hc_p004_js runs
+    Then it reports HC-P004 unless the function is marked a boundary
+
+  Scenario: check_hc_p002_js flags a caught exception in a non-boundary function
+    Given JavaScript source with a try/catch in a non-boundary function
+    When check_hc_p002_js runs
+    Then it reports HC-P002 unless the function is marked a boundary

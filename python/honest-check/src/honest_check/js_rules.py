@@ -13,7 +13,13 @@ apply to vanilla JavaScript and are not implemented here.
 """
 
 from honest_check.diagnostics import Diagnostic, diagnostic
+from honest_check.watchlists import IO_WATCH_LIST, NONDETERMINISTIC_WATCH_LIST, matches_watchlist
 from honest_parse import line_col, node_text, walk
+
+# Section 5.4 — I/O and non-determinism reachable only through the `new` form (constructors), which the
+# call-name watch lists (watchlists.py) do not cover.
+_JS_IO_CONSTRUCTORS = frozenset({"XMLHttpRequest", "WebSocket", "EventSource"})
+_JS_NONDETERMINISTIC_CONSTRUCTORS = frozenset({"Date"})
 
 # Section 5.3 — the only base a JavaScript class may extend (a thrown fault). Everything else,
 # including a bare class implicitly extending Object, is inheritance and is rejected.
@@ -388,4 +394,108 @@ def check_hc_p016_js(root, source: bytes, path: str) -> list[Diagnostic]:
                     "not carry mutable state — use pure parameters or move state into persist.",
                 )
             )
+    return out
+
+
+def _js_qualified_name(node, source: bytes) -> str:
+    """The dotted name of a callee: 'fetch' for an identifier, 'console.log' for a member expression,
+    'a.b.c' for a chain. '' for a computed member, a call result, or any other callee shape."""
+    if node.type == "identifier":
+        return node_text(node, source)
+    if node.type == "member_expression":
+        return _js_qualified_name(node.child_by_field_name("object"), source) + "." + node_text(node.child_by_field_name("property"), source)
+    return ""
+
+
+def _js_impure_name(node, source: bytes):
+    """The watched name of a node that performs I/O or non-deterministic work (section 5.4): the dotted
+    name of a matching call, or 'new X()' for a matching constructor. None otherwise."""
+    if node.type == "call_expression":
+        name = _js_qualified_name(node.child_by_field_name("function"), source)
+        if matches_watchlist(name, IO_WATCH_LIST["javascript"]) or matches_watchlist(name, NONDETERMINISTIC_WATCH_LIST["javascript"]):
+            return name
+    if node.type == "new_expression":
+        constructor = node_text(node.child_by_field_name("constructor"), source)
+        if constructor in _JS_IO_CONSTRUCTORS or constructor in _JS_NONDETERMINISTIC_CONSTRUCTORS:
+            return f"new {constructor}()"
+    return None
+
+
+def _js_enclosing_function(node):
+    """The nearest enclosing function, or None at module level."""
+    current = node.parent
+    while current is not None:
+        if current.type in _JS_FUNCTION_TYPES:
+            return current
+        current = current.parent
+    return None
+
+
+def _js_boundary_lines(root, source: bytes) -> set:
+    """The 1-based line numbers carrying a `// honest: boundary` comment (section 5.2)."""
+    lines = set()
+    for node in walk(root):
+        if node.type == "comment" and node_text(node, source).lstrip("/# ").startswith("honest: boundary"):
+            lines.add(node.start_point[0] + 1)
+    return lines
+
+
+def _js_is_boundary(func_node, boundary_lines) -> bool:
+    """A function is a boundary if a `// honest: boundary` comment sits on its line or the line above it."""
+    start_line = func_node.start_point[0] + 1
+    return start_line in boundary_lines or start_line - 1 in boundary_lines
+
+
+def check_hc_p004_js(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P004 (JavaScript) — I/O or non-deterministic work inside a non-boundary function (section 5.4).
+    Move it to a boundary (mark the function `// honest: boundary`), or it cannot be verified for purity."""
+    boundary_lines = _js_boundary_lines(root, source)
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        name = _js_impure_name(node, source)
+        if name is None:
+            continue
+        enclosing = _js_enclosing_function(node)
+        if enclosing is None or _js_is_boundary(enclosing, boundary_lines):
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P004",
+                "error",
+                path,
+                line,
+                col,
+                f"Call '{name}' performs I/O or non-deterministic work inside a non-boundary function. "
+                "Mark the function '// honest: boundary', or it cannot be verified for purity.",
+            )
+        )
+    return out
+
+
+def check_hc_p002_js(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P002 (JavaScript) — an exception caught inside a non-boundary function (section 5.2). Business
+    logic raises; the boundary catches. A try/finally with no catch is cleanup and is allowed."""
+    boundary_lines = _js_boundary_lines(root, source)
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "try_statement" or node.child_by_field_name("handler") is None:
+            continue
+        enclosing = _js_enclosing_function(node)
+        if enclosing is None or _js_is_boundary(enclosing, boundary_lines):
+            continue
+        line, col = line_col(node)
+        enclosing_name = enclosing.child_by_field_name("name")
+        function_label = node_text(enclosing_name, source) if enclosing_name is not None else "<anonymous>"
+        out.append(
+            diagnostic(
+                "HC-P002",
+                "error",
+                path,
+                line,
+                col,
+                f"Function '{function_label}' catches an exception in business logic. Let it raise and "
+                "catch at the boundary (a '// honest: boundary' function), or return a fault as data.",
+            )
+        )
     return out
