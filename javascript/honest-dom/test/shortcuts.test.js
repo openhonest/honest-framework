@@ -2,7 +2,7 @@
 // pure extractor over a DOM-like element; the element is a plain object here, so no DOM is needed.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readShortcut } from "../src/shortcuts.js";
+import { readShortcut } from "../src/index.js";
 
 test("value shortcut reads el.value", () => {
   assert.equal(readShortcut("value")({ value: "hi" }), "hi");

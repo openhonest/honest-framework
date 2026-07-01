@@ -1,0 +1,9 @@
+{
+  "module": "honest-dom",
+  "note": "The portable honest-DOM conformance suite: language-agnostic cases every implementation (domx, stateless, and future spokes) must pass. A case names a public function and its arguments; when the result is an extractor (a higher-order shortcut), applyTo is the element it reads. Cases are data; the runner resolves the function, applies it, and deep-compares the result. Elements are plain objects, so the property-read shortcuts need no DOM; attr:/data: are covered by the unit tests, which can carry method mocks.",
+  "cases": [
+    {"id": "read-value", "function": "readShortcut", "args": ["value"], "applyTo": {"value": "hi"}, "expected": "hi"},
+    {"id": "read-checked", "function": "readShortcut", "args": ["checked"], "applyTo": {"checked": true}, "expected": true},
+    {"id": "read-text", "function": "readShortcut", "args": ["text"], "applyTo": {"textContent": "body"}, "expected": "body"}
+  ]
+}
