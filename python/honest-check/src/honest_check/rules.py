@@ -45,7 +45,7 @@ from honest_check.declgraph import (
     vocabulary_base_types,
 )
 from honest_check.diagnostics import Diagnostic, diagnostic
-from honest_check.js_rules import check_hc_p003_js, check_hc_p011_js
+from honest_check.js_rules import check_hc_p001_js, check_hc_p003_js, check_hc_p005_js, check_hc_p011_js
 from honest_parse import first_error_node, line_col, node_text, parse, walk
 from honest_check.suppression import build_suppressions, is_suppressed
 from honest_check.watchlists import (
@@ -1600,7 +1600,7 @@ _ALL_CHECKS = (
 # JavaScript rule registry (section 5). The Honest Code principles are language-agnostic; their
 # JavaScript form is implemented over tree-sitter-javascript nodes. The honest-type-specific rules
 # do not apply to vanilla JavaScript, so this registry holds only the structural rules.
-_JS_CHECKS = (check_hc_p003_js, check_hc_p011_js)
+_JS_CHECKS = (check_hc_p001_js, check_hc_p003_js, check_hc_p005_js, check_hc_p011_js)
 
 # Section 2.3 — the grammar a file is checked under, by extension. Anything else is Python.
 _LANGUAGE_BY_EXTENSION = {".js": "javascript", ".mjs": "javascript", ".cjs": "javascript"}

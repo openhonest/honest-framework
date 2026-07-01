@@ -108,7 +108,7 @@ from honest_check.declgraph import (
 )
 from honest_parse import parse_python, parse_javascript, node_text, walk as _w
 from honest_check.rules import language_for_path
-from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name
+from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_equality_target, _js_else_if, _js_type_check
 
 
 def _rules(source: str) -> list[str]:
@@ -152,6 +152,26 @@ _js_case("js_pure_function_clean", "function add(a, b) {\n    return a + b;\n}\n
 _js_case("js_p011_add_event_listener", "el.addEventListener('click', h);", must_fire=("HC-P011",))
 _js_case("js_p011_use_effect", "useEffect(fn);", must_fire=("HC-P011",))
 _js_case("js_p011_plain_method_clean", "el.appendChild(node);", must_not_fire=("HC-P011",))
+
+
+# ----------------------------------------------------------------- HC-P005 (JavaScript)
+
+_js_case("js_p005_typeof", "const t = typeof x === 'string';", must_fire=("HC-P005",))
+_js_case("js_p005_instanceof", "const t = x instanceof Widget;", must_fire=("HC-P005",))
+_js_case("js_p005_plain_equality_clean", "const t = a === b;", must_not_fire=("HC-P005",))
+_js_case("js_p005_other_unary_clean", "const t = !x;", must_not_fire=("HC-P005",))
+
+
+# ----------------------------------------------------------------- HC-P001 (JavaScript)
+
+_JS_DISPATCH = 'function f(r) {\n    if (r === "a") { return 1; }\n    else if (r === "b") { return 2; }\n    else if (r === "c") { return 3; }\n}\n'
+_js_case("js_p001_dispatch_chain", _JS_DISPATCH, must_fire=("HC-P001",))
+_js_case("js_p001_dispatch_with_else", 'function f(r) {\n    if (r === "a") { return 1; }\n    else if (r === "b") { return 2; }\n    else if (r === "c") { return 3; }\n    else { return 0; }\n}\n', must_fire=("HC-P001",))
+_js_case("js_p001_two_branches_clean", 'function f(r) {\n    if (r === "a") { return 1; }\n    else if (r === "b") { return 2; }\n}\n', must_not_fire=("HC-P001",))
+_js_case("js_p001_mixed_discriminant_clean", 'function f(r, s) {\n    if (r === "a") { return 1; }\n    else if (s === "b") { return 2; }\n    else if (r === "c") { return 3; }\n}\n', must_not_fire=("HC-P001",))
+_js_case("js_p001_single_if_clean", 'function f(r) {\n    if (r === "a") { return 1; }\n}\n', must_not_fire=("HC-P001",))
+_js_case("js_p001_non_equality_chain_clean", 'function f(r) {\n    if (r < 1) { return 1; }\n    else if (r < 2) { return 2; }\n    else if (r < 3) { return 3; }\n}\n', must_not_fire=("HC-P001",))
+_js_case("js_p001_loose_equality_dispatch", 'function f(r) {\n    if (r == "a") { return 1; }\n    else if (r == "b") { return 2; }\n    else if (r == "c") { return 3; }\n}\n', must_fire=("HC-P001",))
 
 
 # ----------------------------------------------------------------- HC-P003 class shapes
@@ -1536,6 +1556,60 @@ def _probe_javascript() -> list[str]:
     ):
         if "HC-P011" not in [d["rule"] for d in check_source(f"obj.{hook}(a);", "f.js")]:
             bad.append(f"HC-P011 should fire for lifecycle hook {hook!r}")
+
+    # HC-P005: typeof and instanceof each report their kind as a warning.
+    tof = [d for d in check_source("const t = typeof x === 'string';", "f.js") if d["rule"] == "HC-P005"]
+    if not tof or tof[0]["severity"] != "warning" or tof[0]["message"] != "typeof check in business logic. Consider a vocabulary declaration instead.":
+        bad.append(f"JS HC-P005 typeof message/severity drifted: {tof}")
+    iof = [d for d in check_source("const t = x instanceof Widget;", "f.js") if d["rule"] == "HC-P005"]
+    if not iof or iof[0]["message"] != "instanceof check in business logic. Consider a vocabulary declaration instead.":
+        bad.append(f"JS HC-P005 instanceof message drifted: {iof}")
+    # _js_type_check returns None for a node with no operator and for a non-type operator.
+    ident = next(n for n in _w(parse_javascript(b"x;").root_node) if n.type == "identifier")
+    if _js_type_check(ident, b"x;") is not None:
+        bad.append("_js_type_check of a node without an operator should be None")
+
+    # HC-P001: the dispatch chain reports as an error with the dict-lookup message.
+    disp = [d for d in check_source(_JS_DISPATCH, "f.js") if d["rule"] == "HC-P001"]
+    if not disp or disp[0]["severity"] != "error" or disp[0]["message"] != "if/else-if chain dispatches on value — use dict lookup. See honest-code-principles.md §3.":
+        bad.append(f"JS HC-P001 message/severity drifted: {disp}")
+    # A four-branch chain fires exactly once: the nested else-if if_statements are not counted as their
+    # own chain starts (the parent-is-else_clause guard).
+    four_branch = (
+        'function f(r) {\n    if (r === "a") { return 1; }\n    else if (r === "b") { return 2; }\n'
+        '    else if (r === "c") { return 3; }\n    else if (r === "d") { return 4; }\n}\n'
+    )
+    if len([d for d in check_source(four_branch, "f.js") if d["rule"] == "HC-P001"]) != 1:
+        bad.append("HC-P001 should fire exactly once on a four-branch chain, not per nested else-if")
+    # _js_equality_target: a None condition, a non-binary condition, a non-equality operator, and a
+    # non-identifier left all return None; a plain `IDENT === value` returns the identifier.
+    if _js_equality_target(None, b"") is not None:
+        bad.append("_js_equality_target(None) should be None")
+    # A bare (already-unwrapped) binary_expression skips the parenthesis unwrap and reads the identifier.
+    bare_binary = next(n for n in _w(parse_javascript(b"a === b;").root_node) if n.type == "binary_expression")
+    if _js_equality_target(bare_binary, b"a === b;") != "a":
+        bad.append("_js_equality_target on a bare binary should read the left identifier")
+    for src, expected in [
+        ("if (r === \"a\") { y(); }", "r"),
+        ("if (x) { y(); }", None),          # not a binary comparison
+        ("if (r < 1) { y(); }", None),      # non-equality operator
+        ("if (1 === r) { y(); }", None),    # left is not an identifier
+    ]:
+        node = next(n for n in _w(parse_javascript(src.encode()).root_node) if n.type == "if_statement")
+        got = _js_equality_target(node.child_by_field_name("condition"), src.encode())
+        if got != expected:
+            bad.append(f"_js_equality_target on {src!r} should be {expected!r}: {got}")
+    # _js_else_if: a plain `if` (no else) and a trailing `else {}` both yield None; an `else if` yields the nested if.
+    plain = next(n for n in _w(parse_javascript(b"if (x) { y(); }").root_node) if n.type == "if_statement")
+    if _js_else_if(plain) is not None:
+        bad.append("_js_else_if of a plain if should be None")
+    with_else = next(n for n in _w(parse_javascript(b"if (x) { y(); } else { z(); }").root_node) if n.type == "if_statement")
+    if _js_else_if(with_else) is not None:
+        bad.append("_js_else_if of a trailing else should be None")
+    elif_root = parse_javascript(b"if (x) { y(); } else if (w) { z(); }").root_node
+    outer_if = next(n for n in _w(elif_root) if n.type == "if_statement")
+    if _js_else_if(outer_if) is None or _js_else_if(outer_if).type != "if_statement":
+        bad.append("_js_else_if of an else-if should be the nested if_statement")
     return bad
 
 

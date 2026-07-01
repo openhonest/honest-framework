@@ -19,6 +19,9 @@ from honest_parse import line_col, node_text, walk
 # including a bare class implicitly extending Object, is inheritance and is rejected.
 _ALLOWED_JS_CLASS_BASES = frozenset({"Error"})
 
+# Section 4.2 / 5.1 — the minimum branch count for an if/else-if chain to count as value dispatch.
+_JS_DISPATCH_BRANCH_THRESHOLD = 3
+
 # Section 5.7 — framework lifecycle hooks. Their presence wires behaviour to a hidden lifecycle
 # instead of to server-rendered HTML / HTMX attributes (honest-DOM anti-patterns, honest-DOM §6).
 _JS_LIFECYCLE_HOOKS = frozenset(
@@ -125,6 +128,109 @@ def check_hc_p011_js(root, source: bytes, path: str) -> list[Diagnostic]:
                 line,
                 col,
                 f"Lifecycle hook '{name}'. Use HTMX attributes or server-rendered HTML.",
+            )
+        )
+    return out
+
+
+def _js_type_check(node, source: bytes):
+    """The type-check kind of a node (section 5.5): 'typeof' for a typeof unary, 'instanceof' for an
+    instanceof binary, else None."""
+    op = node.child_by_field_name("operator")
+    if op is None:
+        return None
+    operator = node_text(op, source)
+    if node.type == "unary_expression" and operator == "typeof":
+        return "typeof"
+    if node.type == "binary_expression" and operator == "instanceof":
+        return "instanceof"
+    return None
+
+
+def check_hc_p005_js(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P005 (JavaScript) — a typeof or instanceof check in business logic (section 5.5). Branching on
+    a runtime type is a hidden discriminant; declare a vocabulary and let recognizers classify."""
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        kind = _js_type_check(node, source)
+        if kind is None:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P005",
+                "warning",
+                path,
+                line,
+                col,
+                f"{kind} check in business logic. Consider a vocabulary declaration instead.",
+            )
+        )
+    return out
+
+
+def _js_equality_target(condition, source: bytes):
+    """If `condition` is `IDENT === value` (or ==), return IDENT's text; else None. Unwraps the
+    parenthesized condition of a JavaScript if-statement."""
+    if condition is None:
+        return None
+    if condition.type == "parenthesized_expression":
+        condition = condition.named_children[0]
+    if condition.type != "binary_expression":
+        return None
+    op = condition.child_by_field_name("operator")
+    if op is None or node_text(op, source) not in ("===", "=="):
+        return None
+    left = condition.child_by_field_name("left")
+    if left is None or left.type != "identifier":
+        return None
+    return node_text(left, source)
+
+
+def _js_else_if(if_node):
+    """The nested if-statement of an `else if`, or None for a plain else or no else."""
+    alt = if_node.child_by_field_name("alternative")
+    if alt is None or alt.type != "else_clause":
+        return None
+    inner = alt.named_children
+    if inner and inner[0].type == "if_statement":
+        return inner[0]
+    return None
+
+
+def _js_if_chain_conditions(if_node):
+    """Every condition guarding a branch of an if/else-if chain: the if plus each else-if."""
+    conditions = []
+    node = if_node
+    while node is not None:
+        conditions.append(node.child_by_field_name("condition"))
+        node = _js_else_if(node)
+    return [c for c in conditions if c is not None]
+
+
+def check_hc_p001_js(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P001 (JavaScript) — an if/else-if chain dispatching on a single value (section 5.1). Three or
+    more branches comparing the same identifier to constants is a dict lookup written as control flow."""
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "if_statement":
+            continue
+        if node.parent is not None and node.parent.type == "else_clause":
+            continue  # a nested else-if, already counted as part of its enclosing chain
+        targets = [t for t in (_js_equality_target(c, source) for c in _js_if_chain_conditions(node)) if t is not None]
+        if len(targets) < _JS_DISPATCH_BRANCH_THRESHOLD:
+            continue
+        if len(set(targets)) != 1:
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-P001",
+                "error",
+                path,
+                line,
+                col,
+                "if/else-if chain dispatches on value — use dict lookup. See honest-code-principles.md §3.",
             )
         )
     return out

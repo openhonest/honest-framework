@@ -617,3 +617,33 @@ Feature: honest-check — Python supplement
     Given JavaScript source that calls a lifecycle hook
     When check_hc_p011_js runs
     Then it reports HC-P011 naming the hook
+
+  Scenario: _js_type_check recognizes a typeof or instanceof check
+    Given a JavaScript syntax node
+    When _js_type_check inspects it
+    Then it returns typeof for a typeof unary, instanceof for an instanceof binary, else nothing
+
+  Scenario: check_hc_p005_js flags a JavaScript type check in business logic
+    Given JavaScript source with a typeof or instanceof check
+    When check_hc_p005_js runs
+    Then it reports HC-P005
+
+  Scenario: _js_equality_target reads the discriminant of an equality condition
+    Given a JavaScript if condition
+    When _js_equality_target reads it
+    Then it returns the identifier compared to a value, or nothing when it is not that shape
+
+  Scenario: _js_else_if follows an else-if chain
+    Given a JavaScript if node
+    When _js_else_if reads its alternative
+    Then it returns the nested if of an else-if, or nothing for a plain else or no else
+
+  Scenario: _js_if_chain_conditions collects every condition in an if chain
+    Given the head of a JavaScript if chain
+    When _js_if_chain_conditions walks it
+    Then it returns the condition of the if and of each else-if
+
+  Scenario: check_hc_p001_js flags a JavaScript dispatch chain
+    Given JavaScript source with an if/else-if chain on one value
+    When check_hc_p001_js runs
+    Then it reports HC-P001 when three or more branches compare the same identifier to constants
