@@ -15,9 +15,9 @@ from honest_type import err, fault, ok
 
 DOM_SURFACES = frozenset({"banner", "toast", "modal", "badge", "inline"})
 REPLY_STYLES = frozenset({"primary", "secondary", "danger", "warning"})
-# The message's preferred delivery channel (section 3.1). The routing table's ChannelConfig (section 5)
-# broadens delivery to slack and teams; this is the narrower set a sender may state as a preference.
-CHANNELS = frozenset({"dom", "email", "sms", "webhook"})
+# The message's preferred delivery channel (section 3.1), the full delivery set shared with the routing
+# table's ChannelConfig (section 5.1).
+CHANNELS = frozenset({"dom", "email", "sms", "webhook", "slack", "teams"})
 
 # The extra fields each termination condition requires beyond `condition` (section 3.3). Keyed by
 # condition so the check is a table lookup, never a branch on the condition value. Its keys must equal

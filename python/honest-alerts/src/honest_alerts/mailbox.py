@@ -2,9 +2,8 @@
 
 A mailbox is not a data structure; it is a projection over honest-observe's event log — the answer to
 "which messages addressed to me have not yet terminated?". These functions are pure: they take the
-events as data and never read the log, so they are exhaustively testable. The boundary that pulls
-events from the log formats timestamps; here time is epoch seconds, so ttl arithmetic is ordinary
-subtraction (the spec's §3.1 `sent_at` is the boundary's ISO serialization of the same instant).
+events as data and never read the log, so they are exhaustively testable. Time is epoch seconds
+throughout (section 3.1), so ttl arithmetic is ordinary subtraction.
 
 A message ends by exactly one of four conditions, and an acknowledged message ends when its scope is
 satisfied. Both selections go through a table, never an if/elif chain: the condition names the

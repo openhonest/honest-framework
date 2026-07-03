@@ -94,8 +94,8 @@ def _law_vocabularies():
         bad.append(f"DOM_SURFACES should be the five declared surfaces: {DOM_SURFACES}")
     if REPLY_STYLES != frozenset({"primary", "secondary", "danger", "warning"}):
         bad.append(f"REPLY_STYLES should be the four declared styles: {REPLY_STYLES}")
-    if CHANNELS != frozenset({"dom", "email", "sms", "webhook"}):
-        bad.append(f"CHANNELS should be the four declared preferred channels: {CHANNELS}")
+    if CHANNELS != frozenset({"dom", "email", "sms", "webhook", "slack", "teams"}):
+        bad.append(f"CHANNELS should be the full declared channel set: {CHANNELS}")
     return bad
 
 
