@@ -8,6 +8,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "honest-alerts",
     "honest-auth",
     "honest-check",
     "honest-errors",
@@ -73,6 +74,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/78/29/ac41e16097af67066
 wheels = [
     { url = "https://files.pythonhosted.org/packages/eb/50/23f9dc45483419a3cc2085b498b25adfbf10642b2941c73e6d2dfaffc9ab/django-6.0.6-py3-none-any.whl", hash = "sha256:25148b1194c47c2e685e5f5e9c5d59c78b075dfd282cb9618861ba6c1708f4d2", size = 8373354, upload-time = "2026-06-03T13:02:41.72Z" },
 ]
+
+[[package]]
+name = "honest-alerts"
+version = "0.1.0"
+source = { editable = "honest-alerts" }
 
 [[package]]
 name = "honest-auth"
