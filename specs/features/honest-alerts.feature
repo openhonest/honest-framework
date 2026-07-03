@@ -1,5 +1,25 @@
 Feature: honest-alerts — messages between actors, mailboxes as projections over the event log
 
+  Scenario: validate_actor_ref checks that a reference names a declared actor type
+    Given an actor reference
+    When validate_actor_ref checks it
+    Then a reference whose type is not a declared actor type is a client fault, and id and tenant are optional
+
+  Scenario: validate_termination checks a termination spec's condition and required fields
+    Given a termination spec
+    When validate_termination checks it
+    Then an undeclared condition, or a declared condition missing its required fields, is a client fault
+
+  Scenario: validate_reply_option checks a reply option's required fields and style
+    Given a reply option
+    When validate_reply_option checks it
+    Then a missing option_id or label_id, or an undeclared style, is a client fault
+
+  Scenario: validate_message checks the envelope and every sub-schema
+    Given a message envelope
+    When validate_message checks it
+    Then a missing required field, an invalid actor reference, termination, ack scope, DOM surface, or reply option is a client fault
+
   Scenario: recipient_matches resolves whether a message addresses an actor
     Given a message recipient and an actor
     When recipient_matches compares them

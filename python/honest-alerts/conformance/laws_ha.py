@@ -7,7 +7,20 @@ without a filter, never), and the mailbox projection's recipient, time-window, t
 behaviour. Pure assertions: data in, data out. Time is epoch seconds.
 """
 
-from honest_alerts import ACK_SCOPES, TERMINATION_CONDITIONS, is_terminated, mailbox, recipient_matches
+from honest_alerts import (
+    ACK_SCOPES,
+    ACTOR_TYPES,
+    DOM_SURFACES,
+    REPLY_STYLES,
+    TERMINATION_CONDITIONS,
+    is_terminated,
+    mailbox,
+    recipient_matches,
+    validate_actor_ref,
+    validate_message,
+    validate_reply_option,
+    validate_termination,
+)
 
 
 def _sent(message_id, recipient, sent_at, termination, ack_scope="actor"):
@@ -38,7 +51,20 @@ def _law_exports():
     import honest_alerts
 
     bad = []
-    expected = ["mailbox", "is_terminated", "recipient_matches", "TERMINATION_CONDITIONS", "ACK_SCOPES"]
+    expected = [
+        "mailbox",
+        "is_terminated",
+        "recipient_matches",
+        "TERMINATION_CONDITIONS",
+        "ACK_SCOPES",
+        "ACTOR_TYPES",
+        "validate_actor_ref",
+        "DOM_SURFACES",
+        "REPLY_STYLES",
+        "validate_termination",
+        "validate_reply_option",
+        "validate_message",
+    ]
     if sorted(getattr(honest_alerts, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_alerts, '__all__', None)}")
     missing = [name for name in expected if not hasattr(honest_alerts, name)]
@@ -53,6 +79,19 @@ def _law_vocabularies():
         bad.append(f"TERMINATION_CONDITIONS should be the four declared conditions: {TERMINATION_CONDITIONS}")
     if ACK_SCOPES != frozenset({"session", "actor", "broadcast"}):
         bad.append(f"ACK_SCOPES should be the three declared scopes: {ACK_SCOPES}")
+    if ACTOR_TYPES != frozenset(
+        {
+            "user", "role", "tenant", "admin", "anonymous",
+            "chain", "state_machine", "job", "projection",
+            "framework", "auth", "webhook_inbound",
+            "dom", "email", "sms", "webhook_outbound", "slack", "teams",
+        }
+    ):
+        bad.append(f"ACTOR_TYPES should be the declared human, process, system, and interface types: {ACTOR_TYPES}")
+    if DOM_SURFACES != frozenset({"banner", "toast", "modal", "badge", "inline"}):
+        bad.append(f"DOM_SURFACES should be the five declared surfaces: {DOM_SURFACES}")
+    if REPLY_STYLES != frozenset({"primary", "secondary", "danger", "warning"}):
+        bad.append(f"REPLY_STYLES should be the four declared styles: {REPLY_STYLES}")
     return bad
 
 
@@ -170,6 +209,120 @@ def _law_mailbox():
     return bad
 
 
+def _law_validate_actor_ref():
+    bad = []
+    if validate_actor_ref({"type": "user", "id": "u1"}) != {"ok": {"type": "user", "id": "u1"}}:
+        bad.append("a declared actor type passes")
+    if validate_actor_ref({"type": "dom"}) != {"ok": {"type": "dom"}}:
+        bad.append("id and tenant_id are optional")
+    ghost = validate_actor_ref({"type": "ghost"})
+    if ghost != {"err": {"code": "invalid_actor_type", "message": "'ghost' is not a declared actor type", "category": "client", "detail": "ghost"}}:
+        bad.append(f"an undeclared actor type is a full invalid_actor_type client fault: {ghost}")
+    return bad
+
+
+def _law_validate_termination():
+    bad = []
+    from honest_alerts.message import _TERMINATION_REQUIRED
+
+    if set(_TERMINATION_REQUIRED) != TERMINATION_CONDITIONS:
+        bad.append(f"_TERMINATION_REQUIRED must cover exactly the declared conditions: {set(_TERMINATION_REQUIRED)}")
+    if validate_termination({"condition": "ttl", "ttl_seconds": 10}) != {"ok": {"condition": "ttl", "ttl_seconds": 10}}:
+        bad.append("a ttl termination with ttl_seconds passes")
+    if validate_termination({"condition": "acknowledged"}) != {"ok": {"condition": "acknowledged"}}:
+        bad.append("an acknowledged termination needs no extra fields")
+    if validate_termination({"condition": "never"}) != {"ok": {"condition": "never"}}:
+        bad.append("a never termination needs no extra fields")
+    if validate_termination({"condition": "event", "event_type": "x.done"}) != {"ok": {"condition": "event", "event_type": "x.done"}}:
+        bad.append("an event termination with event_type passes")
+    bogus = validate_termination({"condition": "bogus"})
+    if bogus != {"err": {"code": "invalid_termination", "message": "'bogus' is not a declared termination condition", "category": "client", "detail": "bogus"}}:
+        bad.append(f"an undeclared condition is a full invalid_termination fault: {bogus}")
+    no_ttl = validate_termination({"condition": "ttl"})
+    if no_ttl != {"err": {"code": "incomplete_termination", "message": "a 'ttl' termination is missing required fields: ['ttl_seconds']", "category": "client", "detail": ["ttl_seconds"]}}:
+        bad.append(f"a ttl termination without ttl_seconds is a full incomplete_termination fault: {no_ttl}")
+    no_event = validate_termination({"condition": "event"})
+    if no_event != {"err": {"code": "incomplete_termination", "message": "a 'event' termination is missing required fields: ['event_type']", "category": "client", "detail": ["event_type"]}}:
+        bad.append(f"an event termination without event_type is a full incomplete_termination fault: {no_event}")
+    return bad
+
+
+def _law_validate_reply_option():
+    bad = []
+    if validate_reply_option({"option_id": "approve", "label_id": "alerts.approve"}) != {"ok": {"option_id": "approve", "label_id": "alerts.approve"}}:
+        bad.append("a reply option with option_id and label_id passes")
+    styled = {"option_id": "reject", "label_id": "alerts.reject", "style": "danger"}
+    if validate_reply_option(styled) != {"ok": styled}:
+        bad.append("a declared style passes")
+    incomplete = validate_reply_option({"option_id": "approve"})
+    if incomplete != {"err": {"code": "incomplete_reply_option", "message": "a reply option is missing required fields: ['label_id']", "category": "client", "detail": ["label_id"]}}:
+        bad.append(f"a reply option missing label_id is a full incomplete_reply_option fault: {incomplete}")
+    bad_style = validate_reply_option({"option_id": "a", "label_id": "b", "style": "neon"})
+    if bad_style != {"err": {"code": "invalid_reply_style", "message": "'neon' is not a declared reply style", "category": "client", "detail": "neon"}}:
+        bad.append(f"an undeclared style is a full invalid_reply_style fault: {bad_style}")
+    return bad
+
+
+def _valid_message(**overrides):
+    """A minimal valid message; overrides adjust one field for the negative cases."""
+    message = {
+        "message_id": "m1",
+        "message_type": "order.placed",
+        "message_version": "1",
+        "sender": {"type": "framework"},
+        "recipient": {"type": "user", "id": "u1"},
+        "subject_label_id": "alerts.order_placed",
+        "payload": {},
+        "reply_required": False,
+        "termination": {"condition": "ttl", "ttl_seconds": 10},
+        "ack_scope": "session",
+        "sent_at": 1000,
+    }
+    message.update(overrides)
+    return message
+
+
+def _law_validate_message():
+    bad = []
+    ok_msg = _valid_message()
+    if validate_message(ok_msg) != {"ok": ok_msg}:
+        bad.append(f"a complete, well-formed message passes: {validate_message(ok_msg)}")
+    # optional fields present and valid
+    rich = _valid_message(dom_surface="toast", reply_options=[{"option_id": "ok", "label_id": "l"}])
+    if validate_message(rich) != {"ok": rich}:
+        bad.append(f"valid optional dom_surface and reply_options pass: {validate_message(rich)}")
+    # missing required field
+    incomplete = _valid_message()
+    del incomplete["sent_at"]
+    miss = validate_message(incomplete)
+    if miss != {"err": {"code": "incomplete_message", "message": "message is missing required fields: ['sent_at']", "category": "client", "detail": ["sent_at"]}}:
+        bad.append(f"a message missing a required field is a full incomplete_message fault: {miss}")
+    # invalid sender / recipient propagate the actor fault
+    bad_sender = validate_message(_valid_message(sender={"type": "ghost"}))
+    if bad_sender.get("err", {}).get("code") != "invalid_actor_type":
+        bad.append(f"an invalid sender propagates invalid_actor_type: {bad_sender}")
+    bad_recipient = validate_message(_valid_message(recipient={"type": "ghost"}))
+    if bad_recipient.get("err", {}).get("code") != "invalid_actor_type":
+        bad.append(f"an invalid recipient propagates invalid_actor_type: {bad_recipient}")
+    # invalid termination propagates
+    bad_term = validate_message(_valid_message(termination={"condition": "bogus"}))
+    if bad_term.get("err", {}).get("code") != "invalid_termination":
+        bad.append(f"an invalid termination propagates invalid_termination: {bad_term}")
+    # invalid ack_scope
+    bad_scope = validate_message(_valid_message(ack_scope="everywhere"))
+    if bad_scope != {"err": {"code": "invalid_ack_scope", "message": "'everywhere' is not a declared ack scope", "category": "client", "detail": "everywhere"}}:
+        bad.append(f"an undeclared ack_scope is a full invalid_ack_scope fault: {bad_scope}")
+    # invalid dom_surface
+    bad_surface = validate_message(_valid_message(dom_surface="popover"))
+    if bad_surface != {"err": {"code": "invalid_dom_surface", "message": "'popover' is not a declared DOM surface", "category": "client", "detail": "popover"}}:
+        bad.append(f"an undeclared dom_surface is a full invalid_dom_surface fault: {bad_surface}")
+    # invalid reply option propagates
+    bad_reply = validate_message(_valid_message(reply_options=[{"option_id": "ok"}]))
+    if bad_reply.get("err", {}).get("code") != "incomplete_reply_option":
+        bad.append(f"an invalid reply option propagates incomplete_reply_option: {bad_reply}")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
     "vocabularies": _law_vocabularies,
@@ -179,6 +332,10 @@ _LAWS = {
     "terminated_event": _law_terminated_event,
     "terminated_never": _law_terminated_never,
     "mailbox": _law_mailbox,
+    "validate_actor_ref": _law_validate_actor_ref,
+    "validate_termination": _law_validate_termination,
+    "validate_reply_option": _law_validate_reply_option,
+    "validate_message": _law_validate_message,
 }
 
 

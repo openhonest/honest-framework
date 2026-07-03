@@ -3,7 +3,10 @@ name = "honest-alerts"
 version = "0.1.0"
 description = "Actor-model message passing: messages between actors, mailboxes as projections over the event log."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["honest-type"]
+
+[tool.uv.sources]
+honest-type = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

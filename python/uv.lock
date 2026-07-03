@@ -79,6 +79,12 @@ wheels = [
 name = "honest-alerts"
 version = "0.1.0"
 source = { editable = "honest-alerts" }
+dependencies = [
+    { name = "honest-type" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "honest-type", editable = "honest-type" }]
 
 [[package]]
 name = "honest-auth"
