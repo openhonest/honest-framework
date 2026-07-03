@@ -125,7 +125,7 @@ Message = {
     # Routing
     "sender":          ActorRef,      # who sent this message
     "recipient":       ActorRef,      # who should receive it
-    "channel":         String?,       # preferred delivery channel: "dom" | "email" | "sms" | "webhook" | null (supervisor decides)
+    "channel":         String?,       # preferred delivery channel: "dom" | "email" | "sms" | "webhook" | "slack" | "teams" | null (supervisor decides)
 
     # Content
     "subject_label_id": String,       # i18n label ID for message subject
@@ -146,7 +146,7 @@ Message = {
     "ack_scope":       String,        # "session" | "actor" | "broadcast"
 
     # Timestamps
-    "sent_at":         String,        # ISO 8601 UTC
+    "sent_at":         Integer,       # epoch seconds (UTC)
 }
 ```
 
