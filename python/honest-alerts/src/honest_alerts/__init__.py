@@ -12,6 +12,7 @@ send/send_and_wait) build on this pure core.
 from honest_alerts.actors import ACTOR_TYPES, validate_actor_ref
 from honest_alerts.mailbox import ACK_SCOPES, TERMINATION_CONDITIONS, is_terminated, mailbox, recipient_matches
 from honest_alerts.message import CHANNELS, DOM_SURFACES, REPLY_STYLES, validate_message, validate_reply_option, validate_termination
+from honest_alerts.routing import validate_alert_route, validate_channel_config, validate_escalation_rule
 
 __all__ = [
     "mailbox",
@@ -27,4 +28,7 @@ __all__ = [
     "validate_termination",
     "validate_reply_option",
     "validate_message",
+    "validate_channel_config",
+    "validate_escalation_rule",
+    "validate_alert_route",
 ]

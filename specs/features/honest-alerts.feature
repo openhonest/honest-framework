@@ -20,6 +20,21 @@ Feature: honest-alerts — messages between actors, mailboxes as projections ove
     When validate_message checks it
     Then a missing required field, an invalid actor reference, termination, ack scope, DOM surface, or reply option is a client fault
 
+  Scenario: validate_channel_config checks a channel config's channel and recipient
+    Given a channel config
+    When validate_channel_config checks it
+    Then a missing channel, an undeclared channel, or an invalid recipient reference is a client fault
+
+  Scenario: validate_escalation_rule checks an escalation rule's fields and channel
+    Given an escalation rule
+    When validate_escalation_rule checks it
+    Then a missing ttl_seconds or escalate_to, an invalid escalate_to reference, or an undeclared escalate_channel is a client fault
+
+  Scenario: validate_alert_route checks a route and every channel config and escalation
+    Given an alert route
+    When validate_alert_route checks it
+    Then a missing required field, an undeclared sender type, or an invalid channel config or escalation is a client fault
+
   Scenario: recipient_matches resolves whether a message addresses an actor
     Given a message recipient and an actor
     When recipient_matches compares them

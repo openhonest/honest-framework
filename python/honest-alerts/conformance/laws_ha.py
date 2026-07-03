@@ -18,6 +18,9 @@ from honest_alerts import (
     mailbox,
     recipient_matches,
     validate_actor_ref,
+    validate_alert_route,
+    validate_channel_config,
+    validate_escalation_rule,
     validate_message,
     validate_reply_option,
     validate_termination,
@@ -66,6 +69,9 @@ def _law_exports():
         "validate_termination",
         "validate_reply_option",
         "validate_message",
+        "validate_channel_config",
+        "validate_escalation_rule",
+        "validate_alert_route",
     ]
     if sorted(getattr(honest_alerts, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_alerts, '__all__', None)}")
@@ -334,6 +340,90 @@ def _law_validate_message():
     return bad
 
 
+def _valid_channel_config(**overrides):
+    config = {"channel": "dom"}
+    config.update(overrides)
+    return config
+
+
+def _law_validate_channel_config():
+    bad = []
+    ok_c = _valid_channel_config()
+    if validate_channel_config(ok_c) != {"ok": ok_c}:
+        bad.append(f"a channel config with a declared channel passes: {validate_channel_config(ok_c)}")
+    with_recipient = _valid_channel_config(channel="email", recipient_spec={"type": "role", "id": "admin"})
+    if validate_channel_config(with_recipient) != {"ok": with_recipient}:
+        bad.append(f"a valid recipient_spec passes: {validate_channel_config(with_recipient)}")
+    miss = validate_channel_config({})
+    if miss != {"err": {"code": "incomplete_channel_config", "message": "a channel config is missing required fields: ['channel']", "category": "client", "detail": ["channel"]}}:
+        bad.append(f"a channel config missing channel is a full incomplete_channel_config fault: {miss}")
+    bad_channel = validate_channel_config({"channel": "pigeon"})
+    if bad_channel != {"err": {"code": "invalid_channel", "message": "'pigeon' is not a declared channel", "category": "client", "detail": "pigeon"}}:
+        bad.append(f"an undeclared channel is a full invalid_channel fault: {bad_channel}")
+    bad_recipient = validate_channel_config(_valid_channel_config(recipient_spec={"type": "ghost"}))
+    if bad_recipient.get("err", {}).get("code") != "invalid_actor_type":
+        bad.append(f"an invalid recipient_spec propagates invalid_actor_type: {bad_recipient}")
+    return bad
+
+
+def _valid_escalation(**overrides):
+    rule = {"ttl_seconds": 86400, "escalate_to": {"type": "role", "id": "admin"}}
+    rule.update(overrides)
+    return rule
+
+
+def _law_validate_escalation_rule():
+    bad = []
+    ok_e = _valid_escalation()
+    if validate_escalation_rule(ok_e) != {"ok": ok_e}:
+        bad.append(f"a complete escalation rule passes: {validate_escalation_rule(ok_e)}")
+    with_channel = _valid_escalation(escalate_channel="email")
+    if validate_escalation_rule(with_channel) != {"ok": with_channel}:
+        bad.append(f"a valid escalate_channel passes: {validate_escalation_rule(with_channel)}")
+    no_ttl = validate_escalation_rule({"escalate_to": {"type": "role", "id": "admin"}})
+    if no_ttl != {"err": {"code": "incomplete_escalation", "message": "an escalation rule is missing required fields: ['ttl_seconds']", "category": "client", "detail": ["ttl_seconds"]}}:
+        bad.append(f"an escalation rule missing ttl_seconds is a full incomplete_escalation fault: {no_ttl}")
+    no_target = validate_escalation_rule({"ttl_seconds": 10})
+    if no_target != {"err": {"code": "incomplete_escalation", "message": "an escalation rule is missing required fields: ['escalate_to']", "category": "client", "detail": ["escalate_to"]}}:
+        bad.append(f"an escalation rule missing escalate_to is a full incomplete_escalation fault: {no_target}")
+    bad_target = validate_escalation_rule(_valid_escalation(escalate_to={"type": "ghost"}))
+    if bad_target.get("err", {}).get("code") != "invalid_actor_type":
+        bad.append(f"an invalid escalate_to propagates invalid_actor_type: {bad_target}")
+    bad_channel = validate_escalation_rule(_valid_escalation(escalate_channel="pigeon"))
+    if bad_channel != {"err": {"code": "invalid_channel", "message": "'pigeon' is not a declared channel", "category": "client", "detail": "pigeon"}}:
+        bad.append(f"an undeclared escalate_channel is a full invalid_channel fault: {bad_channel}")
+    return bad
+
+
+def _valid_route(**overrides):
+    route = {"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1}
+    route.update(overrides)
+    return route
+
+
+def _law_validate_alert_route():
+    bad = []
+    ok_r = _valid_route()
+    if validate_alert_route(ok_r) != {"ok": ok_r}:
+        bad.append(f"a complete route passes: {validate_alert_route(ok_r)}")
+    rich = _valid_route(sender_type="framework", escalation={"ttl_seconds": 10, "escalate_to": {"type": "role", "id": "admin"}})
+    if validate_alert_route(rich) != {"ok": rich}:
+        bad.append(f"a valid sender_type and escalation pass: {validate_alert_route(rich)}")
+    miss = validate_alert_route({})
+    if miss != {"err": {"code": "incomplete_route", "message": "an alert route is missing required fields: ['route_id', 'message_type', 'channels', 'priority']", "category": "client", "detail": ["route_id", "message_type", "channels", "priority"]}}:
+        bad.append(f"a route missing required fields is a full incomplete_route fault: {miss}")
+    bad_sender = validate_alert_route(_valid_route(sender_type="ghost"))
+    if bad_sender != {"err": {"code": "invalid_actor_type", "message": "'ghost' is not a declared actor type", "category": "client", "detail": "ghost"}}:
+        bad.append(f"an undeclared sender_type is a full invalid_actor_type fault: {bad_sender}")
+    bad_channel = validate_alert_route(_valid_route(channels=[{"channel": "pigeon"}]))
+    if bad_channel.get("err", {}).get("code") != "invalid_channel":
+        bad.append(f"an invalid channel config propagates invalid_channel: {bad_channel}")
+    bad_escalation = validate_alert_route(_valid_route(escalation={"ttl_seconds": 10}))
+    if bad_escalation.get("err", {}).get("code") != "incomplete_escalation":
+        bad.append(f"an invalid escalation propagates incomplete_escalation: {bad_escalation}")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
     "vocabularies": _law_vocabularies,
@@ -347,6 +437,9 @@ _LAWS = {
     "validate_termination": _law_validate_termination,
     "validate_reply_option": _law_validate_reply_option,
     "validate_message": _law_validate_message,
+    "validate_channel_config": _law_validate_channel_config,
+    "validate_escalation_rule": _law_validate_escalation_rule,
+    "validate_alert_route": _law_validate_alert_route,
 }
 
 
