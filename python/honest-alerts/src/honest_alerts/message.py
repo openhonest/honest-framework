@@ -15,6 +15,9 @@ from honest_type import err, fault, ok
 
 DOM_SURFACES = frozenset({"banner", "toast", "modal", "badge", "inline"})
 REPLY_STYLES = frozenset({"primary", "secondary", "danger", "warning"})
+# The message's preferred delivery channel (section 3.1). The routing table's ChannelConfig (section 5)
+# broadens delivery to slack and teams; this is the narrower set a sender may state as a preference.
+CHANNELS = frozenset({"dom", "email", "sms", "webhook"})
 
 # The extra fields each termination condition requires beyond `condition` (section 3.3). Keyed by
 # condition so the check is a table lookup, never a branch on the condition value. Its keys must equal
@@ -87,6 +90,8 @@ def validate_message(message):
         return termination
     if message["ack_scope"] not in ACK_SCOPES:
         return err(fault("invalid_ack_scope", f"'{message['ack_scope']}' is not a declared ack scope", "client", detail=message["ack_scope"]))
+    if "channel" in message and message["channel"] not in CHANNELS:
+        return err(fault("invalid_channel", f"'{message['channel']}' is not a declared channel", "client", detail=message["channel"]))
     if "dom_surface" in message and message["dom_surface"] not in DOM_SURFACES:
         return err(fault("invalid_dom_surface", f"'{message['dom_surface']}' is not a declared DOM surface", "client", detail=message["dom_surface"]))
     for option in message.get("reply_options", []):

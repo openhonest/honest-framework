@@ -10,6 +10,7 @@ behaviour. Pure assertions: data in, data out. Time is epoch seconds.
 from honest_alerts import (
     ACK_SCOPES,
     ACTOR_TYPES,
+    CHANNELS,
     DOM_SURFACES,
     REPLY_STYLES,
     TERMINATION_CONDITIONS,
@@ -61,6 +62,7 @@ def _law_exports():
         "validate_actor_ref",
         "DOM_SURFACES",
         "REPLY_STYLES",
+        "CHANNELS",
         "validate_termination",
         "validate_reply_option",
         "validate_message",
@@ -92,6 +94,8 @@ def _law_vocabularies():
         bad.append(f"DOM_SURFACES should be the five declared surfaces: {DOM_SURFACES}")
     if REPLY_STYLES != frozenset({"primary", "secondary", "danger", "warning"}):
         bad.append(f"REPLY_STYLES should be the four declared styles: {REPLY_STYLES}")
+    if CHANNELS != frozenset({"dom", "email", "sms", "webhook"}):
+        bad.append(f"CHANNELS should be the four declared preferred channels: {CHANNELS}")
     return bad
 
 
@@ -320,6 +324,13 @@ def _law_validate_message():
     bad_reply = validate_message(_valid_message(reply_options=[{"option_id": "ok"}]))
     if bad_reply.get("err", {}).get("code") != "incomplete_reply_option":
         bad.append(f"an invalid reply option propagates incomplete_reply_option: {bad_reply}")
+    # optional preferred channel, valid and invalid
+    with_channel = _valid_message(channel="email")
+    if validate_message(with_channel) != {"ok": with_channel}:
+        bad.append(f"a declared preferred channel passes: {validate_message(with_channel)}")
+    bad_channel = validate_message(_valid_message(channel="carrier_pigeon"))
+    if bad_channel != {"err": {"code": "invalid_channel", "message": "'carrier_pigeon' is not a declared channel", "category": "client", "detail": "carrier_pigeon"}}:
+        bad.append(f"an undeclared channel is a full invalid_channel fault: {bad_channel}")
     return bad
 
 
