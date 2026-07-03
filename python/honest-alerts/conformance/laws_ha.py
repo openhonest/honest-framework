@@ -14,9 +14,14 @@ from honest_alerts import (
     DOM_SURFACES,
     REPLY_STYLES,
     TERMINATION_CONDITIONS,
+    delivery_plan,
+    execute_deliveries,
     is_terminated,
     mailbox,
+    matching_routes,
+    message_type_matches,
     recipient_matches,
+    supervise,
     validate_actor_ref,
     validate_alert_route,
     validate_channel_config,
@@ -72,6 +77,11 @@ def _law_exports():
         "validate_channel_config",
         "validate_escalation_rule",
         "validate_alert_route",
+        "message_type_matches",
+        "matching_routes",
+        "delivery_plan",
+        "supervise",
+        "execute_deliveries",
     ]
     if sorted(getattr(honest_alerts, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_alerts, '__all__', None)}")
@@ -424,6 +434,139 @@ def _law_validate_alert_route():
     return bad
 
 
+import asyncio
+
+
+class _Runtime:
+    """A stand-in supervisor runtime (sections 6.1-6.2): canned now and delivery outcome, a recorded
+    pending queue, and captured inserts, emits, and marks so the boundary laws can assert what the
+    supervisor did through it. Conformance code is not linted, so a class here is fine; the supervisor
+    source stays classless, and its I/O reaches the world only through this injected object."""
+
+    def __init__(self, now=1000, deliver_ok=True, pending=None):
+        self._now = now
+        self._deliver_ok = deliver_ok
+        self._pending = pending if pending is not None else []
+        self.inserted = []
+        self.emitted = []
+        self.marked = []
+
+    def now(self):
+        return self._now
+
+    async def insert(self, delivery):
+        self.inserted.append(delivery)
+        return {"ok": delivery}
+
+    async def emit(self, event_type, aggregate_id, payload):
+        self.emitted.append((event_type, aggregate_id, payload))
+        return {"ok": {"event_id": "e1"}}
+
+    async def pending(self):
+        return self._pending
+
+    async def deliver(self, delivery):
+        return {"ok": delivery} if self._deliver_ok else {"err": {"code": "channel_down"}}
+
+    async def mark(self, delivery, status):
+        self.marked.append((delivery["message_id"], status))
+        return {"ok": None}
+
+
+def _law_message_type_matches():
+    bad = []
+    if message_type_matches("system.maintenance_notice", "system.maintenance_notice") is not True:
+        bad.append("an exact pattern matches its message type")
+    if message_type_matches("order.placed", "order.shipped") is not False:
+        bad.append("a non-matching exact pattern does not match")
+    if message_type_matches("order", "order.placed") is not False:
+        bad.append("a non-wildcard pattern requires an exact match, not a prefix")
+    if message_type_matches("system.*", "system.maintenance_notice") is not True:
+        bad.append("a wildcard pattern matches any type in its namespace")
+    if message_type_matches("system.*", "auth.login") is not False:
+        bad.append("a wildcard pattern does not match another namespace")
+    if message_type_matches("system.*", "system") is not False:
+        bad.append("a wildcard 'system.*' does not match the bare 'system' (the dot is required)")
+    return bad
+
+
+def _law_matching_routes():
+    bad = []
+    message = {"message_type": "system.maintenance_notice", "sender": {"type": "framework"}}
+    r_wild = {"route_id": "r_wild", "message_type": "system.*", "priority": 2}
+    r_exact = {"route_id": "r_exact", "message_type": "system.maintenance_notice", "priority": 1}
+    r_other = {"route_id": "r_other", "message_type": "order.placed", "priority": 1}
+    r_sender = {"route_id": "r_sender", "message_type": "system.*", "sender_type": "auth", "priority": 3}
+    ids = [r["route_id"] for r in matching_routes([r_wild, r_exact, r_other, r_sender], message)]
+    if ids != ["r_exact", "r_wild"]:
+        bad.append(f"matching_routes keeps matches, priority ascending, dropping other types and non-matching senders: {ids}")
+    sender_msg = {"message_type": "system.x", "sender": {"type": "auth"}}
+    if [r["route_id"] for r in matching_routes([r_sender], sender_msg)] != ["r_sender"]:
+        bad.append("a route with a sender_type matches when the sender type equals it")
+    return bad
+
+
+def _law_delivery_plan():
+    bad = []
+    message = {"message_id": "m1", "recipient": {"type": "user", "id": "u1"}}
+    routes = [
+        {"route_id": "r1", "channels": [{"channel": "dom"}, {"channel": "email", "delay_seconds": 300, "recipient_spec": {"type": "role", "id": "admin"}}]},
+    ]
+    plan = delivery_plan(message, routes, 1000)
+    if plan != [
+        {"message_id": "m1", "route_id": "r1", "channel": "dom", "recipient": {"type": "user", "id": "u1"}, "deliver_at": 1000, "status": "pending"},
+        {"message_id": "m1", "route_id": "r1", "channel": "email", "recipient": {"type": "role", "id": "admin"}, "deliver_at": 1300, "status": "pending"},
+    ]:
+        bad.append(f"delivery_plan builds one pending record per channel, resolving recipient and deliver_at (now + delay): {plan}")
+    return bad
+
+
+def _law_supervise():
+    bad = []
+    message = {"message_id": "m1", "message_type": "order.placed", "sender": {"type": "framework"}, "recipient": {"type": "user", "id": "u1"}}
+    route = {"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1}
+    rt = _Runtime(now=1000)
+    result = asyncio.run(supervise(message, [route], rt))
+    if result != {"ok": {"delivered": 1}}:
+        bad.append(f"supervise reports the number of deliveries created: {result}")
+    if [d["channel"] for d in rt.inserted] != ["dom"]:
+        bad.append(f"supervise inserts a delivery record per channel: {rt.inserted}")
+    if rt.emitted != [("alert.sent", "m1", message)]:
+        bad.append(f"supervise emits alert.sent with the message payload: {rt.emitted}")
+    rt2 = _Runtime()
+    empty = asyncio.run(supervise(message, [], rt2))
+    if empty != {"ok": {"delivered": 0}}:
+        bad.append(f"supervise with no matching route delivers nothing: {empty}")
+    if rt2.inserted != []:
+        bad.append(f"supervise with no matching route inserts nothing: {rt2.inserted}")
+    if rt2.emitted != [("alert.no_route", "m1", {"message_type": "order.placed"})]:
+        bad.append(f"supervise with no matching route emits an alert.no_route warning: {rt2.emitted}")
+    return bad
+
+
+def _law_execute_deliveries():
+    bad = []
+    d1 = {"message_id": "m1", "channel": "dom"}
+    d2 = {"message_id": "m2", "channel": "email"}
+    rt = _Runtime(deliver_ok=True, pending=[d1, d2])
+    result = asyncio.run(execute_deliveries(rt))
+    if result != {"ok": {"executed": 2}}:
+        bad.append(f"execute_deliveries reports how many pending records it processed: {result}")
+    if rt.marked != [("m1", "delivered"), ("m2", "delivered")]:
+        bad.append(f"a successful delivery is marked delivered: {rt.marked}")
+    if rt.emitted != [("alert.delivered", "m1", d1), ("alert.delivered", "m2", d2)]:
+        bad.append(f"a successful delivery emits alert.delivered: {rt.emitted}")
+    rt2 = _Runtime(deliver_ok=False, pending=[d1])
+    asyncio.run(execute_deliveries(rt2))
+    if rt2.marked != [("m1", "failed")]:
+        bad.append(f"a failed delivery is marked failed: {rt2.marked}")
+    if rt2.emitted != [("alert.delivery_failed", "m1", d1)]:
+        bad.append(f"a failed delivery emits alert.delivery_failed: {rt2.emitted}")
+    if asyncio.run(execute_deliveries(_Runtime(pending=[]))) != {"ok": {"executed": 0}}:
+        bad.append("execute_deliveries with nothing pending processes nothing")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
     "vocabularies": _law_vocabularies,
@@ -440,6 +583,11 @@ _LAWS = {
     "validate_channel_config": _law_validate_channel_config,
     "validate_escalation_rule": _law_validate_escalation_rule,
     "validate_alert_route": _law_validate_alert_route,
+    "message_type_matches": _law_message_type_matches,
+    "matching_routes": _law_matching_routes,
+    "delivery_plan": _law_delivery_plan,
+    "supervise": _law_supervise,
+    "execute_deliveries": _law_execute_deliveries,
 }
 
 

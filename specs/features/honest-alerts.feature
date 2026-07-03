@@ -35,6 +35,31 @@ Feature: honest-alerts — messages between actors, mailboxes as projections ove
     When validate_alert_route checks it
     Then a missing required field, an undeclared sender type, or an invalid channel config or escalation is a client fault
 
+  Scenario: message_type_matches matches a route pattern against a message type
+    Given a route's message_type pattern and a message type
+    When message_type_matches compares them
+    Then a pattern ending in .* matches any type in that namespace, otherwise the match is exact
+
+  Scenario: matching_routes selects and orders the routes that handle a message
+    Given the routing table and a message
+    When matching_routes filters and orders it
+    Then it returns the routes whose type and sender match, priority ascending, dropping the rest
+
+  Scenario: delivery_plan builds one pending delivery per channel
+    Given a message, the matched routes, and the current time
+    When delivery_plan is built
+    Then it returns a pending record per channel, with the resolved recipient and deliver_at of now plus the delay
+
+  Scenario: supervise routes a message into deliveries and events
+    Given a message, the routing table, and a runtime
+    When supervise runs
+    Then it writes a delivery per channel and emits alert.sent, or emits alert.no_route and delivers nothing
+
+  Scenario: execute_deliveries dispatches due deliveries and records the outcome
+    Given a runtime with due pending deliveries
+    When execute_deliveries runs
+    Then each delivery is dispatched and marked delivered or failed, emitting the matching event
+
   Scenario: recipient_matches resolves whether a message addresses an actor
     Given a message recipient and an actor
     When recipient_matches compares them

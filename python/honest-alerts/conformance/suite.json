@@ -1,6 +1,9 @@
 {
   "module": "honest-alerts",
-  "value_oracle_exempt": [],
+  "value_oracle_exempt": [
+    {"function": "supervise", "reason": "Section 6.1: an async boundary driven through an injected runtime (now/insert/emit); a JSON value case cannot carry the runtime. Proved by the supervise law in laws_ha.py against a stand-in runtime, both the matched and no-route branches."},
+    {"function": "execute_deliveries", "reason": "Section 6.2: an async boundary driven through an injected runtime (pending/deliver/mark/emit); a JSON value case cannot carry the runtime. Proved by the execute_deliveries law in laws_ha.py, both the delivered and failed branches."}
+  ],
   "cases": [
     {"id": "recipient-type-mismatch", "value_case": {"function": "recipient_matches", "args": [{"type": "dom", "id": null}, {"type": "user", "id": "u1"}], "expected": false}},
     {"id": "recipient-broadcast", "value_case": {"function": "recipient_matches", "args": [{"type": "dom", "id": null}, {"type": "dom", "id": "s1"}], "expected": true}},
@@ -27,6 +30,12 @@
     {"id": "escalation-valid", "value_case": {"function": "validate_escalation_rule", "args": [{"ttl_seconds": 86400, "escalate_to": {"type": "role", "id": "admin"}}], "expected": {"ok": {"ttl_seconds": 86400, "escalate_to": {"type": "role", "id": "admin"}}}}},
     {"id": "escalation-incomplete", "value_case": {"function": "validate_escalation_rule", "args": [{"ttl_seconds": 10}], "expected": {"err": {"code": "incomplete_escalation", "message": "an escalation rule is missing required fields: ['escalate_to']", "category": "client", "detail": ["escalate_to"]}}}},
     {"id": "alert-route-valid", "value_case": {"function": "validate_alert_route", "args": [{"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1}], "expected": {"ok": {"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1}}}},
-    {"id": "alert-route-invalid-sender", "value_case": {"function": "validate_alert_route", "args": [{"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1, "sender_type": "ghost"}], "expected": {"err": {"code": "invalid_actor_type", "message": "'ghost' is not a declared actor type", "category": "client", "detail": "ghost"}}}}
+    {"id": "alert-route-invalid-sender", "value_case": {"function": "validate_alert_route", "args": [{"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1, "sender_type": "ghost"}], "expected": {"err": {"code": "invalid_actor_type", "message": "'ghost' is not a declared actor type", "category": "client", "detail": "ghost"}}}},
+    {"id": "message-type-exact-match", "value_case": {"function": "message_type_matches", "args": ["order.placed", "order.placed"], "expected": true}},
+    {"id": "message-type-exact-no-prefix", "value_case": {"function": "message_type_matches", "args": ["order", "order.placed"], "expected": false}},
+    {"id": "message-type-wildcard", "value_case": {"function": "message_type_matches", "args": ["system.*", "system.maintenance_notice"], "expected": true}},
+    {"id": "message-type-wildcard-other-namespace", "value_case": {"function": "message_type_matches", "args": ["system.*", "auth.login"], "expected": false}},
+    {"id": "matching-routes-sorted", "value_case": {"function": "matching_routes", "args": [[{"route_id": "r_wild", "message_type": "system.*", "priority": 2}, {"route_id": "r_exact", "message_type": "system.maintenance_notice", "priority": 1}, {"route_id": "r_other", "message_type": "order.placed", "priority": 1}], {"message_type": "system.maintenance_notice", "sender": {"type": "framework"}}], "expected": [{"route_id": "r_exact", "message_type": "system.maintenance_notice", "priority": 1}, {"route_id": "r_wild", "message_type": "system.*", "priority": 2}]}},
+    {"id": "delivery-plan-records", "value_case": {"function": "delivery_plan", "args": [{"message_id": "m1", "recipient": {"type": "user", "id": "u1"}}, [{"route_id": "r1", "channels": [{"channel": "dom"}, {"channel": "email", "delay_seconds": 300, "recipient_spec": {"type": "role", "id": "admin"}}]}], 1000], "expected": [{"message_id": "m1", "route_id": "r1", "channel": "dom", "recipient": {"type": "user", "id": "u1"}, "deliver_at": 1000, "status": "pending"}, {"message_id": "m1", "route_id": "r1", "channel": "email", "recipient": {"type": "role", "id": "admin"}, "deliver_at": 1300, "status": "pending"}]}}
   ]
 }
