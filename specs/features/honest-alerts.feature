@@ -100,6 +100,11 @@ Feature: honest-alerts — messages between actors, mailboxes as projections ove
     When alert_event shapes it
     Then a cataloged event type returns the observe arguments under the alert aggregate, otherwise a server fault
 
+  Scenario: resolve_config merges a parsed config over the defaults
+    Given a parsed honest-alerts config
+    When resolve_config resolves it against the defaults
+    Then each provided value wins and every omitted section or key keeps its default
+
   Scenario: recipient_matches resolves whether a message addresses an actor
     Given a message recipient and an actor
     When recipient_matches compares them

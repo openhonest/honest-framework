@@ -11,6 +11,7 @@ from honest_alerts import (
     ACK_SCOPES,
     ACTOR_TYPES,
     ALERT_AGGREGATE,
+    ALERT_CONFIG_DEFAULTS,
     ALERT_EVENTS,
     CHANNELS,
     DOM_SURFACES,
@@ -22,6 +23,7 @@ from honest_alerts import (
     alert_event,
     alert_lifecycle,
     build_message,
+    resolve_config,
     handle_reply,
     render_surface,
     delivery_plan,
@@ -108,6 +110,8 @@ def _law_exports():
         "ALERT_AGGREGATE",
         "ALERT_EVENTS",
         "alert_event",
+        "ALERT_CONFIG_DEFAULTS",
+        "resolve_config",
     ]
     if sorted(getattr(honest_alerts, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_alerts, '__all__', None)}")
@@ -905,9 +909,41 @@ def _law_alert_event():
     return bad
 
 
+_DEFAULT_CONFIG = {
+    "routing": {"table": "alert_routes", "db_id": "primary"},
+    "delivery": {"table": "alert_deliveries", "poll_interval_seconds": 5},
+    "channels": {"dom": {"enabled": True}},
+    "dom": {"sse_endpoint": "/api/alerts/stream", "reply_endpoint": "/api/alerts/{message_id}/reply"},
+    "send_and_wait": {"default_ttl_seconds": 3600},
+}
+
+
+def _law_config_defaults():
+    bad = []
+    if ALERT_CONFIG_DEFAULTS != _DEFAULT_CONFIG:
+        bad.append(f"ALERT_CONFIG_DEFAULTS is the section 11 config defaults: {ALERT_CONFIG_DEFAULTS}")
+    return bad
+
+
+def _law_resolve_config():
+    bad = []
+    if resolve_config({}) != _DEFAULT_CONFIG:
+        bad.append(f"resolve_config of an empty config returns the full defaults: {resolve_config({})}")
+    resolved = resolve_config({"delivery": {"poll_interval_seconds": 10}, "channels": {"email": {"enabled": True, "smtp_config_id": "x"}}})
+    if resolved["delivery"] != {"table": "alert_deliveries", "poll_interval_seconds": 10}:
+        bad.append(f"an override wins within a section while its other keys keep their defaults: {resolved['delivery']}")
+    if resolved["channels"] != {"dom": {"enabled": True}, "email": {"enabled": True, "smtp_config_id": "x"}}:
+        bad.append(f"a configured channel merges over the default channels: {resolved['channels']}")
+    if resolved["routing"] != {"table": "alert_routes", "db_id": "primary"}:
+        bad.append(f"a section absent from the raw config keeps its defaults: {resolved['routing']}")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
     "vocabularies": _law_vocabularies,
+    "config_defaults": _law_config_defaults,
+    "resolve_config": _law_resolve_config,
     "event_catalog": _law_event_catalog,
     "alert_event": _law_alert_event,
     "lifecycle_machine": _law_lifecycle_machine,

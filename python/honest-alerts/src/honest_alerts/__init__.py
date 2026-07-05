@@ -10,6 +10,7 @@ send/send_and_wait) build on this pure core.
 """
 
 from honest_alerts.actors import ACTOR_TYPES, validate_actor_ref
+from honest_alerts.config import ALERT_CONFIG_DEFAULTS, resolve_config
 from honest_alerts.dispatch import build_message, send, send_and_wait, send_message
 from honest_alerts.events import ALERT_AGGREGATE, ALERT_EVENTS, alert_event
 from honest_alerts.mailbox import ACK_SCOPES, TERMINATION_CONDITIONS, is_terminated, mailbox, recipient_matches
@@ -54,4 +55,6 @@ __all__ = [
     "ALERT_AGGREGATE",
     "ALERT_EVENTS",
     "alert_event",
+    "ALERT_CONFIG_DEFAULTS",
+    "resolve_config",
 ]
