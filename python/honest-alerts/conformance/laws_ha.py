@@ -10,6 +10,8 @@ behaviour. Pure assertions: data in, data out. Time is epoch seconds.
 from honest_alerts import (
     ACK_SCOPES,
     ACTOR_TYPES,
+    ALERT_AGGREGATE,
+    ALERT_EVENTS,
     CHANNELS,
     DOM_SURFACES,
     LIFECYCLE_EVENTS,
@@ -17,6 +19,7 @@ from honest_alerts import (
     SURFACE_DEFAULT_TERMINATION,
     TERMINATION_CONDITIONS,
     advance,
+    alert_event,
     alert_lifecycle,
     build_message,
     handle_reply,
@@ -102,6 +105,9 @@ def _law_exports():
         "SURFACE_DEFAULT_TERMINATION",
         "render_surface",
         "handle_reply",
+        "ALERT_AGGREGATE",
+        "ALERT_EVENTS",
+        "alert_event",
     ]
     if sorted(getattr(honest_alerts, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_alerts, '__all__', None)}")
@@ -860,9 +866,50 @@ def _law_handle_reply():
     return bad
 
 
+def _law_event_catalog():
+    bad = []
+    if ALERT_AGGREGATE != "alert":
+        bad.append(f"ALERT_AGGREGATE is the observe aggregate type for alert events: {ALERT_AGGREGATE}")
+    if ALERT_EVENTS != {
+        "alert.sent": "Message created and queued for delivery",
+        "alert.no_route": "No route matched the message type; the message was not delivered (a warning)",
+        "alert.delivered": "Successfully delivered via a channel",
+        "alert.delivery_failed": "Channel delivery failed",
+        "alert.read": "DOM actor rendered the message (impression)",
+        "alert.replied": "Recipient chose a reply option",
+        "alert.acknowledged": "Message acknowledged (scope met)",
+        "alert.actioned": "Message actioned (non-acknowledge response)",
+        "alert.escalated": "Escalated due to TTL with no acknowledgment",
+        "alert.expired": "TTL reached with no acknowledgment",
+        "alert.failed": "Delivery failed across all channels",
+    }:
+        bad.append(f"ALERT_EVENTS is the complete section 10 catalog of event type and when: {ALERT_EVENTS}")
+    # every honest-observe event the lifecycle transitions produce is cataloged
+    if not set(LIFECYCLE_EVENTS.values()) <= set(ALERT_EVENTS):
+        bad.append(f"every lifecycle observe event is cataloged: {set(LIFECYCLE_EVENTS.values()) - set(ALERT_EVENTS)}")
+    # every event the module's boundaries emit is cataloged
+    emitted = {"alert.sent", "alert.no_route", "alert.delivered", "alert.delivery_failed", "alert.replied", "alert.acknowledged"}
+    if not emitted <= set(ALERT_EVENTS):
+        bad.append(f"every event supervise, execute_deliveries, and handle_reply emit is cataloged: {emitted - set(ALERT_EVENTS)}")
+    return bad
+
+
+def _law_alert_event():
+    bad = []
+    shaped = alert_event("alert.sent", "m1", {"total": 5})
+    if shaped != {"ok": {"event_type": "alert.sent", "aggregate_type": "alert", "aggregate_id": "m1", "payload": {"total": 5}}}:
+        bad.append(f"alert_event shapes a cataloged event for observe with the alert aggregate: {shaped}")
+    unknown = alert_event("alert.teleported", "m1", {})
+    if unknown != {"err": {"code": "unknown_alert_event", "message": "'alert.teleported' is not a declared alert event", "category": "server", "detail": "alert.teleported"}}:
+        bad.append(f"an uncataloged event type is a full unknown_alert_event fault: {unknown}")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
     "vocabularies": _law_vocabularies,
+    "event_catalog": _law_event_catalog,
+    "alert_event": _law_alert_event,
     "lifecycle_machine": _law_lifecycle_machine,
     "lifecycle_events": _law_lifecycle_events,
     "advance": _law_advance,

@@ -95,6 +95,11 @@ Feature: honest-alerts — messages between actors, mailboxes as projections ove
     When handle_reply runs
     Then it emits alert.replied then alert.acknowledged and returns the empty fragment that removes the surface
 
+  Scenario: alert_event shapes a cataloged event for honest-observe
+    Given an event type, a message id, and a payload
+    When alert_event shapes it
+    Then a cataloged event type returns the observe arguments under the alert aggregate, otherwise a server fault
+
   Scenario: recipient_matches resolves whether a message addresses an actor
     Given a message recipient and an actor
     When recipient_matches compares them
