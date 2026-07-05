@@ -23,3 +23,25 @@ export function readShortcut(shortcut) {
   }
   return READERS[shortcut];
 }
+
+// Write shortcuts (honest-DOM spec §2.2): the mirror of the readers. A shortcut name resolves to a
+// pure writer that sets one property of the element it is given, the only side effect apply() performs.
+const WRITERS = {
+  value: (el, v) => (el.value = v),
+  checked: (el, v) => (el.checked = v),
+  text: (el, v) => (el.textContent = v),
+};
+
+const PARAMETRIC_WRITERS = {
+  "attr:": (name) => (el, v) => el.setAttribute(name, v),
+  "data:": (name) => (el, v) => (el.dataset[name] = v),
+};
+
+export function writeShortcut(shortcut) {
+  const prefix = shortcut.slice(0, 5);
+  const build = PARAMETRIC_WRITERS[prefix];
+  if (build !== undefined) {
+    return build(shortcut.slice(5));
+  }
+  return WRITERS[shortcut];
+}
