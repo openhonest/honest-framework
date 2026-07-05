@@ -17,6 +17,7 @@ from honest_alerts import (
     TERMINATION_CONDITIONS,
     advance,
     alert_lifecycle,
+    build_message,
     delivery_plan,
     execute_deliveries,
     is_terminated,
@@ -24,6 +25,9 @@ from honest_alerts import (
     matching_routes,
     message_type_matches,
     recipient_matches,
+    send,
+    send_and_wait,
+    send_message,
     supervise,
     validate_actor_ref,
     validate_alert_route,
@@ -88,6 +92,10 @@ def _law_exports():
         "alert_lifecycle",
         "LIFECYCLE_EVENTS",
         "advance",
+        "build_message",
+        "send_message",
+        "send",
+        "send_and_wait",
     ]
     if sorted(getattr(honest_alerts, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_alerts, '__all__', None)}")
@@ -449,16 +457,32 @@ class _Runtime:
     supervisor did through it. Conformance code is not linted, so a class here is fine; the supervisor
     source stays classless, and its I/O reaches the world only through this injected object."""
 
-    def __init__(self, now=1000, deliver_ok=True, pending=None):
+    def __init__(self, now=1000, deliver_ok=True, pending=None, routes=None, reply=None):
         self._now = now
         self._deliver_ok = deliver_ok
         self._pending = pending if pending is not None else []
+        self._routes = routes if routes is not None else []
+        self._reply = reply
         self.inserted = []
         self.emitted = []
         self.marked = []
+        self.waited = None
 
     def now(self):
         return self._now
+
+    def message_id(self):
+        return "msg-1"
+
+    def resume_token(self):
+        return "tok-1"
+
+    async def routes(self):
+        return self._routes
+
+    async def wait_for_reply(self, message_id, timeout):
+        self.waited = (message_id, timeout)
+        return self._reply
 
     async def insert(self, delivery):
         self.inserted.append(delivery)
@@ -644,6 +668,128 @@ def _law_advance():
     return bad
 
 
+def _law_build_message():
+    bad = []
+    full = build_message(
+        "order.placed",
+        {"type": "user", "id": "u1"},
+        {"total": 5},
+        {
+            "sender": {"type": "auth"},
+            "message_version": "2",
+            "subject_label_id": "alerts.order",
+            "ack_scope": "session",
+            "reply_required": True,
+            "termination": {"condition": "ttl", "ttl_seconds": 10},
+            "channel": "email",
+            "body_label_id": "b",
+            "dom_surface": "toast",
+            "dom_target": "#x",
+            "reply_options": [{"option_id": "ok", "label_id": "l"}],
+            "resume_token": "t",
+        },
+        {"actor": {"type": "role", "id": "mgr"}},
+        "m1",
+        1000,
+    )
+    if full != {
+        "message_id": "m1",
+        "message_type": "order.placed",
+        "message_version": "2",
+        "sender": {"type": "auth"},
+        "recipient": {"type": "user", "id": "u1"},
+        "subject_label_id": "alerts.order",
+        "payload": {"total": 5},
+        "reply_required": True,
+        "termination": {"condition": "ttl", "ttl_seconds": 10},
+        "ack_scope": "session",
+        "sent_at": 1000,
+        "channel": "email",
+        "body_label_id": "b",
+        "dom_surface": "toast",
+        "dom_target": "#x",
+        "reply_options": [{"option_id": "ok", "label_id": "l"}],
+        "resume_token": "t",
+    }:
+        bad.append(f"build_message assembles the full envelope, opts sender winning and optional fields flowing through: {full}")
+    minimal = build_message("sys.notice", {"type": "dom", "id": None}, {}, {"termination": {"condition": "never"}}, {"actor": {"type": "role", "id": "mgr"}}, "m2", 2000)
+    if minimal != {
+        "message_id": "m2",
+        "message_type": "sys.notice",
+        "message_version": "1",
+        "sender": {"type": "role", "id": "mgr"},
+        "recipient": {"type": "dom", "id": None},
+        "subject_label_id": "sys.notice",
+        "payload": {},
+        "reply_required": False,
+        "termination": {"condition": "never"},
+        "ack_scope": "actor",
+        "sent_at": 2000,
+    }:
+        bad.append(f"build_message applies defaults and takes the sender from context.actor when opts has none: {minimal}")
+    framework = build_message("x", {"type": "user", "id": "u1"}, {}, {"termination": {"condition": "never"}}, {}, "m3", 3000)
+    if framework["sender"] != {"type": "framework"}:
+        bad.append(f"build_message defaults the sender to the framework actor when neither opts nor context supply one: {framework['sender']}")
+    return bad
+
+
+def _law_send_message():
+    bad = []
+    route = {"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1}
+    rt = _Runtime(routes=[route])
+    result = asyncio.run(send_message(_valid_message(), rt))
+    if result != {"ok": {"message_id": "m1", "delivered": 1}}:
+        bad.append(f"send_message validates, supervises, and reports the message id and delivery count: {result}")
+    if [e[0] for e in rt.emitted] != ["alert.sent"]:
+        bad.append(f"send_message routes a valid message (alert.sent emitted): {rt.emitted}")
+    rt2 = _Runtime(routes=[route])
+    err_result = asyncio.run(send_message(_valid_message(ack_scope="everywhere"), rt2))
+    if err_result.get("err", {}).get("code") != "invalid_ack_scope":
+        bad.append(f"send_message returns the validation fault for an invalid message: {err_result}")
+    if rt2.emitted != []:
+        bad.append(f"an invalid message is not dispatched: {rt2.emitted}")
+    return bad
+
+
+def _law_send():
+    bad = []
+    route = {"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1}
+    rt = _Runtime(routes=[route])
+    opts = {"termination": {"condition": "ttl", "ttl_seconds": 10}, "ack_scope": "session"}
+    result = asyncio.run(send("order.placed", {"type": "user", "id": "u1"}, {"total": 5}, opts, {}, rt))
+    if result != {"ok": {"message_id": "msg-1", "delivered": 1}}:
+        bad.append(f"send builds a message with the runtime's id and time, then dispatches it: {result}")
+    if [e[0] for e in rt.emitted] != ["alert.sent"]:
+        bad.append(f"send emits alert.sent for a routed message: {rt.emitted}")
+    return bad
+
+
+def _law_send_and_wait():
+    bad = []
+    route = {"route_id": "r1", "message_type": "approval.requested", "channels": [{"channel": "dom"}], "priority": 1}
+    opts = {"termination": {"condition": "ttl", "ttl_seconds": 86400}, "ack_scope": "actor", "reply_options": [{"option_id": "approve", "label_id": "l"}]}
+    reply = {"option_id": "approve", "actor_id": "u2", "reply_payload": {"note": "ok"}}
+    rt = _Runtime(routes=[route], reply=reply)
+    result = asyncio.run(send_and_wait("approval.requested", {"type": "role", "id": "manager"}, {"request": 1}, opts, {}, rt))
+    if result != {"ok": {"status": "replied", "option_id": "approve", "actor_id": "u2", "payload": {"note": "ok"}}}:
+        bad.append(f"send_and_wait returns the reply when one arrives: {result}")
+    sent_payload = rt.emitted[0][2]
+    if sent_payload.get("reply_required") is not True or sent_payload.get("resume_token") != "tok-1":
+        bad.append(f"send_and_wait marks the message reply_required with the runtime's resume token: {sent_payload}")
+    if rt.waited != ("msg-1", 86400):
+        bad.append(f"send_and_wait waits on the message id with the termination's ttl_seconds as the timeout: {rt.waited}")
+    rt2 = _Runtime(routes=[route], reply=None)
+    timeout = asyncio.run(send_and_wait("approval.requested", {"type": "role", "id": "manager"}, {"request": 1}, opts, {}, rt2))
+    if timeout != {"ok": {"status": "timeout"}}:
+        bad.append(f"send_and_wait returns timeout when no reply arrives: {timeout}")
+    rt3 = _Runtime(routes=[route], reply=reply)
+    bad_opts = {"termination": {"condition": "ttl", "ttl_seconds": 86400}, "ack_scope": "nope"}
+    err_result = asyncio.run(send_and_wait("approval.requested", {"type": "role", "id": "manager"}, {"r": 1}, bad_opts, {}, rt3))
+    if err_result.get("err", {}).get("code") != "invalid_ack_scope":
+        bad.append(f"send_and_wait returns the validation fault for an invalid message: {err_result}")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
     "vocabularies": _law_vocabularies,
@@ -668,6 +814,10 @@ _LAWS = {
     "delivery_plan": _law_delivery_plan,
     "supervise": _law_supervise,
     "execute_deliveries": _law_execute_deliveries,
+    "build_message": _law_build_message,
+    "send_message": _law_send_message,
+    "send": _law_send,
+    "send_and_wait": _law_send_and_wait,
 }
 
 

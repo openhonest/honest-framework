@@ -65,6 +65,26 @@ Feature: honest-alerts — messages between actors, mailboxes as projections ove
     When advance applies it to the lifecycle state machine
     Then a valid transition returns the next state and the honest-observe event it produces, otherwise a fault
 
+  Scenario: build_message assembles the envelope from the send arguments
+    Given the send arguments, a request context, and an injected id and time
+    When build_message assembles the envelope
+    Then it fills the message from opts and defaults, taking the sender from opts, then the context actor, then the framework
+
+  Scenario: send_message validates and routes a built message
+    Given a built message and a runtime
+    When send_message runs
+    Then a valid message is routed through the supervisor and its id and delivery count reported, otherwise the validation fault is returned
+
+  Scenario: send builds and dispatches a message fire and forget
+    Given the send arguments and a runtime
+    When send runs
+    Then it builds the envelope with the runtime's id and time and dispatches it
+
+  Scenario: send_and_wait dispatches and awaits a reply
+    Given the send arguments and a runtime
+    When send_and_wait runs
+    Then the message is marked reply_required with a resume token, and it returns the reply, a timeout, or the validation fault
+
   Scenario: recipient_matches resolves whether a message addresses an actor
     Given a message recipient and an actor
     When recipient_matches compares them
