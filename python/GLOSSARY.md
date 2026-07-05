@@ -84,6 +84,23 @@ Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1),
 | **Adversarial neighbours** | For every Set member, the near-miss inputs that must be rejected (section 3.5): edit-distance-1, Unicode confusables, control characters, length extensions, encoding variants. `adversarial_neighbors(value)`. A neighbour that is accepted is a recognizer bug. |
 | **Predicate classification** | Reading a predicate's AST to pick a generation strategy (numeric → Fibonacci, length-bounded → enumerate lengths, character-class, external-lookup → supplied-values). |
 
+## honest-alerts (the message-passing layer, Tier 3)
+
+| Term | Definition |
+|---|---|
+| **honest-alerts** | The actor-model message-passing layer: messages pass between actors, no actor shares state with another. Pure decisions in the middle; delivery, emit, and the reply wait reach the world only through an injected runtime. |
+| **Message** | An immutable, typed record (section 3.1). Every field that affects delivery, persistence, or lifecycle is declared at send time; it is the payload of an `alert.sent` event. |
+| **ActorRef** | An actor identity `{type, id?, tenant_id?}` (section 2). A null `id` broadcasts to every actor of that type. |
+| **Mailbox** | Not a data structure — a projection over honest-observe's event log answering "which messages addressed to me have not yet terminated?" (`mailbox`, section 4). Pure fold over the events. |
+| **Termination** | How a message ends: one of `ttl`, `acknowledged`, `event`, `never` (section 3.3), selected through a dispatch table, never a branch. |
+| **Routing table / AlertRoute** | The honest-persist records that declare how each message type is delivered (section 5). Table-driven: there is no listener registry. |
+| **Supervisor** | The pure decision that matches a message to routes and plans one delivery per channel (`matching_routes`, `delivery_plan`); `supervise` and `execute_deliveries` are the injected-runtime boundaries that write and emit (section 6). |
+| **alert_lifecycle** | The message lifecycle as honest-type's pure state machine (section 7); `advance` applies one transition and names the honest-observe event it produces. |
+| **send / send_and_wait** | The send API (section 8). `send` is fire-and-forget; `send_and_wait` suspends on native async until a reply arrives or the wait times out, holding no thread. |
+| **DOM surface** | A message rendered as a server-rendered HTMX fragment declared by its `dom_surface` (banner, toast, modal, badge, inline; section 9). `render_surface` is pure; the surface selects the renderer through a table. |
+| **Injected runtime** | The boundary object carrying the clock, ids, resume token, routing-table read, delivery-queue writes, emit, and reply wait. Injecting it keeps honest-alerts import-free of honest-persist and honest-observe, and lets every boundary be proved against a stand-in. |
+| **ALERT_EVENTS** | The complete catalog of `alert.*` events and when each fires (section 10), all flowing through honest-observe under the `alert` aggregate. |
+
 ## Tooling
 
 | Term | Definition |
