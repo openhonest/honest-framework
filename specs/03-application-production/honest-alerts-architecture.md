@@ -628,6 +628,7 @@ All honest-alerts events flow through honest-observe. The complete event set:
 | Event | When |
 |---|---|
 | `alert.sent` | Message created and queued for delivery |
+| `alert.no_route` | No route matched the message type; the message was not delivered (a warning) |
 | `alert.delivered` | Successfully delivered via a channel |
 | `alert.delivery_failed` | Channel delivery failed |
 | `alert.read` | DOM actor rendered the message (impression) |
