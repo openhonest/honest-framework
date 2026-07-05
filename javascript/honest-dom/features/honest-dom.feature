@@ -13,3 +13,13 @@ Feature: honest-DOM (domx) — the client-side DATAOS primitives
     Given a write shortcut name
     When writeShortcut resolves it
     Then it returns a pure writer that sets the matching property of an element
+
+  Scenario: collect reads DOM state through a manifest and an injected query
+    Given a manifest and a query that returns the matching elements
+    When collect reads the state
+    Then each key maps to null for no match, the scalar for one, or the array for many, using the read shortcut or a custom extractor
+
+  Scenario: apply writes a state object back through a manifest and an injected query
+    Given a manifest, a state object, and a query that returns the matching elements
+    When apply writes the state
+    Then it writes each present key with a write shortcut to every matching element, skipping the rest

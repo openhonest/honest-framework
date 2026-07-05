@@ -15,13 +15,17 @@ const PARAMETRIC = {
   "data:": (name) => (el) => el.dataset[name],
 };
 
+// Total over its input: a known shortcut name resolves to its extractor; anything else (a custom
+// extractor function, an unknown name) resolves to undefined, so collect() can fall through to a
+// caller-supplied extractor without a runtime type check. String() keeps the prefix read safe for a
+// non-string input.
 export function readShortcut(shortcut) {
-  const prefix = shortcut.slice(0, 5);
-  const build = PARAMETRIC[prefix];
+  const key = String(shortcut);
+  const build = PARAMETRIC[key.slice(0, 5)];
   if (build !== undefined) {
-    return build(shortcut.slice(5));
+    return build(key.slice(5));
   }
-  return READERS[shortcut];
+  return READERS[key];
 }
 
 // Write shortcuts (honest-DOM spec §2.2): the mirror of the readers. A shortcut name resolves to a
@@ -38,10 +42,10 @@ const PARAMETRIC_WRITERS = {
 };
 
 export function writeShortcut(shortcut) {
-  const prefix = shortcut.slice(0, 5);
-  const build = PARAMETRIC_WRITERS[prefix];
+  const key = String(shortcut);
+  const build = PARAMETRIC_WRITERS[key.slice(0, 5)];
   if (build !== undefined) {
-    return build(shortcut.slice(5));
+    return build(key.slice(5));
   }
-  return WRITERS[shortcut];
+  return WRITERS[key];
 }
