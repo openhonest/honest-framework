@@ -44,3 +44,13 @@ Feature: honest-alerts (Python) — the termination and acknowledgment dispatch 
     Given a terminating event and an optional filter
     When _event_filter_matches checks them
     Then a null filter matches unconditionally, otherwise every filter key must equal the event payload's value
+
+  Scenario: _render_card renders a card surface
+    Given a message with a card dom_surface
+    When _render_card renders it
+    Then it returns a surface-classed div with the subject, an optional body, and a reply button per option
+
+  Scenario: _render_badge renders a badge surface
+    Given a message with the badge dom_surface
+    When _render_badge renders it
+    Then it returns a badge element carrying the message id and subject with a count of one

@@ -20,6 +20,7 @@ from honest_type import ok
 
 from honest_alerts.message import validate_message
 from honest_alerts.supervisor import supervise
+from honest_alerts.surfaces import SURFACE_DEFAULT_TERMINATION
 
 # The optional envelope fields carried straight through from opts when present (section 3.1).
 _OPTIONAL_FIELDS = ("channel", "body_label_id", "dom_surface", "dom_target", "reply_options", "resume_token")
@@ -29,7 +30,8 @@ def build_message(message_type, recipient, payload, opts, context, message_id, s
     """Assemble a section 3.1 message envelope from the send arguments (section 8). Pure — the id and
     send time are injected, not read. The sender is the one named in opts, else the request context's
     actor, else the framework itself; message_version, subject_label_id, reply_required, and ack_scope
-    take spec defaults; termination and the optional surface fields come from opts."""
+    take spec defaults; termination comes from opts, or the dom_surface's default termination (section 9)
+    when opts omits it; the optional surface fields come from opts."""
     message = {
         "message_id": message_id,
         "message_type": message_type,
@@ -39,7 +41,7 @@ def build_message(message_type, recipient, payload, opts, context, message_id, s
         "subject_label_id": opts.get("subject_label_id", message_type),
         "payload": payload,
         "reply_required": opts.get("reply_required", False),
-        "termination": opts.get("termination", {}),
+        "termination": opts.get("termination") or SURFACE_DEFAULT_TERMINATION.get(opts.get("dom_surface"), {}),
         "ack_scope": opts.get("ack_scope", "actor"),
         "sent_at": sent_at,
     }

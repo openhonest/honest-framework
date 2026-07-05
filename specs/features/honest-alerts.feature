@@ -85,6 +85,16 @@ Feature: honest-alerts — messages between actors, mailboxes as projections ove
     When send_and_wait runs
     Then the message is marked reply_required with a resume token, and it returns the reply, a timeout, or the validation fault
 
+  Scenario: render_surface renders a message as its declared DOM surface
+    Given a message with a declared dom_surface
+    When render_surface renders it
+    Then it returns the server-rendered HTMX fragment for that surface, with the subject, any body, and a reply button per option
+
+  Scenario: handle_reply records the reply and returns the empty fragment
+    Given a reply to a message and a runtime
+    When handle_reply runs
+    Then it emits alert.replied then alert.acknowledged and returns the empty fragment that removes the surface
+
   Scenario: recipient_matches resolves whether a message addresses an actor
     Given a message recipient and an actor
     When recipient_matches compares them

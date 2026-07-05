@@ -14,10 +14,13 @@ from honest_alerts import (
     DOM_SURFACES,
     LIFECYCLE_EVENTS,
     REPLY_STYLES,
+    SURFACE_DEFAULT_TERMINATION,
     TERMINATION_CONDITIONS,
     advance,
     alert_lifecycle,
     build_message,
+    handle_reply,
+    render_surface,
     delivery_plan,
     execute_deliveries,
     is_terminated,
@@ -96,6 +99,9 @@ def _law_exports():
         "send_message",
         "send",
         "send_and_wait",
+        "SURFACE_DEFAULT_TERMINATION",
+        "render_surface",
+        "handle_reply",
     ]
     if sorted(getattr(honest_alerts, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_alerts, '__all__', None)}")
@@ -730,6 +736,11 @@ def _law_build_message():
     framework = build_message("x", {"type": "user", "id": "u1"}, {}, {"termination": {"condition": "never"}}, {}, "m3", 3000)
     if framework["sender"] != {"type": "framework"}:
         bad.append(f"build_message defaults the sender to the framework actor when neither opts nor context supply one: {framework['sender']}")
+    surfaced = build_message("x", {"type": "user", "id": "u1"}, {}, {"dom_surface": "toast"}, {}, "m4", 4000)
+    if surfaced["termination"] != {"condition": "ttl", "ttl_seconds": 5}:
+        bad.append(f"build_message applies the dom_surface's default termination when opts omits one: {surfaced['termination']}")
+    if surfaced["dom_surface"] != "toast":
+        bad.append(f"build_message carries the dom_surface through: {surfaced.get('dom_surface')}")
     return bad
 
 
@@ -790,6 +801,65 @@ def _law_send_and_wait():
     return bad
 
 
+def _law_surface_defaults():
+    bad = []
+    if SURFACE_DEFAULT_TERMINATION != {
+        "banner": {"condition": "acknowledged"},
+        "toast": {"condition": "ttl", "ttl_seconds": 5},
+        "modal": {"condition": "acknowledged"},
+        "badge": {"condition": "acknowledged"},
+        "inline": {"condition": "acknowledged"},
+    }:
+        bad.append(f"SURFACE_DEFAULT_TERMINATION maps each surface to its default termination: {SURFACE_DEFAULT_TERMINATION}")
+    if set(SURFACE_DEFAULT_TERMINATION) != DOM_SURFACES:
+        bad.append(f"SURFACE_DEFAULT_TERMINATION covers exactly the DOM surfaces: {set(SURFACE_DEFAULT_TERMINATION)}")
+    return bad
+
+
+def _law_render_surface():
+    bad = []
+    banner = {"message_id": "m1", "dom_surface": "banner", "subject_label_id": "alerts.subj", "reply_options": [{"option_id": "approve", "label_id": "alerts.approve"}]}
+    if render_surface(banner) != (
+        '<div class="alert alert-banner" data-message-id="m1" data-surface="banner">'
+        '<span class="alert-subject" data-label="alerts.subj"></span>'
+        '<button class="alert-action" hx-post="/api/alerts/m1/reply" name="option_id" value="approve" data-label="alerts.approve"></button>'
+        "</div>"
+    ):
+        bad.append(f"render_surface renders a card with a reply button for a banner: {render_surface(banner)}")
+    modal = {"message_id": "m2", "dom_surface": "modal", "subject_label_id": "alerts.s", "body_label_id": "alerts.b"}
+    if render_surface(modal) != (
+        '<div class="alert alert-modal" data-message-id="m2" data-surface="modal">'
+        '<span class="alert-subject" data-label="alerts.s"></span>'
+        '<span class="alert-body" data-label="alerts.b"></span>'
+        "</div>"
+    ):
+        bad.append(f"render_surface renders the body span and no buttons for a modal without reply_options: {render_surface(modal)}")
+    badge = {"message_id": "m3", "dom_surface": "badge", "subject_label_id": "alerts.count"}
+    if render_surface(badge) != '<span class="alert-badge" data-message-id="m3" data-surface="badge" data-label="alerts.count">1</span>':
+        bad.append(f"render_surface renders a badge count: {render_surface(badge)}")
+    toast = {"message_id": "m4", "dom_surface": "toast", "subject_label_id": "alerts.t"}
+    if render_surface(toast) != '<div class="alert alert-toast" data-message-id="m4" data-surface="toast"><span class="alert-subject" data-label="alerts.t"></span></div>':
+        bad.append(f"render_surface renders a toast as a card: {render_surface(toast)}")
+    inline = {"message_id": "m5", "dom_surface": "inline", "subject_label_id": "alerts.i"}
+    if render_surface(inline) != '<div class="alert alert-inline" data-message-id="m5" data-surface="inline"><span class="alert-subject" data-label="alerts.i"></span></div>':
+        bad.append(f"render_surface renders an inline surface as a card: {render_surface(inline)}")
+    return bad
+
+
+def _law_handle_reply():
+    bad = []
+    rt = _Runtime()
+    result = asyncio.run(handle_reply("m1", "approve", {"note": "ok"}, "u2", rt))
+    if result != {"ok": {"fragment": ""}}:
+        bad.append(f"handle_reply returns an empty fragment to remove the surface: {result}")
+    if rt.emitted != [
+        ("alert.replied", "m1", {"option_id": "approve", "actor_id": "u2", "reply_payload": {"note": "ok"}}),
+        ("alert.acknowledged", "m1", {"message_id": "m1", "actor_id": "u2"}),
+    ]:
+        bad.append(f"handle_reply emits alert.replied then alert.acknowledged: {rt.emitted}")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
     "vocabularies": _law_vocabularies,
@@ -818,6 +888,9 @@ _LAWS = {
     "send_message": _law_send_message,
     "send": _law_send,
     "send_and_wait": _law_send_and_wait,
+    "surface_defaults": _law_surface_defaults,
+    "render_surface": _law_render_surface,
+    "handle_reply": _law_handle_reply,
 }
 
 

@@ -16,6 +16,7 @@ from honest_alerts.message import CHANNELS, DOM_SURFACES, REPLY_STYLES, validate
 from honest_alerts.routing import validate_alert_route, validate_channel_config, validate_escalation_rule
 from honest_alerts.lifecycle import LIFECYCLE_EVENTS, advance, alert_lifecycle
 from honest_alerts.supervisor import delivery_plan, execute_deliveries, matching_routes, message_type_matches, supervise
+from honest_alerts.surfaces import SURFACE_DEFAULT_TERMINATION, handle_reply, render_surface
 
 __all__ = [
     "mailbox",
@@ -46,4 +47,7 @@ __all__ = [
     "send_message",
     "send",
     "send_and_wait",
+    "SURFACE_DEFAULT_TERMINATION",
+    "render_surface",
+    "handle_reply",
 ]
