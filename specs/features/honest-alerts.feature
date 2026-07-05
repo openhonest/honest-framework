@@ -60,6 +60,11 @@ Feature: honest-alerts — messages between actors, mailboxes as projections ove
     When execute_deliveries runs
     Then each delivery is dispatched and marked delivered or failed, emitting the matching event
 
+  Scenario: advance applies a lifecycle event and names the event it produces
+    Given a message's current lifecycle state and an event
+    When advance applies it to the lifecycle state machine
+    Then a valid transition returns the next state and the honest-observe event it produces, otherwise a fault
+
   Scenario: recipient_matches resolves whether a message addresses an actor
     Given a message recipient and an actor
     When recipient_matches compares them

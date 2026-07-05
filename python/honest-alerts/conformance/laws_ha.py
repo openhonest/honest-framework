@@ -12,8 +12,11 @@ from honest_alerts import (
     ACTOR_TYPES,
     CHANNELS,
     DOM_SURFACES,
+    LIFECYCLE_EVENTS,
     REPLY_STYLES,
     TERMINATION_CONDITIONS,
+    advance,
+    alert_lifecycle,
     delivery_plan,
     execute_deliveries,
     is_terminated,
@@ -82,6 +85,9 @@ def _law_exports():
         "delivery_plan",
         "supervise",
         "execute_deliveries",
+        "alert_lifecycle",
+        "LIFECYCLE_EVENTS",
+        "advance",
     ]
     if sorted(getattr(honest_alerts, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_alerts, '__all__', None)}")
@@ -567,9 +573,83 @@ def _law_execute_deliveries():
     return bad
 
 
+def _law_lifecycle_machine():
+    bad = []
+    if alert_lifecycle["states"] != frozenset(
+        {"created", "delivered", "read", "acknowledged", "actioned", "escalated", "expired", "failed"}
+    ):
+        bad.append(f"alert_lifecycle has the eight declared states: {alert_lifecycle['states']}")
+    if alert_lifecycle["events"] != frozenset({"deliver", "read", "acknowledge", "action", "escalate", "expire", "fail"}):
+        bad.append(f"alert_lifecycle has the seven declared events: {alert_lifecycle['events']}")
+    if alert_lifecycle["initial"] != "created":
+        bad.append(f"alert_lifecycle starts at created: {alert_lifecycle['initial']}")
+    if sorted(alert_lifecycle["terminal"]) != ["acknowledged", "actioned", "expired", "failed"]:
+        bad.append(f"alert_lifecycle terminal states are the four end states: {alert_lifecycle['terminal']}")
+    expected = {
+        ("created", "deliver"): "delivered",
+        ("created", "fail"): "failed",
+        ("created", "expire"): "expired",
+        ("delivered", "read"): "read",
+        ("delivered", "acknowledge"): "acknowledged",
+        ("delivered", "action"): "actioned",
+        ("delivered", "escalate"): "escalated",
+        ("delivered", "expire"): "expired",
+        ("read", "acknowledge"): "acknowledged",
+        ("read", "action"): "actioned",
+        ("read", "escalate"): "escalated",
+        ("read", "expire"): "expired",
+        ("escalated", "acknowledge"): "acknowledged",
+        ("escalated", "action"): "actioned",
+        ("escalated", "expire"): "expired",
+    }
+    if alert_lifecycle["transitions"] != expected:
+        bad.append(f"alert_lifecycle transition table drifted from section 7: {alert_lifecycle['transitions']}")
+    return bad
+
+
+def _law_lifecycle_events():
+    bad = []
+    if LIFECYCLE_EVENTS != {
+        "deliver": "alert.delivered",
+        "read": "alert.read",
+        "acknowledge": "alert.acknowledged",
+        "action": "alert.actioned",
+        "escalate": "alert.escalated",
+        "expire": "alert.expired",
+        "fail": "alert.failed",
+    }:
+        bad.append(f"LIFECYCLE_EVENTS maps each lifecycle event to its honest-observe event type: {LIFECYCLE_EVENTS}")
+    if set(LIFECYCLE_EVENTS) != alert_lifecycle["events"]:
+        bad.append(f"LIFECYCLE_EVENTS covers exactly the lifecycle events: {set(LIFECYCLE_EVENTS)}")
+    return bad
+
+
+def _law_advance():
+    bad = []
+    if advance("created", "deliver") != {"ok": {"state": "delivered", "event": "alert.delivered"}}:
+        bad.append(f"advance applies the transition and returns the observe event: {advance('created', 'deliver')}")
+    if advance("delivered", "acknowledge") != {"ok": {"state": "acknowledged", "event": "alert.acknowledged"}}:
+        bad.append(f"advance delivered/acknowledge -> acknowledged and alert.acknowledged: {advance('delivered', 'acknowledge')}")
+    if advance("escalated", "expire") != {"ok": {"state": "expired", "event": "alert.expired"}}:
+        bad.append(f"advance escalated/expire -> expired and alert.expired: {advance('escalated', 'expire')}")
+    unknown = advance("created", "teleport")
+    if unknown.get("err", {}).get("code") != "invalid_event":
+        bad.append(f"an undeclared event is invalid_event: {unknown}")
+    no_trans = advance("created", "read")
+    if no_trans.get("err", {}).get("code") != "no_transition":
+        bad.append(f"an event with no transition from the current state is no_transition: {no_trans}")
+    terminal = advance("acknowledged", "read")
+    if terminal.get("err", {}).get("code") != "no_transition":
+        bad.append(f"a terminal state has no outgoing transition: {terminal}")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
     "vocabularies": _law_vocabularies,
+    "lifecycle_machine": _law_lifecycle_machine,
+    "lifecycle_events": _law_lifecycle_events,
+    "advance": _law_advance,
     "recipient_matches": _law_recipient_matches,
     "terminated_ttl": _law_terminated_ttl,
     "terminated_acknowledged": _law_terminated_acknowledged,
