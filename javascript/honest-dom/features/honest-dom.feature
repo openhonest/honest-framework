@@ -38,3 +38,13 @@ Feature: honest-DOM (domx) — the client-side DATAOS primitives
     Given injected deps
     When clearCache runs
     Then it removes the cached request from storage
+
+  Scenario: observe subscribes each manifest entry by its read strategy and fires the callback with fresh state
+    Given a manifest, a callback, and an injected bus and query
+    When observe wires the entries
+    Then value delegates to input, checked to change, a watch override to its event, and any other read to the shared mutation observer, each firing the callback with fresh collected state, batched via the bus
+
+  Scenario: on subscribes a callback to raw mutations
+    Given a callback and an injected bus
+    When on subscribes it
+    Then it returns the bus subscription to the raw mutation records
