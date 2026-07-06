@@ -3,3 +3,4 @@
 export { readShortcut, writeShortcut } from "./shortcuts.js";
 export { collect } from "./collect.js";
 export { apply } from "./apply.js";
+export { send, replay, clearCache } from "./send.js";

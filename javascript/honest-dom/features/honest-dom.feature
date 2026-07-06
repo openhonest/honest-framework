@@ -23,3 +23,18 @@ Feature: honest-DOM (domx) — the client-side DATAOS primitives
     Given a manifest, a state object, and a query that returns the matching elements
     When apply writes the state
     Then it writes each present key with a write shortcut to every matching element, skipping the rest
+
+  Scenario: send collects, caches, and POSTs the state
+    Given a url, a manifest, options, and injected deps
+    When send runs
+    Then it collects fresh state, caches the request under the cache key, and POSTs the state as JSON
+
+  Scenario: replay re-sends the last cached request unless it is absent or expired
+    Given injected deps holding the cached request
+    When replay runs
+    Then it returns null for an absent or past-ttl request, otherwise it re-POSTs the cached request
+
+  Scenario: clearCache removes the cached request
+    Given injected deps
+    When clearCache runs
+    Then it removes the cached request from storage
