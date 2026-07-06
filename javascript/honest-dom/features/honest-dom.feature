@@ -48,3 +48,18 @@ Feature: honest-DOM (domx) — the client-side DATAOS primitives
     Given a callback and an injected bus
     When on subscribes it
     Then it returns the bus subscription to the raw mutation records
+
+  Scenario: nearestManifest finds the nearest ancestor's dx-manifest name
+    Given an element in an ancestor chain
+    When nearestManifest walks it
+    Then it returns the nearest ancestor's dx-manifest name, or null when none declares one
+
+  Scenario: configureRequest collects the scoped manifest and merges it as _state
+    Given an HTMX request detail and injected deps
+    When configureRequest runs
+    Then it resolves the nearest manifest, collects fresh state, and merges it into the parameters as _state, doing nothing when no manifest is in scope
+
+  Scenario: registerExtension defines the domx HTMX extension
+    Given an injected htmx and deps
+    When registerExtension runs
+    Then it defines a domx extension whose handler configures the request only on the configRequest event

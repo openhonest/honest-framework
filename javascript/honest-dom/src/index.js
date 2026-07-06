@@ -5,3 +5,4 @@ export { collect } from "./collect.js";
 export { apply } from "./apply.js";
 export { send, replay, clearCache } from "./send.js";
 export { observe, on } from "./observe.js";
+export { nearestManifest, configureRequest, registerExtension } from "./htmx.js";
