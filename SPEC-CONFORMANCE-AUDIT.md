@@ -71,12 +71,17 @@ Verdicts use three honest categories:
 | honest-check | **SUBSET** | ~36/42 rules; ~85% Py, ~70% JS | HC001 boundary-vocabulary derivation is a stub; HC011 predicate sampling absent; JS watch-lists ~half |
 | honest-observe | **SUBSET** | ~39/46 (85%) | `hf.proof.checked` builder absent; 6/13 built-in metrics missing; OTel auth attrs + `install_otel_exporter` absent |
 | honest-test | **SUBSET** | ~65% | no runner/CLI; no BDD step scaffolding; no `io_monitor` (§4.4); HC-P009 not implemented; §6/§7 absent |
-| honest-parse | **SUBSET** | 2/6 languages (~71% of reqs) | only Python + JavaScript; Ruby/PHP/Elixir/Go absent from `_LANGUAGES` |
+| honest-parse | **SPEC-COMPLETE** | 6/6 languages | none (Ruby/PHP/Go/Elixir added — commit f793594) |
 | honest-persist | **SUBSET** | SQLite/Turso substantial; Postgres non-functional | no PostgreSQL inspector; no view/trigger/procedure DDL apply; no RETURNING; no materialized-view refresh |
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
 | honest-DOM | **SUBSET** | ~45% of Full | injected-param signatures with no browser-binding wrapper; §4 React hooks absent; §5 observability absent; conformance suite has 3 cases |
 
-Score: of 13 modules, **3 spec-complete, 2 complete-at-mandate, 8 genuine subsets.**
+Score: of 13 modules, **4 spec-complete, 2 complete-at-mandate, 7 genuine subsets.**
+
+Remediation is proceeding in the spec's bootstrap/dependency order
+(`specs/01-framework/honest-framework-spec.md` §299): parse → check → test →
+observe → persist → auth → state → features → DOM → alerts. Completed: **parse**
+(2026-07-08).
 
 (Tier 3 honest-components and honest-page have specs but are not yet built in
 this tree, so they are outside this audit's scope; they were never reported
@@ -186,13 +191,16 @@ Verified gaps:
   features; it does not run.
 - §6 (persist contract tests) and §7 (component isolation) absent.
 
-### honest-parse — SUBSET (2 of 6 languages)
-The parse boundary and all node helpers (`node_text`, `line_col`, `walk`,
-`first_error_node`, UTF-8, determinism) are correct — for the languages present.
-`_LANGUAGES` holds only `python` and `javascript` (verified). The spec's target
-set is Python, JavaScript, Ruby, PHP, Elixir, Go, and §345 makes adding a grammar
-part of the gate. Ruby/PHP/Elixir/Go are absent, so honest-check and honest-test
-cannot run against those languages at all.
+### honest-parse — SPEC-COMPLETE (6 of 6 languages) — resolved 2026-07-08 (f793594)
+The parse boundary and node helpers (`node_text`, `line_col`, `walk`,
+`first_error_node`, UTF-8, determinism) were already correct. All six framework
+target languages are now present in `_LANGUAGES` — Python, JavaScript, Ruby, PHP
+(via the tag-aware `language_php()` handle), Go, Elixir — each a single row plus a
+convenience wrapper. The JS law and the four new grammars are checked uniformly by
+a data-driven `_law_grammars` table over per-language corpora; the closed-vocabulary
+law exercises all six; portable suite cases cover each. Gate: honest-check clean,
+100% coverage, 28 conformance cases + 8 laws, mutation 65 caught / 0 undeclared,
+bijection 11 = 11.
 
 ### honest-persist — SUBSET (SQLite/Turso substantial; Postgres non-functional)
 Present and solid: schema diff/validate/deps/ambiguity, apply with table
