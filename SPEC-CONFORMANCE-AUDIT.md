@@ -69,7 +69,7 @@ Verdicts use three honest categories:
 | honest-state | **COMPLETE AT MANDATE** | 15/18 | law+taxonomy complete; no conformance test that the §3 honest-check rules actually fire |
 | honest-auth | **SUBSET** | ~11/28 (~39%) | `test_token_generator.generate()` contract wrong/absent; no 6-token-class enforcement; no conformance-suite app; `"unauthenticated"` fault key not enforced |
 | honest-check | **SPEC-COMPLETE** | 36/36 static rules; HC002 first-link live | none (HC011 spec reconciled to the pure-static design — eac7ae7) |
-| honest-observe | **SUBSET** | ~39/46 (85%) | `hf.proof.checked` builder absent; 6/13 built-in metrics missing; OTel auth attrs + `install_otel_exporter` absent |
+| honest-observe | **SUBSET (owned surface complete)** | OTel auth attrs done; 1 open item | 2 link metrics await a §8b per-link firing rule (spec-design decision). proof_checked, persist metrics, install_otel_exporter, dev-mode are by-design elsewhere/boundary |
 | honest-test | **SPEC-COMPLETE** | §4.4 + §8.2 + §8.4 done | none (the runner, HC-P009, and §6/§7 are not-gaps — by design) |
 | honest-parse | **SPEC-COMPLETE** | 7 grammars (6 source + HTML) | none (Ruby/PHP/Go/Elixir — f793594; HTML/HTMX — 6de18bb) |
 | honest-persist | **SUBSET** | SQLite/Turso substantial; Postgres non-functional | no PostgreSQL inspector; no view/trigger/procedure DDL apply; no RETURNING; no materialized-view refresh |
@@ -181,17 +181,29 @@ Reading the spec directly corrected three of this module's audit claims:
   stale "CLI/LSP sandboxed evaluator" note is gone.
 - Minor: `pyproject.toml` declares `conformance = "python"`, not a valid level.
 
-### honest-observe — SUBSET (~85%)
-Event envelope, `emit()`, all 11 framework event builders, projections +
-snapshots, HLC ingest + identity binding + rejection log, threshold projections,
-and dev-tool formatting are implemented. Verified gaps:
-- **`hf.proof.checked` builder absent** (§4.8) — exists only as a comment
-  pointing elsewhere; blocks the honest-test certification matrix on the
-  observe side.
-- **6 of 13 built-in metrics missing** (4 persist-related, deferred with
-  rationale; 2 per-link blocked on an undefined firing rule).
-- OTel **auth attributes** and **`install_otel_exporter`** absent.
-- No development-mode config.
+### honest-observe — SUBSET, owned surface complete (re-verified 2026-07-08)
+Event envelope, `emit()`, all framework event builders, projections + snapshots,
+HLC ingest + identity binding + rejection log, threshold projections, and
+dev-tool formatting are implemented. Re-verifying corrected the audit's claims:
+- **OTel `hf.auth.*` attributes — DONE** (378202f): `_auth_attrs` maps the auth
+  partition to `hf.auth.caller_id/data_owner_id/factors_presented`.
+- **`hf.proof.checked` — NOT observe's.** honest-test fully builds and emits it
+  (`proof.py` `emit_proofs`), exactly as `hf.persist.*` events are built in
+  honest-persist — the owning module builds its events (framework_events.py's own
+  comment says so). Not a gap.
+- **`install_otel_exporter` — the boundary's** (§7.4 reconciled, def26a7): observe
+  produces the pure `otel_signal` projection; the SDK export loop is boundary I/O
+  (honest-py), reached through an injected exporter, exactly as `emit`. observe
+  never imports the OTel SDK. Same principle as HC011.
+- **4 persist metrics** deferred to honest-persist (their event payloads are
+  persist's); **dev-mode** is a boundary/config concern (§9.5: "controlled by
+  config, not code"). Both by-design, not observe gaps.
+
+One genuine open item: **2 link metrics** (`link.fault_rate`,
+`link.p99_duration_ns`) are observe-owned (over `hf.link.executed`) but produce a
+value **per link**, which needs a per-link firing rule §8b does not define — the
+aggregate threshold model (`condition_met` on one value) can't express it. This
+is a §8b spec-design decision plus an `evaluate_threshold` extension.
 
 ### honest-test — SPEC-COMPLETE (resolved 2026-07-08; audit re-verified)
 Strong: the generation engine (Set enumeration, Fibonacci numerics,
