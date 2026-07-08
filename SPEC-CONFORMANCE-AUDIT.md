@@ -68,7 +68,7 @@ Verdicts use three honest categories:
 | honest-features | **COMPLETE AT MANDATE** | 9/9 lib functions | Full/Complete need app-layer routes/CLI (spec §11 defers) |
 | honest-state | **COMPLETE AT MANDATE** | 15/18 | law+taxonomy complete; no conformance test that the §3 honest-check rules actually fire |
 | honest-auth | **SUBSET** | ~11/28 (~39%) | `test_token_generator.generate()` contract wrong/absent; no 6-token-class enforcement; no conformance-suite app; `"unauthenticated"` fault key not enforced |
-| honest-check | **SUBSET** | ~36/42 rules; ~85% Py, ~70% JS | HC001 boundary-vocabulary derivation is a stub; HC011 predicate sampling absent; JS watch-lists ~half |
+| honest-check | **SUBSET** | 36/36 static rules; JS reads now trapped | HC002 first-link boundary-vocab derivation (blocked on honest-page — not built); HC011 CLI/LSP sandboxed sampler (construction-time form already done in honest-type) |
 | honest-observe | **SUBSET** | ~39/46 (85%) | `hf.proof.checked` builder absent; 6/13 built-in metrics missing; OTel auth attrs + `install_otel_exporter` absent |
 | honest-test | **SUBSET** | ~65% | no runner/CLI; no BDD step scaffolding; no `io_monitor` (§4.4); HC-P009 not implemented; §6/§7 absent |
 | honest-parse | **SPEC-COMPLETE** | 6/6 languages | none (Ruby/PHP/Go/Elixir added — commit f793594) |
@@ -149,19 +149,31 @@ Much of what remains (domain-mutation prevention, determinism, boundary
 placement) is correctly deferred to honest-check/honest-test/host, per
 [[auth-is-boundary-validation]]; the contract-shape gaps above are the real ones.
 
-### honest-check — SUBSET (~85% Python, ~70% JavaScript)
+### honest-check — SUBSET (two real gaps; the audit's own claims were partly wrong)
+Reading the spec directly corrected three of this module's audit claims:
+- **HC001 is spec-correct, not a stub.** Its pseudocode (spec §4.2, lines
+  439-445) is exactly "every link in a chain carries `@link` metadata, else
+  error" — which `check_hc001` does. The boundary-vocabulary derivation at line
+  461 belongs to **HC002's first-link check**, not HC001.
+- **The JS watch-lists were more complete than claimed.** The IO list and the
+  `new`-constructor traps (WebSocket/XMLHttpRequest/EventSource/Date) were
+  already present. The real gap was member-**read** impurity, now fixed
+  (commit ce361a7): `_js_reads_impure` traps `process.env` / `location.*` /
+  `document.cookie` / `navigator.*` reads and `Symbol()`.
+
 36 of 36 statically-verifiable rules are implemented for Python; test-time rules
-(HC-P008/009/012) are correctly deferred. Verified gaps:
-- **HC001** does not derive the first link's boundary vocabulary from the route
-  map (spec §4.2); it only checks a `@link` exists. This weakens the
-  "guaranteed complete auto-generated suite" claim.
-- **HC011** predicate sampling (1000 strings, reject >95%) is **not in
-  `rules.py`** — verified by grep. It emits info and defers. (The sampling that
-  exists is honest-type's construction-time guard, a different mechanism.)
-- **JavaScript watch-lists ~half complete** — missing I/O and nondeterminism
-  entries (WebSocket, XMLHttpRequest, `fs/promises.*`, `process.env`,
-  `navigator.*`, `document.cookie`, …), so impure JS can pass.
-- `pyproject.toml` declares `conformance = "python"`, not a valid level.
+(HC-P008/009/012) are correctly deferred. Two genuine gaps remain:
+- **HC002 first-link boundary-vocab derivation** (spec line 461): the first
+  link's `accepts` should be checked against the vocabulary derived from the
+  route map + templates (honest-page §5/§9). That derivation reads honest-page
+  templates, and **honest-page is not built in this tree** — there are no
+  templates to derive from. This is genuinely blocked on honest-page (later in
+  bootstrap order), not corner-cuttable now.
+- **HC011 CLI/LSP sandboxed sampler**: the construction-time form (sample a
+  predicate, reject if >95% accepted) is already implemented in honest-type's
+  `vocabulary()` (`_check_catch_all`); the spec's CLI/LSP form needs honest-check
+  to evaluate the predicate in a sandbox, which does not exist yet.
+- Minor: `pyproject.toml` declares `conformance = "python"`, not a valid level.
 
 ### honest-observe — SUBSET (~85%)
 Event envelope, `emit()`, all 11 framework event builders, projections +
