@@ -70,18 +70,18 @@ Verdicts use three honest categories:
 | honest-auth | **SUBSET** | ~11/28 (~39%) | `test_token_generator.generate()` contract wrong/absent; no 6-token-class enforcement; no conformance-suite app; `"unauthenticated"` fault key not enforced |
 | honest-check | **SPEC-COMPLETE** | 36/36 static rules; HC002 first-link live | none (HC011 spec reconciled to the pure-static design — eac7ae7) |
 | honest-observe | **SUBSET** | ~39/46 (85%) | `hf.proof.checked` builder absent; 6/13 built-in metrics missing; OTel auth attrs + `install_otel_exporter` absent |
-| honest-test | **SUBSET** | §4.4 + §8.2 done; 1 gap | §8.4 HTTP assertion step library (the runner, HC-P009, and §6/§7 are NOT gaps — by design) |
+| honest-test | **SPEC-COMPLETE** | §4.4 + §8.2 + §8.4 done | none (the runner, HC-P009, and §6/§7 are not-gaps — by design) |
 | honest-parse | **SPEC-COMPLETE** | 7 grammars (6 source + HTML) | none (Ruby/PHP/Go/Elixir — f793594; HTML/HTMX — 6de18bb) |
 | honest-persist | **SUBSET** | SQLite/Turso substantial; Postgres non-functional | no PostgreSQL inspector; no view/trigger/procedure DDL apply; no RETURNING; no materialized-view refresh |
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
 | honest-DOM | **SUBSET** | ~45% of Full | injected-param signatures with no browser-binding wrapper; §4 React hooks absent; §5 observability absent; conformance suite has 3 cases |
 
-Score: of 13 modules, **5 spec-complete, 2 complete-at-mandate, 6 genuine subsets.**
+Score: of 13 modules, **6 spec-complete, 2 complete-at-mandate, 5 genuine subsets.**
 
 Remediation is proceeding in the spec's bootstrap/dependency order
 (`specs/01-framework/honest-framework-spec.md` §299): parse → check → test →
 observe → persist → auth → state → features → DOM → alerts. Completed:
-**parse** and **honest-check** (2026-07-08). Next: **honest-test**.
+**parse**, **honest-check**, **honest-test** (2026-07-08). Next: **observe**.
 
 (Tier 3 honest-components and honest-page have specs but are not yet built in
 this tree, so they are outside this audit's scope; they were never reported
@@ -193,7 +193,7 @@ and dev-tool formatting are implemented. Verified gaps:
 - OTel **auth attributes** and **`install_otel_exporter`** absent.
 - No development-mode config.
 
-### honest-test — SUBSET (2 real gaps; audit re-verified 2026-07-08)
+### honest-test — SPEC-COMPLETE (resolved 2026-07-08; audit re-verified)
 Strong: the generation engine (Set enumeration, Fibonacci numerics,
 length-bounded, adversarial classes 1–4), the value oracle + step library,
 purity/mutation/idempotency/chain-contract/auth-honesty checks, state-machine
@@ -212,19 +212,17 @@ Re-verifying against spec+code corrected several audit claims:
 - **§6/§7 — deferred by design.** They are Complete-level and use honest-test's
   machinery from honest-persist / honest-features, not honest-test core.
 
-Gaps:
-- **§4.4 boundary isolation — DONE** (db40f26).
+All three real gaps are closed:
+- **§4.4 boundary isolation — DONE** (db40f26): `io_monitor` +
+  `verify_boundary_isolation` trap I/O in a non-boundary link, recording without
+  performing it.
 - **§8.2 BDD step scaffolding generator — DONE** (d15d3ad): `scaffold_chain`
   generates a chain's gherkin registry (given classifies → when runs → then
   asserts), verified end-to-end against a real gherkin scenario.
-- **§8.4 HTTP assertion step library — remaining.** The 23 required standard
-  steps (13 response assertions: status/status-class/Content-Type/charset/
-  header/body/JSON/HTML-selector/cookie/location; 4 request builders; 3 when
-  senders; 3 multi-request session steps). Each is a pure `(context, **captures)
-  -> context` handler over a **normalized response/request dict** the app's test
-  client provides — that contract (status/headers/body/cookies shape, the
-  injected client, a named-schema registry) is the one design surface to pin
-  before building, so honest-test stays framework-agnostic and pure.
+- **§8.4 HTTP assertion step library — DONE** (1d99b7f): all 23 standard steps
+  (`register_http_steps`) over a normalized response/request dict the app's test
+  client provides, honest-test staying framework-agnostic and pure. Verified
+  end-to-end; each assertion exercised on a match and a mismatch.
 
 ### honest-parse — SPEC-COMPLETE (7 grammars) — resolved 2026-07-08 (f793594, 6de18bb)
 The parse boundary and node helpers (`node_text`, `line_col`, `walk`,
