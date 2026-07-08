@@ -38,6 +38,7 @@ from honest_test.determinism import (
 )
 from honest_test.enumeration import enumerate_sets
 from honest_test.scaffolding import scaffold_chain
+from honest_test.http_steps import register_http_steps
 from honest_test.isolation import (
     io_finding,
     io_monitor,
@@ -96,6 +97,7 @@ __all__ = [
     "io_monitor",
     "verify_boundary_isolation",
     "scaffold_chain",
+    "register_http_steps",
     "auth_token_classes",
     "map_fault_to_http",
     "auth_expected_status",

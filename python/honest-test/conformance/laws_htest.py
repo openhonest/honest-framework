@@ -1168,11 +1168,229 @@ def _probe_scaffolding():
     return bad
 
 
+def _probe_http_steps():
+    """Standard protocol-level assertion steps (§8.4): the 23 required HTTP steps run through the
+    gherkin registry against a fake normalized client — each response assertion passes on a match and
+    fails on a mismatch, the request builders and when-senders shape the sent request, and the session
+    steps carry cookies across requests. The pure helpers are exercised directly."""
+    from honest_gherkin import empty_registry, parse_feature, register_step, run_scenario
+    from honest_parse import parse_html, walk
+
+    from honest_test.http_steps import (
+        _charset,
+        _content_type,
+        _element_attr,
+        _element_tag,
+        _html_has_selector,
+        _mime,
+        _open_tag,
+        _parse_selector,
+        _selector_matches,
+        register_http_steps,
+    )
+
+    bad = []
+
+    # --- pure helpers ---
+    html = {"headers": {"content-type": "text/html; charset=utf-8"}}
+    if _content_type(html) != "text/html; charset=utf-8" or _content_type({"headers": {}}) != "":
+        bad.append("_content_type")
+    if _mime(html) != "text/html":
+        bad.append("_mime")
+    if _charset(html) != "utf-8" or _charset({"headers": {"content-type": "text/plain"}}) != "":
+        bad.append("_charset")
+    if _charset({"headers": {"content-type": "text/html; boundary=z; charset=utf-8"}}) != "utf-8":
+        bad.append("_charset should skip a non-charset parameter")
+    if _parse_selector("div#main.card.wide") != ("div", "main", ["card", "wide"]):
+        bad.append(f"_parse_selector: {_parse_selector('div#main.card.wide')}")
+    if not _html_has_selector(b'<div id="main" class="card">x</div>', "div#main.card"):
+        bad.append("selector should match tag+id+class")
+    if _html_has_selector(b"<span>x</span>", "div") or _html_has_selector(b'<div id="o">x</div>', "#main") or _html_has_selector(b'<div class="a">x</div>', ".b"):
+        bad.append("selector should not match a wrong tag/id/class")
+    if not _html_has_selector(b'<img id="logo"/>', "#logo"):
+        bad.append("selector should match a self-closing element (exercises the self_closing_tag branch)")
+    root = parse_html(b'<div id="main" class="c">x</div>').root_node
+    element = next(n for n in walk(root) if n.type == "element")
+    src = b'<div id="main" class="c">x</div>'
+    if _element_tag(element, src) != "div" or _element_attr(element, "id", src) != "main" or _element_attr(element, "nope", src) is not None:
+        bad.append("_element_tag / _element_attr")
+    if _open_tag(root) is not None or _element_tag(root, b"") is not None or _element_attr(root, "id", b"") is not None:
+        bad.append("_open_tag / _element_tag / _element_attr of a non-element should be None")
+
+    # --- steps through the registry against a fake client ---
+    box = {"response": None, "request": None}
+
+    def client(method, path, request):
+        box["request"] = {"method": method, "path": path, "request": request}
+        return box["response"]
+
+    def seed(context):
+        return {**context, "client": client, "schemas": {"user": lambda d: "id" in d}}
+
+    registry = register_step(register_http_steps(empty_registry()), "given", "the client is ready", seed)
+    ok_response = {
+        "status": 200,
+        "headers": {"content-type": "text/html; charset=utf-8", "location": "/next"},
+        "body": b'<div id="main" class="card">hi</div>',
+        "cookies": {"session": {"value": "abc", "attributes": {"HttpOnly": "", "Max-Age": 3600}}},
+    }
+
+    def run(response, steps):
+        box["response"] = response
+        feature = 'Feature: F\n\n  Scenario: S\n    Given the client is ready\n    When a GET request is sent to "/x"\n' + steps
+        scenario = parse_feature(feature, "t.feature")["ok"]["scenarios"][0]
+        return run_scenario(scenario, [], registry)["status"]
+
+    # Each response assertion: a match passes, a mismatch fails (so the assert genuinely fires).
+    passes = [
+        "the response status is 200",
+        "the response status is in 2xx",
+        'the response Content-Type is "text/html"',
+        'the response charset is "utf-8"',
+        'the response header "location" equals "/next"',
+        'the response has no header "x-missing"',
+        'the response body bytes equal "plain body"',
+        "the response body is JSON conforming to user",
+        'the response body is HTML containing the selector "div#main.card"',
+        'the response sets cookie "session" with value "abc"',
+        'the response cookie "session" has attribute "HttpOnly"',
+        "the response cookie \"session\" has Max-Age 3600",
+        'the response location is "/next"',
+    ]
+    fails = [
+        "the response status is 404",
+        "the response status is in 5xx",
+        'the response Content-Type is "text/plain"',
+        'the response charset is "latin-1"',
+        'the response header "location" equals "/wrong"',
+        'the response has no header "location"',
+        'the response body bytes equal "other"',
+        "the response body is JSON conforming to user",
+        'the response body is HTML containing the selector "span"',
+        'the response sets cookie "session" with value "zzz"',
+        'the response cookie "session" has attribute "Secure"',
+        "the response cookie \"session\" has Max-Age 1",
+        'the response location is "/elsewhere"',
+    ]
+    json_response = {**ok_response, "body": b'{"id": 1}'}
+    json_fail_response = {**ok_response, "body": b"{}"}
+    bytes_response = {**ok_response, "body": b"plain body"}
+
+    def _pass_response(step):
+        if "JSON" in step:
+            return json_response
+        return bytes_response if "body bytes" in step else ok_response
+
+    def _fail_response(step):
+        if "JSON" in step:
+            return json_fail_response
+        return bytes_response if "body bytes" in step else ok_response
+
+    for step in passes:
+        if run(_pass_response(step), "    Then " + step + "\n") != "ok":
+            bad.append(f"the passing HTTP assertion should hold: {step}")
+    for step in fails:
+        if run(_fail_response(step), "    Then " + step + "\n") == "ok":
+            bad.append(f"the failing HTTP assertion should be caught: {step}")
+
+    # Chained assertion then-steps thread the context, so each non-last then-handler's return is used by
+    # the next (dropping a return then breaks the chain). Response-specific bodies get their own chain.
+    ok_chain = "".join(
+        "    Then " + s + "\n"
+        for s in [
+            "the response status is 200",
+            "the response status is in 2xx",
+            'the response Content-Type is "text/html"',
+            'the response charset is "utf-8"',
+            'the response header "location" equals "/next"',
+            'the response has no header "x-missing"',
+            'the response location is "/next"',
+            'the response body is HTML containing the selector "div#main.card"',
+            'the response sets cookie "session" with value "abc"',
+            'the response cookie "session" has attribute "HttpOnly"',
+            "the response cookie \"session\" has Max-Age 3600",
+            "the response status is 200",
+        ]
+    )
+    if run(ok_response, ok_chain) != "ok":
+        bad.append("chained assertion then-steps should each thread the context forward")
+    if run(bytes_response, '    Then the response body bytes equal "plain body"\n    Then the response status is 200\n') != "ok":
+        bad.append("the body-bytes then should thread the context forward")
+    if run(json_response, "    Then the response body is JSON conforming to user\n    Then the response status is 200\n") != "ok":
+        bad.append("the JSON then should thread the context forward")
+    # A status just below a hundred boundary distinguishes // 100 from any nearby divisor.
+    if run({**ok_response, "status": 199}, "    Then the response status is in 1xx\n") != "ok":
+        bad.append("status 199 should be in the 1xx class")
+    if run({**ok_response, "status": 199}, "    Then the response status is in 2xx\n") == "ok":
+        bad.append("status 199 should not be in the 2xx class")
+
+    # Request builders and when-senders shape the request the client receives. The status is checked so a
+    # dropped context-thread (a builder that stops returning the request) breaks the scenario observably.
+    def sent(steps):
+        box["response"] = ok_response
+        box["request"] = None
+        feature = "Feature: F\n\n  Scenario: S\n    Given the client is ready\n" + steps
+        scenario = parse_feature(feature, "t.feature")["ok"]["scenarios"][0]
+        status = run_scenario(scenario, [], registry)["status"]
+        return status, box["request"]
+
+    status, built = sent(
+        '    Given a request with header "X-Token" = "t"\n'
+        '    Given a request with cookie "c" = "1"\n'
+        '    Given a request with Content-Type "application/json"\n'
+        '    Given a request with body "seed"\n'
+        '    When a POST request is sent to "/p" with body "hello"\n'
+    )
+    if status != "ok" or built is None or built["method"] != "POST" or built["path"] != "/p" or built["request"]["body"] != b"hello":
+        bad.append(f"POST send should carry the method, path, and body: {status} {built}")
+    if built["request"]["headers"].get("X-Token") != "t" or built["request"]["cookies"].get("c") != "1" or built["request"]["content_type"] != "application/json":
+        bad.append(f"request builders should shape the request: {built}")
+    get_status, get_sent = sent('    Given a request with body "b"\n    When a GET request is sent to "/g"\n')
+    if get_status != "ok" or get_sent["method"] != "GET" or get_sent["request"]["body"] != b"b":
+        bad.append(f"GET send should use the GET method and carry the built body: {get_sent}")
+    delete_status, delete_sent = sent('    When a DELETE request is sent to "/d"\n')
+    if delete_status != "ok" or delete_sent["method"] != "DELETE":
+        bad.append("DELETE send should use the DELETE method")
+
+    # Session steps: cookies carry from a response into the next request; shared-session assertion.
+    reuse_status, reused = sent(
+        '    When a GET request is sent to "/first"\n'
+        "    When the previous response's Set-Cookie is used as the next request's Cookie\n"
+        '    When a GET request is sent to "/second"\n'
+    )
+    if reuse_status != "ok" or reused["request"]["cookies"].get("session") != "abc":
+        bad.append(f"reuse_set_cookie should carry the response cookies into the next request: {reused}")
+    session_status, reused2 = sent(
+        '    When a GET request is sent to "/first"\n'
+        "    When the session from the previous response is reused\n"
+        '    When a GET request is sent to "/second"\n'
+    )
+    if session_status != "ok" or reused2["request"]["cookies"].get("session") != "abc":
+        bad.append("reuse_session should carry the session cookie into the next request")
+    share = 'Feature: F\n\n  Scenario: S\n    Given the client is ready\n    When a GET request is sent to "/a"\n    When a GET request is sent to "/b"\n    Then the response and the previous response share the same session cookie value\n    Then the response status is 200\n'
+    box["response"] = ok_response
+    if run_scenario(parse_feature(share, "t.feature")["ok"]["scenarios"][0], [], registry)["status"] != "ok":
+        bad.append("share_session should hold when both responses carry the same session cookie")
+
+    # share_session fails when the two responses carry different session cookies (the assertion fires).
+    def per_path_client(method, path, request):
+        return {**ok_response, "cookies": {"session": {"value": path, "attributes": {}}}}
+
+    def seed_per_path(context):
+        return {**context, "client": per_path_client, "schemas": {}}
+
+    reg2 = register_step(register_http_steps(empty_registry()), "given", "the client is ready", seed_per_path)
+    if run_scenario(parse_feature(share, "t.feature")["ok"]["scenarios"][0], [], reg2)["status"] == "ok":
+        bad.append("share_session should fail when the two responses carry different session cookies")
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
         "isolation": _probe_isolation(),
         "scaffolding": _probe_scaffolding(),
+        "http_steps": _probe_http_steps(),
         "adversarial": _probe_adversarial(),
         "laws": _probe_laws(),
         "mutation": _probe_mutation(),

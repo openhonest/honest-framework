@@ -461,3 +461,59 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given a statement node
     When _is_annotation_only checks it
     Then it is true only for a bare type annotation with no value, which has no runtime effect
+
+  # Standard protocol-level HTTP assertion steps (section 8.4).
+  Scenario: _request returns the request being built or a fresh one
+    Given a gherkin context
+    When _request reads it
+    Then it returns the request under construction, or an empty request when none has been started
+
+  Scenario: _content_type reads the response Content-Type header
+    Given a normalized response
+    When _content_type reads it
+    Then it returns the Content-Type header value, or the empty string when absent
+
+  Scenario: _mime reads the response media type
+    Given a normalized response
+    When _mime reads it
+    Then it returns the Content-Type before any parameters
+
+  Scenario: _charset reads the response charset parameter
+    Given a normalized response
+    When _charset reads it
+    Then it returns the charset parameter of the Content-Type, or the empty string when absent
+
+  Scenario: _open_tag finds an HTML element's tag
+    Given a parsed HTML element
+    When _open_tag reads it
+    Then it returns the start or self-closing tag, or nothing for a non-element
+
+  Scenario: _element_tag reads an HTML element's tag name
+    Given a parsed HTML element
+    When _element_tag reads it
+    Then it returns the tag name, or nothing when there is no open tag
+
+  Scenario: _element_attr reads a named attribute of an HTML element
+    Given a parsed HTML element and an attribute name
+    When _element_attr reads it
+    Then it returns the attribute value, or nothing when absent
+
+  Scenario: _parse_selector splits a simple CSS selector
+    Given a CSS selector
+    When _parse_selector splits it
+    Then it returns the optional tag, optional id, and the list of classes
+
+  Scenario: _selector_matches tests an element against a selector
+    Given a parsed HTML element and a selector
+    When _selector_matches checks it
+    Then it is true only when the tag, id, and every class match
+
+  Scenario: _html_has_selector finds a matching element in an HTML body
+    Given an HTML body and a selector
+    When _html_has_selector scans it
+    Then it is true when some element matches the simple selector
+
+  Scenario: register_http_steps registers the standard HTTP steps
+    Given a registry
+    When register_http_steps wires the steps in
+    Then it returns the registry carrying the response assertions, request builders, when-senders, and session steps
