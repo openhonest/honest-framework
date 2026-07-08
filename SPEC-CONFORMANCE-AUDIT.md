@@ -69,19 +69,20 @@ Verdicts use three honest categories:
 | honest-state | **COMPLETE AT MANDATE** | 15/18 | law+taxonomy complete; no conformance test that the §3 honest-check rules actually fire |
 | honest-auth | **SUBSET** | ~11/28 (~39%) | `test_token_generator.generate()` contract wrong/absent; no 6-token-class enforcement; no conformance-suite app; `"unauthenticated"` fault key not enforced |
 | honest-check | **SPEC-COMPLETE** | 36/36 static rules; HC002 first-link live | none (HC011 spec reconciled to the pure-static design — eac7ae7) |
-| honest-observe | **SUBSET (owned surface complete)** | OTel auth attrs done; 1 open item | 2 link metrics await a §8b per-link firing rule (spec-design decision). proof_checked, persist metrics, install_otel_exporter, dev-mode are by-design elsewhere/boundary |
+| honest-observe | **SPEC-COMPLETE** | auth attrs + grouped metrics done | none (proof_checked, persist metrics, install_otel_exporter, dev-mode are by-design elsewhere/boundary) |
 | honest-test | **SPEC-COMPLETE** | §4.4 + §8.2 + §8.4 done | none (the runner, HC-P009, and §6/§7 are not-gaps — by design) |
 | honest-parse | **SPEC-COMPLETE** | 7 grammars (6 source + HTML) | none (Ruby/PHP/Go/Elixir — f793594; HTML/HTMX — 6de18bb) |
 | honest-persist | **SUBSET** | SQLite/Turso substantial; Postgres non-functional | no PostgreSQL inspector; no view/trigger/procedure DDL apply; no RETURNING; no materialized-view refresh |
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
 | honest-DOM | **SUBSET** | ~45% of Full | injected-param signatures with no browser-binding wrapper; §4 React hooks absent; §5 observability absent; conformance suite has 3 cases |
 
-Score: of 13 modules, **6 spec-complete, 2 complete-at-mandate, 5 genuine subsets.**
+Score: of 13 modules, **7 spec-complete, 2 complete-at-mandate, 4 genuine subsets.**
 
 Remediation is proceeding in the spec's bootstrap/dependency order
 (`specs/01-framework/honest-framework-spec.md` §299): parse → check → test →
 observe → persist → auth → state → features → DOM → alerts. Completed:
-**parse**, **honest-check**, **honest-test** (2026-07-08). Next: **observe**.
+**parse**, **honest-check**, **honest-test**, **observe** (2026-07-08). Next:
+**persist**.
 
 (Tier 3 honest-components and honest-page have specs but are not yet built in
 this tree, so they are outside this audit's scope; they were never reported
@@ -181,7 +182,7 @@ Reading the spec directly corrected three of this module's audit claims:
   stale "CLI/LSP sandboxed evaluator" note is gone.
 - Minor: `pyproject.toml` declares `conformance = "python"`, not a valid level.
 
-### honest-observe — SUBSET, owned surface complete (re-verified 2026-07-08)
+### honest-observe — SPEC-COMPLETE (resolved 2026-07-08; re-verified)
 Event envelope, `emit()`, all framework event builders, projections + snapshots,
 HLC ingest + identity binding + rejection log, threshold projections, and
 dev-tool formatting are implemented. Re-verifying corrected the audit's claims:
@@ -199,11 +200,13 @@ dev-tool formatting are implemented. Re-verifying corrected the audit's claims:
   persist's); **dev-mode** is a boundary/config concern (§9.5: "controlled by
   config, not code"). Both by-design, not observe gaps.
 
-One genuine open item: **2 link metrics** (`link.fault_rate`,
-`link.p99_duration_ns`) are observe-owned (over `hf.link.executed`) but produce a
-value **per link**, which needs a per-link firing rule §8b does not define — the
-aggregate threshold model (`condition_met` on one value) can't express it. This
-is a §8b spec-design decision plus an `evaluate_threshold` extension.
+- **2 link metrics — DONE** (aa86766): `link.fault_rate` and
+  `link.p99_duration_ns` are built by giving the metric model a general grouping
+  capability — `custom_metric` takes a `group` function so a metric's value is one
+  number per group (per link), and `evaluate_threshold` fires per group,
+  returning one `{group, fired, value}` per link. Developer-configurable (group on
+  the metric, condition on the projection), not hardcoded; §8b.5 defines it
+  (1184aeb). Aggregate metrics unchanged.
 
 ### honest-test — SPEC-COMPLETE (resolved 2026-07-08; audit re-verified)
 Strong: the generation engine (Set enumeration, Fibonacci numerics,
