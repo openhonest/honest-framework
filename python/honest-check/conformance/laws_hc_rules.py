@@ -110,6 +110,7 @@ from honest_parse import parse_python, parse_javascript, parse_html, node_text, 
 from honest_check.rules import language_for_path
 from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_enclosing_function, _js_equality_target, _js_else_if, _js_impure_name, _js_mutable_decl_names, _js_qualified_name, _js_reassigned_names, _js_scope_lets, _js_type_check
 from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _object_keys, _open_tag, _tag_name, manifest_keys, request_sites, scan_template
+from honest_check.boundary import _normalize_path, _path_params, check_boundary, route_boundary
 
 
 def _rules(source: str) -> list[str]:
@@ -2633,6 +2634,69 @@ def _probe_templates() -> list:
     return bad
 
 
+def _probe_boundary() -> list:
+    """HC002's first-link boundary check (section 4.2, line 461): a chain's first link's accepts must be
+    suppliable by the vocabulary derived from the templates targeting its route. Exercises path-parameter
+    extraction, path normalisation, route boundary derivation, and each first-link outcome — supplied,
+    missing, boundary-exempt, unresolvable, and the skip cases (empty chain, unknown link, unrouted)."""
+    bad = []
+    if _path_params("/items/{id}/{bad") != frozenset({"id"}) or _path_params("/x/{a}") != frozenset({"a"}) or _path_params("/x/{}") != frozenset() or _path_params("/a/b") != frozenset():
+        bad.append("_path_params")
+    if _normalize_path("/items/{id}") != "/items/*" or _normalize_path("/a/b") != "/a/b":
+        bad.append("_normalize_path")
+    tpl = scan_template(
+        b'<script>const appManifest = { tenant: {} };</script>'
+        b'<form hx-post="/api/orders"><input name="qty"><input name="sku"></form>'
+    )
+    sites = tpl["sites"]
+    if route_boundary("POST", "/api/orders", sites, tpl["manifest_keys"]) != {"fields": frozenset({"qty", "sku", "tenant"}), "resolvable": True}:
+        bad.append("route_boundary: matching site contributes its fields plus manifest keys")
+    if route_boundary("GET", "/api/orders", sites, frozenset()) != {"fields": frozenset(), "resolvable": True}:
+        bad.append("route_boundary: a method mismatch contributes no fields")
+    if route_boundary("POST", "/items/{id}", sites, frozenset()) != {"fields": frozenset({"id"}), "resolvable": True}:
+        bad.append("route_boundary: a path mismatch keeps only the path params")
+    routes = [{"method": "POST", "path": "/api/orders", "chain": "create_order"}]
+    # Two links so the first (links[0]) is distinct from the last: the check and the message must name
+    # the first. Only "validate" is defined; the second link is never looked up (only the first is).
+    chains = [{"name": "create_order", "links": ["validate", "persist"], "location": (3, 1)}]
+
+    def _rules(link_map):
+        return [d["rule"] for d in check_boundary(routes, chains, link_map, [tpl], "app.py")]
+
+    if _rules({"validate": {"accepts": {"qty", "sku", "tenant"}, "boundary": False}}) != []:
+        bad.append("a supplied first link should be clean")
+    missing = check_boundary(routes, chains, {"validate": {"accepts": {"qty", "coupon"}, "boundary": False}}, [tpl], "app.py")
+    if [(d["rule"], d["severity"]) for d in missing] != [("HC002", "error")] or missing[0]["message"] != (
+        "First link 'validate' of chain 'create_order' accepts ['coupon'], which no template targeting "
+        "POST /api/orders can supply. Send the field from a template that targets this route, or drop it "
+        "from the link's accepts."
+    ):
+        bad.append(f"a missing field should fire HC002 error naming it: {missing}")
+    if _rules({"validate": {"accepts": {"anything"}, "boundary": True}}) != []:
+        bad.append("a boundary first link is the intake and should be exempt")
+    if _rules({"other": {"accepts": {"x"}, "boundary": False}}) != []:
+        bad.append("an unknown first link should be skipped")
+    if [d["rule"] for d in check_boundary([], chains, {"validate": {"accepts": {"x"}, "boundary": False}}, [tpl], "app.py")]:
+        bad.append("a chain with no route should be skipped")
+    if [d["rule"] for d in check_boundary(routes, [{"name": "create_order", "links": [], "location": (1, 1)}], {}, [tpl], "app.py")]:
+        bad.append("a chain with no links should be skipped")
+    dyn = scan_template(b'<div hx-post="/items/{{id}}"></div>')
+    routes_dyn = [{"method": "POST", "path": "/items/{id}", "chain": "edit"}]
+    chains_dyn = [{"name": "edit", "links": ["do"], "location": (1, 1)}]
+    unresolvable = check_boundary(routes_dyn, chains_dyn, {"do": {"accepts": {"id"}, "boundary": False}}, [dyn], "app.py")
+    if [(d["rule"], d["severity"]) for d in unresolvable] != [("HC002", "error")] or unresolvable[0]["message"] != (
+        "Chain 'edit' runs route POST /items/{id}, but a template targeting it sends a field or path that "
+        "is not statically resolvable, so its input boundary is unknowable. Make every hx-post/hx-get path "
+        "and field name static."
+    ):
+        bad.append(f"an unresolvable boundary should fire one HC002 error: {unresolvable}")
+    # The continue after an unresolvable diagnostic prevents a second (missing-field) one for the chain.
+    both = check_boundary(routes_dyn, chains_dyn, {"do": {"accepts": {"coupon"}, "boundary": False}}, [dyn], "app.py")
+    if [d["rule"] for d in both] != ["HC002"]:
+        bad.append(f"an unresolvable boundary should emit exactly one diagnostic, not also a missing one: {both}")
+    return bad
+
+
 def run() -> int:
     failed = 0
     passed = 0
@@ -2682,6 +2746,14 @@ def run() -> int:
     if templates_bad:
         failed += 1
         print(f"FAIL HC-rule [templates]: {templates_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    boundary_bad = _probe_boundary()
+    if boundary_bad:
+        failed += 1
+        print(f"FAIL HC-rule [boundary]: {boundary_bad}")
     else:
         passed += 1
 

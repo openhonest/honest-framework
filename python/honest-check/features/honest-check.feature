@@ -778,3 +778,24 @@ Feature: honest-check — Python supplement
     Given an HTML or HTMX template source
     When scan_template parses it
     Then it returns the request sites and the application-state manifest keys for HC002
+
+  # HC002 first-link boundary check (spec section 4.2, line 461): the first link checked against the boundary.
+  Scenario: _path_params reads the parameters of a route path
+    Given a route path pattern
+    When _path_params scans its segments
+    Then it returns the names of the brace-wrapped parameter segments
+
+  Scenario: _normalize_path collapses a path's variable segments
+    Given a route or template path
+    When _normalize_path rewrites it
+    Then each parameter or interpolation segment becomes a wildcard so a target matches its route
+
+  Scenario: route_boundary derives a route's boundary vocabulary
+    Given a route, the scanned template sites, and the manifest keys
+    When route_boundary unions the fields of the sites targeting that route
+    Then it returns the boundary fields with the path parameters and manifest keys, and whether it is resolvable
+
+  Scenario: check_boundary checks each chain's first link against its route boundary
+    Given the route map, the chains, the links, and the scanned templates
+    When check_boundary derives each routed chain's boundary
+    Then it reports HC002 when the first link accepts a field the boundary cannot supply or the boundary is unresolvable, exempting a boundary first link

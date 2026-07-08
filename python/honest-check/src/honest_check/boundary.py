@@ -1,0 +1,72 @@
+"""HC002 first-link boundary check (honest-check spec section 4.2; honest-page sections 5, 9, 10.3).
+
+The first link of a chain receives the manifest classify() builds at intake from the tokens the
+templates targeting its route send — the closed input boundary (framework spec, "The input boundary is
+closed"). This module derives that boundary vocabulary per route from the scanned templates and checks
+each chain's first link's accepts against it. A first link declared a boundary is the intake itself and
+is exempt. The inputs are already-parsed data — the route map, chains, links, and scanned templates —
+so every function is pure; reading .py and template files stays at the caller's I/O boundary.
+"""
+
+from honest_check.diagnostics import diagnostic
+
+
+def _path_params(path: str) -> frozenset:
+    """The path parameters of a route pattern: the `{id}` segments of /items/{id} (honest-page 10.3)."""
+    return frozenset(segment[1:-1] for segment in path.split("/") if len(segment) > 2 and segment[0] == "{" and segment[-1] == "}")
+
+
+def _normalize_path(path: str) -> str:
+    """A route path with every parameter or interpolation segment collapsed to `*`, so a template's
+    concrete or interpolated target (/items/{{item.id}}) matches its route pattern (/items/{id})."""
+    return "/".join("*" if "{" in segment else segment for segment in path.split("/"))
+
+
+def route_boundary(method: str, path: str, sites: list, manifest_keys) -> dict:
+    """The boundary vocabulary of a route: the fields every template site targeting that (method, path)
+    sends, unioned with the route's path parameters and the application-state manifest keys. resolvable
+    is False when any targeting site's path is not statically resolvable — an unknowable boundary."""
+    fields = set(_path_params(path)) | set(manifest_keys)
+    resolvable = True
+    for site in sites:
+        if site["method"] == method and _normalize_path(site["path"]) == _normalize_path(path):
+            fields = fields | site["fields"]
+            resolvable = resolvable and site["resolvable"]
+    return {"fields": frozenset(fields), "resolvable": resolvable}
+
+
+def check_boundary(routes: list, chains: list, links: dict, scanned_templates: list, path: str) -> list:
+    """Check each chain named by a route: its first link's accepts must be suppliable by the boundary
+    vocabulary derived from the templates targeting that route. A first link declared a boundary is the
+    intake itself and is exempt. An unresolvable boundary — a template field or path that is not
+    statically knowable — is itself an HC002 violation (honest-check spec section 4.2, line 461)."""
+    sites = [site for scanned in scanned_templates for site in scanned["sites"]]
+    manifest_keys = frozenset(key for scanned in scanned_templates for key in scanned["manifest_keys"])
+    chain_route = {route["chain"]: route for route in routes}
+    out = []
+    for chain in chains:
+        if not chain["links"]:
+            continue
+        first = links.get(chain["links"][0])
+        route = chain_route.get(chain["name"])
+        if first is None or first.get("boundary") or route is None:
+            continue
+        boundary = route_boundary(route["method"], route["path"], sites, manifest_keys)
+        line, col = chain["location"]
+        if not boundary["resolvable"]:
+            out.append(diagnostic(
+                "HC002", "error", path, line, col,
+                f"Chain '{chain['name']}' runs route {route['method']} {route['path']}, but a template "
+                "targeting it sends a field or path that is not statically resolvable, so its input "
+                "boundary is unknowable. Make every hx-post/hx-get path and field name static.",
+            ))
+            continue
+        missing = set(first["accepts"]) - boundary["fields"]
+        if missing:
+            out.append(diagnostic(
+                "HC002", "error", path, line, col,
+                f"First link '{chain['links'][0]}' of chain '{chain['name']}' accepts {sorted(missing)}, "
+                f"which no template targeting {route['method']} {route['path']} can supply. Send the field "
+                "from a template that targets this route, or drop it from the link's accepts.",
+            ))
+    return out
