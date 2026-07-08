@@ -25,18 +25,28 @@ _OPERATORS = {
 }
 
 
-def custom_metric(name, event_types, fold, value, initial_state) -> dict:
+def custom_metric(name, event_types, fold, value, initial_state, group=None) -> dict:
     """Declare a metric (section 8b.5): the events it folds, the fold that accumulates state, the value
-    that extracts the number from that state, and the initial state. Pure data construction — it carries
-    the fold and value functions unchanged."""
-    return {"name": name, "event_types": event_types, "fold": fold, "value": value, "initial_state": initial_state}
+    that extracts the number from that state, and the initial state. A `group` function makes the metric
+    grouped — it extracts a key from each event (e.g. the link name), so the metric's value is one number
+    per group rather than one for the whole log. Pure data construction — the fold, value, and group
+    functions are carried unchanged."""
+    return {"name": name, "event_types": event_types, "fold": fold, "value": value, "initial_state": initial_state, "group": group}
 
 
 def compute_metric(metric, events):
-    """Compute a metric's current value over the log (section 8b). Pure: fold the metric's events from
-    its initial state, then extract the value. Reading the log is the boundary's; the events are data."""
-    state = apply_projection(events, metric["fold"], metric["initial_state"], event_types=metric["event_types"])
-    return metric["value"](state)
+    """Compute a metric's current value over the log (section 8b). Pure: fold the metric's events from its
+    initial state, then extract the value. An aggregate metric returns one number; a grouped metric folds
+    each group's events separately and returns {group_key: number}. Reading the log is the boundary's."""
+    if metric["group"] is None:
+        return metric["value"](apply_projection(events, metric["fold"], metric["initial_state"], event_types=metric["event_types"]))
+
+    def grouped_fold(state, event):
+        key = metric["group"](event)
+        return {**state, key: metric["fold"](state.get(key, metric["initial_state"]), event)}
+
+    grouped_state = apply_projection(events, grouped_fold, {}, event_types=metric["event_types"])
+    return {key: metric["value"](state) for key, state in grouped_state.items()}
 
 
 def condition_met(value, condition) -> bool:
@@ -56,10 +66,10 @@ def _percentile(values, p):
 
 # Section 8b.3 built-in metrics over the framework's own events: each a fold accumulating state and a
 # value extracting the number. This covers the self-contained metrics over honest-observe's own event
-# types. The persist-sourced metrics (persist.query.*, persist.pool.*, persist.queue.*) fold honest-
-# persist's section 4.5 events, whose payloads honest-persist defines, so they are declared there, not
-# guessed here; the per-link metrics (link.fault_rate, link.p99_duration_ns) produce a value per link,
-# which needs a per-link firing rule section 8b does not yet define.
+# types, including the per-link metrics (link.fault_rate, link.p99_duration_ns), which are grouped by
+# link — one value per link — so a threshold declared on them fires per link (evaluate_threshold). The
+# persist-sourced metrics (persist.query.*, persist.pool.*, persist.queue.*) fold honest-persist's
+# section 4.5 events, whose payloads honest-persist defines, so they are declared there, not guessed here.
 _BUILTIN_METRICS = {
     "request.error_rate": custom_metric(
         "request.error_rate", ["hf.request.canonical"],
@@ -103,6 +113,21 @@ _BUILTIN_METRICS = {
         lambda state: _percentile(state["durations"], 99),
         {"durations": []},
     ),
+    "link.fault_rate": custom_metric(
+        "link.fault_rate", ["hf.link.executed"],
+        lambda state, event: {"total": state["total"] + 1, "faults": state["faults"] + (1 if event["payload"]["result"] == "err" else 0)},
+        # A group exists only once at least one link execution folded into it, so total is always >= 1.
+        lambda state: state["faults"] / state["total"],
+        {"total": 0, "faults": 0},
+        group=lambda event: event["payload"]["link_name"],
+    ),
+    "link.p99_duration_ns": custom_metric(
+        "link.p99_duration_ns", ["hf.link.executed"],
+        lambda state, event: {"durations": state["durations"] + [event["payload"]["duration_ns"]]},
+        lambda state: _percentile(state["durations"], 99),
+        {"durations": []},
+        group=lambda event: event["payload"]["link_name"],
+    ),
 }
 
 
@@ -133,11 +158,16 @@ def threshold_projection(projection_id, metric, condition, window, cooldown, ale
 
 
 def evaluate_threshold(threshold, metric, events) -> dict:
-    """Decide whether a threshold projection fires now (section 8b): when enabled, compute its metric
-    over the events and test the condition, returning {fired, value}; a disabled projection never fires
-    and reports no value. Pure. The cooldown timing, the alert send, and the remediation chain are the
-    boundary's — this is only the crossing decision."""
+    """Decide whether a threshold projection fires now (section 8b): when enabled, compute its metric over
+    the events and test the condition. An aggregate metric returns {fired, value}. A grouped metric tests
+    the condition per group and returns {fired, firings}, where `fired` is true when any group crosses the
+    line and `firings` is one {group, fired, value} per group — so a per-link threshold fires once for
+    each link over the line. A disabled projection never fires. Pure. The cooldown timing, the alert send,
+    and the remediation chain are the boundary's — this is only the crossing decision."""
     if not threshold["enabled"]:
         return {"fired": False, "value": None}
     value = compute_metric(metric, events)
-    return {"fired": condition_met(value, threshold["condition"]), "value": value}
+    if metric["group"] is None:
+        return {"fired": condition_met(value, threshold["condition"]), "value": value}
+    firings = [{"group": key, "fired": condition_met(number, threshold["condition"]), "value": number} for key, number in value.items()]
+    return {"fired": any(firing["fired"] for firing in firings), "firings": firings}

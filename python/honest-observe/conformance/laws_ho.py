@@ -719,8 +719,9 @@ def _probe_threshold_engine():
 
 def _probe_builtin_metrics():
     """The built-in threshold metrics (section 8b.3): ready-made metrics over the framework's own events,
-    each a fold and a value the engine runs. Covers the self-contained metrics over observe-owned events;
-    the persist-sourced and per-link metrics are deferred (see thresholds.py)."""
+    each a fold and a value the engine runs. Covers the self-contained metrics over observe-owned events,
+    including the per-link metrics grouped by link; the persist-sourced metrics are deferred (see
+    thresholds.py)."""
     from honest_observe import builtin_metrics, compute_metric
     from honest_observe.thresholds import _percentile
 
@@ -791,6 +792,24 @@ def _probe_builtin_metrics():
     ]
     if compute_metric(metrics["browser.response.p99_duration_ms"], responses) != 200:
         bad.append("browser.response.p99_duration_ms should be the 99th-percentile round trip")
+
+    # The per-link metrics are grouped by link_name: one value per link (section 8b.3), and an empty log
+    # is an empty mapping.
+    link_exec = [
+        {"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "validate", "result": "ok", "duration_ns": 10}},
+        {"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "charge", "result": "err", "duration_ns": 50}},
+        {"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "charge", "result": "ok", "duration_ns": 40}},
+    ]
+    if compute_metric(metrics["link.fault_rate"], link_exec) != {"validate": 0.0, "charge": 0.5}:
+        bad.append(f"link.fault_rate should be the fault fraction per link: {compute_metric(metrics['link.fault_rate'], link_exec)}")
+    if compute_metric(metrics["link.p99_duration_ns"], link_exec) != {"validate": 10, "charge": 50}:
+        bad.append(f"link.p99_duration_ns should be the 99th-percentile duration per link: {compute_metric(metrics['link.p99_duration_ns'], link_exec)}")
+    # One link with 100 distinct durations pins its 99th percentile at 99 (a 2-sample group cannot).
+    hundred_link = [{"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "slow", "result": "ok", "duration_ns": n}} for n in range(1, 101)]
+    if compute_metric(metrics["link.p99_duration_ns"], hundred_link) != {"slow": 99}:
+        bad.append(f"link.p99_duration_ns over 1..100 for one link should be 99: {compute_metric(metrics['link.p99_duration_ns'], hundred_link)}")
+    if compute_metric(metrics["link.fault_rate"], []) != {}:
+        bad.append("a grouped metric over an empty log should be an empty mapping")
     return bad
 
 
@@ -831,6 +850,20 @@ def _probe_threshold_projection():
     disabled = threshold_projection("off", "request.error_rate", {"operator": "gt", "value": 0.05}, "5m", "10m", alert, enabled=False)
     if evaluate_threshold(disabled, metric, over) != {"fired": False, "value": None}:
         bad.append("a disabled threshold never fires and reports no value")
+
+    # A threshold declared on a grouped (per-link) metric fires per link: one {group, fired, value} per
+    # link, and `fired` is true when any link crosses the line (section 8b, per-link firing).
+    per_link = threshold_projection("link_faults", "link.fault_rate", {"operator": "gt", "value": 0.25}, "5m", "10m", alert)
+    link_metric = builtin_metrics()["link.fault_rate"]
+    link_events = [
+        {"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "ok_link", "result": "ok", "duration_ns": 1}},
+        {"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "bad_link", "result": "err", "duration_ns": 1}},
+    ]
+    if evaluate_threshold(per_link, link_metric, link_events) != {"fired": True, "firings": [{"group": "ok_link", "fired": False, "value": 0.0}, {"group": "bad_link", "fired": True, "value": 1.0}]}:
+        bad.append(f"a per-link threshold should fire per link over the line: {evaluate_threshold(per_link, link_metric, link_events)}")
+    calm = evaluate_threshold(per_link, link_metric, link_events[:1])
+    if calm["fired"] or calm["firings"] != [{"group": "ok_link", "fired": False, "value": 0.0}]:
+        bad.append(f"a per-link threshold with no link over the line should not fire: {calm}")
     return bad
 
 
