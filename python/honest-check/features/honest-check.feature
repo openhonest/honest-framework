@@ -727,3 +727,54 @@ Feature: honest-check — Python supplement
     Given JavaScript source with a try/catch in a non-boundary function
     When check_hc_p002_js runs
     Then it reports HC-P002 unless the function is marked a boundary
+
+  # HC002 template scanner (honest-page sections 5, 9): the input boundary read from templates.
+  Scenario: _open_tag finds an element's start or self-closing tag
+    Given a parsed HTML element node
+    When _open_tag looks at its children
+    Then it returns the start_tag or self_closing_tag that carries the attributes, else None
+
+  Scenario: _tag_name reads an element's tag name
+    Given a parsed HTML element node
+    When _tag_name reads its open tag
+    Then it returns the tag name, or None when the node has no open tag
+
+  Scenario: _attr reads a named attribute value from an element
+    Given a parsed HTML element node and an attribute name
+    When _attr searches the attribute subtree
+    Then it returns the value, the empty string for a valueless attribute, or None when absent
+
+  Scenario: _is_resolvable tells a static attribute value from an interpolated one
+    Given a template attribute value
+    When _is_resolvable inspects it
+    Then it is false when the value carries a template or JavaScript interpolation, otherwise true
+
+  Scenario: _object_keys reads the keys of a JavaScript object literal
+    Given a parsed object node
+    When _object_keys walks its pairs
+    Then it returns the top-level keys, whether written as bare identifiers or as strings
+
+  Scenario: _hx_vals_keys reads the keys of an hx-vals value
+    Given an hx-vals attribute value
+    When _hx_vals_keys parses it as a JavaScript object
+    Then it returns its keys, or nothing when the value is absent or not a static object
+
+  Scenario: _form_field_names collects the form control names under an element
+    Given a parsed HTML element node
+    When _form_field_names walks its form controls
+    Then it returns the names of the input, select, textarea, and named button descendants
+
+  Scenario: manifest_keys reads the appManifest keys declared in a script
+    Given a parsed JavaScript node
+    When manifest_keys looks for a const appManifest object
+    Then it returns the manifest keys, or nothing when no appManifest object is declared
+
+  Scenario: request_sites lists the HTMX request sites in a template
+    Given a parsed HTML template
+    When request_sites walks its elements
+    Then it returns each hx-* site's method, path, resolvability, and the fields it sends
+
+  Scenario: scan_template reads a template's request sites and manifest keys
+    Given an HTML or HTMX template source
+    When scan_template parses it
+    Then it returns the request sites and the application-state manifest keys for HC002

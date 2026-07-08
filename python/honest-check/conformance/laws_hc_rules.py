@@ -106,9 +106,10 @@ from honest_check.declgraph import (
     _recognizer,
     _route_key,
 )
-from honest_parse import parse_python, parse_javascript, node_text, walk as _w
+from honest_parse import parse_python, parse_javascript, parse_html, node_text, walk as _w
 from honest_check.rules import language_for_path
 from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_enclosing_function, _js_equality_target, _js_else_if, _js_impure_name, _js_mutable_decl_names, _js_qualified_name, _js_reassigned_names, _js_scope_lets, _js_type_check
+from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _object_keys, _open_tag, _tag_name, manifest_keys, request_sites, scan_template
 
 
 def _rules(source: str) -> list[str]:
@@ -2571,6 +2572,67 @@ def _probe_counts() -> list[str]:
     return bad
 
 
+def _probe_templates() -> list:
+    """HC002's HTML/HTMX template scanner (section 4.2, honest-page sections 5/9): request sites and
+    manifest keys read from a parsed template. Exercises every branch — all five hx-* methods, static
+    vs interpolated paths, form-field and hx-vals fields, bare and string object keys, self-closing
+    tags, valueless and absent attributes, and the empty/non-object cases."""
+    bad = []
+    tpl = (
+        '<script>const appManifest = { search: {read:"value"}, "sort": {} };</script>'
+        '<form hx-post="/api/orders"><input name="qty"><select name="sku"></select>'
+        '<textarea name="note"></textarea><button name="go">Go</button><span>x</span><input></form>'
+        '<button hx-get="/api/items" hx-vals=\'{"page": 1}\'>More</button>'
+        '<div hx-put="/a"></div><div hx-patch="/b"></div><div hx-delete="/c"></div>'
+        '<div hx-post="/items/{{id}}"></div><div class="plain"></div>'
+    ).encode()
+    scanned = scan_template(tpl)
+    if scanned["manifest_keys"] != frozenset({"search", "sort"}):
+        bad.append(f"manifest_keys from <script>: {sorted(scanned['manifest_keys'])}")
+    sites = {(s["method"], s["path"]): s for s in scanned["sites"]}
+    if {s["method"] for s in scanned["sites"]} != {"POST", "GET", "PUT", "PATCH", "DELETE"}:
+        bad.append(f"hx-* methods: {sorted(s['method'] for s in scanned['sites'])}")
+    orders = sites.get(("POST", "/api/orders"))
+    if orders is None or orders["fields"] != frozenset({"qty", "sku", "note", "go"}) or not orders["resolvable"]:
+        bad.append(f"form fields/resolvable: {orders}")
+    items = sites.get(("GET", "/api/items"))
+    if items is None or items["fields"] != frozenset({"page"}):
+        bad.append(f"hx-vals fields: {items}")
+    dyn = sites.get(("POST", "/items/{{id}}"))
+    if dyn is None or dyn["resolvable"] or dyn["fields"] != frozenset():
+        bad.append(f"interpolated path should be unresolvable with no fields: {dyn}")
+    # A template with no <script> has no manifest keys; a self-closing tag still yields a site.
+    plain = scan_template(b'<img hx-get="/img"/>')
+    if plain["manifest_keys"] != frozenset() or {s["path"] for s in plain["sites"]} != {"/img"}:
+        bad.append(f"no-script / self-closing: {plain}")
+    # _is_resolvable: each interpolation form is unresolvable; a clean path is resolvable.
+    if any(_is_resolvable(v) for v in ("/x/{{i}}", "/x/{% if %}", "/x/${i}")) or not _is_resolvable("/x/1"):
+        bad.append("_is_resolvable misclassified an interpolation form")
+    # _hx_vals_keys: absent -> empty; a non-object value -> empty; a static object -> its keys.
+    if _hx_vals_keys(None) != frozenset() or _hx_vals_keys("dynamicVals") != frozenset():
+        bad.append("_hx_vals_keys absent/non-object should be empty")
+    if _hx_vals_keys('{"a": 1, b: 2}') != frozenset({"a", "b"}):
+        bad.append("_hx_vals_keys string and bare keys")
+    # _object_keys via manifest: string key ("sort") and bare key (search) both resolve.
+    if _object_keys(next(n for n in _w(parse_javascript(b'x = {a: 1, "b": 2}').root_node) if n.type == "object"), b'x = {a: 1, "b": 2}') != frozenset({"a", "b"}):
+        bad.append("_object_keys bare + string")
+    # manifest_keys edge cases: a non-appManifest declarator, and appManifest not bound to an object.
+    for src, want in ((b"const other = { z: 1 };", frozenset()), (b"const appManifest = 5;", frozenset()), (b"const appManifest;", frozenset())):
+        if manifest_keys(parse_javascript(src).root_node, src) != want:
+            bad.append(f"manifest_keys edge {src!r}: {sorted(manifest_keys(parse_javascript(src).root_node, src))}")
+    # _attr / _open_tag / _tag_name edges on parsed nodes.
+    doc = parse_html(b'<form hx-post="/o" disabled></form>').root_node
+    form = next(n for n in _w(doc) if n.type == "element")
+    src = b'<form hx-post="/o" disabled></form>'
+    if _attr(form, "hx-post", src) != "/o" or _attr(form, "disabled", src) != "" or _attr(form, "missing", src) is not None:
+        bad.append("_attr value / valueless / absent")
+    if _open_tag(doc) is not None or _tag_name(doc, src) is not None or _attr(doc, "hx-post", src) is not None:
+        bad.append("_open_tag / _tag_name / _attr of a node with no open tag should be None")
+    if _tag_name(form, src) != "form" or _form_field_names(form, src) != frozenset():
+        bad.append("_tag_name / empty form fields")
+    return bad
+
+
 def run() -> int:
     failed = 0
     passed = 0
@@ -2612,6 +2674,14 @@ def run() -> int:
     if javascript_bad:
         failed += 1
         print(f"FAIL HC-rule [javascript]: {javascript_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    templates_bad = _probe_templates()
+    if templates_bad:
+        failed += 1
+        print(f"FAIL HC-rule [templates]: {templates_bad}")
     else:
         passed += 1
 
