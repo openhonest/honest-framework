@@ -71,7 +71,7 @@ Verdicts use three honest categories:
 | honest-check | **SUBSET** | 36/36 static rules; JS reads now trapped | HC002 first-link boundary-vocab derivation (blocked on honest-page — not built); HC011 CLI/LSP sandboxed sampler (construction-time form already done in honest-type) |
 | honest-observe | **SUBSET** | ~39/46 (85%) | `hf.proof.checked` builder absent; 6/13 built-in metrics missing; OTel auth attrs + `install_otel_exporter` absent |
 | honest-test | **SUBSET** | ~65% | no runner/CLI; no BDD step scaffolding; no `io_monitor` (§4.4); HC-P009 not implemented; §6/§7 absent |
-| honest-parse | **SPEC-COMPLETE** | 6/6 languages | none (Ruby/PHP/Go/Elixir added — commit f793594) |
+| honest-parse | **SPEC-COMPLETE** | 7 grammars (6 source + HTML) | none (Ruby/PHP/Go/Elixir — f793594; HTML/HTMX — 6de18bb) |
 | honest-persist | **SUBSET** | SQLite/Turso substantial; Postgres non-functional | no PostgreSQL inspector; no view/trigger/procedure DDL apply; no RETURNING; no materialized-view refresh |
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
 | honest-DOM | **SUBSET** | ~45% of Full | injected-param signatures with no browser-binding wrapper; §4 React hooks absent; §5 observability absent; conformance suite has 3 cases |
@@ -165,10 +165,13 @@ Reading the spec directly corrected three of this module's audit claims:
 (HC-P008/009/012) are correctly deferred. Two genuine gaps remain:
 - **HC002 first-link boundary-vocab derivation** (spec line 461): the first
   link's `accepts` should be checked against the vocabulary derived from the
-  route map + templates (honest-page §5/§9). That derivation reads honest-page
-  templates, and **honest-page is not built in this tree** — there are no
-  templates to derive from. This is genuinely blocked on honest-page (later in
-  bootstrap order), not corner-cuttable now.
+  route map + templates (honest-page §5/§9). Not blocked on honest-page: the
+  conventions are fixed by the honest-page *spec* (route map §9, manifest §5,
+  intake §10.3), and building the checker before honest-page's implementation is
+  Verification First (the gate precedes the code it governs, framework spec §297).
+  Build underway spec-first: step 1 (HTML grammar in honest-parse, 6de18bb) done;
+  next the honest-check template scanner (hx-post/hx-get, form `name`s, `hx-vals`,
+  `appManifest` keys), then the HC002 derivation, then synthetic app fixtures.
 - **HC011 CLI/LSP sandboxed sampler**: the construction-time form (sample a
   predicate, reject if >95% accepted) is already implemented in honest-type's
   `vocabulary()` (`_check_catch_all`); the spec's CLI/LSP form needs honest-check
@@ -203,16 +206,19 @@ Verified gaps:
   features; it does not run.
 - §6 (persist contract tests) and §7 (component isolation) absent.
 
-### honest-parse — SPEC-COMPLETE (6 of 6 languages) — resolved 2026-07-08 (f793594)
+### honest-parse — SPEC-COMPLETE (7 grammars) — resolved 2026-07-08 (f793594, 6de18bb)
 The parse boundary and node helpers (`node_text`, `line_col`, `walk`,
-`first_error_node`, UTF-8, determinism) were already correct. All six framework
-target languages are now present in `_LANGUAGES` — Python, JavaScript, Ruby, PHP
-(via the tag-aware `language_php()` handle), Go, Elixir — each a single row plus a
-convenience wrapper. The JS law and the four new grammars are checked uniformly by
-a data-driven `_law_grammars` table over per-language corpora; the closed-vocabulary
-law exercises all six; portable suite cases cover each. Gate: honest-check clean,
-100% coverage, 28 conformance cases + 8 laws, mutation 65 caught / 0 undeclared,
-bijection 11 = 11.
+`first_error_node`, UTF-8, determinism) were already correct. The six source
+languages honest-check/honest-test lint are present in `_LANGUAGES` — Python,
+JavaScript, Ruby, PHP (via the tag-aware `language_php()` handle), Go, Elixir —
+plus the **HTML/HTMX template grammar** the single parser must also read. That
+seventh grammar corrects a premature "6/6 complete" claim: framework spec "The
+input boundary is closed" names the parser's languages as "Python, the HTML/HTMX
+templates, and JavaScript," so honest-parse without HTML could not see the
+template attributes HC002 derives a boundary vocabulary from. Each grammar is one
+row plus a wrapper; a data-driven `_law_grammars` table checks all non-Python
+grammars uniformly. Gate: honest-check clean, 100% coverage, 33 conformance cases
++ 8 laws, mutation 71 caught / 0 undeclared, bijection 12 = 12.
 
 ### honest-persist — SUBSET (SQLite/Turso substantial; Postgres non-functional)
 Present and solid: schema diff/validate/deps/ambiguity, apply with table
