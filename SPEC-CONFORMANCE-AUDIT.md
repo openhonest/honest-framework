@@ -169,9 +169,11 @@ Reading the spec directly corrected three of this module's audit claims:
   conventions are fixed by the honest-page *spec* (route map §9, manifest §5,
   intake §10.3), and building the checker before honest-page's implementation is
   Verification First (the gate precedes the code it governs, framework spec §297).
-  Build underway spec-first: step 1 (HTML grammar in honest-parse, 6de18bb) done;
-  next the honest-check template scanner (hx-post/hx-get, form `name`s, `hx-vals`,
-  `appManifest` keys), then the HC002 derivation, then synthetic app fixtures.
+  Build underway spec-first: step 1 (HTML grammar in honest-parse, 6de18bb) and
+  step 2 (the `templates.py` scanner — `scan_template` reads request sites +
+  `appManifest` keys, 6a148fe) done; next step 3 wires the scanner to the `ROUTES`
+  map so HC002 checks a first link's `accepts` against the derived boundary
+  vocabulary, then step 4 adds synthetic app fixtures.
 - **HC011 CLI/LSP sandboxed sampler**: the construction-time form (sample a
   predicate, reject if >95% accepted) is already implemented in honest-type's
   `vocabulary()` (`_check_catch_all`); the spec's CLI/LSP form needs honest-check
