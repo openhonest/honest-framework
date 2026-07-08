@@ -169,11 +169,16 @@ Reading the spec directly corrected three of this module's audit claims:
   conventions are fixed by the honest-page *spec* (route map §9, manifest §5,
   intake §10.3), and building the checker before honest-page's implementation is
   Verification First (the gate precedes the code it governs, framework spec §297).
-  Build underway spec-first: step 1 (HTML grammar in honest-parse, 6de18bb) and
-  step 2 (the `templates.py` scanner — `scan_template` reads request sites +
-  `appManifest` keys, 6a148fe) done; next step 3 wires the scanner to the `ROUTES`
-  map so HC002 checks a first link's `accepts` against the derived boundary
-  vocabulary, then step 4 adds synthetic app fixtures.
+  Build underway spec-first. Done and gated: step 1 (HTML grammar in
+  honest-parse, 6de18bb); step 2 (`templates.py` scanner — `scan_template` reads
+  request sites + `appManifest` keys, 6a148fe); step 3 logic (`boundary.py` —
+  `route_boundary` derives a route's vocabulary, `check_boundary` reports HC002
+  when a first link accepts a field no template supplies or the boundary is
+  unresolvable, `boundary_diagnostics` runs it on a parsed file; fe396f6,
+  6081d06), verified end-to-end on real honest-code source. Remaining: the CLI
+  wiring — a `templates` config key plus reading/scanning the template directory
+  and calling `boundary_diagnostics` per `.py` file, so HC002 fires on a real
+  project.
 - **HC011 CLI/LSP sandboxed sampler**: the construction-time form (sample a
   predicate, reject if >95% accepted) is already implemented in honest-type's
   `vocabulary()` (`_check_catch_all`); the spec's CLI/LSP form needs honest-check
