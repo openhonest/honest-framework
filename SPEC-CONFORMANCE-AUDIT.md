@@ -70,7 +70,7 @@ Verdicts use three honest categories:
 | honest-auth | **SUBSET** | ~11/28 (~39%) | `test_token_generator.generate()` contract wrong/absent; no 6-token-class enforcement; no conformance-suite app; `"unauthenticated"` fault key not enforced |
 | honest-check | **SPEC-COMPLETE** | 36/36 static rules; HC002 first-link live | none (HC011 spec reconciled to the pure-static design — eac7ae7) |
 | honest-observe | **SUBSET** | ~39/46 (85%) | `hf.proof.checked` builder absent; 6/13 built-in metrics missing; OTel auth attrs + `install_otel_exporter` absent |
-| honest-test | **SUBSET** | §4.4 done; 2 real gaps | §8.2 BDD step scaffolding generator; §8.4 HTTP assertion step library (the runner, HC-P009, and §6/§7 are NOT gaps — by design) |
+| honest-test | **SUBSET** | §4.4 + §8.2 done; 1 gap | §8.4 HTTP assertion step library (the runner, HC-P009, and §6/§7 are NOT gaps — by design) |
 | honest-parse | **SPEC-COMPLETE** | 7 grammars (6 source + HTML) | none (Ruby/PHP/Go/Elixir — f793594; HTML/HTMX — 6de18bb) |
 | honest-persist | **SUBSET** | SQLite/Turso substantial; Postgres non-functional | no PostgreSQL inspector; no view/trigger/procedure DDL apply; no RETURNING; no materialized-view refresh |
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
@@ -212,11 +212,19 @@ Re-verifying against spec+code corrected several audit claims:
 - **§6/§7 — deferred by design.** They are Complete-level and use honest-test's
   machinery from honest-persist / honest-features, not honest-test core.
 
-Two genuine gaps remain:
-- **§8.2 BDD step scaffolding generator** — generate step functions from `@link`
-  declarations. Inputs exist (`link_meta`, `enumerate_sets`, `register_step`).
-- **§8.4 HTTP assertion step library** — the standard response-status/header/body
-  step handlers, pure over a duck-typed response in the gherkin context.
+Gaps:
+- **§4.4 boundary isolation — DONE** (db40f26).
+- **§8.2 BDD step scaffolding generator — DONE** (d15d3ad): `scaffold_chain`
+  generates a chain's gherkin registry (given classifies → when runs → then
+  asserts), verified end-to-end against a real gherkin scenario.
+- **§8.4 HTTP assertion step library — remaining.** The 23 required standard
+  steps (13 response assertions: status/status-class/Content-Type/charset/
+  header/body/JSON/HTML-selector/cookie/location; 4 request builders; 3 when
+  senders; 3 multi-request session steps). Each is a pure `(context, **captures)
+  -> context` handler over a **normalized response/request dict** the app's test
+  client provides — that contract (status/headers/body/cookies shape, the
+  injected client, a named-schema registry) is the one design surface to pin
+  before building, so honest-test stays framework-agnostic and pure.
 
 ### honest-parse — SPEC-COMPLETE (7 grammars) — resolved 2026-07-08 (f793594, 6de18bb)
 The parse boundary and node helpers (`node_text`, `line_col`, `walk`,
