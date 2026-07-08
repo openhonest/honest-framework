@@ -887,12 +887,12 @@ These attributes extend OTel with honest-framework-specific measurements. They a
 
 ### 7.4 OTel Integration Hooks
 
-Each spoke implementation provides integration hooks for the OTel SDK. The developer installs the OTel exporter and configures the endpoint; the framework instruments automatically.
+honest-observe produces OTel signals as pure data: `otel_signal` (section 7.1) projects each `hf.*` event to its signal kind and its semantic-convention attributes. Installing an SDK exporter and running the export loop is boundary I/O — reached through an injected exporter exactly as `emit` reaches the log through an injected runtime — so the install hook lives at the spoke's application boundary, not in observe's pure core; observe never imports the OpenTelemetry SDK. The boundary exposes a hook that wires a configured exporter to the projection and ships each signal through it:
 
 **Python (honest-py):**
 
 ```python
-from honest_observe import install_otel_exporter
+from honest_py import install_otel_exporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
 install_otel_exporter(
@@ -905,7 +905,7 @@ install_otel_exporter(
 **JavaScript (honest-js):**
 
 ```javascript
-import { installOtelExporter } from 'honest-observe'
+import { installOtelExporter } from 'honest-web'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 
 installOtelExporter({
@@ -915,7 +915,7 @@ installOtelExporter({
 })
 ```
 
-Once installed, all `hf.*` events are automatically exported as OTel signals. No further configuration is required for standard instrumentation.
+The hook runs the `otel_signal` projection over the event log and ships each signal through the injected exporter. Once installed, all `hf.*` events are exported automatically; no further configuration is required for standard instrumentation.
 
 ### 7.5 Zero-Code vs Code-Based Instrumentation
 
