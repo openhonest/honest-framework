@@ -134,10 +134,15 @@ Feature: honest-observe — event envelope, recording, and projection
     When otel_signal_kind maps it
     Then it returns the OTel signal kind for a framework event and None for any other
 
+  Scenario: _auth_attrs maps an event's auth partition to hf.auth attributes
+    Given an event's auth partition
+    When _auth_attrs reads it
+    Then it returns the caller, data owner, and factors-presented as hf.auth attributes, each only when its field is present
+
   Scenario: otel_attributes derives the OTel semantic-convention attributes
-    Given an hf event with a payload and optional meta release
+    Given an hf event with a payload, optional auth partition, and optional meta release
     When otel_attributes derives them
-    Then it returns the hf attributes its event type contributes plus service version from meta release, and nothing for an event with no attribute builder
+    Then it returns the hf attributes its event type contributes, the hf.auth attributes from its auth partition, and service version from meta release, and nothing for an event with no attribute builder
 
   Scenario: otel_signal is the projection output for one event
     Given an hf event

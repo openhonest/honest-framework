@@ -439,6 +439,17 @@ def _probe_otel():
     if "service.version" in otel_attributes({"event_type": "hf.persist.query", "payload": {}, "meta": {"other": "x"}}):
         bad.append("service.version should be absent when meta has no release")
 
+    # §7.3 hf.auth.* attributes come from the event's auth partition (when honest-auth is used): every
+    # field present maps, only the fields present map, and a no-auth event carries none.
+    with_auth = {"event_type": "hf.link.executed", "payload": link["payload"], "auth": {"caller_id": "u1", "data_owner_id": "o1", "factors_presented": ["pw"]}}
+    got_auth = {k: v for k, v in otel_attributes(with_auth).items() if k.startswith("hf.auth")}
+    if got_auth != {"hf.auth.caller_id": "u1", "hf.auth.data_owner_id": "o1", "hf.auth.factors_presented": ["pw"]}:
+        bad.append(f"the auth partition should map to hf.auth.* attributes: {got_auth}")
+    if {k for k in otel_attributes({**with_auth, "auth": {"caller_id": "u1"}}) if k.startswith("hf.auth")} != {"hf.auth.caller_id"}:
+        bad.append("only the auth fields present in the partition should map")
+    if any(k.startswith("hf.auth") for k in otel_attributes({**with_auth, "auth": None})):
+        bad.append("a no-auth event should carry no hf.auth.* attributes")
+
     # otel_signal is the projection's output: kind plus attributes for one event.
     sig = otel_signal(chain_done)
     if sig != {"event_type": "hf.chain.completed", "kind": "span_end", "attributes": {"hf.chain.name": "checkout", "hf.chain.link_count": 3, "hf.chain.fault_code": "declined"}}:

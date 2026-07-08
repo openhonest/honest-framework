@@ -60,6 +60,21 @@ def _state_attrs(payload):
     return {"hf.state.machine": payload["machine_name"], "hf.state.from": payload["from_state"], "hf.state.event": payload["event"], "hf.state.to": payload["to_state"]}
 
 
+# Section 7.3: the auth partition's fields mapped to their hf.auth.* OTel attributes. Present on a
+# signal only when honest-auth put the field in the event's auth partition.
+_AUTH_ATTRS = {
+    "caller_id": "hf.auth.caller_id",
+    "data_owner_id": "hf.auth.data_owner_id",
+    "factors_presented": "hf.auth.factors_presented",
+}
+
+
+def _auth_attrs(auth):
+    """The hf.auth.* attributes from an event's auth partition (section 7.3): caller, data owner, and
+    factors presented, each included only when honest-auth put it in the partition. Pure."""
+    return {attr: auth[field] for field, attr in _AUTH_ATTRS.items() if field in auth}
+
+
 # Section 7.3: per-event-type attribute builders. The dispatch table is the type system.
 _ATTRIBUTE_BUILDERS = {
     "hf.chain.started": _chain_started_attrs,
@@ -79,10 +94,14 @@ def otel_signal_kind(event_type: str):
 
 def otel_attributes(event: dict) -> dict:
     """The OTel semantic-convention attributes for an event (sections 7.2, 7.3): the hf.* attributes its
-    event type contributes, plus `service.version` from `meta.release` when present. An event with no
-    attribute builder contributes no hf.* attributes. Pure."""
+    event type contributes, the hf.auth.* attributes from its auth partition when present, plus
+    `service.version` from `meta.release` when present. An event with no attribute builder contributes no
+    event-type attributes. Pure."""
     builder = _ATTRIBUTE_BUILDERS.get(event["event_type"])
     attrs = builder(event["payload"]) if builder else {}
+    auth = event.get("auth")
+    if auth:
+        attrs.update(_auth_attrs(auth))
     meta = event.get("meta")
     if meta and "release" in meta:
         attrs["service.version"] = meta["release"]
