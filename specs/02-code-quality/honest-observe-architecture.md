@@ -1205,6 +1205,21 @@ enabled        = true
 
 **Step 3: Done.** The framework wires the projection to the threshold check to the alert to the optional remediation chain. No middleware. No cron job. No external alerting system.
 
+**Grouped (per-key) metrics.** A metric may carry a `group` function that extracts a key from each event — the link name for `link.fault_rate`, say. Its value is then one number **per group** rather than one aggregate: `compute_metric` folds each group's events separately and returns a `{group_key: number}` mapping. A threshold declared on a grouped metric tests its condition against each group's value and fires once for **every group over the line**; the firing decision is `{fired, firings}`, where `fired` is true when any group crosses and `firings` carries one `{group, fired, value}` record per group. The developer chooses the grouping when declaring the metric and the condition when declaring the projection — the per-group firing is declared, never hardcoded. The built-in `link.fault_rate` and `link.p99_duration_ns` are grouped by link.
+
+```python
+# A per-link metric: one fault rate per link function.
+custom_metric(
+    name        = "link.fault_rate",
+    event_types = ["hf.link.executed"],
+    fold        = lambda state, event: {"total": state["total"] + 1,
+                                        "faults": state["faults"] + (1 if event.payload["result"] == "err" else 0)},
+    value       = lambda state: state["faults"] / state["total"],
+    initial_state = {"total": 0, "faults": 0},
+    group       = lambda event: event.payload["link_name"],
+)
+```
+
 ### 8b.6 The Feedback Loop
 
 For threshold projections with a `remediation` chain, the full loop is:
