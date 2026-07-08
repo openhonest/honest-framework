@@ -9,18 +9,29 @@ target language is adding a row, not branching control flow.
 
 import types
 
+import tree_sitter_elixir as ts_elixir
+import tree_sitter_go as ts_go
 import tree_sitter_javascript as ts_javascript
+import tree_sitter_php as ts_php
 import tree_sitter_python as ts_python
+import tree_sitter_ruby as ts_ruby
 from tree_sitter import Language, Parser
 
 # Compiled grammars are immutable. They are exposed only through a read-only mapping
 # (MappingProxyType), so there is no module-level mutable container here at all. A tree-sitter
 # Parser carries internal state, so one is built per call rather than held as a shared
-# singleton — `parse` stays free of hidden cross-call state.
+# singleton — `parse` stays free of hidden cross-call state. The six framework target languages
+# each occupy one row; adding a language is adding a row, never branching control flow. The PHP
+# grammar exposes its handle as `language_php()` (the tag-aware grammar that accepts `<?php`),
+# not `language()`, so its row names that function explicitly.
 _LANGUAGES = types.MappingProxyType(
     {
         "python": Language(ts_python.language()),
         "javascript": Language(ts_javascript.language()),
+        "ruby": Language(ts_ruby.language()),
+        "php": Language(ts_php.language_php()),
+        "go": Language(ts_go.language()),
+        "elixir": Language(ts_elixir.language()),
     }
 )
 
@@ -38,6 +49,26 @@ def parse_python(source: bytes):
 def parse_javascript(source: bytes):
     """Convenience wrapper for the JavaScript grammar."""
     return parse(source, "javascript")
+
+
+def parse_ruby(source: bytes):
+    """Convenience wrapper for the Ruby grammar."""
+    return parse(source, "ruby")
+
+
+def parse_php(source: bytes):
+    """Convenience wrapper for the PHP grammar."""
+    return parse(source, "php")
+
+
+def parse_go(source: bytes):
+    """Convenience wrapper for the Go grammar."""
+    return parse(source, "go")
+
+
+def parse_elixir(source: bytes):
+    """Convenience wrapper for the Elixir grammar."""
+    return parse(source, "elixir")
 
 
 def node_text(node, source: bytes) -> str:

@@ -14,6 +14,22 @@
     {"id": "js-valid-empty", "language": "javascript", "source": "", "expect_error": false},
     {"id": "js-syntax-error", "language": "javascript", "source": "function f(", "expect_error": true},
     {"id": "js-unterminated-string", "language": "javascript", "source": "const x = 'abc", "expect_error": true},
-    {"id": "js-root-text-spans-source", "language": "javascript", "source": "let a = 2;", "expect_root_text": "let a = 2;"}
+    {"id": "js-root-text-spans-source", "language": "javascript", "source": "let a = 2;", "expect_root_text": "let a = 2;"},
+    {"id": "rb-valid-assignment", "language": "ruby", "source": "x = 1\n", "expect_error": false},
+    {"id": "rb-valid-method", "language": "ruby", "source": "def f(a)\n  a + 1\nend\n", "expect_error": false},
+    {"id": "rb-syntax-error", "language": "ruby", "source": "def f(", "expect_error": true},
+    {"id": "rb-root-text-spans-source", "language": "ruby", "source": "y = 2\n", "expect_root_text": "y = 2\n"},
+    {"id": "php-valid-assignment", "language": "php", "source": "<?php\n$x = 1;\n", "expect_error": false},
+    {"id": "php-valid-function", "language": "php", "source": "<?php\nfunction f($a) { return $a + 1; }\n", "expect_error": false},
+    {"id": "php-syntax-error", "language": "php", "source": "<?php\nfunction f(", "expect_error": true},
+    {"id": "php-root-text-spans-source", "language": "php", "source": "<?php\n$a = 2;\n", "expect_root_text": "<?php\n$a = 2;\n"},
+    {"id": "go-valid-package", "language": "go", "source": "package main\n", "expect_error": false},
+    {"id": "go-valid-function", "language": "go", "source": "package main\nfunc f(a int) int {\n\treturn a + 1\n}\n", "expect_error": false},
+    {"id": "go-syntax-error", "language": "go", "source": "package main\nfunc f( {", "expect_error": true},
+    {"id": "go-root-text-spans-source", "language": "go", "source": "package main\n", "expect_root_text": "package main\n"},
+    {"id": "ex-valid-assignment", "language": "elixir", "source": "x = 1\n", "expect_error": false},
+    {"id": "ex-valid-module", "language": "elixir", "source": "defmodule M do\n  def f(x), do: x + 1\nend\n", "expect_error": false},
+    {"id": "ex-syntax-error", "language": "elixir", "source": "defmodule do", "expect_error": true},
+    {"id": "ex-root-text-spans-source", "language": "elixir", "source": "y = 2\n", "expect_root_text": "y = 2\n"}
   ]
 }

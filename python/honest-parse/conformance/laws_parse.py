@@ -19,7 +19,19 @@ The conformance directory is outside the honest-check gate, so this file is free
 malformed bytes and unknown languages on purpose.
 """
 
-from honest_parse import first_error_node, line_col, node_text, parse, parse_javascript, parse_python, walk
+from honest_parse import (
+    first_error_node,
+    line_col,
+    node_text,
+    parse,
+    parse_elixir,
+    parse_go,
+    parse_javascript,
+    parse_php,
+    parse_python,
+    parse_ruby,
+    walk,
+)
 
 _CORPUS = [
     "x = 1",
@@ -32,15 +44,64 @@ _CORPUS = [
 
 _INVALID = ["def f(:", "x = 'abc", "(", "return = "]
 
-_JS_CORPUS = [
-    "const x = 1;",
-    "function f(a, b) {\n    return a + b;\n}\n",
-    "let y = 'hello';\nconst z = [1, 2, 3];\n",
-    "if (a === 1) {\n    b = 2;\n} else {\n    b = 3;\n}\n",
-    "",
-]
-
-_JS_INVALID = ["function f(", "const x = 'abc", "{", "let = "]
+# Every non-Python grammar is checked uniformly through the shared boundary (node-text round-trip,
+# error detection on valid and invalid source, and wrapper/`parse` agreement) over a per-language
+# corpus. Python is the deep reference language exercised by the laws above; each other framework
+# target grammar earns its row here. This is data, not branches: adding a language extends the table.
+_GRAMMARS = {
+    "javascript": {
+        "parse": parse_javascript,
+        "corpus": [
+            "const x = 1;",
+            "function f(a, b) {\n    return a + b;\n}\n",
+            "let y = 'hello';\nconst z = [1, 2, 3];\n",
+            "if (a === 1) {\n    b = 2;\n} else {\n    b = 3;\n}\n",
+            "",
+        ],
+        "invalid": ["function f(", "const x = 'abc", "{", "let = "],
+    },
+    "ruby": {
+        "parse": parse_ruby,
+        "corpus": [
+            "x = 1\n",
+            "def f(a, b)\n  a + b\nend\n",
+            "class C < Base\nend\n",
+            "[1, 2, 3].each { |n| p n }\n",
+            "",
+        ],
+        "invalid": ["def f(", "x = [1, 2", "class ", "if a"],
+    },
+    "php": {
+        "parse": parse_php,
+        "corpus": [
+            "<?php\n$x = 1;\n",
+            "<?php\nfunction f($a) { return $a + 1; }\n",
+            "<?php\nclass C {}\n",
+            "",
+        ],
+        "invalid": ["<?php\nfunction f(", "<?php\n$x = ", "<?php\nclass {", "<?php\nif ("],
+    },
+    "go": {
+        "parse": parse_go,
+        "corpus": [
+            "package main\n",
+            "package main\nfunc f(a int) int {\n\treturn a + 1\n}\n",
+            "package main\nvar x = 3\n",
+            "",
+        ],
+        "invalid": ["package main\nfunc f( {", "package", "var = "],
+    },
+    "elixir": {
+        "parse": parse_elixir,
+        "corpus": [
+            "x = 1\n",
+            "defmodule M do\n  def f(x), do: x + 1\nend\n",
+            "[1, 2, 3]\n",
+            "",
+        ],
+        "invalid": ["defmodule do", "def f(", "[1, 2"],
+    },
+}
 
 
 def _reference_preorder(node):
@@ -118,12 +179,14 @@ def _law_determinism():
 
 
 def _law_language_vocabulary():
-    """A known language parses; an unknown one is rejected, never guessed (closed vocabulary)."""
+    """Every known language parses a valid snippet; an unknown one is rejected, never guessed
+    (closed vocabulary). All six framework target languages are exercised through the boundary."""
     bad = []
     if parse(b"x = 1", "python").root_node.has_error:
         bad.append("parse(.., 'python') failed on valid source")
-    if parse(b"const x = 1;", "javascript").root_node.has_error:
-        bad.append("parse(.., 'javascript') failed on valid source")
+    for language, grammar in _GRAMMARS.items():
+        if parse(grammar["corpus"][0].encode("utf-8"), language).root_node.has_error:
+            bad.append(f"parse(.., {language!r}) failed on valid source")
     try:
         parse(b"x = 1", "klingon")
         bad.append("an unknown language should raise KeyError, not be guessed")
@@ -132,29 +195,33 @@ def _law_language_vocabulary():
     return bad
 
 
-def _law_javascript():
-    """The JavaScript grammar parses through the shared boundary: node-text round-trip and error
-    detection hold over a JS corpus, the wrapper agrees with parse(.., 'javascript'), and broken JS
-    is detected. honest-DOM (Tier 3) is the JS reference implementation gated through this boundary."""
+def _law_grammars():
+    """Every non-Python target grammar parses through the shared boundary: node-text round-trip and
+    error detection hold over each language's corpus, invalid source is detected, and the per-language
+    convenience wrapper agrees with parse(.., language). honest-check's shape rules reach every target
+    language through exactly this one boundary; honest-DOM (Tier 3) is the JS reference gated here."""
     bad = []
-    for src in _JS_CORPUS:
-        source = src.encode("utf-8")
-        root = parse_javascript(source).root_node
-        for node in walk(root):
-            expected = source[node.start_byte : node.end_byte].decode("utf-8", "replace")
-            if node_text(node, source) != expected:
-                bad.append(f"node_text != source slice for a {node.type} node in JS {src!r}")
-        if node_text(root, source) != src:
-            bad.append(f"root node_text does not span the whole JS source {src!r}")
-        if (first_error_node(root) is not None) != root.has_error:
-            bad.append(f"first_error_node disagrees with has_error on valid JS {src!r}")
-    for src in _JS_INVALID:
-        if first_error_node(parse_javascript(src.encode("utf-8")).root_node) is None:
-            bad.append(f"no error node found for invalid JS {src!r}")
-    direct = [n.type for n in walk(parse(b"const x = 1;", "javascript").root_node)]
-    wrapped = [n.type for n in walk(parse_javascript(b"const x = 1;").root_node)]
-    if direct != wrapped:
-        bad.append("parse_javascript disagrees with parse(.., 'javascript')")
+    for language, grammar in _GRAMMARS.items():
+        parse_lang = grammar["parse"]
+        for src in grammar["corpus"]:
+            source = src.encode("utf-8")
+            root = parse_lang(source).root_node
+            for node in walk(root):
+                expected = source[node.start_byte : node.end_byte].decode("utf-8", "replace")
+                if node_text(node, source) != expected:
+                    bad.append(f"node_text != source slice for a {node.type} node in {language} {src!r}")
+            if node_text(root, source) != src:
+                bad.append(f"root node_text does not span the whole {language} source {src!r}")
+            if (first_error_node(root) is not None) != root.has_error:
+                bad.append(f"first_error_node disagrees with has_error on valid {language} {src!r}")
+        for src in grammar["invalid"]:
+            if first_error_node(parse_lang(src.encode("utf-8")).root_node) is None:
+                bad.append(f"no error node found for invalid {language} {src!r}")
+        first_valid = grammar["corpus"][0].encode("utf-8")
+        direct = [n.type for n in walk(parse(first_valid, language).root_node)]
+        wrapped = [n.type for n in walk(parse_lang(first_valid).root_node)]
+        if direct != wrapped:
+            bad.append(f"parse_{language} disagrees with parse(.., {language!r})")
     return bad
 
 
@@ -178,7 +245,7 @@ _LAWS = {
     "error_detection": _law_error_detection,
     "determinism": _law_determinism,
     "language_vocabulary": _law_language_vocabulary,
-    "javascript": _law_javascript,
+    "grammars": _law_grammars,
     "utf8_decoding": _law_utf8_decoding,
 }
 
