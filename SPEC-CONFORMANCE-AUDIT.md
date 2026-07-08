@@ -68,7 +68,7 @@ Verdicts use three honest categories:
 | honest-features | **COMPLETE AT MANDATE** | 9/9 lib functions | Full/Complete need app-layer routes/CLI (spec §11 defers) |
 | honest-state | **COMPLETE AT MANDATE** | 15/18 | law+taxonomy complete; no conformance test that the §3 honest-check rules actually fire |
 | honest-auth | **SUBSET** | ~11/28 (~39%) | `test_token_generator.generate()` contract wrong/absent; no 6-token-class enforcement; no conformance-suite app; `"unauthenticated"` fault key not enforced |
-| honest-check | **SUBSET** | 36/36 static rules; JS reads trapped; HC002 first-link live | HC011 CLI/LSP sandboxed sampler (construction-time form already done in honest-type) |
+| honest-check | **SPEC-COMPLETE** | 36/36 static rules; HC002 first-link live | none (HC011 spec reconciled to the pure-static design — eac7ae7) |
 | honest-observe | **SUBSET** | ~39/46 (85%) | `hf.proof.checked` builder absent; 6/13 built-in metrics missing; OTel auth attrs + `install_otel_exporter` absent |
 | honest-test | **SUBSET** | ~65% | no runner/CLI; no BDD step scaffolding; no `io_monitor` (§4.4); HC-P009 not implemented; §6/§7 absent |
 | honest-parse | **SPEC-COMPLETE** | 7 grammars (6 source + HTML) | none (Ruby/PHP/Go/Elixir — f793594; HTML/HTMX — 6de18bb) |
@@ -76,12 +76,12 @@ Verdicts use three honest categories:
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
 | honest-DOM | **SUBSET** | ~45% of Full | injected-param signatures with no browser-binding wrapper; §4 React hooks absent; §5 observability absent; conformance suite has 3 cases |
 
-Score: of 13 modules, **4 spec-complete, 2 complete-at-mandate, 7 genuine subsets.**
+Score: of 13 modules, **5 spec-complete, 2 complete-at-mandate, 6 genuine subsets.**
 
 Remediation is proceeding in the spec's bootstrap/dependency order
 (`specs/01-framework/honest-framework-spec.md` §299): parse → check → test →
-observe → persist → auth → state → features → DOM → alerts. Completed: **parse**
-(2026-07-08).
+observe → persist → auth → state → features → DOM → alerts. Completed:
+**parse** and **honest-check** (2026-07-08). Next: **honest-test**.
 
 (Tier 3 honest-components and honest-page have specs but are not yet built in
 this tree, so they are outside this audit's scope; they were never reported
@@ -149,7 +149,7 @@ Much of what remains (domain-mutation prevention, determinism, boundary
 placement) is correctly deferred to honest-check/honest-test/host, per
 [[auth-is-boundary-validation]]; the contract-shape gaps above are the real ones.
 
-### honest-check — SUBSET (two real gaps; the audit's own claims were partly wrong)
+### honest-check — SPEC-COMPLETE (resolved 2026-07-08; the audit's own claims were partly wrong)
 Reading the spec directly corrected three of this module's audit claims:
 - **HC001 is spec-correct, not a stub.** Its pseudocode (spec §4.2, lines
   439-445) is exactly "every link in a chain carries `@link` metadata, else
@@ -162,7 +162,7 @@ Reading the spec directly corrected three of this module's audit claims:
   `document.cookie` / `navigator.*` reads and `Symbol()`.
 
 36 of 36 statically-verifiable rules are implemented for Python; test-time rules
-(HC-P008/009/012) are correctly deferred. Two genuine gaps remain:
+(HC-P008/009/012) are correctly deferred. Both former gaps are now closed:
 - **HC002 first-link boundary-vocab derivation** (spec line 461): **DONE and
   live** (2026-07-08). The first link's `accepts` is checked against the
   vocabulary derived from the route map + templates (honest-page §5/§9). Built
@@ -173,10 +173,12 @@ Reading the spec directly corrected three of this module's audit claims:
   boundary pass (28cc395). An app whose first link accepts a field no template
   targeting its route sends now exits 1 with HC002; an interpolated `hx-post`
   path fires the "unknowable boundary" violation.
-- **HC011 CLI/LSP sandboxed sampler**: the construction-time form (sample a
-  predicate, reject if >95% accepted) is already implemented in honest-type's
-  `vocabulary()` (`_check_catch_all`); the spec's CLI/LSP form needs honest-check
-  to evaluate the predicate in a sandbox, which does not exist yet.
+- **HC011 catch-all**: resolved by reconciling the spec to the pure-static design
+  (eac7ae7). honest-check does not execute application code, so it emits an `info`
+  routing to the runtime checks that decide it; the catch-all bug category is
+  still made structurally impossible — honest-type's `vocabulary()` rejects it at
+  construction and honest-test rejects it under the generated suite. The spec's
+  stale "CLI/LSP sandboxed evaluator" note is gone.
 - Minor: `pyproject.toml` declares `conformance = "python"`, not a valid level.
 
 ### honest-observe — SUBSET (~85%)
