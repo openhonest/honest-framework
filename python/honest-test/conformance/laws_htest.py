@@ -1034,9 +1034,93 @@ def _probe_laws():
     return bad
 
 
+def _probe_isolation():
+    """Boundary isolation (§4.4): io_monitor records I/O without performing it, and
+    verify_boundary_isolation warns a non-boundary link that touched it."""
+    import importlib
+    import os
+
+    from honest_test.isolation import io_finding, io_monitor, io_watch_list, verify_boundary_isolation
+
+    bad = []
+
+    # The pure decision (§4.4): detected + non-boundary -> warning; boundary or none -> honest.
+    if io_finding("write", False, ["builtins.open"]) != {"code": "io_detected", "subject": "write", "message": "Link performed I/O ['builtins.open']; I/O belongs at boundaries. Add boundary=True if intentional."}:
+        bad.append(f"a non-boundary link that performed I/O should warn with the io_detected record: {io_finding('write', False, ['builtins.open'])}")
+    if io_finding("save", True, ["builtins.open"]) is not None:
+        bad.append("a boundary link is exempt from the I/O check")
+    if io_finding("compute", False, []) is not None:
+        bad.append("a link that performed no I/O is honest")
+
+    watch = io_watch_list()
+    if "builtins.open" not in watch or "subprocess.run" not in watch:
+        bad.append(f"the I/O watch list should name the stdlib I/O callables: {watch}")
+
+    # Every watch symbol is patched inside the monitor and restored after — checked without calling it.
+    def resolve(path):
+        module_name, attr = path.rsplit(".", 1)
+        return getattr(importlib.import_module(module_name), attr)
+
+    originals = {path: resolve(path) for path in watch}
+    with io_monitor():
+        for path in watch:
+            if resolve(path) is originals[path]:
+                bad.append(f"{path} was not patched inside the io monitor")
+    for path in watch:
+        if resolve(path) is not originals[path]:
+            bad.append(f"{path} was not restored after the io monitor")
+
+    # The recorder records the call and does NOT perform the I/O (detect without executing). Clean any
+    # leftover first: a broken io_monitor mutant lets the real os.mkdir run, and that directory would
+    # otherwise persist and confound a later run.
+    stray = "/tmp/honest_test_isolation_should_not_exist"
+    if os.path.isdir(stray):
+        os.rmdir(stray)
+    with io_monitor() as detected:
+        os.mkdir(stray)
+    if detected != ["os.mkdir"]:
+        bad.append(f"a trapped I/O call should be recorded, got {detected}")
+    if os.path.isdir(stray):
+        os.rmdir(stray)
+        bad.append("io_monitor must not perform the I/O (no directory should be created)")
+
+    # verify_boundary_isolation: a non-boundary link that opens a file is flagged; a pure link and a
+    # boundary link are clean; a link that faults after a blocked I/O is still flagged on what it attempted.
+    def pure(m):
+        return {**m, "ok": True}
+
+    def writes(m):
+        open("/tmp/honest_test_iso_x")
+        return m
+
+    def faults(m):
+        return open("/tmp/honest_test_iso_y").read()
+
+    def bwrites(m):
+        open("/tmp/honest_test_iso_z")
+        return m
+
+    writes.__honest_link__ = {"boundary": False}
+    faults.__honest_link__ = {"boundary": False}
+    bwrites.__honest_link__ = {"boundary": True}
+
+    if verify_boundary_isolation(pure, {}) is not None:
+        bad.append("a pure link should pass boundary isolation")
+    flagged = verify_boundary_isolation(writes, {})
+    if flagged is None or flagged["code"] != "io_detected":
+        bad.append(f"a non-boundary link that performs I/O should be flagged: {flagged}")
+    after_fault = verify_boundary_isolation(faults, {})
+    if after_fault is None or after_fault["code"] != "io_detected":
+        bad.append(f"a link that faults after a blocked I/O is still flagged: {after_fault}")
+    if verify_boundary_isolation(bwrites, {}) is not None:
+        bad.append("a boundary link is exempt from boundary isolation")
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
+        "isolation": _probe_isolation(),
         "adversarial": _probe_adversarial(),
         "laws": _probe_laws(),
         "mutation": _probe_mutation(),

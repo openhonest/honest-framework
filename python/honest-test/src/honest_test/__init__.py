@@ -37,6 +37,12 @@ from honest_test.determinism import (
     verify_determinism,
 )
 from honest_test.enumeration import enumerate_sets
+from honest_test.isolation import (
+    io_finding,
+    io_monitor,
+    io_watch_list,
+    verify_boundary_isolation,
+)
 from honest_test.honesty import (
     detect_mutation,
     enumerate_test_cases,
@@ -84,6 +90,10 @@ __all__ = [
     "nondeterminism_finding",
     "call_monitor",
     "verify_determinism",
+    "io_watch_list",
+    "io_finding",
+    "io_monitor",
+    "verify_boundary_isolation",
     "auth_token_classes",
     "map_fault_to_http",
     "auth_expected_status",

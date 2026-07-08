@@ -267,6 +267,31 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When verify_determinism runs the link under the monitor
     Then it warns for a non-boundary link that touched a source, and is silent for a boundary link or a link that touched none
 
+  Scenario: io_watch_list lists the I/O sources a non-boundary link must not call
+    Given the boundary-isolation check
+    When io_watch_list is asked
+    Then it returns the stdlib call-form I/O sources the runtime monitor traps
+
+  Scenario: io_finding decides whether a link's I/O is honest
+    Given a link name, its boundary flag, and the I/O it performed
+    When io_finding decides
+    Then it warns for a non-boundary link that performed I/O, and is silent for a boundary link or a link that performed none
+
+  Scenario: _recorder wraps a watched I/O symbol to record its call without performing it
+    Given a watched I/O symbol
+    When _recorder wraps it
+    Then a call is recorded and returns nothing, so the I/O is detected but never performed
+
+  Scenario: io_monitor traps every I/O symbol without performing it for the duration of a run
+    Given the I/O watch list
+    When io_monitor patches the symbols and the run calls them
+    Then each call is recorded but not performed, and every symbol is restored after the run
+
+  Scenario: verify_boundary_isolation flags a non-boundary link that performs I/O
+    Given a link and a manifest
+    When verify_boundary_isolation runs the link under the I/O monitor
+    Then it warns for a non-boundary link that performed I/O, catching a fault after a blocked call, and is silent for a boundary link or a pure one
+
   Scenario: auth_token_classes lists the token classes
     Given an authentication contract
     When auth_token_classes is asked
