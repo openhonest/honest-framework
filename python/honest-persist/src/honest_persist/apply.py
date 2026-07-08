@@ -50,6 +50,10 @@ def _column_ddl(name, definition, dialect):
     if definition.get("references"):
         ref_table, ref_column = definition["references"].rsplit(".", 1)
         parts.append(f"REFERENCES {ref_table}({ref_column})")
+        if definition.get("on_delete"):
+            parts.append(f"ON DELETE {definition['on_delete'].upper()}")
+        if definition.get("on_update"):
+            parts.append(f"ON UPDATE {definition['on_update'].upper()}")
     if definition.get("check"):
         parts.append(f"CHECK ({definition['check']})")
     return " ".join(parts)
@@ -118,7 +122,12 @@ def _render_add_foreign_key(op, dialect):
     details = op["details"]
     ref_table, ref_column = details["references"].split(".")
     name = f"fk_{op['table']}_{details['column']}"
-    return f"ALTER TABLE {op['table']} ADD CONSTRAINT {name} FOREIGN KEY ({details['column']}) REFERENCES {ref_table} ({ref_column})"
+    clause = f"ALTER TABLE {op['table']} ADD CONSTRAINT {name} FOREIGN KEY ({details['column']}) REFERENCES {ref_table} ({ref_column})"
+    if details.get("on_delete"):
+        clause += f" ON DELETE {details['on_delete'].upper()}"
+    if details.get("on_update"):
+        clause += f" ON UPDATE {details['on_update'].upper()}"
+    return clause
 
 
 def _render_drop_foreign_key(op, dialect):

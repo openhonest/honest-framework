@@ -83,7 +83,11 @@ def _diff_foreign_keys(table, current_cols, target_cols):
         if current_ref:
             ops.append(operation("drop_foreign_key", table, {"column": column, "references": current_ref}))
         if target_ref:
-            ops.append(operation("add_foreign_key", table, {"column": column, "references": target_ref}))
+            fk = {"column": column, "references": target_ref}
+            for action in ("on_delete", "on_update"):
+                if target_cols[column].get(action):
+                    fk[action] = target_cols[column][action]
+            ops.append(operation("add_foreign_key", table, fk))
     return ops
 
 

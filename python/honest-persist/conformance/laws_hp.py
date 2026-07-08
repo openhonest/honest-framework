@@ -136,6 +136,10 @@ _RENDER_OPS = [
     ("add_index_plain", operation("add_index", "t", {"index": "ix", "definition": {"columns": ["a"]}}), "INDEX"),
     ("drop_index", operation("drop_index", "t", {"index": "ix"}), "DROP INDEX"),
     ("add_foreign_key", operation("add_foreign_key", "t", {"column": "uid", "references": "users.id"}), "FOREIGN KEY"),
+    ("add_fk_on_delete", operation("add_foreign_key", "t", {"column": "uid", "references": "users.id", "on_delete": "cascade"}), "ON DELETE CASCADE"),
+    ("add_fk_on_update", operation("add_foreign_key", "t", {"column": "uid", "references": "users.id", "on_update": "set null"}), "ON UPDATE SET NULL"),
+    ("column_fk_on_delete", operation("add_column", "t", {"column": "uid", "definition": {"type": "uuid", "references": "users.id", "on_delete": "cascade", "on_update": "restrict"}}), "ON DELETE CASCADE"),
+    ("column_fk_on_update", operation("add_column", "t", {"column": "uid", "definition": {"type": "uuid", "references": "users.id", "on_delete": "cascade", "on_update": "restrict"}}), "ON UPDATE RESTRICT"),
     ("drop_foreign_key", operation("drop_foreign_key", "t", {"column": "uid"}), "DROP CONSTRAINT"),
     ("add_constraint", operation("add_constraint", "t", {"constraint": "ck", "definition": {"expression": "age > 0"}}), "CHECK"),
     ("drop_constraint", operation("drop_constraint", "t", {"constraint": "ck"}), "DROP CONSTRAINT"),
@@ -585,6 +589,13 @@ def _probe_diff_alter():
         alters = [op for op in result["operations"] if op["op"] == "alter_column"]
         if not alters or field not in alters[0]["details"]["changes"]:
             bad.append(f"diff with only a {field} change did not produce that alteration: {result['operations']}")
+    # A column gaining a foreign key with cascade actions produces an add_foreign_key that carries them.
+    users = {"users": {"columns": {"id": {"type": "uuid", "primary_key": True}}}}
+    no_fk = {**users, "t": {"columns": {"owner": {"type": "uuid"}}}}
+    with_fk = {**users, "t": {"columns": {"owner": {"type": "uuid", "references": "users.id", "on_delete": "cascade", "on_update": "restrict"}}}}
+    fk_ops = [op for op in diff(no_fk, with_fk)["operations"] if op["op"] == "add_foreign_key"]
+    if not fk_ops or fk_ops[0]["details"].get("on_delete") != "cascade" or fk_ops[0]["details"].get("on_update") != "restrict":
+        bad.append(f"an added FK with cascade actions should carry them in the op: {fk_ops}")
     # A changed index is dropped and re-added.
     with_ix = {"t": {"columns": {"a": {"type": "text"}, "b": {"type": "text"}}, "indexes": {"ix": {"columns": ["a"]}}}}
     changed_ix = {"t": {"columns": {"a": {"type": "text"}, "b": {"type": "text"}}, "indexes": {"ix": {"columns": ["b"]}}}}
