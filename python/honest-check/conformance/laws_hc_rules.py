@@ -110,7 +110,7 @@ from honest_parse import parse_python, parse_javascript, parse_html, node_text, 
 from honest_check.rules import language_for_path
 from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_enclosing_function, _js_equality_target, _js_else_if, _js_impure_name, _js_mutable_decl_names, _js_qualified_name, _js_reassigned_names, _js_scope_lets, _js_type_check
 from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _object_keys, _open_tag, _tag_name, manifest_keys, request_sites, scan_template
-from honest_check.boundary import _normalize_path, _path_params, check_boundary, route_boundary
+from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, route_boundary
 
 
 def _rules(source: str) -> list[str]:
@@ -2694,6 +2694,28 @@ def _probe_boundary() -> list:
     both = check_boundary(routes_dyn, chains_dyn, {"do": {"accepts": {"coupon"}, "boundary": False}}, [dyn], "app.py")
     if [d["rule"] for d in both] != ["HC002"]:
         bad.append(f"an unresolvable boundary should emit exactly one diagnostic, not also a missing one: {both}")
+
+    # boundary_diagnostics wires the extractors to check_boundary on a real parsed source: a routed
+    # chain whose first link accepts a field no template sends fires HC002; a file with no ROUTES is silent.
+    app = (
+        "from honest_type import link, vocabulary, chain\n"
+        "V = vocabulary({'qty': {'1', '2'}, 'sku': {'a', 'b'}})\n"
+        "@link(accepts=V, emits=V)\n"
+        "def validate(x):\n"
+        "    return x\n"
+        "c = chain(validate)\n"
+        "ROUTES = {('POST', '/api/orders'): c}\n"
+    ).encode("utf-8")
+    root = parse_python(app).root_node
+    tpl_ok = scan_template(b'<form hx-post="/api/orders"><input name="qty"><input name="sku"></form>')
+    if boundary_diagnostics(root, app, "app.py", [tpl_ok]) != []:
+        bad.append("boundary_diagnostics: a fully-supplied first link is clean")
+    tpl_bad = scan_template(b'<form hx-post="/api/orders"><input name="qty"></form>')
+    fault = boundary_diagnostics(root, app, "app.py", [tpl_bad])
+    if [d["rule"] for d in fault] != ["HC002"] or "['sku']" not in fault[0]["message"]:
+        bad.append(f"boundary_diagnostics: a missing field fires HC002 naming it: {fault}")
+    if boundary_diagnostics(parse_python(b"x = 1\n").root_node, b"x = 1\n", "x.py", [tpl_ok]) != []:
+        bad.append("boundary_diagnostics: a file with no ROUTES yields nothing")
     return bad
 
 

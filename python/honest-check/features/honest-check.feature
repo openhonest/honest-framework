@@ -799,3 +799,8 @@ Feature: honest-check — Python supplement
     Given the route map, the chains, the links, and the scanned templates
     When check_boundary derives each routed chain's boundary
     Then it reports HC002 when the first link accepts a field the boundary cannot supply or the boundary is unresolvable, exempting a boundary first link
+
+  Scenario: boundary_diagnostics runs the first-link boundary check on a parsed file
+    Given a parsed source file, its path, and the scanned templates
+    When boundary_diagnostics reads the file's route map, chains, and links
+    Then it reports the first-link boundary faults, or nothing when the file declares no ROUTES

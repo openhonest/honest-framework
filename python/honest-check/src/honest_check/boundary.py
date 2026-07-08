@@ -8,6 +8,7 @@ is exempt. The inputs are already-parsed data — the route map, chains, links, 
 so every function is pure; reading .py and template files stays at the caller's I/O boundary.
 """
 
+from honest_check.declgraph import build_vocabulary_definitions, extract_chains, extract_links, extract_routes, resolve_aliases
 from honest_check.diagnostics import diagnostic
 
 
@@ -70,3 +71,18 @@ def check_boundary(routes: list, chains: list, links: dict, scanned_templates: l
                 "from a template that targets this route, or drop it from the link's accepts.",
             ))
     return out
+
+
+def boundary_diagnostics(root, source: bytes, path: str, scanned_templates: list) -> list:
+    """Run the first-link boundary check on one parsed source file given the scanned templates: read its
+    route map, chains, and links, then check_boundary against the templates. A file that declares no
+    ROUTES has no route boundary to derive, so it yields nothing. This is the seam the CLI calls once
+    the template directory has been scanned at its I/O boundary."""
+    routes = extract_routes(root, source)
+    if not routes:
+        return []
+    aliases = resolve_aliases(root, source)
+    vocab_defs = build_vocabulary_definitions(root, source, aliases)
+    links = extract_links(root, source, aliases, vocab_defs)
+    chains = extract_chains(root, source, aliases)
+    return check_boundary(routes, chains, links, scanned_templates, path)
