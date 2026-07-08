@@ -70,7 +70,7 @@ Verdicts use three honest categories:
 | honest-auth | **SUBSET** | ~11/28 (~39%) | `test_token_generator.generate()` contract wrong/absent; no 6-token-class enforcement; no conformance-suite app; `"unauthenticated"` fault key not enforced |
 | honest-check | **SPEC-COMPLETE** | 36/36 static rules; HC002 first-link live | none (HC011 spec reconciled to the pure-static design — eac7ae7) |
 | honest-observe | **SUBSET** | ~39/46 (85%) | `hf.proof.checked` builder absent; 6/13 built-in metrics missing; OTel auth attrs + `install_otel_exporter` absent |
-| honest-test | **SUBSET** | ~65% | no runner/CLI; no BDD step scaffolding; no `io_monitor` (§4.4); HC-P009 not implemented; §6/§7 absent |
+| honest-test | **SUBSET** | §4.4 done; 2 real gaps | §8.2 BDD step scaffolding generator; §8.4 HTTP assertion step library (the runner, HC-P009, and §6/§7 are NOT gaps — by design) |
 | honest-parse | **SPEC-COMPLETE** | 7 grammars (6 source + HTML) | none (Ruby/PHP/Go/Elixir — f793594; HTML/HTMX — 6de18bb) |
 | honest-persist | **SUBSET** | SQLite/Turso substantial; Postgres non-functional | no PostgreSQL inspector; no view/trigger/procedure DDL apply; no RETURNING; no materialized-view refresh |
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
@@ -193,21 +193,30 @@ and dev-tool formatting are implemented. Verified gaps:
 - OTel **auth attributes** and **`install_otel_exporter`** absent.
 - No development-mode config.
 
-### honest-test — SUBSET (~65%)
+### honest-test — SUBSET (2 real gaps; audit re-verified 2026-07-08)
 Strong: the generation engine (Set enumeration, Fibonacci numerics,
 length-bounded, adversarial classes 1–4), the value oracle + step library,
 purity/mutation/idempotency/chain-contract/auth-honesty checks, state-machine
 test generation, the four coverage measures, and the full mutation-operator set.
-Verified gaps:
-- **No runner/CLI** — no `honest-test` command; the whole execution/output layer
-  (§11) is absent (only the conformance harness exists).
-- **No BDD step scaffolding generator** (§8.2) and **no HTTP assertion step
-  library** (§8.4).
-- **No `io_monitor`** (§4.4 boundary isolation) — cannot detect undeclared I/O.
-- **HC-P009 not implemented** — the "one gherkin per roled function" detector is
-  a docstring only. This is the check that would have caught un-authored
-  features; it does not run.
-- §6 (persist contract tests) and §7 (component isolation) absent.
+Re-verifying against spec+code corrected several audit claims:
+- **§4.4 boundary isolation — DONE** (db40f26): `io_monitor` +
+  `verify_boundary_isolation` trap I/O in a non-boundary link, recording without
+  performing it.
+- **No runner/CLI — NOT a gap.** §11 is the *output format*; honest-test is a
+  library applications wire into their own runner (the conformance harness is for
+  meta-testing). The spec mandates no `honest-test` command.
+- **HC-P009 — NOT honest-test's.** §8.3 says the diagnostic comes *from
+  honest-check*; honest-test's role (writing `coverage.json` / proof events) is
+  done. (Note: no static rule currently emits it; see the self-check hole above —
+  but that is honest-check's edge to build, not honest-test's.)
+- **§6/§7 — deferred by design.** They are Complete-level and use honest-test's
+  machinery from honest-persist / honest-features, not honest-test core.
+
+Two genuine gaps remain:
+- **§8.2 BDD step scaffolding generator** — generate step functions from `@link`
+  declarations. Inputs exist (`link_meta`, `enumerate_sets`, `register_step`).
+- **§8.4 HTTP assertion step library** — the standard response-status/header/body
+  step handlers, pure over a duck-typed response in the gherkin context.
 
 ### honest-parse — SPEC-COMPLETE (7 grammars) — resolved 2026-07-08 (f793594, 6de18bb)
 The parse boundary and node helpers (`node_text`, `line_col`, `walk`,
