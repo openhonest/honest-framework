@@ -26,6 +26,7 @@ from honest_parse import (
     parse,
     parse_elixir,
     parse_go,
+    parse_html,
     parse_javascript,
     parse_php,
     parse_python,
@@ -100,6 +101,22 @@ _GRAMMARS = {
             "",
         ],
         "invalid": ["defmodule do", "def f(", "[1, 2"],
+    },
+    # HTML/HTMX templates: the single parser reads them so the input boundary stays inspectable
+    # (framework spec, "The input boundary is closed"). The corpus carries the attributes HC002's
+    # boundary-vocabulary derivation reads — hx-post/hx-get targets, form field names, hx-vals keys,
+    # dx-manifest. HTML is error-tolerant of mismatched tags, so the invalid set uses genuinely
+    # malformed syntax (unclosed tag, missing attribute value, unterminated string, garbage).
+    "html": {
+        "parse": parse_html,
+        "corpus": [
+            '<button hx-post="/api/orders" hx-vals=\'{"qty": 3}\'>Buy</button>\n',
+            '<form hx-post="/api/orders"><input name="qty"><input name="sku"></form>\n',
+            '<body dx-manifest="appManifest"></body>\n',
+            "<div></div>\n",
+            "",
+        ],
+        "invalid": ["<button hx-post=>", "<form", "<<<", '<a href=">'],
     },
 }
 

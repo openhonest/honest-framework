@@ -31,3 +31,8 @@ Feature: honest-parse — Python supplement
     Given Elixir source text
     When parse_elixir reads it
     Then it returns the syntax tree, using the Elixir grammar
+
+  Scenario: parse_html parses source with the HTML template grammar
+    Given HTML or HTMX template text
+    When parse_html reads it
+    Then it returns the syntax tree, using the HTML grammar

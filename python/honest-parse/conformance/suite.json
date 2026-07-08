@@ -30,6 +30,11 @@
     {"id": "ex-valid-assignment", "language": "elixir", "source": "x = 1\n", "expect_error": false},
     {"id": "ex-valid-module", "language": "elixir", "source": "defmodule M do\n  def f(x), do: x + 1\nend\n", "expect_error": false},
     {"id": "ex-syntax-error", "language": "elixir", "source": "defmodule do", "expect_error": true},
-    {"id": "ex-root-text-spans-source", "language": "elixir", "source": "y = 2\n", "expect_root_text": "y = 2\n"}
+    {"id": "ex-root-text-spans-source", "language": "elixir", "source": "y = 2\n", "expect_root_text": "y = 2\n"},
+    {"id": "html-valid-form", "language": "html", "source": "<form hx-post=\"/api/orders\"><input name=\"qty\"></form>", "expect_error": false},
+    {"id": "html-valid-hxvals", "language": "html", "source": "<button hx-post=\"/api/orders\" hx-vals='{\"qty\": 3}'>Buy</button>", "expect_error": false},
+    {"id": "html-valid-empty", "language": "html", "source": "", "expect_error": false},
+    {"id": "html-syntax-error", "language": "html", "source": "<button hx-post=>", "expect_error": true},
+    {"id": "html-root-text-spans-source", "language": "html", "source": "<div></div>", "expect_root_text": "<div></div>"}
   ]
 }

@@ -11,6 +11,7 @@ import types
 
 import tree_sitter_elixir as ts_elixir
 import tree_sitter_go as ts_go
+import tree_sitter_html as ts_html
 import tree_sitter_javascript as ts_javascript
 import tree_sitter_php as ts_php
 import tree_sitter_python as ts_python
@@ -20,10 +21,12 @@ from tree_sitter import Language, Parser
 # Compiled grammars are immutable. They are exposed only through a read-only mapping
 # (MappingProxyType), so there is no module-level mutable container here at all. A tree-sitter
 # Parser carries internal state, so one is built per call rather than held as a shared
-# singleton — `parse` stays free of hidden cross-call state. The six framework target languages
-# each occupy one row; adding a language is adding a row, never branching control flow. The PHP
-# grammar exposes its handle as `language_php()` (the tag-aware grammar that accepts `<?php`),
-# not `language()`, so its row names that function explicitly.
+# singleton — `parse` stays free of hidden cross-call state. Each grammar occupies one row; adding
+# a language is adding a row, never branching control flow. The six source languages honest-check
+# and honest-test lint (python, javascript, ruby, php, go, elixir) are joined by the HTML/HTMX
+# template grammar the single parser must also read, so no channel into an application is opaque
+# (framework spec, "The input boundary is closed"). The PHP grammar exposes its handle as
+# `language_php()` (the tag-aware grammar that accepts `<?php`), not `language()`, named explicitly.
 _LANGUAGES = types.MappingProxyType(
     {
         "python": Language(ts_python.language()),
@@ -32,6 +35,7 @@ _LANGUAGES = types.MappingProxyType(
         "php": Language(ts_php.language_php()),
         "go": Language(ts_go.language()),
         "elixir": Language(ts_elixir.language()),
+        "html": Language(ts_html.language()),
     }
 )
 
@@ -69,6 +73,11 @@ def parse_go(source: bytes):
 def parse_elixir(source: bytes):
     """Convenience wrapper for the Elixir grammar."""
     return parse(source, "elixir")
+
+
+def parse_html(source: bytes):
+    """Convenience wrapper for the HTML/HTMX template grammar."""
+    return parse(source, "html")
 
 
 def node_text(node, source: bytes) -> str:
