@@ -68,7 +68,7 @@ Verdicts use three honest categories:
 | honest-features | **COMPLETE AT MANDATE** | 9/9 lib functions | Full/Complete need app-layer routes/CLI (spec §11 defers) |
 | honest-state | **COMPLETE AT MANDATE** | 15/18 | law+taxonomy complete; no conformance test that the §3 honest-check rules actually fire |
 | honest-auth | **SUBSET** | ~11/28 (~39%) | `test_token_generator.generate()` contract wrong/absent; no 6-token-class enforcement; no conformance-suite app; `"unauthenticated"` fault key not enforced |
-| honest-check | **SUBSET** | 36/36 static rules; JS reads now trapped | HC002 first-link boundary-vocab derivation (blocked on honest-page — not built); HC011 CLI/LSP sandboxed sampler (construction-time form already done in honest-type) |
+| honest-check | **SUBSET** | 36/36 static rules; JS reads trapped; HC002 first-link live | HC011 CLI/LSP sandboxed sampler (construction-time form already done in honest-type) |
 | honest-observe | **SUBSET** | ~39/46 (85%) | `hf.proof.checked` builder absent; 6/13 built-in metrics missing; OTel auth attrs + `install_otel_exporter` absent |
 | honest-test | **SUBSET** | ~65% | no runner/CLI; no BDD step scaffolding; no `io_monitor` (§4.4); HC-P009 not implemented; §6/§7 absent |
 | honest-parse | **SPEC-COMPLETE** | 7 grammars (6 source + HTML) | none (Ruby/PHP/Go/Elixir — f793594; HTML/HTMX — 6de18bb) |
@@ -163,22 +163,16 @@ Reading the spec directly corrected three of this module's audit claims:
 
 36 of 36 statically-verifiable rules are implemented for Python; test-time rules
 (HC-P008/009/012) are correctly deferred. Two genuine gaps remain:
-- **HC002 first-link boundary-vocab derivation** (spec line 461): the first
-  link's `accepts` should be checked against the vocabulary derived from the
-  route map + templates (honest-page §5/§9). Not blocked on honest-page: the
-  conventions are fixed by the honest-page *spec* (route map §9, manifest §5,
-  intake §10.3), and building the checker before honest-page's implementation is
-  Verification First (the gate precedes the code it governs, framework spec §297).
-  Build underway spec-first. Done and gated: step 1 (HTML grammar in
-  honest-parse, 6de18bb); step 2 (`templates.py` scanner — `scan_template` reads
-  request sites + `appManifest` keys, 6a148fe); step 3 logic (`boundary.py` —
-  `route_boundary` derives a route's vocabulary, `check_boundary` reports HC002
-  when a first link accepts a field no template supplies or the boundary is
-  unresolvable, `boundary_diagnostics` runs it on a parsed file; fe396f6,
-  6081d06), verified end-to-end on real honest-code source. Remaining: the CLI
-  wiring — a `templates` config key plus reading/scanning the template directory
-  and calling `boundary_diagnostics` per `.py` file, so HC002 fires on a real
-  project.
+- **HC002 first-link boundary-vocab derivation** (spec line 461): **DONE and
+  live** (2026-07-08). The first link's `accepts` is checked against the
+  vocabulary derived from the route map + templates (honest-page §5/§9). Built
+  spec-first — Verification First, the gate preceding the code it governs
+  (framework spec §297): HTML grammar in honest-parse (6de18bb); `templates.py`
+  scanner (6a148fe); `boundary.py` derivation + check + `boundary_diagnostics`
+  (fe396f6, 6081d06); CLI wiring — a `[check] templates` key drives a per-file
+  boundary pass (28cc395). An app whose first link accepts a field no template
+  targeting its route sends now exits 1 with HC002; an interpolated `hx-post`
+  path fires the "unknowable boundary" violation.
 - **HC011 CLI/LSP sandboxed sampler**: the construction-time form (sample a
   predicate, reject if >95% accepted) is already implemented in honest-type's
   `vocabulary()` (`_check_catch_all`); the spec's CLI/LSP form needs honest-check
