@@ -143,6 +143,16 @@ _RENDER_OPS = [
     ("drop_foreign_key", operation("drop_foreign_key", "t", {"column": "uid"}), "DROP CONSTRAINT"),
     ("add_constraint", operation("add_constraint", "t", {"constraint": "ck", "definition": {"expression": "age > 0"}}), "CHECK"),
     ("drop_constraint", operation("drop_constraint", "t", {"constraint": "ck"}), "DROP CONSTRAINT"),
+    ("create_view", operation("create_view", "", {"view": "v", "definition": {"query": "SELECT 1"}, "depends_on": []}), "CREATE VIEW v AS SELECT 1"),
+    ("drop_view", operation("drop_view", "", {"view": "v"}), "DROP VIEW v"),
+    ("create_trigger", operation("create_trigger", "t", {"trigger": "tr", "definition": {"table": "t", "timing": "after", "events": ["insert", "update"], "body": "BODY", "when": "NEW.x"}}), "CREATE TRIGGER tr AFTER INSERT OR UPDATE ON t WHEN (NEW.x) BODY"),
+    ("create_trigger_instead", operation("create_trigger", "v", {"trigger": "tr2", "definition": {"table": "v", "timing": "instead_of", "events": ["delete"], "body": "BODY"}}), "CREATE TRIGGER tr2 INSTEAD OF DELETE ON v BODY"),
+    ("drop_trigger", operation("drop_trigger", "t", {"trigger": "tr"}), "DROP TRIGGER tr"),
+    ("create_function", operation("create_function", "", {"function": "f", "definition": {"kind": "function", "params": [{"name": "a", "type": "int"}], "returns": "int", "language": "sql", "body": "BODY"}}), "CREATE FUNCTION f(a int) RETURNS int LANGUAGE sql AS BODY"),
+    ("create_procedure", operation("create_function", "", {"function": "p", "definition": {"kind": "procedure", "body": "BODY"}}), "CREATE PROCEDURE p() AS BODY"),
+    ("create_function_multiparam", operation("create_function", "", {"function": "g", "definition": {"body": "BODY", "params": [{"name": "a", "type": "int"}, {"name": "b", "type": "text"}]}}), "CREATE FUNCTION g(a int, b text) AS BODY"),
+    ("replace_function", operation("replace_function", "", {"function": "f", "definition": {"body": "BODY"}}), "CREATE OR REPLACE FUNCTION f() AS BODY"),
+    ("drop_function", operation("drop_function", "", {"function": "f"}), "DROP FUNCTION f"),
 ]
 
 

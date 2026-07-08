@@ -80,6 +80,46 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When _render_drop_constraint renders it
     Then it produces an ALTER TABLE DROP CONSTRAINT statement for that constraint
 
+  Scenario: _render_create_view renders a CREATE VIEW statement
+    Given a create-view operation and a dialect
+    When _render_create_view renders it
+    Then it produces a CREATE VIEW statement whose body is the view's query
+
+  Scenario: _render_drop_view renders a DROP VIEW statement
+    Given a drop-view operation and a dialect
+    When _render_drop_view renders it
+    Then it produces a DROP VIEW statement for that view
+
+  Scenario: _render_create_trigger renders a CREATE TRIGGER statement
+    Given a create-trigger operation and a dialect
+    When _render_create_trigger renders it
+    Then it produces a CREATE TRIGGER statement with the timing, events, table, optional condition, and body
+
+  Scenario: _render_drop_trigger renders a DROP TRIGGER statement
+    Given a drop-trigger operation and a dialect
+    When _render_drop_trigger renders it
+    Then it produces a DROP TRIGGER statement for that trigger
+
+  Scenario: _render_function renders a function or procedure definition
+    Given a function operation and whether to replace it
+    When _render_function renders it
+    Then it produces a CREATE or CREATE OR REPLACE statement with the kind, parameters, optional return type and language, and body
+
+  Scenario: _render_create_function renders a CREATE FUNCTION statement
+    Given a create-function operation and a dialect
+    When _render_create_function renders it
+    Then it produces a plain CREATE definition of the function or procedure
+
+  Scenario: _render_replace_function renders a CREATE OR REPLACE statement
+    Given a replace-function operation and a dialect
+    When _render_replace_function renders it
+    Then it produces a CREATE OR REPLACE definition of the function
+
+  Scenario: _render_drop_function renders a DROP FUNCTION statement
+    Given a drop-function operation and a dialect
+    When _render_drop_function renders it
+    Then it produces a DROP FUNCTION statement for that function
+
   Scenario: to_sql renders one operation to a DDL string for a dialect
     Given an operation and a dialect
     When to_sql dispatches on the operation's change name

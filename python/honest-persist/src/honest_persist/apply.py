@@ -145,6 +145,56 @@ def _render_drop_constraint(op, dialect):
     return f"ALTER TABLE {op['table']} DROP CONSTRAINT {op['details']['constraint']}"
 
 
+def _render_create_view(op, dialect):
+    details = op["details"]
+    return f"CREATE VIEW {details['view']} AS {details['definition']['query']}"
+
+
+def _render_drop_view(op, dialect):
+    return f"DROP VIEW {op['details']['view']}"
+
+
+def _render_create_trigger(op, dialect):
+    details = op["details"]
+    trigger = details["definition"]
+    events = " OR ".join(event.upper() for event in trigger["events"])
+    parts = [f"CREATE TRIGGER {details['trigger']}", trigger["timing"].upper().replace("_", " "), events, f"ON {trigger['table']}"]
+    if trigger.get("when"):
+        parts.append(f"WHEN ({trigger['when']})")
+    parts.append(trigger["body"])
+    return " ".join(parts)
+
+
+def _render_drop_trigger(op, dialect):
+    return f"DROP TRIGGER {op['details']['trigger']}"
+
+
+def _render_function(op, replace):
+    details = op["details"]
+    proc = details["definition"]
+    params = ", ".join(f"{parameter['name']} {parameter['type']}" for parameter in proc.get("params", []))
+    verb = "CREATE OR REPLACE" if replace else "CREATE"
+    parts = [f"{verb} {proc.get('kind', 'function').upper()} {details['function']}({params})"]
+    if proc.get("returns"):
+        parts.append(f"RETURNS {proc['returns']}")
+    if proc.get("language"):
+        parts.append(f"LANGUAGE {proc['language']}")
+    parts.append(f"AS {proc['body']}")
+    return " ".join(parts)
+
+
+def _render_create_function(op, dialect):
+    return _render_function(op, False)
+
+
+def _render_replace_function(op, dialect):
+    return _render_function(op, True)
+
+
+def _render_drop_function(op, dialect):
+    return f"DROP FUNCTION {op['details']['function']}"
+
+
 _RENDERERS = {
     "create_table": _render_create_table,
     "drop_table": _render_drop_table,
@@ -159,6 +209,13 @@ _RENDERERS = {
     "drop_foreign_key": _render_drop_foreign_key,
     "add_constraint": _render_add_constraint,
     "drop_constraint": _render_drop_constraint,
+    "create_view": _render_create_view,
+    "drop_view": _render_drop_view,
+    "create_trigger": _render_create_trigger,
+    "drop_trigger": _render_drop_trigger,
+    "create_function": _render_create_function,
+    "replace_function": _render_replace_function,
+    "drop_function": _render_drop_function,
 }
 
 
