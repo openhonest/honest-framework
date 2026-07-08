@@ -21,6 +21,19 @@ from honest_parse import line_col, node_text, walk
 _JS_IO_CONSTRUCTORS = frozenset({"XMLHttpRequest", "WebSocket", "EventSource"})
 _JS_NONDETERMINISTIC_CONSTRUCTORS = frozenset({"Date"})
 
+# Section 4.2 — the nondeterministic JavaScript watch-list entries that are non-deterministic on
+# *read*, not on call: reading process.env, the browser location/navigator, or document.cookie yields
+# a value that depends on environment or session, so a non-boundary function that reads one is impure
+# even though no call is made. (`path.*` and `Symbol.for` from the spec list carry a "when used for
+# I/O"/"when the key is computed" caveat that plain name-matching cannot honour without false
+# positives on pure code — like Python's caveated `hash` entry — so they are deliberately omitted.)
+_JS_NONDETERMINISTIC_READS = frozenset(
+    {
+        "process.env", "process.pid", "process.argv", "process.platform", "process.version",
+        "navigator.*", "location.*", "document.cookie",
+    }
+)
+
 # Section 5.3 — the only base a JavaScript class may extend (a thrown fault). Everything else,
 # including a bare class implicitly extending Object, is inheritance and is rejected.
 _ALLOWED_JS_CLASS_BASES = frozenset({"Error"})
@@ -407,9 +420,21 @@ def _js_qualified_name(node, source: bytes) -> str:
     return ""
 
 
+def _js_reads_impure(node, source: bytes) -> bool:
+    """True if this member_expression reads a nondeterministic slot (process.env, location.*, …). A
+    member that is the callee of a call is excluded: that is a call, trapped by the call branch, so
+    excluding it keeps navigator.sendBeacon() from being flagged twice. A member expression is always
+    nested, so it always has a parent; only a call parent carries a `function` field to compare."""
+    if not matches_watchlist(_js_qualified_name(node, source), _JS_NONDETERMINISTIC_READS):
+        return False
+    callee = node.parent.child_by_field_name("function")
+    return callee is None or (callee.start_byte, callee.end_byte) != (node.start_byte, node.end_byte)
+
+
 def _js_impure_name(node, source: bytes):
     """The watched name of a node that performs I/O or non-deterministic work (section 5.4): the dotted
-    name of a matching call, or 'new X()' for a matching constructor. None otherwise."""
+    name of a matching call, 'new X()' for a matching constructor, or a nondeterministic member read
+    (process.env, location.*, document.cookie). None otherwise."""
     if node.type == "call_expression":
         name = _js_qualified_name(node.child_by_field_name("function"), source)
         if matches_watchlist(name, IO_WATCH_LIST["javascript"]) or matches_watchlist(name, NONDETERMINISTIC_WATCH_LIST["javascript"]):
@@ -418,6 +443,8 @@ def _js_impure_name(node, source: bytes):
         constructor = node_text(node.child_by_field_name("constructor"), source)
         if constructor in _JS_IO_CONSTRUCTORS or constructor in _JS_NONDETERMINISTIC_CONSTRUCTORS:
             return f"new {constructor}()"
+    if node.type == "member_expression" and _js_reads_impure(node, source):
+        return _js_qualified_name(node, source)
     return None
 
 
@@ -466,7 +493,7 @@ def check_hc_p004_js(root, source: bytes, path: str) -> list[Diagnostic]:
                 path,
                 line,
                 col,
-                f"Call '{name}' performs I/O or non-deterministic work inside a non-boundary function. "
+                f"'{name}' performs I/O or non-deterministic work inside a non-boundary function. "
                 "Mark the function '// honest: boundary', or it cannot be verified for purity.",
             )
         )

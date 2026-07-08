@@ -698,6 +698,11 @@ Feature: honest-check — Python supplement
     When _js_impure_name inspects it
     Then it returns the watched name of a matching I/O or non-deterministic construct, else nothing
 
+  Scenario: _js_reads_impure detects a nondeterministic member read
+    Given a JavaScript member expression that is not a call's callee
+    When _js_reads_impure inspects it
+    Then it is true when the read names a nondeterministic slot such as process.env or location
+
   Scenario: _js_enclosing_function finds the nearest enclosing function
     Given a JavaScript node
     When _js_enclosing_function walks its parents

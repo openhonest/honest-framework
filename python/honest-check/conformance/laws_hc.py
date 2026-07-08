@@ -805,7 +805,7 @@ _EXPECTED_IO_WATCH_JS = frozenset({
     "pg.*", "mongodb.*", "redis.*", "mysql.*", "sqlite3.*",
 })
 _EXPECTED_ND_WATCH_JS = frozenset({
-    "Math.random", "crypto.getRandomValues", "crypto.randomUUID",
+    "Math.random", "crypto.getRandomValues", "crypto.randomUUID", "Symbol",
     "Date.now", "performance.now", "process.cwd",
 })
 

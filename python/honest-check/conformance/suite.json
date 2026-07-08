@@ -749,7 +749,7 @@
             "rule": "HC-P004",
             "severity": "error",
             "line": 1,
-            "message": "Call 'fetch' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity."
+            "message": "'fetch' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity."
           }
         ]
       }

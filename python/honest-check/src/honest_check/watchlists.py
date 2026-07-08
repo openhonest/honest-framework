@@ -84,7 +84,7 @@ NONDETERMINISTIC_WATCH_LIST = {
     "javascript": frozenset(
         {
             # Randomness
-            "Math.random", "crypto.getRandomValues", "crypto.randomUUID",
+            "Math.random", "crypto.getRandomValues", "crypto.randomUUID", "Symbol",
             # Time
             "Date.now", "performance.now",
             # Process
@@ -92,6 +92,10 @@ NONDETERMINISTIC_WATCH_LIST = {
         }
     ),
 }
+# Section 4.2 — nondeterministic entries that are non-deterministic on *read* (process.env, browser
+# location/navigator, document.cookie) live in js_rules._JS_NONDETERMINISTIC_READS, matched against a
+# member read rather than a call. `new Date()` and the I/O constructors (WebSocket, XMLHttpRequest,
+# EventSource) are trapped as constructors in js_rules, not as call names here.
 
 
 def matches_watchlist(name: str, watchlist) -> bool:

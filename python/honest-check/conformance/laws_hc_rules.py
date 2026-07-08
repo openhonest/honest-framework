@@ -166,6 +166,18 @@ _js_case("js_p004_module_scope_clean", "fetch(u);", must_not_fire=("HC-P004",))
 _js_case("js_p004_computed_call_clean", "function f() { obj[k](); }", must_not_fire=("HC-P004",))
 _js_case("js_p004_pure_call_clean", "function f() { return add(a, b); }", must_not_fire=("HC-P004",))
 _js_case("js_p004_plain_new_clean", "function f() { return new Widget(); }", must_not_fire=("HC-P004",))
+# Nondeterministic member reads (section 4.2): reading an env/session slot is impure without a call.
+_js_case("js_p004_process_env", "function f() { return process.env.TOKEN; }", must_fire=("HC-P004",))
+_js_case("js_p004_process_pid", "function f() { return process.pid; }", must_fire=("HC-P004",))
+_js_case("js_p004_process_argv", "function f() { return process.argv; }", must_fire=("HC-P004",))
+_js_case("js_p004_process_platform", "function f() { return process.platform; }", must_fire=("HC-P004",))
+_js_case("js_p004_process_version", "function f() { return process.version; }", must_fire=("HC-P004",))
+_js_case("js_p004_location_read", "function f() { return location.href; }", must_fire=("HC-P004",))
+_js_case("js_p004_document_cookie", "function f() { return document.cookie; }", must_fire=("HC-P004",))
+_js_case("js_p004_navigator_read", "function f() { return navigator.userAgent; }", must_fire=("HC-P004",))
+_js_case("js_p004_symbol_call", "function f() { return Symbol(); }", must_fire=("HC-P004",))
+_js_case("js_p004_env_read_boundary_clean", "// honest: boundary\nfunction f() { return process.env.TOKEN; }\n", must_not_fire=("HC-P004",))
+_js_case("js_p004_plain_member_clean", "function f() { return obj.prop; }", must_not_fire=("HC-P004",))
 
 
 # ----------------------------------------------------------------- HC-P002 (JavaScript)
@@ -1716,7 +1728,7 @@ def _probe_javascript() -> list[str]:
 
     # HC-P004: an I/O call and a nondeterministic constructor each report as an error.
     io = [d for d in check_source("function f() { return fetch(u); }", "f.js") if d["rule"] == "HC-P004"]
-    if not io or io[0]["severity"] != "error" or io[0]["message"] != "Call 'fetch' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity.":
+    if not io or io[0]["severity"] != "error" or io[0]["message"] != "'fetch' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity.":
         bad.append(f"JS HC-P004 message/severity drifted: {io}")
     # _js_qualified_name: identifier, member chain, and '' for a non-name callee.
     if _js_qualified_name(next(n for n in _w(parse_javascript(b"fetch(u);").root_node) if n.type == "identifier"), b"fetch(u);") != "fetch":
@@ -1729,8 +1741,13 @@ def _probe_javascript() -> list[str]:
         bad.append("_js_qualified_name of a computed callee should be empty")
     # A watched constructor reports as 'new X()' (pins the constructor-name format).
     ctor = [d for d in check_source("function f() { return new WebSocket(u); }", "f.js") if d["rule"] == "HC-P004"]
-    if not ctor or ctor[0]["message"] != "Call 'new WebSocket()' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity.":
+    if not ctor or ctor[0]["message"] != "'new WebSocket()' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity.":
         bad.append(f"JS HC-P004 constructor name format drifted: {ctor}")
+    # navigator.sendBeacon() is a watched call whose callee also matches the nondeterministic-read
+    # family; it must be flagged once (the call), not a second time as a member read.
+    beacon = [d for d in check_source("function f() { navigator.sendBeacon(u); }", "f.js") if d["rule"] == "HC-P004"]
+    if len(beacon) != 1:
+        bad.append(f"JS HC-P004 should flag navigator.sendBeacon() once, not once per node: {beacon}")
     # _js_impure_name: a non-watched call and a non-watched constructor are not impure.
     pure_call = next(n for n in _w(parse_javascript(b"add(a, b);").root_node) if n.type == "call_expression")
     if _js_impure_name(pure_call, b"add(a, b);") is not None:
