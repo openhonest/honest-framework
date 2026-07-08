@@ -25,6 +25,7 @@ from honest_check.config import (
     resolve_paths,
     resolve_severity,
 )
+from honest_check.boundary import boundary_diagnostics
 from honest_check.diagnostics import Diagnostic
 from honest_check.formats import (
     filter_by_rule,
@@ -34,7 +35,9 @@ from honest_check.formats import (
     supported_formats,
 )
 from honest_check.lsp import serve
-from honest_check.rules import check_source
+from honest_check.rules import check_source, language_for_path
+from honest_check.templates import scan_template
+from honest_parse import parse
 
 
 def _discover_files(paths: list[str], exclude: list[str]) -> list[Path]:
@@ -45,6 +48,14 @@ def _discover_files(paths: list[str], exclude: list[str]) -> list[Path]:
         candidates = sorted(path.rglob("*.py")) if path.is_dir() else [path]
         files.extend(c for c in candidates if not is_excluded(str(c), exclude))
     return files
+
+
+def _discover_templates(templates_dir: str) -> list[Path]:
+    """Expand the configured template directory into a sorted list of .html files (honest-page section
+    10.1). Empty when no directory is configured or it does not exist, so HC002's boundary check runs
+    only where an application declares its templates."""
+    root = Path(templates_dir)
+    return sorted(root.rglob("*.html")) if templates_dir and root.is_dir() else []
 
 
 def _find_config(explicit: str | None) -> Path | None:
@@ -84,13 +95,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str) -> int:
+def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str, templates_dir: str) -> int:
     """Check the paths once and print the rendered report; return the exit code (1 on errors, 2 on a
-    read failure, else 0). The single-pass core that both a plain run and --watch repeat."""
+    read failure, else 0). The single-pass core that both a plain run and --watch repeat. When a
+    template directory is configured, its templates are scanned once and every checked file also runs
+    HC002's first-link boundary check against them (spec section 4.2)."""
     diagnostics: list[Diagnostic] = []
     try:
+        scanned = [scan_template(template.read_bytes()) for template in _discover_templates(templates_dir)]
         for file in _discover_files(paths, exclude):
-            diagnostics.extend(check_source(file.read_text(encoding="utf-8"), str(file)))
+            source = file.read_text(encoding="utf-8")
+            diagnostics.extend(check_source(source, str(file)))
+            if scanned:
+                src_bytes = source.encode("utf-8")
+                root = parse(src_bytes, language_for_path(str(file))).root_node
+                diagnostics.extend(boundary_diagnostics(root, src_bytes, str(file), scanned))
     except OSError as exc:
         print(f"honest-check: cannot read source: {exc}", file=sys.stderr)
         return 2
@@ -140,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     def run() -> int:
-        return _run_once(paths, config["exclude"], severity, suppress, only, args.format)
+        return _run_once(paths, config["exclude"], severity, suppress, only, args.format, config["templates"])
 
     if args.watch:
         return watch(run)

@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 from honest_check import HonestCheckError, check_source, startup_check
-from honest_check.cli import _discover_files, _find_config, _load_config, main as cli_main, watch
+from honest_check.cli import _discover_files, _discover_templates, _find_config, _load_config, main as cli_main, watch
 from honest_check.rules import is_fixable
 from honest_check.config import (
     empty_config,
@@ -203,6 +203,8 @@ def _probe_config():
     full = normalize_config({"check": {"paths": ["src/"], "exclude": ["x/**"], "severity": "error"}, "rules": {"disable": ["HC003"]}})
     if full["paths"] != ["src/"] or full["severity"] != "error" or full["disable"] != ["HC003"] or full["exclude"] != ["x/**"]:
         bad.append(f"normalize_config wrong: {full}")
+    if full["templates"] != "" or normalize_config({"check": {"templates": "tpl/"}})["templates"] != "tpl/":
+        bad.append(f"normalize_config should read the templates directory, empty by default: {full['templates']!r}")
     # A per-rule value that is not a mapping (no .items) is not kept as rule_config; only dict configs are.
     nondict = normalize_config({"rules": {"disable": ["HC003"], "HC003": "notamapping", "HC-OR003": {"min_run": 4}}})
     if nondict["rule_config"] != {"HC-OR003": {"min_run": 4}}:
@@ -299,6 +301,39 @@ def _probe_cli():
         _, out, _ = _run_cli([str(dirty), "--format", "json"])
         if '"fixable": false' not in out:
             bad.append("json output should carry a computed fixable field")
+
+    # HC002's first-link boundary check wired through the CLI: a template directory in the config makes
+    # every checked file run the boundary check against the scanned templates (spec section 4.2).
+    with tempfile.TemporaryDirectory() as tmp:
+        app = (
+            "from honest_type import link, vocabulary, chain\n"
+            "V = vocabulary({'qty': {'1'}, 'sku': {'a'}})\n"
+            "@link(accepts=V, emits=V)\n"
+            "def validate(x):\n    return x\n"
+            "c = chain(validate)\n"
+            "ROUTES = {('POST', '/api/orders'): c}\n"
+        )
+        Path(tmp, "app.py").write_text(app, encoding="utf-8")
+        tdir = Path(tmp, "templates")
+        tdir.mkdir()
+        cfg = Path(tmp, "honest-check.toml")
+        cfg.write_text(f'[check]\ntemplates = "{tdir}"\n', encoding="utf-8")
+        orders = Path(tdir, "orders.html")
+        # A template that sends only qty: the first link also needs sku, so HC002 fires (exit 1).
+        orders.write_text('<form hx-post="/api/orders"><input name="qty"></form>', encoding="utf-8")
+        code, out, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg), "--format", "json"])
+        if code != 1 or "HC002" not in out:
+            bad.append(f"a first link needing a field no template sends should fire HC002: {code} {out[:80]}")
+        # Send both fields: the boundary supplies the accepts, so the run is clean (exit 0).
+        orders.write_text('<form hx-post="/api/orders"><input name="qty"><input name="sku"></form>', encoding="utf-8")
+        code, _, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg)])
+        if code != 0:
+            bad.append(f"a first link the templates fully supply should be clean, got {code}")
+        # _discover_templates: a configured dir yields its .html files; no dir or a missing one yields none.
+        if _discover_templates(str(tdir)) != [orders]:
+            bad.append(f"_discover_templates should list the .html under the configured dir: {_discover_templates(str(tdir))}")
+        if _discover_templates("") != [] or _discover_templates(str(Path(tmp, "nope"))) != []:
+            bad.append("_discover_templates should be empty for no dir or a missing dir")
     # The watch loop re-runs once per trigger line and returns the last code at EOF.
     runs = {"n": 0}
 

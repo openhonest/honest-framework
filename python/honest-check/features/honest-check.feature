@@ -362,6 +362,11 @@ Feature: honest-check — Python supplement
     When _discover_files expands them
     Then it returns the sorted source files, dropping any that match an exclusion
 
+  Scenario: _discover_templates lists the template files HC002 reads
+    Given a configured template directory
+    When _discover_templates expands it
+    Then it returns the sorted .html files, or nothing when no directory is configured or it is missing
+
   Scenario: _find_config locates the configuration file to use
     Given an optional explicit configuration path
     When _find_config looks for one

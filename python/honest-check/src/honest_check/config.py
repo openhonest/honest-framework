@@ -5,9 +5,10 @@ read and the ancestor search are I/O and live at the cli boundary; this module n
 touches the filesystem, so it stays exhaustively testable.
 
     [check]
-    paths    = ["src/"]
-    exclude  = ["**/migrations/**", "**/__pycache__/**"]
-    severity = "warning"
+    paths     = ["src/"]
+    exclude   = ["**/migrations/**", "**/__pycache__/**"]
+    severity  = "warning"
+    templates = "templates/"
 
     [rules]
     disable  = ["HC-P006"]
@@ -29,6 +30,7 @@ def normalize_config(raw: dict) -> dict:
         "paths": list(check.get("paths", [])),
         "exclude": list(check.get("exclude", [])),
         "severity": check.get("severity", _DEFAULT_SEVERITY),
+        "templates": check.get("templates", ""),
         "disable": list(rules.get("disable", [])),
         "rule_config": {name: dict(value) for name, value in rules.items() if name != "disable" and hasattr(value, "items")},
         "startup_on_error": raw.get("startup", {}).get("on_error"),
