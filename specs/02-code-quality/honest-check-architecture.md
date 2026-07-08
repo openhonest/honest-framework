@@ -361,7 +361,7 @@ FUNCTION check_HC007(chain):
 
 #### HC011 — Catch-all recognizer
 
-A recognizer that accepts all (or nearly all) inputs is not a type. The vocabulary constructor must reject it.
+A recognizer that accepts all (or nearly all) inputs is not a type. Because a predicate is opaque source, deciding this requires *running* the recognizer, so it is a runtime check, not a static one: the `vocabulary()` constructor performs it at construction time — rejecting a catch-all before the vocabulary exists — and honest-test repeats it over the generated suite. The sampling both perform is:
 
 ```
 FUNCTION check_HC011(recognizer, type_name):
@@ -369,16 +369,16 @@ FUNCTION check_HC011(recognizer, type_name):
         // Sets are always bounded — not a catch-all
         RETURN
 
-    // For predicates: sample 1000 random strings
-    sample ← generate_random_strings(1000)
+    // For predicates: sample 1000 strings from a fixed deterministic corpus
+    sample ← catch_all_corpus(1000)
     accepted ← COUNT s IN sample WHERE recognizer(s) = true
 
     IF accepted / 1000 > 0.95:
-        EMIT error(HC011, type_name,
+        REJECT(HC011, type_name,
             "Recognizer accepts nearly all inputs — not a discriminating type")
 ```
 
-**Note:** HC011 requires running the predicate, which means it cannot be purely static. In CLI and LSP mode, honest-check uses a sandboxed evaluator. In startup mode, the `vocabulary()` constructor runs this check directly.
+**Note:** running the predicate is exactly what honest-check does not do — it is a pure static analyzer that never executes application code. So honest-check does not sample the predicate itself; on each predicate recognizer it emits an `info` (CLI and LSP) directing the developer to the runtime checks that decide it, the same static-emits-info / runtime-decides split HC003 uses for predicate overlaps. The catch-all cannot ship regardless: the `vocabulary()` constructor rejects it at construction, and honest-test rejects it under the generated suite. The corpus is fixed and deterministic (not random) so the >95% verdict is identical across runs.
 
 #### HC-SM01, HC-SM02, HC-SM05 — State machine vocabulary violations
 
