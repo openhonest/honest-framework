@@ -292,6 +292,21 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When verify_boundary_isolation runs the link under the I/O monitor
     Then it warns for a non-boundary link that performed I/O, catching a fault after a blocked call, and is silent for a boundary link or a pure one
 
+  Scenario: _humanize turns a name into spoken words
+    Given a chain or slot name
+    When _humanize rewrites it
+    Then the underscores become spaces
+
+  Scenario: _given_pattern builds a chain's given-step pattern
+    Given a chain name and its manifest slots
+    When _given_pattern composes the pattern
+    Then it is a manifest step for the chain that captures one value per slot
+
+  Scenario: scaffold_chain generates a chain's gherkin step registry
+    Given a chain name, its links, vocabulary, binding, and slots
+    When scaffold_chain wires the steps
+    Then it returns a registry whose given classifies the slots into a manifest, whose when runs the chain, and whose then steps assert the result is ok or carries a fault code
+
   Scenario: auth_token_classes lists the token classes
     Given an authentication contract
     When auth_token_classes is asked

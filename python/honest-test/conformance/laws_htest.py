@@ -1117,10 +1117,62 @@ def _probe_isolation():
     return bad
 
 
+def _probe_scaffolding():
+    """BDD step scaffolding (§8.2): scaffold_chain generates a gherkin registry from a chain — given
+    classifies the captured slots, when runs the chain, and the then steps assert ok or a fault code."""
+    from honest_gherkin import parse_feature, run_scenario
+    from honest_type import binding, link, vocabulary
+
+    from honest_test.scaffolding import _given_pattern, _humanize, scaffold_chain
+
+    bad = []
+    if _humanize("create_user_pipeline") != "create user pipeline":
+        bad.append("_humanize should turn underscores into spaces")
+    if _given_pattern("p", ["role", "colour"]) != 'a manifest for p with role "{role}" and colour "{colour}"':
+        bad.append(f"_given_pattern wrong: {_given_pattern('p', ['role', 'colour'])}")
+
+    v = vocabulary({"role": {"admin", "guest"}, "colour": {"blue", "green"}})
+    b = binding({"role": "role", "colour": "colour"})
+
+    @link(accepts=v, binds=b)
+    def accept(m):
+        return {"ok": {**m, "seen": True}}
+
+    @link(accepts=v, binds=b)
+    def reject(m):
+        return {"err": {"code": "unrecognized"}}
+
+    def go(links, feature_text):
+        registry = scaffold_chain("create_user_pipeline", links, v, b, ["role", "colour"])
+        scenario = parse_feature(feature_text, "t.feature")["ok"]["scenarios"][0]
+        report = run_scenario(scenario, [], registry)
+        return report["status"], [r["status"] for r in report["step_results"]]
+
+    given_when = (
+        '    Given a manifest for create user pipeline with role "admin" and colour "blue"\n'
+        "    When the create user pipeline runs\n"
+    )
+    if go([accept], "Feature: X\n\n  Scenario: V\n" + given_when + "    Then the result is ok\n") != ("ok", ["ok", "ok", "ok"]):
+        bad.append("a scaffolded chain returning ok should pass the ok scenario")
+    if go([reject], "Feature: X\n\n  Scenario: R\n" + given_when + '    Then the result has a fault code "unrecognized"\n') != ("ok", ["ok", "ok", "ok"]):
+        bad.append("a scaffolded chain returning a fault should pass the fault scenario")
+    # The then-step assertions genuinely fire: ok fails on a fault, and fault fails on the wrong code.
+    if go([reject], "Feature: X\n\n  Scenario: W\n" + given_when + "    Then the result is ok\n")[0] == "ok":
+        bad.append("the ok assertion should fail when the chain returns a fault")
+    if go([reject], "Feature: X\n\n  Scenario: W\n" + given_when + '    Then the result has a fault code "other"\n')[0] == "ok":
+        bad.append("the fault-code assertion should fail on the wrong code")
+    # then_fault on a non-fault result fails cleanly on the "err" assert (failed), never a KeyError (errored).
+    on_ok = go([accept], "Feature: X\n\n  Scenario: W\n" + given_when + '    Then the result has a fault code "unrecognized"\n')
+    if on_ok[1][2] != "failed":
+        bad.append(f"the 'err' assertion should make then_fault fail (not error) on a non-fault result: {on_ok}")
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
         "isolation": _probe_isolation(),
+        "scaffolding": _probe_scaffolding(),
         "adversarial": _probe_adversarial(),
         "laws": _probe_laws(),
         "mutation": _probe_mutation(),
