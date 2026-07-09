@@ -1161,6 +1161,42 @@ def _probe_transaction_real():
     return asyncio.run(_run())
 
 
+def _probe_reconstruct_fk_violation():
+    """The reconstruction's dangling-foreign-key safety net against real databases (section 5.5): if a
+    rebuild would leave a foreign key pointing at a missing row, the whole reconstruction rolls back.
+    The _FkViolationConn fake injects the violation; here a real orphan row (inserted with foreign-key
+    enforcement off) is carried into the rebuild and the real verification catches it — SQLite via
+    PRAGMA foreign_key_check, Turso via the adapter's orphan query. PostgreSQL has no reconstruction
+    path. Skipped under the mutation loop; the fake covers the control flow there."""
+    if os.environ.get("HONEST_MUTATION"):
+        return []
+    from honest_persist import migrate
+
+    async def _run():
+        bad = []
+        for dialect, conn in [("sqlite", _SqliteConn()), ("turso", turso_connection())]:
+            if conn is None:
+                continue
+            await conn.execute("CREATE TABLE parent (id integer PRIMARY KEY)")
+            await conn.execute("CREATE TABLE child (id integer PRIMARY KEY, pid integer REFERENCES parent(id), note text)")
+            await conn.execute("PRAGMA foreign_keys = OFF")
+            await conn.execute("INSERT INTO child (id, pid, note) VALUES (1, 99, :n)", {"n": "x"})
+            await conn.execute("PRAGMA foreign_keys = ON")
+            # Making note NOT NULL rebuilds child; the rebuild carries the orphan (pid 99 -> no parent),
+            # which the foreign-key verification must catch, rolling the whole reconstruction back.
+            target = {"tables": {
+                "parent": {"columns": {"id": {"type": "integer", "primary_key": True}}},
+                "child": {"columns": {"id": {"type": "integer", "primary_key": True}, "pid": {"type": "integer", "nullable": True, "references": "parent.id"}, "note": {"type": "text", "nullable": False}}},
+            }}
+            result = await migrate(target, conn, dialect)
+            if "ok" not in result or result["ok"]["success"] or "dangling" not in (result["ok"]["error"] or ""):
+                bad.append(f"{dialect}: a reconstruction that leaves a dangling foreign key should roll back: {result}")
+            conn.close()
+        return bad
+
+    return asyncio.run(_run())
+
+
 def _probe_instrument():
     """Pool-layer instrumentation (§8.3, 8.5, 8.7, 8.8): the typed pool faults and the pure event
     payload builders persist emits through honest-observe — branch paths a data file leaves implicit."""
@@ -3528,6 +3564,7 @@ def run():
         "execute": _probe_execute(),
         "transaction": _probe_transaction(),
         "transaction_real": _probe_transaction_real(),
+        "reconstruct_fk_violation": _probe_reconstruct_fk_violation(),
         "instrument": _probe_instrument(),
         "instrumented": _probe_instrumented(),
         "types_defaults": _probe_types_defaults(),
