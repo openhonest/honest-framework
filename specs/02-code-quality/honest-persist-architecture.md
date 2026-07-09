@@ -347,8 +347,8 @@ LatencyRecord = {
 ### 4.12 View
 
 A view is a named query. A materialized view is a view whose result is stored and
-refreshed; on dialects without native materialized views it is emulated by a backing table
-plus refresh triggers (section 5.7).
+refreshed; on dialects without native materialized views it is emulated by a registry entry, a
+backing table, and refresh triggers (section 6.6).
 
 ```
 View = {
@@ -687,8 +687,8 @@ changed is replaced.
 - **Views.** A changed `query` emits `drop_view` + `create_view` (or `alter_view` where the
   dialect supports replacing a view). A view's `depends_on` participates in the dependency
   graph (section 5.4): a view is created after the tables and views it reads and dropped
-  before them. A materialized view also creates its backing table and refresh triggers
-  (section 6).
+  before them. A materialized view instead emits its backing table, registry row, and refresh
+  triggers (section 6.6).
 - **Triggers.** A changed trigger emits `drop_trigger` + `create_trigger`, ordered after the
   table it fires on.
 - **Functions** are replaceable: a change emits `replace_function` (`CREATE OR REPLACE`), so
@@ -840,6 +840,74 @@ or applied. Overlap, containment, and adjacency are pure query terms over the bo
 lower, upper)` each return a parameterized WHERE condition (`{ "sql": ..., "params": ... }`). Two
 ranges overlap when each starts at or before the other ends; a range contains a point when the point
 lies between its bounds; two ranges are adjacent when one's upper bound equals the other's lower.
+
+### 6.6 Materialized Views
+
+A view with `materialized: true` (section 4.12) stores its result instead of recomputing it on
+every read. Only PostgreSQL has a native materialized view; SQLite and Turso do not. honest-persist
+emulates one uniformly across all three dialects with ordinary relational objects, so a materialized
+view is subject to the same verification as any hand-written table. The emulation has three parts.
+
+**The registry.** A single table `_hp_matview` records which stored tables are really materialized
+views:
+
+```sql
+CREATE TABLE _hp_matview (
+    name       TEXT PRIMARY KEY,   -- the view (and its backing table) name
+    query      TEXT NOT NULL,      -- the SELECT the view stores
+    refresh    TEXT NOT NULL,      -- "manual" | "trigger" | "on_commit"
+    depends_on TEXT                -- JSON array of source tables, or NULL
+)
+```
+
+The registry is what lets the inspector (section 9) tell a materialized view's backing table apart
+from an ordinary table, so a materialized view round-trips as a materialized view rather than
+churning into a bare table on the next migration.
+
+**The backing table.** The view's result is stored in a table of the same name, created with
+
+```sql
+CREATE TABLE {name} AS {query}
+```
+
+The database derives the backing table's columns from the query result. honest-persist does not
+parse the `query`, so it cannot and does not name those columns itself — the `CREATE TABLE AS`
+form hands that to the database, exactly as it hands the opaque `query` and `body` strings to the
+database everywhere else (section 5.7).
+
+**Refresh.** Refreshing a materialized view replaces its stored rows with a fresh evaluation of the
+query, in place so the table and its indexes survive:
+
+```sql
+DELETE FROM {name};
+INSERT INTO {name} {query};
+```
+
+`refresh_materialized_view(schema, name)` is the pure builder of these two statements; it reads the
+query from the schema, so no separate lookup is needed. When and how a refresh runs is the
+`refresh` strategy:
+
+- **`manual`** — no triggers. The view refreshes only when the application calls for it. Correct
+  when the result may lag its sources and a scheduled or on-demand refresh is enough.
+- **`trigger`** — for every source table in `depends_on`, an `AFTER INSERT`, `AFTER UPDATE`, and
+  `AFTER DELETE` trigger (named `_hp_refresh_{name}_on_{source}_{event}`) that re-runs the refresh.
+  Any change to a source keeps the view current.
+- **`on_commit`** — the same per-statement refresh triggers as `trigger`. SQLite and Turso have no
+  deferred on-commit hook, so on those dialects `on_commit` is emulated exactly as `trigger`;
+  the distinction is preserved in the registry and honored where a dialect offers a real
+  commit-time hook.
+
+**Diff and apply.** A materialized view is diffed as a view (section 5.7), but creating one emits,
+in dependency order: the `_hp_matview` registry table if it does not yet exist, the `CREATE TABLE AS`
+backing table, the registry row, and — for `trigger` and `on_commit` — the refresh triggers.
+Dropping one removes the triggers, the registry row, and the backing table. A change to `query`,
+`refresh`, or `depends_on` is a drop followed by a create, like any other extended object
+(section 5.7).
+
+**Round-trip.** The inspector reads `_hp_matview` and reconstructs each row into a `materialized`
+view in the schema's `views` map; it treats that view's backing table and `_hp_refresh_*` triggers
+as owned by the view and does not report them as free-standing objects. A schema whose materialized
+views already exist therefore diffs to no operations.
 
 ---
 
