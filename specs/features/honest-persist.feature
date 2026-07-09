@@ -88,25 +88,15 @@ Feature: honest-persist — schema diffing, query building, and the write bounda
     When _plain_view_drop_ops builds it
     Then it returns a single drop_view op carrying the dependencies
 
-  Scenario: _matview_create_ops produces the ops to create a materialized view
+  Scenario: _matview_create_ops produces the op to create a materialized view
     Given a view name and its materialized definition
-    When _matview_create_ops builds them
-    Then it returns the backing-table create followed by a create_trigger per refresh trigger, each ordered after the backing table
+    When _matview_create_ops builds it
+    Then it returns a single create_matview op carrying the whole definition, ordered after the sources it reads
 
-  Scenario: _matview_drop_ops produces the ops to drop a materialized view
+  Scenario: _matview_drop_ops produces the op to drop a materialized view
     Given a view name and its materialized definition
-    When _matview_drop_ops builds them
-    Then it returns the refresh-trigger drops, ordered before the backing table, followed by the backing-table drop
-
-  Scenario: _refresh_triggers produces a materialized view's refresh triggers
-    Given a view name and its materialized definition
-    When _refresh_triggers builds them
-    Then it returns an after insert, update, and delete trigger on each source table for a trigger or on_commit strategy, and none for a manual strategy
-
-  Scenario: refresh_materialized_view builds the statements to refresh a materialized view
-    Given a schema and a materialized view name
-    When refresh_materialized_view builds the refresh
-    Then it returns a delete of the backing table followed by a reinsert of the view's query
+    When _matview_drop_ops builds it
+    Then it returns a single drop_matview op carrying the definition so apply knows which refresh triggers to drop
 
   Scenario: _diff_triggers produces the trigger changes between two schemas
     Given the current triggers and target triggers

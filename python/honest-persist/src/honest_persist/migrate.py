@@ -98,43 +98,55 @@ def _pg_type(data_type):
     return _PG_TYPE.get(data_type, data_type)
 
 
-def _column_from_information_schema_row(row, primary_keys):
-    """One `information_schema.columns` row to a column definition (section 9.1). The primary-key flag
-    and default appear only when present, matching how a schema omits them. Pure."""
+# The PostgreSQL catalog queries (section 9.1). One statement reads the registry's presence; one reads
+# every public base table's columns, nullability, defaults, and primary-key membership in a single
+# pass, so the inspector makes two reads and no per-table loop.
+_PG_REGISTRY_EXISTS = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '_hp_object'"
+_PG_SCHEMA = (
+    "SELECT c.table_name, c.column_name, c.data_type, c.is_nullable, c.column_default, "
+    "CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key "
+    "FROM information_schema.columns c "
+    "JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE' "
+    "LEFT JOIN (SELECT kcu.table_name, kcu.column_name FROM information_schema.table_constraints tc "
+    "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
+    "WHERE tc.table_schema = 'public' AND tc.constraint_type = 'PRIMARY KEY') pk "
+    "ON pk.table_name = c.table_name AND pk.column_name = c.column_name "
+    "WHERE c.table_schema = 'public' ORDER BY c.table_name, c.ordinal_position"
+)
+
+
+def _pg_column(row):
+    """One `_PG_SCHEMA` row to a column definition (section 9.1). The primary-key flag and default
+    appear only when present, matching how a schema omits them. Pure."""
     column = {"type": _pg_type(row["data_type"]), "nullable": row["is_nullable"] == "YES"}
-    if row["column_name"] in primary_keys:
+    if row["is_primary_key"]:
         column["primary_key"] = True
     if row["column_default"] is not None:
         column["default"] = row["column_default"]
     return column
 
 
-async def _inspect_postgresql(conn):
-    """Read the complete live schema of a PostgreSQL database (section 9.1): the public base tables
-    with their columns, nullability, primary keys, and defaults from `information_schema`, and the
-    views, triggers, and procedures from the `_hp_object` registry. Owned tables (the registry,
-    materialized-view backing tables) are not reported. Table names are interpolated into the catalog
-    queries because an identifier cannot be a bound parameter, as with the SQLite inspector's PRAGMA.
-    I/O. Returns ok of a full SchemaDefinition (section 4.15)."""
-    objects = await _read_object_registry(conn, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '_hp_object'")
-    owned = _owned_tables(objects)
-    listing = await conn.execute(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
-    )
+def _pg_tables(rows, owned):
+    """Assemble the tables map from the flat `_PG_SCHEMA` result (section 9.1): group the ordered rows
+    by table, skip honest-persist's own bookkeeping tables, and resolve each column. Pure."""
     tables = {}
-    for row in listing["rows"]:
+    for row in rows:
         name = row["table_name"]
         if name in owned:
             continue
-        keys = await conn.execute(
-            "SELECT kcu.column_name FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema WHERE tc.table_schema = 'public' AND tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = '" + name + "'"
-        )
-        primary_keys = {row["column_name"] for row in keys["rows"]}
-        columns = await conn.execute(
-            "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '" + name + "' ORDER BY ordinal_position"
-        )
-        tables[name] = {"columns": {row["column_name"]: _column_from_information_schema_row(row, primary_keys) for row in columns["rows"]}}
-    return ok({"tables": tables, **objects})
+        tables.setdefault(name, {"columns": {}})["columns"][row["column_name"]] = _pg_column(row)
+    return tables
+
+
+async def _inspect_postgresql(conn):
+    """Read the complete live schema of a PostgreSQL database (section 9.1): the public base tables
+    with their columns from `information_schema`, and the views, triggers, and procedures from the
+    `_hp_object` registry. Thin I/O seam — the catalog SQL and the assembly are pure; this reads the
+    registry and the one schema query and hands the rows to `_pg_tables`. Returns ok of a full
+    SchemaDefinition (section 4.15)."""
+    objects = await _read_object_registry(conn, _PG_REGISTRY_EXISTS)
+    rows = await conn.execute(_PG_SCHEMA)
+    return ok({"tables": _pg_tables(rows["rows"], _owned_tables(objects)), **objects})
 
 
 # The inspector for each supported dialect (section 9, 9.1). Each reads its own catalog; the

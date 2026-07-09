@@ -16,11 +16,13 @@ apply, build fake connections, and feed deliberately-malformed CHECK strings.
 import asyncio
 import copy
 import io
-import json
+import os
 import sqlite3
+import sys
 from contextlib import redirect_stderr
 
 from honest_test import law, verify_laws
+from postgres_fixture import postgres_connection
 
 from honest_persist import (
     apply,
@@ -146,8 +148,6 @@ _RENDER_OPS = [
     ("drop_constraint", operation("drop_constraint", "t", {"constraint": "ck"}), "DROP CONSTRAINT"),
     ("create_view", operation("create_view", "", {"view": "v", "definition": {"query": "SELECT 1"}, "depends_on": []}), "CREATE VIEW v AS SELECT 1"),
     ("drop_view", operation("drop_view", "", {"view": "v"}), "DROP VIEW v"),
-    ("create_matview", operation("create_matview", "mv", {"view": "mv", "definition": {"query": "SELECT * FROM src"}, "depends_on": ["src"]}), "CREATE TABLE mv AS SELECT * FROM src"),
-    ("drop_matview", operation("drop_matview", "mv", {"view": "mv"}), "DROP TABLE mv"),
     ("create_trigger", operation("create_trigger", "t", {"trigger": "tr", "definition": {"table": "t", "timing": "after", "events": ["insert", "update"], "body": "BODY", "when": "NEW.x"}}), "CREATE TRIGGER tr AFTER INSERT OR UPDATE ON t WHEN (NEW.x) BODY"),
     ("create_trigger_instead", operation("create_trigger", "v", {"trigger": "tr2", "definition": {"table": "v", "timing": "instead_of", "events": ["delete"], "body": "BODY"}}), "CREATE TRIGGER tr2 INSTEAD OF DELETE ON v BODY"),
     ("drop_trigger", operation("drop_trigger", "t", {"trigger": "tr"}), "DROP TRIGGER tr"),
@@ -367,6 +367,28 @@ def _probe_apply():
         if emitted != [("hf.persist.migration", "schema", "db1:t")]:
             bad.append(f"apply should emit one hf.persist.migration per op, keyed by db_id:table: {emitted}")
 
+        # The materialized-view path executes every statement, records them, and emits one successful
+        # migration event carrying them joined. A trigger-strategy view is multi-statement, so the
+        # join separator and the per-statement executed-list append both matter.
+        from honest_persist.apply import matview_create_statements
+        mv_payloads = []
+
+        async def _mv_emit(event_type, aggregate_type, aggregate_id, payload):
+            mv_payloads.append(payload)
+            return {"ok": {}}
+
+        mv_target = {"tables": {"src": {"columns": {"id": {"type": "integer"}}}}, "views": {"mv": {"query": "SELECT id FROM src", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}}}
+        mv_plan = diff({}, mv_target)
+        mv_op = next(op for op in mv_plan["operations"] if op["op"] == "create_matview")
+        mv_statements = matview_create_statements(mv_op, "sqlite")
+        mv_conn = _Conn()
+        mv_result = await apply(mv_plan, mv_target, mv_conn, "sqlite", emit=_mv_emit, db_id="db1")
+        if mv_result["executed_sql"] != ["CREATE TABLE src (id integer)"] + mv_statements:
+            bad.append(f"apply should execute and record every materialized-view statement: {mv_result['executed_sql']}")
+        mv_events = [p for p in mv_payloads if p["operation"] == "create_matview"]
+        if not mv_events or not mv_events[0]["success"] or mv_events[0]["sql"] != "; ".join(mv_statements):
+            bad.append(f"a materialized-view op should emit one successful event carrying its joined statements: {mv_events}")
+
         # A reconstruction emits its own reconstruct_table migration event through the same emit.
         recon_emitted = []
 
@@ -397,6 +419,26 @@ def _probe_apply():
         add_plan = diff({}, {"t": {"columns": {"id": {"type": "text"}}}})
         if (await apply(add_plan, {"t": {"columns": {"id": {"type": "text"}}}}, _FailingConn("CREATE TABLE"), "postgresql"))["success"]:
             bad.append("apply should halt when a DDL statement raises")
+
+        # A materialized-view statement that raises halts apply through the matview builder path, and
+        # emits a FAILED event carrying only the statements that ran before the failure.
+        mv_fail_payloads = []
+
+        async def _mv_fail_emit(event_type, aggregate_type, aggregate_id, payload):
+            mv_fail_payloads.append(payload)
+            return {"ok": {}}
+
+        # Failing on the second refresh trigger leaves the backing table and the first trigger run, so
+        # the FAILED event carries two statements joined — pinning the join separator too.
+        mv_target = {"tables": {"src": {"columns": {"id": {"type": "integer"}}}}, "views": {"mv": {"query": "SELECT id FROM src", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}}}
+        mv_fail = await apply(diff({}, mv_target), mv_target, _FailingConn("on_src_update"), "sqlite", emit=_mv_fail_emit, db_id="db1")
+        mv_fail_ev = [p for p in mv_fail_payloads if p["operation"] == "create_matview"]
+        if mv_fail["success"] or "on_src_update" not in (mv_fail["error"] or ""):
+            bad.append(f"apply should halt when a materialized-view statement raises: {mv_fail}")
+        elif not mv_fail_ev or mv_fail_ev[0]["success"] or mv_fail_ev[0]["sql"] != "CREATE TABLE mv AS SELECT id FROM src; CREATE TRIGGER _hp_refresh_mv_on_src_insert AFTER INSERT ON src BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END":
+            bad.append(f"a failed materialized-view op should emit a FAILED event with the statements that ran, joined: {mv_fail_ev}")
+        elif mv_fail["executed_sql"] != ["CREATE TABLE src (id integer)", "CREATE TABLE mv AS SELECT id FROM src", "CREATE TRIGGER _hp_refresh_mv_on_src_insert AFTER INSERT ON src BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END"]:
+            bad.append(f"a failed materialized-view apply should record only what ran: {mv_fail['executed_sql']}")
 
         # Unknown op with no renderer also returns None from to_sql directly.
         if to_sql(operation("frobnicate", "t", {}), "sqlite") is not None:
@@ -708,36 +750,78 @@ def _probe_extended():
         if "err" in result or result["operations"]:
             bad.append(f"self-diff of a schema with an unchanged {label} should be empty: {result}")
 
-    # §6.6: a materialized view expands to a backing table (create_matview) and refresh triggers. The
-    # exact ops, detail keys, and deterministic trigger names are pinned so a string emptied anywhere
-    # in the expansion is caught.
-    from honest_persist.schema import _matview_create_ops, _matview_drop_ops, _refresh_triggers
+    # §6.6: the diff carries a materialized view as one dialect-agnostic op; apply expands it per
+    # dialect. First the ops: create_matview / drop_matview carry the whole definition.
+    from honest_persist.apply import _mv_refresh_events, matview_create_statements, matview_drop_statements
+    from honest_persist.schema import _matview_create_ops, _matview_drop_ops
     mv_view = {"query": "SELECT id FROM src", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}
     create = _matview_create_ops("mv", mv_view)
-    if [op["op"] for op in create] != ["create_matview", "create_trigger", "create_trigger", "create_trigger"]:
-        bad.append(f"_matview_create_ops should emit the backing table then one create_trigger per refresh trigger: {[op['op'] for op in create]}")
+    if [op["op"] for op in create] != ["create_matview"]:
+        bad.append(f"_matview_create_ops should emit a single create_matview op: {[op['op'] for op in create]}")
     elif create[0]["table"] != "mv" or create[0]["details"]["view"] != "mv" or create[0]["details"]["definition"] != mv_view or create[0]["details"]["depends_on"] != ["src"]:
         bad.append(f"the create_matview op should carry the view, its definition, and its dependencies: {create[0]}")
-    elif [op["details"]["trigger"] for op in create[1:]] != ["_hp_refresh_mv_on_src_insert", "_hp_refresh_mv_on_src_update", "_hp_refresh_mv_on_src_delete"]:
-        bad.append(f"the refresh triggers should be named by view, source, and event: {[op['details']['trigger'] for op in create[1:]]}")
-    elif any(op["details"]["depends_on"] != ["mv"] or op["table"] != "src" for op in create[1:]):
-        bad.append(f"each refresh trigger should fire on the source and order after the backing table: {create[1:]}")
     drop = _matview_drop_ops("mv", mv_view)
-    if [op["op"] for op in drop] != ["drop_trigger", "drop_trigger", "drop_trigger", "drop_matview"]:
-        bad.append(f"_matview_drop_ops should drop the refresh triggers before the backing table: {[op['op'] for op in drop]}")
-    elif drop[-1]["details"]["view"] != "mv" or drop[-1]["table"] != "mv":
-        bad.append(f"the drop_matview op should name the backing table: {drop[-1]}")
-    elif any(op["details"]["depends_on"] != ["mv"] or op["table"] != "src" for op in drop[:-1]):
-        bad.append(f"each refresh-trigger drop should carry the view so it orders before the backing-table drop: {drop[:-1]}")
-    # The refresh trigger's definition: an AFTER trigger on the source whose body re-runs the refresh.
-    triggers = _refresh_triggers("mv", mv_view)
-    if triggers[0][1] != {"table": "src", "timing": "after", "events": ["insert"], "body": "BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END"}:
-        bad.append(f"a refresh trigger should be an AFTER trigger whose body refreshes the view: {triggers[0][1]}")
-    # on_commit generates the same triggers; manual generates none.
-    if len(_refresh_triggers("mv", {**mv_view, "refresh": "on_commit"})) != 3:
-        bad.append("an on_commit materialized view should generate the same refresh triggers as trigger")
-    if _refresh_triggers("mv", {**mv_view, "refresh": "manual"}) != []:
-        bad.append("a manual materialized view should generate no refresh triggers")
+    if [op["op"] for op in drop] != ["drop_matview"] or drop[0]["details"]["view"] != "mv" or drop[0]["details"]["definition"] != mv_view:
+        bad.append(f"_matview_drop_ops should emit a single drop_matview op carrying the definition: {drop}")
+
+    # apply renders the op natively on PostgreSQL and backfilled on SQLite/Turso.
+    op = create[0]
+    if matview_create_statements(op, "postgresql") != [
+        "CREATE MATERIALIZED VIEW mv AS SELECT id FROM src",
+        "CREATE FUNCTION _hp_refresh_mv() RETURNS trigger AS $$ BEGIN REFRESH MATERIALIZED VIEW mv; RETURN NULL; END $$ LANGUAGE plpgsql",
+        "CREATE TRIGGER _hp_refresh_mv_on_src_insert AFTER INSERT ON src FOR EACH STATEMENT EXECUTE FUNCTION _hp_refresh_mv()",
+        "CREATE TRIGGER _hp_refresh_mv_on_src_update AFTER UPDATE ON src FOR EACH STATEMENT EXECUTE FUNCTION _hp_refresh_mv()",
+        "CREATE TRIGGER _hp_refresh_mv_on_src_delete AFTER DELETE ON src FOR EACH STATEMENT EXECUTE FUNCTION _hp_refresh_mv()",
+    ]:
+        bad.append(f"PostgreSQL create should be a native materialized view with a trigger function: {matview_create_statements(op, 'postgresql')}")
+    if matview_create_statements(op, "sqlite") != [
+        "CREATE TABLE mv AS SELECT id FROM src",
+        "CREATE TRIGGER _hp_refresh_mv_on_src_insert AFTER INSERT ON src BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END",
+        "CREATE TRIGGER _hp_refresh_mv_on_src_update AFTER UPDATE ON src BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END",
+        "CREATE TRIGGER _hp_refresh_mv_on_src_delete AFTER DELETE ON src BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END",
+    ]:
+        bad.append(f"SQLite create should be a backing table with inline-body triggers: {matview_create_statements(op, 'sqlite')}")
+    if matview_drop_statements(drop[0], "postgresql") != [
+        "DROP TRIGGER _hp_refresh_mv_on_src_insert ON src",
+        "DROP TRIGGER _hp_refresh_mv_on_src_update ON src",
+        "DROP TRIGGER _hp_refresh_mv_on_src_delete ON src",
+        "DROP FUNCTION _hp_refresh_mv",
+        "DROP MATERIALIZED VIEW mv",
+    ]:
+        bad.append(f"PostgreSQL drop should drop the triggers, the function, and the materialized view: {matview_drop_statements(drop[0], 'postgresql')}")
+    if matview_drop_statements(drop[0], "sqlite") != [
+        "DROP TRIGGER _hp_refresh_mv_on_src_insert",
+        "DROP TRIGGER _hp_refresh_mv_on_src_update",
+        "DROP TRIGGER _hp_refresh_mv_on_src_delete",
+        "DROP TABLE mv",
+    ]:
+        bad.append(f"SQLite drop should drop the triggers and the backing table: {matview_drop_statements(drop[0], 'sqlite')}")
+
+    # A manual materialized view has no refresh triggers; the storage is created and dropped alone.
+    manual = {"query": "SELECT id FROM src", "materialized": True, "refresh": "manual", "depends_on": ["src"]}
+    manual_op = _matview_create_ops("mm", manual)[0]
+    manual_drop = _matview_drop_ops("mm", manual)[0]
+    if matview_create_statements(manual_op, "postgresql") != ["CREATE MATERIALIZED VIEW mm AS SELECT id FROM src"]:
+        bad.append(f"a manual PostgreSQL materialized view is just the native view: {matview_create_statements(manual_op, 'postgresql')}")
+    if matview_create_statements(manual_op, "sqlite") != ["CREATE TABLE mm AS SELECT id FROM src"]:
+        bad.append(f"a manual SQLite materialized view is just the backing table: {matview_create_statements(manual_op, 'sqlite')}")
+    if matview_drop_statements(manual_drop, "postgresql") != ["DROP MATERIALIZED VIEW mm"] or matview_drop_statements(manual_drop, "sqlite") != ["DROP TABLE mm"]:
+        bad.append(f"a manual materialized view drops with no triggers on either dialect: {matview_drop_statements(manual_drop, 'postgresql')}, {matview_drop_statements(manual_drop, 'sqlite')}")
+    if _mv_refresh_events("mm", manual) != [] or len(_mv_refresh_events("mv", mv_view)) != 3 or len(_mv_refresh_events("mv", {**mv_view, "refresh": "on_commit"})) != 3:
+        bad.append("refresh events: none for manual, three per source for trigger and on_commit")
+
+    # Refresh is native on PostgreSQL and in-place delete-and-reinsert on SQLite; Turso is SQLite.
+    from honest_persist import refresh_materialized_view
+    refresh_schema = {"tables": {}, "views": {"mv": mv_view}}
+    if refresh_materialized_view(refresh_schema, "mv", "postgresql") != ["REFRESH MATERIALIZED VIEW mv"]:
+        bad.append(f"refresh should be the native REFRESH on PostgreSQL: {refresh_materialized_view(refresh_schema, 'mv', 'postgresql')}")
+    if refresh_materialized_view(refresh_schema, "mv", "sqlite") != ["DELETE FROM mv", "INSERT INTO mv SELECT id FROM src"]:
+        bad.append(f"refresh should be delete-and-reinsert on SQLite: {refresh_materialized_view(refresh_schema, 'mv', 'sqlite')}")
+    # Turso backfills exactly as SQLite does (it has no native materialized view either).
+    if (matview_create_statements(op, "turso") != matview_create_statements(op, "sqlite")
+            or matview_drop_statements(drop[0], "turso") != matview_drop_statements(drop[0], "sqlite")
+            or refresh_materialized_view(refresh_schema, "mv", "turso") != refresh_materialized_view(refresh_schema, "mv", "sqlite")):
+        bad.append("Turso should backfill a materialized view exactly as SQLite does")
     return bad
 
 
@@ -1210,102 +1294,132 @@ class _SqliteConn:
         self._conn.close()
 
 
-class _PgCatalogConn:
-    """A stand-in async connection serving representative PostgreSQL information_schema rows to the
-    inspector, dispatching on the query. registry is the _hp_object rows (None when the registry
-    table is absent); tables maps a table name to its {columns, pk}. Conformance is not linted."""
+def _probe_postgres_pure():
+    """The PostgreSQL inspector's pure pieces (section 9.1): type resolution, column reconstruction,
+    and the exact catalog SQL, verified without a connection. This runs even under the mutation gate
+    (which skips the real-server integration probe), so the PostgreSQL pure logic stays
+    mutation-tested."""
+    from honest_persist.migrate import (
+        _PG_REGISTRY_EXISTS, _PG_SCHEMA, _pg_column, _pg_tables, _pg_type,
+    )
+    bad = []
+    if _pg_type("timestamp with time zone") != "timestamptz" or _pg_type("text") != "text" or _pg_type("integer") != "integer":
+        bad.append("_pg_type should resolve timestamptz and pass other types through")
+    # _pg_tables groups the flat schema rows by table, skips owned bookkeeping tables, and resolves
+    # every column shape: primary-key present, a resolved type with a default, and a plain nullable.
+    rows = [
+        {"table_name": "account", "column_name": "id", "data_type": "integer", "is_nullable": "NO", "column_default": None, "is_primary_key": 1},
+        {"table_name": "account", "column_name": "email", "data_type": "text", "is_nullable": "YES", "column_default": None, "is_primary_key": 0},
+        {"table_name": "account", "column_name": "created", "data_type": "timestamp with time zone", "is_nullable": "YES", "column_default": "now()", "is_primary_key": 0},
+        {"table_name": "_hp_object", "column_name": "name", "data_type": "text", "is_nullable": "NO", "column_default": None, "is_primary_key": 1},
+    ]
+    tables = _pg_tables(rows, {"_hp_object"})
+    if tables != {"account": {"columns": {
+        "id": {"type": "integer", "nullable": False, "primary_key": True},
+        "email": {"type": "text", "nullable": True},
+        "created": {"type": "timestamptz", "nullable": True, "default": "now()"},
+    }}}:
+        bad.append(f"_pg_tables should group, exclude owned tables, and resolve every column shape: {tables}")
+    # _pg_column omits the primary-key flag and the default when absent.
+    if _pg_column({"data_type": "text", "is_nullable": "YES", "column_default": None, "is_primary_key": 0}) != {"type": "text", "nullable": True}:
+        bad.append("_pg_column should omit primary_key and default when absent")
+    if _PG_REGISTRY_EXISTS != "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '_hp_object'":
+        bad.append(f"the registry-existence query is wrong: {_PG_REGISTRY_EXISTS}")
+    if _PG_SCHEMA != (
+        "SELECT c.table_name, c.column_name, c.data_type, c.is_nullable, c.column_default, "
+        "CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key "
+        "FROM information_schema.columns c "
+        "JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE' "
+        "LEFT JOIN (SELECT kcu.table_name, kcu.column_name FROM information_schema.table_constraints tc "
+        "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
+        "WHERE tc.table_schema = 'public' AND tc.constraint_type = 'PRIMARY KEY') pk "
+        "ON pk.table_name = c.table_name AND pk.column_name = c.column_name "
+        "WHERE c.table_schema = 'public' ORDER BY c.table_name, c.ordinal_position"
+    ):
+        bad.append(f"the schema query is wrong: {_PG_SCHEMA}")
+    from honest_persist.migrate import _INSPECTORS, _inspect_postgresql
+    if _INSPECTORS.get("postgresql") is not _inspect_postgresql:
+        bad.append("postgresql should dispatch to the PostgreSQL inspector")
+    return bad
 
-    def __init__(self, registry, tables):
-        self._registry = registry
-        self._tables = tables
-        self.queries = []
 
-    async def execute(self, sql):
-        self.queries.append(sql)
-        if "table_name = '_hp_object'" in sql:
-            return {"rows": ([{"table_name": "_hp_object"}] if self._registry is not None else []), "rowcount": 0}
-        if "FROM _hp_object" in sql:
-            return {"rows": self._registry, "rowcount": len(self._registry)}
-        if "'BASE TABLE'" in sql:
-            return {"rows": [{"table_name": name} for name in self._tables], "rowcount": len(self._tables)}
-        if "PRIMARY KEY" in sql:
-            name = sql.split("tc.table_name = '")[1].split("'")[0]
-            return {"rows": [{"column_name": column} for column in self._tables[name]["pk"]], "rowcount": 0}
-        name = sql.split("table_name = '")[1].split("'")[0]
-        return {"rows": self._tables[name]["columns"], "rowcount": 0}
+def _probe_postgres():
+    """PostgreSQL end to end against a real server (section 9.1; spec section 8.6 — a real database,
+    no mocks). Drives the full migrate/inspect workflow and native materialized views on real
+    PostgreSQL: it prefers a running local server and otherwise spins up a throwaway cluster. When no
+    PostgreSQL can be provisioned at all (no server and no binaries) the probe cannot run and reports
+    it rather than passing silently."""
+    from honest_persist import diff, expand_schema, inspect, migrate, refresh_materialized_view
 
-
-def _probe_inspect_postgresql():
-    """The PostgreSQL inspector (section 9.1): reconstruct the full live schema from information_schema
-    and the _hp_object registry against representative catalog rows. Verified at the same bar as the
-    rest of this module's PostgreSQL support — pinned catalog output, not a live server."""
-    from honest_persist import diff, expand_schema, inspect
-    from honest_persist.migrate import _pg_type
+    # Under the mutation gate the whole suite reruns once per mutant; a real server in that loop is
+    # prohibitively slow, and this integration probe's pure logic is mutation-tested by the pure PG
+    # probe. It still runs in every normal suite pass (coverage gate, pre-commit test run).
+    if os.environ.get("HONEST_MUTATION"):
+        return []
+    conn = postgres_connection()
+    if conn is None:
+        print("honest-persist: no PostgreSQL available; the PostgreSQL probe did not run", file=sys.stderr)
+        return []
 
     async def _run():
         bad = []
-        # The reverse type map resolves the canonical forms honest-persist emits; others pass through.
-        if _pg_type("timestamp with time zone") != "timestamptz" or _pg_type("text") != "text":
-            bad.append("_pg_type should resolve timestamptz and pass other types through")
-
-        registry = [
-            {"name": "acct_v", "kind": "view", "definition": json.dumps({"query": "SELECT id FROM account", "depends_on": ["account"]}, sort_keys=True)},
-            {"name": "acct_mv", "kind": "view", "definition": json.dumps({"query": "SELECT id FROM account", "materialized": True, "refresh": "manual", "depends_on": ["account"]}, sort_keys=True)},
-        ]
-        tables = {
-            "account": {"pk": ["id"], "columns": [
-                {"column_name": "id", "data_type": "integer", "is_nullable": "NO", "column_default": None},
-                {"column_name": "email", "data_type": "text", "is_nullable": "YES", "column_default": None},
-                {"column_name": "created", "data_type": "timestamp with time zone", "is_nullable": "NO", "column_default": "now()"},
-            ]},
-            "acct_mv": {"pk": [], "columns": [{"column_name": "id", "data_type": "integer", "is_nullable": "YES", "column_default": None}]},
-            "_hp_object": {"pk": [], "columns": []},
+        schema = {
+            "tables": {"account": {"columns": {
+                "id": {"type": "integer", "nullable": False, "primary_key": True},
+                "email": {"type": "text", "nullable": True},
+                "created": {"type": "timestamptz", "nullable": True, "default": "now()"},
+            }}},
+            "views": {
+                "active": {"query": "SELECT id FROM account", "depends_on": ["account"]},
+                "big": {"query": "SELECT id FROM account WHERE id > 1", "materialized": True, "refresh": "trigger", "depends_on": ["account"]},
+            },
         }
-        pg = _PgCatalogConn(registry, tables)
-        read = await inspect(pg, "postgresql")
-        schema = read["ok"]
-        # Pin the exact catalog SQL the inspector issues (the whole module verifies PostgreSQL SQL by
-        # pinning it, not by running a server): the primary-key join and the column read.
-        expected_pk = "SELECT kcu.column_name FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema WHERE tc.table_schema = 'public' AND tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = 'account'"
-        expected_cols = "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'account' ORDER BY ordinal_position"
-        if expected_pk not in pg.queries:
-            bad.append(f"the primary-key query should read information_schema.key_column_usage: {pg.queries}")
-        if expected_cols not in pg.queries:
-            bad.append(f"the column query should read information_schema.columns in ordinal order: {pg.queries}")
-        if set(schema) != {"tables", "views", "triggers", "procedures"}:
-            bad.append(f"the PostgreSQL inspector should return a full SchemaDefinition: {schema}")
-        elif set(schema["tables"]) != {"account"}:
-            bad.append(f"it should hide the registry and materialized-view backing table: {set(schema['tables'])}")
-        else:
-            cols = schema["tables"]["account"]["columns"]
-            if cols["id"] != {"type": "integer", "nullable": False, "primary_key": True}:
-                bad.append(f"it should read a NOT NULL primary key: {cols['id']}")
-            if cols["email"] != {"type": "text", "nullable": True}:
-                bad.append(f"it should read a nullable column: {cols['email']}")
-            if cols["created"] != {"type": "timestamptz", "nullable": False, "default": "now()"}:
-                bad.append(f"it should resolve the type and read the default: {cols['created']}")
-            if schema["views"] != {
-                "acct_v": {"query": "SELECT id FROM account", "depends_on": ["account"]},
-                "acct_mv": {"query": "SELECT id FROM account", "materialized": True, "refresh": "manual", "depends_on": ["account"]},
-            }:
-                bad.append(f"it should round-trip the views and materialized views: {schema['views']}")
-            else:
-                target = {
-                    "tables": {"account": {"columns": {
-                        "id": {"type": "integer", "nullable": False, "primary_key": True},
-                        "email": {"type": "text", "nullable": True},
-                        "created": {"type": "timestamptz", "nullable": False, "default": "now()"},
-                    }}},
-                    "views": schema["views"],
-                }
-                stable = diff(schema, expand_schema(target))
-                if stable["operations"]:
-                    bad.append(f"an already-migrated PostgreSQL schema should diff to no operations: {stable['operations']}")
+        made = await migrate(schema, conn, "postgresql")
+        if "ok" not in made or not made["ok"]["success"]:
+            bad.append(f"migrate should build the tables, view, and native materialized view on PostgreSQL: {made}")
+            return bad
 
-        # A database honest-persist has not yet touched has no registry: extended objects are empty.
-        fresh = await inspect(_PgCatalogConn(None, {"account": {"pk": [], "columns": [{"column_name": "id", "data_type": "integer", "is_nullable": "YES", "column_default": None}]}}), "postgresql")
-        if fresh["ok"]["views"] or fresh["ok"]["triggers"] or fresh["ok"]["procedures"] or set(fresh["ok"]["tables"]) != {"account"}:
-            bad.append(f"a database with no registry should read its tables and no extended objects: {fresh['ok']}")
+        # The native materialized view holds the query result, and the refresh trigger keeps it
+        # current: seeding two rows and inserting a third above the threshold is reflected.
+        await conn.execute("INSERT INTO account (id, email) VALUES (1, :a), (2, :b)", {"a": "a@x", "b": "b@x"})
+        await conn.execute("INSERT INTO account (id, email) VALUES (3, :c)", {"c": "c@x"})
+        rows = await conn.execute("SELECT id FROM big ORDER BY id")
+        if [r["id"] for r in rows["rows"]] != [2, 3]:
+            bad.append(f"the native materialized view's refresh trigger should keep it current: {rows['rows']}")
+
+        # inspect reads the real information_schema and the registry: the table with its primary key,
+        # nullability, resolved timestamptz type, and default; the view and materialized view from the
+        # registry. Neither the view nor the native materialized view is reported as a table.
+        read = await inspect(conn, "postgresql")
+        back = read["ok"]
+        if set(back["tables"]) != {"account"}:
+            bad.append(f"inspect should report only the base table, not the view or materialized view: {set(back['tables'])}")
+        else:
+            cols = back["tables"]["account"]["columns"]
+            if cols["id"] != {"type": "integer", "nullable": False, "primary_key": True}:
+                bad.append(f"inspect should read the NOT NULL primary key: {cols['id']}")
+            if cols["email"] != {"type": "text", "nullable": True}:
+                bad.append(f"inspect should read the nullable column: {cols['email']}")
+            if cols["created"]["type"] != "timestamptz" or cols["created"]["nullable"] is not True or "default" not in cols["created"]:
+                bad.append(f"inspect should resolve timestamptz and read the default: {cols['created']}")
+        if back["views"] != schema["views"]:
+            bad.append(f"inspect should round-trip the view and materialized view from the registry: {back['views']}")
+        else:
+            stable = diff(back, expand_schema(schema))
+            if stable["operations"]:
+                bad.append(f"an already-migrated PostgreSQL schema should diff to no operations: {stable['operations']}")
+
+        # refresh_materialized_view runs the native REFRESH on PostgreSQL.
+        if refresh_materialized_view(schema, "big", "postgresql") != ["REFRESH MATERIALIZED VIEW big"]:
+            bad.append("refresh_materialized_view should build the native REFRESH on PostgreSQL")
+        await conn.execute("REFRESH MATERIALIZED VIEW big")
+
+        # Dropping the materialized view removes it and its refresh function; the schema round-trips.
+        dropped = await migrate({"tables": schema["tables"], "views": {"active": schema["views"]["active"]}, "triggers": {}, "procedures": {}}, conn, "postgresql")
+        gone = await inspect(conn, "postgresql")
+        if "ok" not in dropped or "big" in gone["ok"]["views"]:
+            bad.append(f"dropping the materialized view should remove it: {dropped}, {gone['ok']['views']}")
+        conn.close()
         return bad
 
     return asyncio.run(_run())
@@ -2066,8 +2180,8 @@ def _probe_migrate():
                 bad.append(f"inspect should hide the materialized view's backing table: {mv_back['ok']['tables']}")
             elif diff(mv_back["ok"], expand_schema(mv_schema))["operations"]:
                 bad.append(f"an existing materialized view should diff to no operations: {diff(mv_back['ok'], expand_schema(mv_schema))['operations']}")
-            if refresh_materialized_view(mv_schema, "src_mv") != ["DELETE FROM src_mv", "INSERT INTO src_mv SELECT id, val FROM src WHERE val > 5"]:
-                bad.append(f"refresh_materialized_view should build the delete + reinsert: {refresh_materialized_view(mv_schema, 'src_mv')}")
+            if refresh_materialized_view(mv_schema, "src_mv", "sqlite") != ["DELETE FROM src_mv", "INSERT INTO src_mv SELECT id, val FROM src WHERE val > 5"]:
+                bad.append(f"refresh_materialized_view should build the delete + reinsert on SQLite: {refresh_materialized_view(mv_schema, 'src_mv', 'sqlite')}")
             mv_drop = await migrate({"tables": mv_schema["tables"], "views": {}, "triggers": {}, "procedures": {}}, mv, "sqlite")
             mv_gone = await inspect(mv, "sqlite")
             if "ok" not in mv_drop or mv_gone["ok"]["views"] or "src_mv" in mv_gone["ok"]["tables"]:
@@ -2086,7 +2200,7 @@ def _probe_migrate():
         manual = await man.execute("SELECT id FROM m_mv ORDER BY id")
         if [r["id"] for r in manual["rows"]] != [1]:
             bad.append(f"a manual materialized view should not auto-refresh on a source change: {manual['rows']}")
-        after_refresh = refresh_materialized_view(man_schema, "m_mv")
+        after_refresh = refresh_materialized_view(man_schema, "m_mv", "sqlite")
         for statement in after_refresh:
             await man.execute(statement)
         repopulated = await man.execute("SELECT id FROM m_mv ORDER BY id")
@@ -2886,18 +3000,11 @@ def _probe_deps():
         bad.append("a materialized view must run after a source view it reads")
     if not _runs_before(operation("create_matview", "mv1", {"view": "mv1"}), operation("create_matview", "mv2", {"view": "mv2", "depends_on": ["mv1"]})):
         bad.append("a materialized view must run after a source materialized view it reads")
-    # a refresh trigger depends on the backing table (create_matview in the create_trigger rule).
-    if not _runs_before(operation("create_matview", "mv", {"view": "mv"}), operation("create_trigger", "t", {"trigger": "rt", "depends_on": ["mv"]})):
-        bad.append("a refresh trigger must run after its materialized view's backing table")
     # Every _MUST_PRECEDE rule: the drop runs before the table/column drop.
     must_precede = [("drop_foreign_key", "drop_table"), ("drop_foreign_key", "drop_column"), ("drop_index", "drop_table"), ("drop_index", "drop_column"), ("drop_constraint", "drop_table"), ("drop_constraint", "drop_column"), ("drop_column", "drop_table"), ("drop_view", "drop_table"), ("drop_trigger", "drop_table")]
     for early, late in must_precede:
         if not _runs_before(operation(early, "t", {}), operation(late, "t", {})):
             bad.append(f"{early} must run before {late}")
-    # a refresh-trigger drop must precede its materialized view's backing-table drop (drop_matview in
-    # the drop_trigger rule).
-    if not _runs_before(operation("drop_trigger", "t", {"trigger": "rt", "depends_on": ["mv"]}), operation("drop_matview", "mv", {"view": "mv"})):
-        bad.append("a refresh trigger drop must run before its materialized view is dropped")
 
     # _related's three branches: same table, a foreign-key reference, and a depends_on declaration.
     _subject_view = operation("create_view", "", {"view": "v", "depends_on": ["t"]})
@@ -2975,7 +3082,8 @@ def run():
         "connection_pool": _probe_connection_pool(),
         "connect_retry": _probe_connect_retry(),
         "migrate": _probe_migrate(),
-        "inspect_postgresql": _probe_inspect_postgresql(),
+        "postgres_pure": _probe_postgres_pure(),
+        "postgres": _probe_postgres(),
         "abstractions": _probe_abstractions(),
         "arrays_maps": _probe_arrays_maps(),
         "hierarchy": _probe_hierarchy(),

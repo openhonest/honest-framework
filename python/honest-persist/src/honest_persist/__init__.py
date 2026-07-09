@@ -21,7 +21,7 @@ from honest_persist.abstractions import (
     range_contains,
     range_overlaps,
 )
-from honest_persist.apply import apply, reconstruction_sql, requires_reconstruction, to_sql
+from honest_persist.apply import apply, reconstruction_sql, refresh_materialized_view, requires_reconstruction, to_sql
 from honest_persist.connect import connect_with_retry, open_pool
 from honest_persist.cutover import (
     bulk_copy_table,
@@ -74,7 +74,7 @@ from honest_persist.query import (
     update,
 )
 from honest_persist.transaction import transaction
-from honest_persist.schema import diff, object_registry_queries, refresh_materialized_view, validate_schema
+from honest_persist.schema import diff, object_registry_queries, validate_schema
 from honest_persist.instrument import (
     POOL_FAULT_CODES,
     build_migration_event,

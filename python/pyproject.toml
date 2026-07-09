@@ -26,4 +26,4 @@ show_missing = true
 # of the pure core. They live in the dev group so the loaders' conformance runs under the gate; an
 # adopter opts in via the honest-persist[pydantic] or [django] extra. The pure core never imports them.
 [dependency-groups]
-dev = ["pydantic>=2", "django>=4"]
+dev = ["pydantic>=2", "django>=4", "psycopg[binary]>=3"]

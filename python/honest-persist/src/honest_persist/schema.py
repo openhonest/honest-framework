@@ -167,30 +167,6 @@ def object_registry_queries(schema, dialect):
     return queries
 
 
-def refresh_materialized_view(schema, name):
-    """The two statements that refresh a materialized view (section 6.6): clear its backing table and
-    re-evaluate its query in place, so the table and its indexes survive. Pure query builder that
-    reads the query from the schema. Returns a list of SQL statements."""
-    definition = _normalize(schema)
-    query = definition["views"][name]["query"]
-    return [f"DELETE FROM {name}", f"INSERT INTO {name} {query}"]
-
-
-def _refresh_triggers(name, view):
-    """The refresh triggers a materialized view's strategy generates (section 6.6): for `trigger` and
-    `on_commit`, an `AFTER` insert/update/delete trigger on each source table that re-runs the refresh
-    in place; for `manual`, none. Each trigger's `depends_on` carries the view so it orders after the
-    backing table (section 5.4). Pure — returns a list of (trigger_name, trigger_definition)."""
-    if view.get("refresh") not in ("trigger", "on_commit"):
-        return []
-    body = f"BEGIN DELETE FROM {name}; INSERT INTO {name} {view['query']}; END"
-    triggers = []
-    for source in view.get("depends_on", []):
-        for event in ("insert", "update", "delete"):
-            triggers.append((f"_hp_refresh_{name}_on_{source}_{event}", {"table": source, "timing": "after", "events": [event], "body": body}))
-    return triggers
-
-
 def _plain_view_create_ops(name, view):
     """The op to create a plain (non-materialized) view (section 5.7)."""
     return [operation("create_view", "", {"view": name, "definition": dict(view), "depends_on": list(view.get("depends_on", []))})]
@@ -202,24 +178,21 @@ def _plain_view_drop_ops(name, view):
 
 
 def _matview_create_ops(name, view):
-    """The ops to create a materialized view (section 6.6): the CREATE TABLE AS backing table, then a
-    create_trigger per refresh trigger — ordered after the backing table by the trigger's depends_on."""
-    ops = [operation("create_matview", name, {"view": name, "definition": dict(view), "depends_on": list(view.get("depends_on", []))})]
-    for trigger_name, trigger in _refresh_triggers(name, view):
-        ops.append(operation("create_trigger", trigger["table"], {"trigger": trigger_name, "definition": trigger, "depends_on": [name]}))
-    return ops
+    """The op to create a materialized view (section 6.6): one dialect-agnostic create_matview carrying
+    the whole definition, ordered after the sources it reads. apply renders it to the dialect's
+    statements — native materialized view or backing table, plus any refresh triggers."""
+    return [operation("create_matview", name, {"view": name, "definition": dict(view), "depends_on": list(view.get("depends_on", []))})]
 
 
 def _matview_drop_ops(name, view):
-    """The ops to drop a materialized view (section 6.6): each refresh trigger first — ordered before
-    the backing table by its depends_on — then the DROP TABLE of the backing table."""
-    ops = [operation("drop_trigger", trigger["table"], {"trigger": trigger_name, "depends_on": [name]}) for trigger_name, trigger in _refresh_triggers(name, view)]
-    ops.append(operation("drop_matview", name, {"view": name}))
-    return ops
+    """The op to drop a materialized view (section 6.6): one drop_matview carrying the definition so
+    apply knows which refresh triggers to drop alongside the storage."""
+    return [operation("drop_matview", name, {"view": name, "definition": dict(view)})]
 
 
 # Create/drop of a view dispatches on whether it is materialized (section 6.6): a plain view is a
-# single CREATE/DROP VIEW; a materialized view expands to a backing table and refresh triggers.
+# CREATE/DROP VIEW; a materialized view is a single create_matview / drop_matview that apply expands
+# per dialect.
 _VIEW_CREATE_OPS = {False: _plain_view_create_ops, True: _matview_create_ops}
 _VIEW_DROP_OPS = {False: _plain_view_drop_ops, True: _matview_drop_ops}
 
@@ -236,8 +209,8 @@ def _drop_view_ops(name, view):
 
 def _diff_views(current_views, target_views):
     """View add/drop/replace (section 5.7). A changed definition is a drop + create; a materialized
-    view expands to a backing table and refresh triggers (section 6.6). depends_on travels in the ops
-    for dependency ordering (section 5.4)."""
+    view is a create_matview / drop_matview that apply expands per dialect (section 6.6). depends_on
+    travels in the ops for dependency ordering (section 5.4)."""
     ops = []
     for name in sorted(set(current_views) - set(target_views)):
         ops.extend(_drop_view_ops(name, current_views[name]))

@@ -90,15 +90,80 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When _render_drop_view renders it
     Then it produces a DROP VIEW statement for that view
 
-  Scenario: _render_create_matview renders a materialized view's backing table
+  Scenario: matview_create_statements renders a materialized view for the dialect
     Given a create-matview operation and a dialect
-    When _render_create_matview renders it
-    Then it produces a CREATE TABLE AS statement populating the backing table from the view's query
+    When matview_create_statements builds them
+    Then it produces the native materialized view or the backfilled backing table, followed by any refresh triggers
 
-  Scenario: _render_drop_matview renders a DROP TABLE for the backing table
+  Scenario: matview_drop_statements renders a materialized view's drop for the dialect
     Given a drop-matview operation and a dialect
-    When _render_drop_matview renders it
-    Then it produces a DROP TABLE statement for the materialized view's backing table
+    When matview_drop_statements builds them
+    Then it produces the refresh-trigger drops first, then the native materialized view or backing-table drop
+
+  Scenario: refresh_materialized_view builds the refresh statements for the dialect
+    Given a schema, a materialized view name, and a dialect
+    When refresh_materialized_view builds the refresh
+    Then it returns the native REFRESH on PostgreSQL and the in-place delete-and-reinsert on SQLite and Turso
+
+  Scenario: _mv_refresh_events lists the trigger events of an auto-refresh materialized view
+    Given a view name and its materialized definition
+    When _mv_refresh_events reads it
+    Then it returns an insert, update, and delete pair per source for a trigger or on_commit strategy, and none for manual
+
+  Scenario: _mv_trigger_name names one refresh trigger
+    Given a view name, a source table, and an event
+    When _mv_trigger_name builds it
+    Then it returns the deterministic refresh-trigger name
+
+  Scenario: _mv_create_native renders a native CREATE MATERIALIZED VIEW
+    Given a materialized view name and its query
+    When _mv_create_native renders it
+    Then it produces a CREATE MATERIALIZED VIEW statement
+
+  Scenario: _mv_create_backing renders a backing-table CREATE TABLE AS
+    Given a materialized view name and its query
+    When _mv_create_backing renders it
+    Then it produces a CREATE TABLE AS statement populating the backing table from the query
+
+  Scenario: _mv_drop_native renders a DROP MATERIALIZED VIEW
+    Given a materialized view name
+    When _mv_drop_native renders it
+    Then it produces a DROP MATERIALIZED VIEW statement
+
+  Scenario: _mv_drop_backing renders a DROP TABLE for the backing table
+    Given a materialized view name
+    When _mv_drop_backing renders it
+    Then it produces a DROP TABLE statement
+
+  Scenario: _mv_refresh_native builds the native REFRESH statement
+    Given a materialized view name and its query
+    When _mv_refresh_native builds it
+    Then it returns a single REFRESH MATERIALIZED VIEW statement
+
+  Scenario: _mv_refresh_backing builds the in-place refresh statements
+    Given a materialized view name and its query
+    When _mv_refresh_backing builds it
+    Then it returns a delete of the backing table followed by a reinsert of the query
+
+  Scenario: _mv_triggers_native renders PostgreSQL refresh triggers
+    Given a materialized view name and its definition
+    When _mv_triggers_native builds them
+    Then it returns a trigger function that calls REFRESH and a statement-level trigger on each source, or none for manual
+
+  Scenario: _mv_triggers_backing renders SQLite refresh triggers
+    Given a materialized view name and its definition
+    When _mv_triggers_backing builds them
+    Then it returns an inline-body trigger on each source that re-runs the in-place refresh
+
+  Scenario: _mv_trigger_drops_native drops the PostgreSQL refresh triggers and function
+    Given a materialized view name and its definition
+    When _mv_trigger_drops_native builds them
+    Then it returns a drop of each source trigger and of the refresh function, or none for manual
+
+  Scenario: _mv_trigger_drops_backing drops the SQLite refresh triggers
+    Given a materialized view name and its definition
+    When _mv_trigger_drops_backing builds them
+    Then it returns a drop of each source trigger
 
   Scenario: _render_create_trigger renders a CREATE TRIGGER statement
     Given a create-trigger operation and a dialect
@@ -479,15 +544,20 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When _pg_type resolves it
     Then it returns the abstract type honest-persist emitted, resolving the canonical forms and passing every other type through
 
-  Scenario: _column_from_information_schema_row resolves an information_schema row to a column
-    Given an information_schema column row and the table's primary-key columns
-    When _column_from_information_schema_row resolves it
+  Scenario: _pg_column resolves one schema-query row to a column definition
+    Given a PostgreSQL schema-query row
+    When _pg_column resolves it
     Then it returns the column's abstract type and nullability, with primary_key and default only when present
+
+  Scenario: _pg_tables assembles the tables map from the flat schema query result
+    Given the ordered rows of the PostgreSQL schema query and the owned table names
+    When _pg_tables assembles them
+    Then it groups the rows by table, skips honest-persist's own bookkeeping tables, and resolves each column
 
   Scenario: _inspect_postgresql reads the live schema of a PostgreSQL database
     Given a PostgreSQL connection
     When _inspect_postgresql reads it
-    Then it returns a full SchemaDefinition, reading tables, columns, primary keys, and defaults from information_schema and the extended objects from the registry, and does not report owned tables
+    Then it returns a full SchemaDefinition, reading the registry and one schema query and handing the rows to the pure assembler, and does not report owned tables
 
   Scenario: inspect reads the live database schema for the dialect
     Given a connection and a dialect

@@ -154,13 +154,111 @@ def _render_drop_view(op, dialect):
     return f"DROP VIEW {op['details']['view']}"
 
 
-def _render_create_matview(op, dialect):
-    details = op["details"]
-    return f"CREATE TABLE {details['view']} AS {details['definition']['query']}"
+# --- Materialized views (section 6.6). The database's native materialized view is used where the
+# dialect has one (PostgreSQL); a backing table stands in where it does not (SQLite, Turso). apply
+# picks the form because only apply knows the dialect; the diff carries the matview as one operation. ---
 
 
-def _render_drop_matview(op, dialect):
-    return f"DROP TABLE {op['details']['view']}"
+def _mv_refresh_events(name, view):
+    """The (source, event) pairs an auto-refresh materialized view triggers on; empty for `manual`
+    (section 6.6). Pure."""
+    if view.get("refresh") not in ("trigger", "on_commit"):
+        return []
+    return [(source, event) for source in view.get("depends_on", []) for event in ("insert", "update", "delete")]
+
+
+def _mv_trigger_name(name, source, event):
+    """The deterministic name of one refresh trigger (section 6.6)."""
+    return f"_hp_refresh_{name}_on_{source}_{event}"
+
+
+def _mv_create_native(name, query):
+    return f"CREATE MATERIALIZED VIEW {name} AS {query}"
+
+
+def _mv_create_backing(name, query):
+    return f"CREATE TABLE {name} AS {query}"
+
+
+def _mv_drop_native(name):
+    return f"DROP MATERIALIZED VIEW {name}"
+
+
+def _mv_drop_backing(name):
+    return f"DROP TABLE {name}"
+
+
+def _mv_refresh_native(name, query):
+    return [f"REFRESH MATERIALIZED VIEW {name}"]
+
+
+def _mv_refresh_backing(name, query):
+    return [f"DELETE FROM {name}", f"INSERT INTO {name} {query}"]
+
+
+def _mv_triggers_native(name, view):
+    """PostgreSQL refresh triggers: a trigger function that calls REFRESH, plus a statement-level
+    trigger on each source (section 6.6). Pure."""
+    events = _mv_refresh_events(name, view)
+    if not events:
+        return []
+    function = f"_hp_refresh_{name}"
+    statements = [f"CREATE FUNCTION {function}() RETURNS trigger AS $$ BEGIN REFRESH MATERIALIZED VIEW {name}; RETURN NULL; END $$ LANGUAGE plpgsql"]
+    for source, event in events:
+        statements.append(f"CREATE TRIGGER {_mv_trigger_name(name, source, event)} AFTER {event.upper()} ON {source} FOR EACH STATEMENT EXECUTE FUNCTION {function}()")
+    return statements
+
+
+def _mv_triggers_backing(name, view):
+    """SQLite/Turso refresh triggers: an inline-body trigger on each source that re-runs the refresh
+    in place (section 6.6). Pure."""
+    body = f"BEGIN DELETE FROM {name}; INSERT INTO {name} {view['query']}; END"
+    return [f"CREATE TRIGGER {_mv_trigger_name(name, source, event)} AFTER {event.upper()} ON {source} {body}" for source, event in _mv_refresh_events(name, view)]
+
+
+def _mv_trigger_drops_native(name, view):
+    """Drop the PostgreSQL refresh triggers and their function (section 6.6). Pure."""
+    events = _mv_refresh_events(name, view)
+    if not events:
+        return []
+    statements = [f"DROP TRIGGER {_mv_trigger_name(name, source, event)} ON {source}" for source, event in events]
+    statements.append(f"DROP FUNCTION _hp_refresh_{name}")
+    return statements
+
+
+def _mv_trigger_drops_backing(name, view):
+    """Drop the SQLite/Turso refresh triggers (section 6.6). Pure."""
+    return [f"DROP TRIGGER {_mv_trigger_name(name, source, event)}" for source, event in _mv_refresh_events(name, view)]
+
+
+# Per-dialect materialized-view rendering (section 6.6): native on PostgreSQL, backfilled elsewhere.
+_MV_CREATE = {"postgresql": _mv_create_native, "sqlite": _mv_create_backing, "turso": _mv_create_backing}
+_MV_DROP = {"postgresql": _mv_drop_native, "sqlite": _mv_drop_backing, "turso": _mv_drop_backing}
+_MV_REFRESH = {"postgresql": _mv_refresh_native, "sqlite": _mv_refresh_backing, "turso": _mv_refresh_backing}
+_MV_TRIGGERS = {"postgresql": _mv_triggers_native, "sqlite": _mv_triggers_backing, "turso": _mv_triggers_backing}
+_MV_TRIGGER_DROPS = {"postgresql": _mv_trigger_drops_native, "sqlite": _mv_trigger_drops_backing, "turso": _mv_trigger_drops_backing}
+
+
+def matview_create_statements(op, dialect):
+    """The statements that create a materialized view on the dialect (section 6.6): the native
+    materialized view or the backfilled backing table, then any refresh triggers. Pure."""
+    name, view = op["details"]["view"], op["details"]["definition"]
+    return [_MV_CREATE[dialect](name, view["query"])] + _MV_TRIGGERS[dialect](name, view)
+
+
+def matview_drop_statements(op, dialect):
+    """The statements that drop a materialized view on the dialect (section 6.6): its refresh triggers
+    first, then the native materialized view or the backing table. Pure."""
+    name, view = op["details"]["view"], op["details"]["definition"]
+    return _MV_TRIGGER_DROPS[dialect](name, view) + [_MV_DROP[dialect](name)]
+
+
+def refresh_materialized_view(schema, name, dialect):
+    """The statements that refresh a materialized view on the dialect (section 6.6): the native REFRESH
+    on PostgreSQL, the in-place delete-and-reinsert on SQLite and Turso. Pure query builder reading the
+    query from the schema. Returns a list of SQL statements."""
+    view = _normalize(schema)["views"][name]
+    return _MV_REFRESH[dialect](name, view["query"])
 
 
 def _render_create_trigger(op, dialect):
@@ -220,14 +318,16 @@ _RENDERERS = {
     "drop_constraint": _render_drop_constraint,
     "create_view": _render_create_view,
     "drop_view": _render_drop_view,
-    "create_matview": _render_create_matview,
-    "drop_matview": _render_drop_matview,
     "create_trigger": _render_create_trigger,
     "drop_trigger": _render_drop_trigger,
     "create_function": _render_create_function,
     "replace_function": _render_replace_function,
     "drop_function": _render_drop_function,
 }
+
+# Materialized-view operations expand to a dialect-specific statement list rather than a single DDL
+# string (section 6.6), so apply runs them through these builders instead of to_sql / _RENDERERS.
+_MATVIEW_BUILDERS = {"create_matview": matview_create_statements, "drop_matview": matview_drop_statements}
 
 
 def to_sql(operation, dialect):
@@ -379,6 +479,20 @@ async def apply(diff_result, target, conn, dialect, emit=None, db_id=""):
                 return failure
             await _emit_migration(emit, db_id, "reconstruct_table", op["table"], {}, rebuilt_sql, time.perf_counter_ns() - start, True, None)
             reconstructed.add(op["table"])
+            continue
+        matview_builder = _MATVIEW_BUILDERS.get(op["op"])
+        if matview_builder is not None:
+            statements = matview_builder(op, dialect)
+            start = time.perf_counter_ns()
+            mark = len(executed)
+            try:
+                for statement in statements:
+                    await conn.execute(statement)
+                    executed.append(statement)
+            except Exception as exc:
+                await _emit_migration(emit, db_id, op["op"], op["table"], op["details"], "; ".join(executed[mark:]), time.perf_counter_ns() - start, False, type(exc).__name__)
+                return _apply_result(False, executed, str(exc), index)
+            await _emit_migration(emit, db_id, op["op"], op["table"], op["details"], "; ".join(statements), time.perf_counter_ns() - start, True, None)
             continue
         sql = to_sql(op, dialect)
         if sql is None:

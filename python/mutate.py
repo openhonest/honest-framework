@@ -329,6 +329,12 @@ def _run_module(module, only=None):
 
 
 def main(modules):
+    # Signal the conformance suite that it is running under mutation, so probes that drive a heavy
+    # real external service (the PostgreSQL integration probe) skip themselves: mutation re-runs the
+    # whole suite once per mutant, and a real server in that loop is prohibitively slow. Those probes
+    # verify integration in a normal suite run; their pure logic is mutation-tested by pure probes.
+    # Workers inherit this env, as does the baseline subprocess.
+    os.environ["HONEST_MUTATION"] = "1"
     status = 0
     for module in modules:
         # `module:filename-substring` narrows mutation to matching source files for fast iteration.
