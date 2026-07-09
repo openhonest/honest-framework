@@ -1,4 +1,5 @@
 .DS_Store
+._*
 .venv/
 __pycache__/
 *.pyc
@@ -13,3 +14,7 @@ AGENTS.md
 .agents.md
 CLAUDE.md
 python/honest_event_log.jsonl
+
+# Abandoned prototype and local backup bundles — never released, never read (clean-slate rule).
+python.botched/
+framework backup/
