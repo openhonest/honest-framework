@@ -29,3 +29,18 @@ Feature: honest-auth — authentication is validated at the boundary and passed 
     Given a provider and a fault
     When fault_status maps it
     Then the provider fault_mapping wins, else the framework default for the category, else 500
+
+  Scenario: _outcome classifies what the boundary produced for a token
+    Given the result of authenticating a token
+    When _outcome classifies it
+    Then an ok result is an actor, a recognizer rejection is a recognizer_reject, and any other fault is its category
+
+  Scenario: authentication_honesty checks a provider honours the token-class contract
+    Given a provider and a test context
+    When authentication_honesty runs its token classes through the boundary
+    Then a valid token resolves to an actor, a malformed one is rejected at the recognizer, and every other class fails as unauthenticated, else it lists each dishonest class with its expected and actual outcome
+
+  Scenario: resolve_actor_deterministic confirms a token resolves the same way twice
+    Given a provider and a token
+    When resolve_actor_deterministic resolves it twice under fixed state
+    Then it reports whether the two results agree

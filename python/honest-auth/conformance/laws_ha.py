@@ -21,8 +21,33 @@ def _provider(recognizer=None, resolver=None, fault_mapping=None):
         "name": "p",
         "actor_recognizer": recognizer or (lambda token: token != "bad"),
         "resolve_actor": resolver or (lambda token: ok("actor") if token == "good" else err(fault("nope", "no", "unauthenticated"))),
-        "test_token_generator": lambda class_name: class_name,
+        "test_token_generator": lambda class_name, context: class_name,
         "fault_mapping": fault_mapping or {},
+    }
+
+
+# A real, minimal conforming provider (section 5.3 style, not a mock): each token class maps to a token
+# its recognizer and resolver handle so the class's outcome is correct — 'good' resolves to an actor,
+# 'bad' is malformed (recognizer rejects), and every other class resolves to an unauthenticated fault.
+def _honest_provider():
+    return {
+        "name": "honest",
+        "actor_recognizer": lambda token: token != "bad",
+        "resolve_actor": lambda token: ok("alice") if token == "good" else err(fault(token, "no valid identity", "unauthenticated")),
+        "test_token_generator": lambda class_name, context: {"valid": "good", "malformed": "bad"}.get(class_name, class_name),
+        "fault_mapping": {},
+    }
+
+
+# A dishonest provider: its resolver hands an actor back for every recognized token, so revoked, expired,
+# missing, and forged tokens all wrongly resolve to an actor instead of failing as unauthenticated.
+def _dishonest_provider():
+    return {
+        "name": "dishonest",
+        "actor_recognizer": lambda token: token != "bad",
+        "resolve_actor": lambda token: ok("alice"),
+        "test_token_generator": lambda class_name, context: {"valid": "good", "malformed": "bad"}.get(class_name, class_name),
+        "fault_mapping": {},
     }
 
 
@@ -34,7 +59,7 @@ def _law_exports():
     import honest_auth
 
     bad = []
-    expected = ["AuthProvider", "Registry", "empty_registry", "register_auth_provider", "registered_provider", "validate_provider", "authenticate", "fault_status"]
+    expected = ["AuthProvider", "Registry", "empty_registry", "register_auth_provider", "registered_provider", "validate_provider", "authenticate", "fault_status", "authentication_honesty", "resolve_actor_deterministic"]
     if sorted(getattr(honest_auth, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_auth, '__all__', None)}")
     missing = [name for name in expected if not hasattr(honest_auth, name)]
@@ -114,6 +139,42 @@ def _law_fault_status():
     return bad
 
 
+def _law_authentication_honesty():
+    from honest_auth import authentication_honesty
+
+    bad = []
+    if "ok" not in authentication_honesty(_honest_provider(), None):
+        bad.append(f"an honest provider should pass the authentication-honesty check: {authentication_honesty(_honest_provider(), None)}")
+    dishonest = authentication_honesty(_dishonest_provider(), None)
+    if "err" not in dishonest or dishonest["err"]["code"] != "authentication_dishonest" or dishonest["err"]["category"] != "server" or dishonest["err"]["message"] != "the provider does not honour the token-class contract":
+        bad.append(f"a provider that resolves revoked/forged tokens to an actor should be authentication_dishonest: {dishonest}")
+    else:
+        classes = {v["class"] for v in dishonest["err"]["detail"]}
+        if classes != {"revoked", "expired", "missing", "forged"}:
+            bad.append(f"the violation should name each dishonest class (got an actor, expected unauthenticated): {classes}")
+        got = {v["class"]: (v["expected"], v["got"]) for v in dishonest["err"]["detail"]}
+        if got.get("forged") != ("unauthenticated", "actor"):
+            bad.append(f"each violation should carry the expected and actual outcome: {got.get('forged')}")
+    return bad
+
+
+def _law_resolve_actor_deterministic():
+    from honest_auth import resolve_actor_deterministic
+
+    bad = []
+    if not resolve_actor_deterministic(_honest_provider(), "good"):
+        bad.append("a resolver that returns the same result for a token should be reported deterministic")
+    calls = []
+
+    def flaky(token):
+        calls.append(1)
+        return ok("a") if len(calls) % 2 == 0 else err(fault("x", "y", "unauthenticated"))
+
+    if resolve_actor_deterministic(_provider(resolver=flaky), "good"):
+        bad.append("a resolver that returns different results for the same token is not deterministic")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
     "empty_registry": _law_empty_registry,
@@ -122,6 +183,8 @@ _LAWS = {
     "registered_provider": _law_registered_provider,
     "authenticate": _law_authenticate,
     "fault_status": _law_fault_status,
+    "authentication_honesty": _law_authentication_honesty,
+    "resolve_actor_deterministic": _law_resolve_actor_deterministic,
 }
 
 
