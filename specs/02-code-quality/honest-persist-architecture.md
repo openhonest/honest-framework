@@ -848,21 +848,12 @@ every read. Only PostgreSQL has a native materialized view; SQLite and Turso do 
 emulates one uniformly across all three dialects with ordinary relational objects, so a materialized
 view is subject to the same verification as any hand-written table. The emulation has three parts.
 
-**The registry.** A single table `_hp_matview` records which stored tables are really materialized
-views:
-
-```sql
-CREATE TABLE _hp_matview (
-    name       TEXT PRIMARY KEY,   -- the view (and its backing table) name
-    query      TEXT NOT NULL,      -- the SELECT the view stores
-    refresh    TEXT NOT NULL,      -- "manual" | "trigger" | "on_commit"
-    depends_on TEXT                -- JSON array of source tables, or NULL
-)
-```
-
-The registry is what lets the inspector (section 9) tell a materialized view's backing table apart
-from an ordinary table, so a materialized view round-trips as a materialized view rather than
-churning into a bare table on the next migration.
+**The registry.** A materialized view is an extended object, so its canonical definition — the
+`query`, the `materialized` flag, the `refresh` strategy, and `depends_on` — is recorded in the
+`_hp_object` registry alongside every other view, trigger, and procedure (section 9.1). That single
+row is what lets the inspector tell a materialized view's backing table apart from an ordinary table,
+so a materialized view round-trips as a materialized view rather than churning into a bare table on
+the next migration.
 
 **The backing table.** The view's result is stored in a table of the same name, created with
 
@@ -898,16 +889,16 @@ query from the schema, so no separate lookup is needed. When and how a refresh r
   commit-time hook.
 
 **Diff and apply.** A materialized view is diffed as a view (section 5.7), but creating one emits,
-in dependency order: the `_hp_matview` registry table if it does not yet exist, the `CREATE TABLE AS`
-backing table, the registry row, and — for `trigger` and `on_commit` — the refresh triggers.
-Dropping one removes the triggers, the registry row, and the backing table. A change to `query`,
-`refresh`, or `depends_on` is a drop followed by a create, like any other extended object
-(section 5.7).
+in dependency order: the `CREATE TABLE AS` backing table and — for `trigger` and `on_commit` — the
+refresh triggers. Dropping one removes the triggers and the backing table. Its `_hp_object` row is
+kept in step by `object_registry_queries` after apply, like every other extended object (section 9.1).
+A change to `query`, `refresh`, or `depends_on` is a drop followed by a create, like any other
+extended object (section 5.7).
 
-**Round-trip.** The inspector reads `_hp_matview` and reconstructs each row into a `materialized`
-view in the schema's `views` map; it treats that view's backing table and `_hp_refresh_*` triggers
-as owned by the view and does not report them as free-standing objects. A schema whose materialized
-views already exist therefore diffs to no operations.
+**Round-trip.** The inspector reconstructs each `_hp_object` row of a materialized view into a
+`materialized` view in the schema's `views` map, and treats that view's backing table and
+`_hp_refresh_*` triggers as owned by the view rather than free-standing objects (section 9.1). A
+schema whose materialized views already exist therefore diffs to no operations.
 
 ---
 
@@ -1419,7 +1410,50 @@ database state against the current schema definition. This means:
 - Rollback is computed by diffing in the opposite direction.
 - The schema definition and the database are always compared directly.
 
-### 9.1 Zero-Downtime Cutover
+### 9.1 The Inspector
+
+`inspect(conn, dialect)` returns the **complete** live SchemaDefinition (section 4.15): tables,
+views, triggers, procedures, and materialized views. This is not optional. The diff is computed
+fresh every migration by comparing `inspect(live)` against the target, so anything the inspector
+fails to report is invisible to the diff — a changed view is never redefined, a stale trigger is
+never dropped, and a materialized view is re-created on every run until it errors. An inspector that
+reads only tables can migrate only tables. The inspector must round-trip every object the schema can
+declare.
+
+**How it reads, without parsing SQL.** Table structure is read from the dialect's catalog — columns,
+types, nullability, keys, defaults — because that structure is recoverable there (SQLite's
+`PRAGMA table_info`, PostgreSQL's `information_schema`). Extended objects are not: a view's `query`
+and a trigger's `body` are opaque dialect SQL that honest-persist never parses (section 5.7), so the
+inspector cannot rebuild their definitions from the database's rendered DDL. Instead honest-persist
+keeps its own registry of the extended objects it creates:
+
+```sql
+CREATE TABLE _hp_object (
+    name       TEXT PRIMARY KEY,   -- object name
+    kind       TEXT NOT NULL,      -- "view" | "trigger" | "procedure"
+    definition TEXT NOT NULL       -- the canonical definition (section 4.12-4.14) as JSON
+)
+```
+
+Every `create`/`replace`/`drop` of a view, trigger, procedure, or materialized view keeps `_hp_object`
+in step: `object_registry_queries(schema, dialect)` is the pure builder of the idempotent upserts and
+deletes, run after `apply` in the same workflow slot as `enum_seed_queries` (section 6.1). The
+inspector reads `_hp_object` and reconstructs each extended object exactly from the stored JSON — a
+byte-exact round-trip that never depends on how the database re-renders DDL. A materialized view is
+stored here like any view (its `materialized`/`refresh`/`depends_on` travel in the definition); the
+inspector attaches its backing table and `_hp_refresh_*` triggers to it and does not report them
+separately (section 6.6).
+
+**Owned objects.** honest-persist generates relational objects the application never declares —
+enum lookups (`_hp_enum_*`), array and map junctions (`_hp_array_*`, `_hp_map_*`), closure tables,
+materialized-view backing tables and their refresh triggers, and `_hp_object` itself. The inspector
+reconstructs these to exactly the shape `expand_schema` (section 6) produces for the same
+declarations, so a schema whose abstractions and extended objects already exist diffs to no
+operations. The catalog SQL each inspector runs is dialect-specific and implementation-defined
+(section 12); the contract above — a complete SchemaDefinition, extended objects via `_hp_object`,
+owned objects reconciled — is normative and identical across dialects.
+
+### 9.2 Zero-Downtime Cutover
 
 The workflow above applies a diff in place. Moving a live database to a new home — a new
 engine, a new host, a major restructure — without downtime is a separate, staged operation,
@@ -1563,7 +1597,7 @@ FUNCTION check_HC_P013(vocabulary, binding):
 
 Implementations may omit the write queue, the multi-tenant manager, the type
 abstractions of sections 6.3-6.5 (hierarchy, arrays and maps, ranges), and the
-zero-downtime cutover of section 9.1. These are optional extensions;
+zero-downtime cutover of section 9.2. These are optional extensions;
 implementations must declare which they support. Enum abstraction (section 6.1)
 and CHECK enforcement (section 6.2) are not optional — they are cross-dialect
 correctness guarantees.
@@ -1579,7 +1613,9 @@ correctness guarantees.
 - The Pydantic loader (Python-specific, not part of the core pattern)
 - The CLI (`declaro diff`, `declaro apply`) — tooling, not the library
 - The SQLAlchemy-style query API — compatibility shim, not core pattern
-- The inspector (reads live DB schema) — implementation-defined per dialect
+- The inspector's catalog SQL (which system tables each dialect reads) — implementation-defined
+  per dialect. Its *contract* is normative and in-spec (section 9.1): a complete SchemaDefinition,
+  extended objects reconstructed from the `_hp_object` registry, owned objects reconciled
 - Native dialect specializations (PostgreSQL native enums and array types,
   PRAGMA emulation for engines lacking introspection) — optimizations behind the
   dialect-agnostic abstractions of section 6
