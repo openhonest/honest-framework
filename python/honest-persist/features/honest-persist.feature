@@ -547,7 +547,37 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
   Scenario: _read_object_registry reconstructs extended objects from the _hp_object registry
     Given a connection and a registry-existence query
     When _read_object_registry reads it
-    Then it returns the views, triggers, and procedures rebuilt exactly from the registry rows, or empty maps when the database has no registry table yet
+    Then it returns the views, triggers, procedures, and check constraints rebuilt exactly from the registry rows, or empty maps when the database has no registry table yet
+
+  Scenario: _put_view reconstructs a view registry row
+    Given the reconstructed objects, a view definition, and its name
+    When _put_view places it
+    Then the view is recorded under its name in the views map
+
+  Scenario: _put_trigger reconstructs a trigger registry row
+    Given the reconstructed objects, a trigger definition, and its name
+    When _put_trigger places it
+    Then the trigger is recorded under its name in the triggers map
+
+  Scenario: _put_procedure reconstructs a procedure registry row
+    Given the reconstructed objects, a procedure definition, and its name
+    When _put_procedure places it
+    Then the procedure is recorded under its name in the procedures map
+
+  Scenario: _put_constraint reconstructs a check-constraint registry row onto its table
+    Given the reconstructed objects and a constraint registry definition carrying its table
+    When _put_constraint places it
+    Then the constraint definition is recorded under the constraint's name within its table's constraints
+
+  Scenario: _attach_constraints attaches reconstructed check constraints to their tables
+    Given the inspected tables and the reconstructed constraints by table
+    When _attach_constraints attaches them
+    Then each table that has constraints gains them, and tables without any are unchanged
+
+  Scenario: _schema_definition assembles the full SchemaDefinition from tables and registry objects
+    Given the inspected tables and the reconstructed registry objects
+    When _schema_definition assembles them
+    Then it returns a definition whose tables carry their check constraints and whose views, triggers, and procedures are the top-level maps
 
   Scenario: _owned_tables names the stored tables that are honest-persist's own bookkeeping
     Given the reconstructed extended objects
@@ -737,7 +767,12 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
   Scenario: object_registry_queries brings the _hp_object registry in step with a schema
     Given a schema and a dialect
     When object_registry_queries builds the queries
-    Then it ensures the registry table exists, clears it, and records each view, trigger, and procedure as a row carrying its canonical definition as JSON
+    Then it ensures the registry table exists, clears it, and records each view, trigger, procedure, and check constraint as a row carrying its canonical definition as JSON
+
+  Scenario: _constraint_registry_rows records a schema's check constraints for the registry
+    Given the tables of a schema
+    When _constraint_registry_rows collects them
+    Then it returns a row per check constraint, keyed table.constraint and carrying its table, name, and definition, and skips any non-check constraint
 
   Scenario: table marks a Pydantic model as a named table
     Given a table name

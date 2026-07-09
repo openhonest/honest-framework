@@ -775,6 +775,12 @@ def _probe_extended():
     added_index = [o for o in new_indexed["operations"] if o["op"] == "add_index"]
     if len(added_index) != 1 or added_index[0]["table"] != "t" or added_index[0]["details"]["index"] != "by_s" or added_index[0]["details"]["definition"] != {"columns": ["s"]}:
         bad.append(f"a new table's indexes should be created via add_index: {added_index}")
+    # Check constraints are recorded in the registry (opaque SQL the catalog cannot faithfully return);
+    # a non-check constraint is not.
+    from honest_persist.schema import _constraint_registry_rows
+    reg = _constraint_registry_rows({"t": {"constraints": {"amount_ok": {"type": "check", "expression": "amount >= 0"}, "u": {"type": "unique", "columns": ["y"]}}}})
+    if reg != [("t.amount_ok", {"table": "t", "constraint": "amount_ok", "definition": {"type": "check", "expression": "amount >= 0"}})]:
+        bad.append(f"_constraint_registry_rows should record only check constraints, keyed table.constraint: {reg}")
     # A primary-key column is canonically not-null, whether declared column-level or in the table's
     # primary_key list, so a declared primary key round-trips against the not-null the inspector reads.
     from honest_persist.schema import _canonical_columns
@@ -1587,6 +1593,10 @@ _ROUNDTRIP_SCHEMAS = {
         "columns": {"id": {"type": "integer", "primary_key": True}, "kind": {"type": "text", "nullable": True}, "at": {"type": "integer", "nullable": True}},
         "indexes": {"event_by_kind": {"columns": ["kind"]}, "event_by_kind_at": {"columns": ["kind", "at"], "unique": True}},
     }}},
+    "check-constraints": {"tables": {"ledger": {
+        "columns": {"id": {"type": "integer", "primary_key": True}, "amount": {"type": "integer", "nullable": True}, "kind": {"type": "text", "nullable": True}},
+        "constraints": {"amount_nonneg": {"type": "check", "expression": "amount >= 0"}, "kind_known": {"type": "check", "expression": "kind IN ('debit', 'credit')"}},
+    }}},
 }
 
 
@@ -2302,6 +2312,17 @@ def _probe_migrate():
         if got_ix != {"ev_by_a": {"columns": ["a"]}, "ev_uq_ab": {"columns": ["a", "b"], "unique": True}}:
             bad.append(f"inspect should read only explicit indexes, with their columns and unique flag: {got_ix}")
 
+        # A check constraint round-trips through the registry: migrate records it, and inspect
+        # reconstructs it onto the table (SQLite has no catalog for check constraints).
+        cc = _SqliteConn()
+        cc_schema = {"tables": {"acct": {"columns": {"id": {"type": "integer", "primary_key": True}, "bal": {"type": "integer", "nullable": True}}, "constraints": {"bal_ok": {"type": "check", "expression": "bal >= 0"}}}}}
+        await migrate(cc_schema, cc, "sqlite")
+        cc_back = await inspect(cc, "sqlite")
+        if cc_back["ok"]["tables"]["acct"].get("constraints") != {"bal_ok": {"type": "check", "expression": "bal >= 0"}}:
+            bad.append(f"inspect should reconstruct a check constraint onto its table from the registry: {cc_back['ok']['tables']['acct'].get('constraints')}")
+        if diff(cc_back["ok"], expand_schema(cc_schema))["operations"]:
+            bad.append("a check-constraint schema should round-trip to no operations")
+
         # inspect reads tables and columns back with type, nullability, primary key, and default.
         rich = _SqliteConn()
         await rich.execute(
@@ -2373,11 +2394,15 @@ def _probe_migrate():
             bad.append(f"the registry should round-trip a procedure definition exactly: {proc_back['ok']['procedures']}")
 
         # The stored definition JSON is key-sorted, so the same logical object always serializes to
-        # the same bytes regardless of dict insertion order — deterministic registry rows.
-        ordered = object_registry_queries({"tables": {}, "views": {"v": {"query": "SELECT 1", "materialized": False}}}, "sqlite")
+        # the same bytes regardless of dict insertion order — deterministic registry rows, for both an
+        # extended object and a check constraint.
+        ordered = object_registry_queries({"tables": {"t": {"constraints": {"c": {"type": "check", "expression": "x > 0"}}}}, "views": {"v": {"query": "SELECT 1", "materialized": False}}}, "sqlite")
         stored = [q["params"]["definition"] for q in ordered if q["params"].get("name") == "v"]
         if stored != ['{"materialized": false, "query": "SELECT 1"}']:
-            bad.append(f"object_registry_queries should store the definition as key-sorted JSON: {stored}")
+            bad.append(f"object_registry_queries should store an object definition as key-sorted JSON: {stored}")
+        stored_c = [q["params"]["definition"] for q in ordered if q["params"].get("name") == "t.c"]
+        if stored_c != ['{"constraint": "c", "definition": {"expression": "x > 0", "type": "check"}, "table": "t"}']:
+            bad.append(f"object_registry_queries should store a constraint definition as key-sorted JSON: {stored_c}")
 
         # §6.6: a materialized view is emulated by a CREATE TABLE AS backing table plus refresh
         # triggers. The backing table holds the query result; a 'trigger' strategy keeps it current on

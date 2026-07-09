@@ -22,9 +22,25 @@ from honest_persist.apply import apply
 from honest_persist.check import validate_checks
 from honest_persist.schema import diff, object_registry_queries
 
-# The `kind` recorded in the `_hp_object` registry (section 9.1) maps to the SchemaDefinition map the
-# reconstructed object belongs in.
-_REGISTRY_MAP = {"view": "views", "trigger": "triggers", "procedure": "procedures"}
+# Reconstruct one `_hp_object` row into the schema being read back (section 9.1), dispatched on its
+# `kind`: an extended object is a top-level map keyed by name; a check constraint attaches to its table.
+def _put_view(objects, definition, name):
+    objects["views"][name] = definition
+
+
+def _put_trigger(objects, definition, name):
+    objects["triggers"][name] = definition
+
+
+def _put_procedure(objects, definition, name):
+    objects["procedures"][name] = definition
+
+
+def _put_constraint(objects, definition, name):
+    objects["constraints"].setdefault(definition["table"], {})[definition["constraint"]] = definition["definition"]
+
+
+_RECONSTRUCT = {"view": _put_view, "trigger": _put_trigger, "procedure": _put_procedure, "constraint": _put_constraint}
 
 
 def _column_from_pragma_row(row):
@@ -70,14 +86,26 @@ async def _read_object_registry(conn, exists_sql):
     reconstruction is an exact round-trip that never parses the database's rendered DDL. A database
     honest-persist has not yet touched has no registry table and therefore no extended objects.
     Returns {views, triggers, procedures}."""
-    objects = {"views": {}, "triggers": {}, "procedures": {}}
+    objects = {"views": {}, "triggers": {}, "procedures": {}, "constraints": {}}
     present = await conn.execute(exists_sql)
     if not present["rows"]:
         return objects
     rows = await conn.execute("SELECT name, kind, definition FROM _hp_object")
     for row in rows["rows"]:
-        objects[_REGISTRY_MAP[row["kind"]]][row["name"]] = json.loads(row["definition"])
+        _RECONSTRUCT[row["kind"]](objects, json.loads(row["definition"]), row["name"])
     return objects
+
+
+def _attach_constraints(tables, constraints):
+    """Attach the reconstructed check constraints to their tables (section 9.1). Pure."""
+    return {name: ({**table, "constraints": constraints[name]} if name in constraints else table) for name, table in tables.items()}
+
+
+def _schema_definition(tables, objects):
+    """The full SchemaDefinition from inspected tables and the reconstructed registry objects (section
+    9.1): check constraints attach to their tables; views, triggers, and procedures are the top-level
+    maps. Pure."""
+    return {"tables": _attach_constraints(tables, objects["constraints"]), "views": objects["views"], "triggers": objects["triggers"], "procedures": objects["procedures"]}
 
 
 def _owned_tables(objects):
@@ -132,7 +160,7 @@ async def _inspect_sqlite(conn):
         if indexes:
             table["indexes"] = indexes
         tables[name] = table
-    return ok({"tables": tables, **objects})
+    return ok(_schema_definition(tables, objects))
 
 
 # A PostgreSQL information_schema data_type resolved back to honest-persist's abstract type (section
@@ -242,7 +270,7 @@ async def _inspect_postgresql(conn):
     objects = await _read_object_registry(conn, _PG_REGISTRY_EXISTS)
     rows = await conn.execute(_PG_SCHEMA)
     index_rows = await conn.execute(_PG_INDEXES)
-    return ok({"tables": _pg_tables(rows["rows"], index_rows["rows"], _owned_tables(objects)), **objects})
+    return ok(_schema_definition(_pg_tables(rows["rows"], index_rows["rows"], _owned_tables(objects)), objects))
 
 
 # The inspector for each supported dialect (section 9, 9.1). Each reads its own catalog; the

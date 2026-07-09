@@ -146,24 +146,40 @@ def _normalize(schema):
     return {"tables": schema, "views": {}, "triggers": {}, "procedures": {}}
 
 
+def _constraint_registry_rows(tables):
+    """The `_hp_object` rows recording each table's check constraints (section 9.1): a check constraint
+    is an opaque SQL expression the database re-renders (PostgreSQL) or does not expose at all (SQLite),
+    so honest-persist stores it in the registry and reads it back exactly rather than from the catalog.
+    Each row is keyed 'table.constraint' and carries the table, the constraint name, and its definition.
+    Pure."""
+    rows = []
+    for table_name in sorted(tables):
+        constraints = tables[table_name].get("constraints", {})
+        for constraint_name in sorted(constraints):
+            if constraints[constraint_name].get("type") == "check":
+                rows.append((table_name + "." + constraint_name, {"table": table_name, "constraint": constraint_name, "definition": constraints[constraint_name]}))
+    return rows
+
+
 def object_registry_queries(schema, dialect):
     """The queries that bring the `_hp_object` registry (section 9.1) in step with a schema's extended
-    objects, run after apply in the same workflow slot as `enum_seed_queries` (section 6.1). Pure
-    query builder: ensure the registry table exists, clear it, and record every view, trigger, and
-    procedure as a row carrying its canonical definition as JSON — so the inspector reconstructs each
-    one exactly without ever parsing the database's rendered DDL. Clearing then re-recording lets the
-    registry shed objects the schema has dropped. Returns a list of `{sql, params}`."""
+    objects and check constraints, run after apply in the same workflow slot as `enum_seed_queries`
+    (section 6.1). Pure query builder: ensure the registry table exists, clear it, and record every
+    view, trigger, procedure, and check constraint as a row carrying its canonical definition as JSON —
+    so the inspector reconstructs each one exactly without ever parsing the database's rendered DDL.
+    Clearing then re-recording lets the registry shed objects the schema has dropped. Returns a list of
+    `{sql, params}`."""
     definition = _normalize(schema)
     queries = [
         {"sql": "CREATE TABLE IF NOT EXISTS _hp_object (name TEXT PRIMARY KEY, kind TEXT NOT NULL, definition TEXT NOT NULL)", "params": {}},
         {"sql": "DELETE FROM _hp_object", "params": {}},
     ]
+    insert = "INSERT INTO _hp_object (name, kind, definition) VALUES (:name, :kind, :definition)"
     for key, kind in _REGISTRY_KINDS:
         for name in sorted(definition[key]):
-            queries.append({
-                "sql": "INSERT INTO _hp_object (name, kind, definition) VALUES (:name, :kind, :definition)",
-                "params": {"name": name, "kind": kind, "definition": json.dumps(definition[key][name], sort_keys=True)},
-            })
+            queries.append({"sql": insert, "params": {"name": name, "kind": kind, "definition": json.dumps(definition[key][name], sort_keys=True)}})
+    for name, row in _constraint_registry_rows(definition["tables"]):
+        queries.append({"sql": insert, "params": {"name": name, "kind": "constraint", "definition": json.dumps(row, sort_keys=True)}})
     return queries
 
 
