@@ -1127,6 +1127,40 @@ def _probe_transaction():
     return asyncio.run(_run())
 
 
+def _probe_transaction_real():
+    """transaction's real all-or-nothing behavior against real databases (spec section 8.6): a
+    committed transaction persists every write, and a failing write rolls the earlier ones back — on a
+    real engine, not simulated. The _TxConn fake only records begin/commit/rollback and cannot show
+    whether a real database actually undoes the earlier writes. Runs on real SQLite, Turso, and
+    PostgreSQL; skipped under the mutation loop like the other real-database probes (the transaction
+    control flow itself is mutation-tested against the fake)."""
+    if os.environ.get("HONEST_MUTATION"):
+        return []
+    from honest_persist import insert, transaction
+
+    async def _run():
+        bad = []
+        for dialect, conn in [("sqlite", _SqliteConn()), ("turso", turso_connection()), ("postgresql", postgres_connection())]:
+            if conn is None:
+                print(f"honest-persist: no {dialect} available; transaction not checked for it", file=sys.stderr)
+                continue
+            await conn.execute("CREATE TABLE acct (id integer PRIMARY KEY, bal integer)")
+            committed = await transaction([insert("acct", {"id": 1, "bal": 10}), insert("acct", {"id": 2, "bal": 20})], conn)
+            rows = await conn.execute("SELECT id FROM acct ORDER BY id")
+            if "ok" not in committed or [r["id"] for r in rows["rows"]] != [1, 2]:
+                bad.append(f"{dialect}: a committed transaction should persist every write: {committed}, {rows['rows']}")
+            # The second write duplicates a primary key, so it fails; the first write of the transaction
+            # must be rolled back, leaving only the two rows the committed transaction wrote.
+            rolled = await transaction([insert("acct", {"id": 3, "bal": 5}), insert("acct", {"id": 3, "bal": 6})], conn)
+            after = await conn.execute("SELECT id FROM acct ORDER BY id")
+            if "err" not in rolled or [r["id"] for r in after["rows"]] != [1, 2]:
+                bad.append(f"{dialect}: a failing transaction should roll back its earlier writes on a real engine: {rolled}, {after['rows']}")
+            conn.close()
+        return bad
+
+    return asyncio.run(_run())
+
+
 def _probe_instrument():
     """Pool-layer instrumentation (§8.3, 8.5, 8.7, 8.8): the typed pool faults and the pure event
     payload builders persist emits through honest-observe — branch paths a data file leaves implicit."""
@@ -3493,6 +3527,7 @@ def run():
         "checked": _probe_checked(),
         "execute": _probe_execute(),
         "transaction": _probe_transaction(),
+        "transaction_real": _probe_transaction_real(),
         "instrument": _probe_instrument(),
         "instrumented": _probe_instrumented(),
         "types_defaults": _probe_types_defaults(),

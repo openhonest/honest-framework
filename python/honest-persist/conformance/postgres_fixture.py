@@ -111,6 +111,16 @@ class PostgresConn:
         rows = cursor.fetchall() if cursor.description else []
         return {"rows": rows, "rowcount": cursor.rowcount}
 
+    # Manual transaction control in autocommit mode, so the transaction() path can be exercised.
+    async def begin(self):
+        self._conn.execute("BEGIN")
+
+    async def commit(self):
+        self._conn.execute("COMMIT")
+
+    async def rollback(self):
+        self._conn.execute("ROLLBACK")
+
     def close(self):
         self._conn.close()
 
