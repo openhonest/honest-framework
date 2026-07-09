@@ -448,6 +448,20 @@ def _probe_apply():
         statements = reconstruction_sql("t", {"columns": {"id": {"type": "text"}}}, [], "sqlite")
         if any("INSERT" in s for s in statements):
             bad.append("reconstruction_sql with no common columns should not INSERT")
+
+        # §5.5: _dependent_views is the plain views that read the table (not a materialized view, not a
+        # view on another table); reconstruction_sql drops them before the rebuild and recreates them after.
+        from honest_persist.apply import _dependent_views
+        views = {
+            "v_dep": {"query": "SELECT id FROM t", "depends_on": ["t"]},
+            "v_other": {"query": "SELECT id FROM u", "depends_on": ["u"]},
+            "mv_dep": {"query": "SELECT id FROM t", "materialized": True, "depends_on": ["t"]},
+        }
+        if _dependent_views("t", views) != [("v_dep", "SELECT id FROM t")]:
+            bad.append(f"_dependent_views should be only the plain views reading the table: {_dependent_views('t', views)}")
+        recon = reconstruction_sql("t", {"columns": {"id": {"type": "text"}}}, ["id"], "sqlite", [("v_dep", "SELECT id FROM t")], temp_name="_tmp")
+        if recon[0] != "DROP VIEW v_dep" or recon[-1] != "CREATE VIEW v_dep AS SELECT id FROM t":
+            bad.append(f"reconstruction_sql should drop the dependent views first and recreate them last: {recon}")
         if not requires_reconstruction(operation("alter_column", "t", {}), "sqlite"):
             bad.append("alter_column should require reconstruction on sqlite")
         return bad
@@ -2322,6 +2336,21 @@ def _probe_migrate():
             bad.append(f"inspect should reconstruct a check constraint onto its table from the registry: {cc_back['ok']['tables']['acct'].get('constraints')}")
         if diff(cc_back["ok"], expand_schema(cc_schema))["operations"]:
             bad.append("a check-constraint schema should round-trip to no operations")
+
+        # §5.5: reconstructing a table under a dependent view (a SQLite column alter) drops and recreates
+        # the view around the rebuild, rather than failing because a view references the table.
+        rv = _SqliteConn()
+        rv_v1 = {"tables": {"acct": {"columns": {"id": {"type": "integer", "primary_key": True}, "note": {"type": "text", "nullable": True}}}}, "views": {"acct_v": {"query": "SELECT id FROM acct", "depends_on": ["acct"]}}}
+        await migrate(rv_v1, rv, "sqlite")
+        rv_v2 = {"tables": {"acct": {"columns": {"id": {"type": "integer", "primary_key": True}, "note": {"type": "text", "nullable": False}}}}, "views": {"acct_v": {"query": "SELECT id FROM acct", "depends_on": ["acct"]}}}
+        recon = await migrate(rv_v2, rv, "sqlite")
+        rv_back = await inspect(rv, "sqlite")
+        if "ok" not in recon or not recon["ok"]["success"]:
+            bad.append(f"reconstructing a table under a dependent view should succeed: {recon}")
+        elif rv_back["ok"]["views"].get("acct_v") != {"query": "SELECT id FROM acct", "depends_on": ["acct"]}:
+            bad.append(f"the dependent view should survive the reconstruction: {rv_back['ok']['views']}")
+        elif rv_back["ok"]["tables"]["acct"]["columns"]["note"]["nullable"] is not False:
+            bad.append(f"the reconstruction should have applied the column change: {rv_back['ok']['tables']['acct']['columns']['note']}")
 
         # inspect reads tables and columns back with type, nullability, primary key, and default.
         rich = _SqliteConn()

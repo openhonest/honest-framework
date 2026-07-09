@@ -363,16 +363,31 @@ def requires_reconstruction(operation, dialect):
     return operation["op"] in _RECONSTRUCTION_OPS.get(dialect, frozenset())
 
 
-def reconstruction_sql(table, target_table, common_columns, dialect, temp_name=None):
-    """The statement sequence that rebuilds `table` into `target_table` (section 5.5): create a
-    temp table with the target columns, copy the common columns, drop the old, rename the temp
-    into place, recreate the target indexes. Pure. The transaction wrapping and foreign-key
-    toggling are apply()'s boundary responsibility; `temp_name` carries the unique id apply()
-    mints, with a deterministic default so the plan is reproducible for testing."""
+def _dependent_views(table, views):
+    """The plain views that read `table`, as (name, query) in name order (section 5.5): a
+    reconstruction drops and recreates them around the rebuild, because a dialect that rebuilds by
+    dropping the table cannot drop it while a view references it. Materialized views are not handled
+    here — they carry their own backing table and refresh triggers. Pure."""
+    dependent = []
+    for name in sorted(views):
+        view = views[name]
+        if not view.get("materialized") and table in view.get("depends_on", []):
+            dependent.append((name, view["query"]))
+    return dependent
+
+
+def reconstruction_sql(table, target_table, common_columns, dialect, dependent_views=(), temp_name=None):
+    """The statement sequence that rebuilds `table` into `target_table` (section 5.5): drop the views
+    that read the table, create a temp table with the target columns, copy the common columns, drop
+    the old, rename the temp into place, recreate the target indexes, and recreate the dropped views.
+    Pure. The transaction wrapping and foreign-key toggling are apply()'s boundary responsibility;
+    `temp_name` carries the unique id apply() mints, with a deterministic default so the plan is
+    reproducible for testing."""
     temp = temp_name or f"_hp_tmp_{table}"
     columns = target_table.get("columns", {})
     columns_ddl = ", ".join(_column_ddl(name, columns[name], dialect) for name in columns)
-    statements = [f"CREATE TABLE {temp} ({columns_ddl})"]
+    statements = [f"DROP VIEW {name}" for name, _ in dependent_views]
+    statements.append(f"CREATE TABLE {temp} ({columns_ddl})")
     if common_columns:
         copied = ", ".join(common_columns)
         statements.append(f"INSERT INTO {temp} ({copied}) SELECT {copied} FROM {table}")
@@ -382,6 +397,8 @@ def reconstruction_sql(table, target_table, common_columns, dialect, temp_name=N
         unique = "UNIQUE " if index.get("unique") else ""
         index_columns = ", ".join(index.get("columns", []))
         statements.append(f"CREATE {unique}INDEX {index_name} ON {table} ({index_columns})")
+    for name, query in dependent_views:
+        statements.append(f"CREATE VIEW {name} AS {query}")
     return statements
 
 
@@ -401,7 +418,7 @@ async def _resume_push(conn):
         await conn.resume_push()
 
 
-async def _reconstruct(table, target_tables, operations, conn, dialect, executed):
+async def _reconstruct(table, target_tables, target_views, operations, conn, dialect, executed):
     """Rebuild one table to its target shape (section 5.5) with the full foreign-key lifecycle, pausing
     sync push for the duration (Turso). Foreign-key checks are disabled BEFORE the transaction — the
     pragma is connection-scoped, not transactional, so it cannot be toggled mid-transaction — the rebuild
@@ -418,7 +435,7 @@ async def _reconstruct(table, target_tables, operations, conn, dialect, executed
     await conn.disable_foreign_keys()
     await conn.begin()
     try:
-        for sql in reconstruction_sql(table, target_table, common, dialect):
+        for sql in reconstruction_sql(table, target_table, common, dialect, _dependent_views(table, target_views)):
             await conn.execute(sql)
             executed.append(sql)
         violations = await conn.verify_foreign_keys()
@@ -460,7 +477,8 @@ async def apply(diff_result, target, conn, dialect, emit=None, db_id=""):
     it awaits I/O through conn."""
     if diff_result.get("ambiguities"):
         return _apply_result(False, [], "unresolved ambiguities; resolve before applying", None)
-    target_tables = _normalize(target)["tables"]
+    target_definition = _normalize(target)
+    target_tables = target_definition["tables"]
     operations = diff_result["operations"]
     reconstruct_tables = {op["table"] for op in operations if requires_reconstruction(op, dialect)}
     reconstructed = set()
@@ -472,7 +490,7 @@ async def apply(diff_result, target, conn, dialect, emit=None, db_id=""):
                 continue
             start = time.perf_counter_ns()
             mark = len(executed)
-            failure = await _reconstruct(op["table"], target_tables, operations, conn, dialect, executed)
+            failure = await _reconstruct(op["table"], target_tables, target_definition["views"], operations, conn, dialect, executed)
             rebuilt_sql = "; ".join(executed[mark:])
             if failure is not None:
                 await _emit_migration(emit, db_id, "reconstruct_table", op["table"], {}, rebuilt_sql, time.perf_counter_ns() - start, False, "reconstruction_failed")

@@ -201,10 +201,15 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Then it returns the rendered DDL for that operation
     But an operation type with no renderer returns nothing
 
+  Scenario: _dependent_views names the plain views that read a table
+    Given a table and the schema's views
+    When _dependent_views collects them
+    Then it returns each plain view that reads the table, as name and query in order, and not a materialized view or a view on another table
+
   Scenario: reconstruction_sql renders the statements that rebuild a table
-    Given a table, its target shape, the columns to carry over, a dialect, and an optional temporary name
+    Given a table, its target shape, the columns to carry over, a dialect, the dependent views, and an optional temporary name
     When reconstruction_sql renders the rebuild
-    Then it produces the statements to create a temporary table, copy the shared columns, drop the old, rename the temporary into place, and recreate the target indexes
+    Then it drops the dependent views, creates a temporary table, copies the shared columns, drops the old, renames the temporary into place, recreates the target indexes, and recreates the dependent views
     And without a supplied temporary name it uses a deterministic default so the plan is reproducible
 
   Scenario: _query packages built SQL with its named parameters
