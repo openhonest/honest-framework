@@ -145,6 +145,8 @@ _RENDER_OPS = [
     ("drop_constraint", operation("drop_constraint", "t", {"constraint": "ck"}), "DROP CONSTRAINT"),
     ("create_view", operation("create_view", "", {"view": "v", "definition": {"query": "SELECT 1"}, "depends_on": []}), "CREATE VIEW v AS SELECT 1"),
     ("drop_view", operation("drop_view", "", {"view": "v"}), "DROP VIEW v"),
+    ("create_matview", operation("create_matview", "mv", {"view": "mv", "definition": {"query": "SELECT * FROM src"}, "depends_on": ["src"]}), "CREATE TABLE mv AS SELECT * FROM src"),
+    ("drop_matview", operation("drop_matview", "mv", {"view": "mv"}), "DROP TABLE mv"),
     ("create_trigger", operation("create_trigger", "t", {"trigger": "tr", "definition": {"table": "t", "timing": "after", "events": ["insert", "update"], "body": "BODY", "when": "NEW.x"}}), "CREATE TRIGGER tr AFTER INSERT OR UPDATE ON t WHEN (NEW.x) BODY"),
     ("create_trigger_instead", operation("create_trigger", "v", {"trigger": "tr2", "definition": {"table": "v", "timing": "instead_of", "events": ["delete"], "body": "BODY"}}), "CREATE TRIGGER tr2 INSTEAD OF DELETE ON v BODY"),
     ("drop_trigger", operation("drop_trigger", "t", {"trigger": "tr"}), "DROP TRIGGER tr"),
@@ -704,6 +706,37 @@ def _probe_extended():
         result = diff(schema, schema)
         if "err" in result or result["operations"]:
             bad.append(f"self-diff of a schema with an unchanged {label} should be empty: {result}")
+
+    # §6.6: a materialized view expands to a backing table (create_matview) and refresh triggers. The
+    # exact ops, detail keys, and deterministic trigger names are pinned so a string emptied anywhere
+    # in the expansion is caught.
+    from honest_persist.schema import _matview_create_ops, _matview_drop_ops, _refresh_triggers
+    mv_view = {"query": "SELECT id FROM src", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}
+    create = _matview_create_ops("mv", mv_view)
+    if [op["op"] for op in create] != ["create_matview", "create_trigger", "create_trigger", "create_trigger"]:
+        bad.append(f"_matview_create_ops should emit the backing table then one create_trigger per refresh trigger: {[op['op'] for op in create]}")
+    elif create[0]["table"] != "mv" or create[0]["details"]["view"] != "mv" or create[0]["details"]["definition"] != mv_view or create[0]["details"]["depends_on"] != ["src"]:
+        bad.append(f"the create_matview op should carry the view, its definition, and its dependencies: {create[0]}")
+    elif [op["details"]["trigger"] for op in create[1:]] != ["_hp_refresh_mv_on_src_insert", "_hp_refresh_mv_on_src_update", "_hp_refresh_mv_on_src_delete"]:
+        bad.append(f"the refresh triggers should be named by view, source, and event: {[op['details']['trigger'] for op in create[1:]]}")
+    elif any(op["details"]["depends_on"] != ["mv"] or op["table"] != "src" for op in create[1:]):
+        bad.append(f"each refresh trigger should fire on the source and order after the backing table: {create[1:]}")
+    drop = _matview_drop_ops("mv", mv_view)
+    if [op["op"] for op in drop] != ["drop_trigger", "drop_trigger", "drop_trigger", "drop_matview"]:
+        bad.append(f"_matview_drop_ops should drop the refresh triggers before the backing table: {[op['op'] for op in drop]}")
+    elif drop[-1]["details"]["view"] != "mv" or drop[-1]["table"] != "mv":
+        bad.append(f"the drop_matview op should name the backing table: {drop[-1]}")
+    elif any(op["details"]["depends_on"] != ["mv"] or op["table"] != "src" for op in drop[:-1]):
+        bad.append(f"each refresh-trigger drop should carry the view so it orders before the backing-table drop: {drop[:-1]}")
+    # The refresh trigger's definition: an AFTER trigger on the source whose body re-runs the refresh.
+    triggers = _refresh_triggers("mv", mv_view)
+    if triggers[0][1] != {"table": "src", "timing": "after", "events": ["insert"], "body": "BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END"}:
+        bad.append(f"a refresh trigger should be an AFTER trigger whose body refreshes the view: {triggers[0][1]}")
+    # on_commit generates the same triggers; manual generates none.
+    if len(_refresh_triggers("mv", {**mv_view, "refresh": "on_commit"})) != 3:
+        bad.append("an on_commit materialized view should generate the same refresh triggers as trigger")
+    if _refresh_triggers("mv", {**mv_view, "refresh": "manual"}) != []:
+        bad.append("a manual materialized view should generate no refresh triggers")
     return bad
 
 
@@ -1821,7 +1854,7 @@ def _probe_migrate():
     composes inspect + diff + apply against a real database — creating a table, then adding a column
     on a second pass — refusing without applying when the diff is ambiguous, surfacing a diff fault
     for an invalid target, and faulting on an unsupported dialect. Driven end-to-end on real SQLite."""
-    from honest_persist import diff, expand_schema, inspect, migrate, object_registry_queries
+    from honest_persist import diff, expand_schema, inspect, migrate, object_registry_queries, refresh_materialized_view
 
     async def _run():
         bad = []
@@ -1902,6 +1935,61 @@ def _probe_migrate():
         stored = [q["params"]["definition"] for q in ordered if q["params"].get("name") == "v"]
         if stored != ['{"materialized": false, "query": "SELECT 1"}']:
             bad.append(f"object_registry_queries should store the definition as key-sorted JSON: {stored}")
+
+        # §6.6: a materialized view is emulated by a CREATE TABLE AS backing table plus refresh
+        # triggers. The backing table holds the query result; a 'trigger' strategy keeps it current on
+        # source changes; inspect round-trips the view and hides the backing table; a drop removes it.
+        mv = _SqliteConn()
+        await mv.execute("CREATE TABLE src (id integer, val integer)")
+        await mv.execute("INSERT INTO src (id, val) VALUES (1, 10), (2, 20)")
+        mv_schema = {
+            "tables": {"src": {"columns": {"id": {"type": "integer", "nullable": True}, "val": {"type": "integer", "nullable": True}}}},
+            "views": {"src_mv": {"query": "SELECT id, val FROM src WHERE val > 5", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}},
+        }
+        mv_made = await migrate(mv_schema, mv, "sqlite")
+        if "ok" not in mv_made or not mv_made["ok"]["success"]:
+            bad.append(f"migrate should build a materialized view's backing table and triggers: {mv_made}")
+        else:
+            seeded = await mv.execute("SELECT id FROM src_mv ORDER BY id")
+            if [r["id"] for r in seeded["rows"]] != [1, 2]:
+                bad.append(f"the backing table should hold the query result: {seeded['rows']}")
+            await mv.execute("INSERT INTO src (id, val) VALUES (3, 30), (4, 1)")
+            refreshed = await mv.execute("SELECT id FROM src_mv ORDER BY id")
+            if [r["id"] for r in refreshed["rows"]] != [1, 2, 3]:
+                bad.append(f"a refresh trigger should re-evaluate the view on a source change: {refreshed['rows']}")
+            mv_back = await inspect(mv, "sqlite")
+            if mv_back["ok"]["views"] != mv_schema["views"]:
+                bad.append(f"inspect should round-trip the materialized view: {mv_back['ok']['views']}")
+            elif "src_mv" in mv_back["ok"]["tables"]:
+                bad.append(f"inspect should hide the materialized view's backing table: {mv_back['ok']['tables']}")
+            elif diff(mv_back["ok"], expand_schema(mv_schema))["operations"]:
+                bad.append(f"an existing materialized view should diff to no operations: {diff(mv_back['ok'], expand_schema(mv_schema))['operations']}")
+            if refresh_materialized_view(mv_schema, "src_mv") != ["DELETE FROM src_mv", "INSERT INTO src_mv SELECT id, val FROM src WHERE val > 5"]:
+                bad.append(f"refresh_materialized_view should build the delete + reinsert: {refresh_materialized_view(mv_schema, 'src_mv')}")
+            mv_drop = await migrate({"tables": mv_schema["tables"], "views": {}, "triggers": {}, "procedures": {}}, mv, "sqlite")
+            mv_gone = await inspect(mv, "sqlite")
+            if "ok" not in mv_drop or mv_gone["ok"]["views"] or "src_mv" in mv_gone["ok"]["tables"]:
+                bad.append(f"dropping a materialized view should remove it and its backing table: {mv_drop}, {mv_gone['ok']}")
+
+        # A 'manual'-refresh materialized view generates no triggers: a source change does not update it.
+        man = _SqliteConn()
+        await man.execute("CREATE TABLE m_src (id integer)")
+        await man.execute("INSERT INTO m_src (id) VALUES (1)")
+        man_schema = {
+            "tables": {"m_src": {"columns": {"id": {"type": "integer", "nullable": True}}}},
+            "views": {"m_mv": {"query": "SELECT id FROM m_src", "materialized": True, "refresh": "manual", "depends_on": ["m_src"]}},
+        }
+        await migrate(man_schema, man, "sqlite")
+        await man.execute("INSERT INTO m_src (id) VALUES (2)")
+        manual = await man.execute("SELECT id FROM m_mv ORDER BY id")
+        if [r["id"] for r in manual["rows"]] != [1]:
+            bad.append(f"a manual materialized view should not auto-refresh on a source change: {manual['rows']}")
+        after_refresh = refresh_materialized_view(man_schema, "m_mv")
+        for statement in after_refresh:
+            await man.execute(statement)
+        repopulated = await man.execute("SELECT id FROM m_mv ORDER BY id")
+        if [r["id"] for r in repopulated["rows"]] != [1, 2]:
+            bad.append(f"an explicit refresh should repopulate a manual materialized view: {repopulated['rows']}")
 
         # An ambiguous diff (a likely rename) is refused — the database is left untouched.
         amb = _SqliteConn()
@@ -2688,11 +2776,26 @@ def _probe_deps():
     view_on_table = operation("create_view", "", {"view": "v", "depends_on": ["t"]})
     if not _runs_before(operation("create_table", "t", {}), view_on_table):
         bad.append("a view that depends on a table must run after the table is created")
+    # create_matview depends on each source it reads (the three dependencies in the create_matview
+    # rule): the source table, view, or materialized view must run before the backing table.
+    if not _runs_before(operation("create_table", "t", {}), operation("create_matview", "mv", {"view": "mv", "depends_on": ["t"]})):
+        bad.append("a materialized view must run after a source table it reads")
+    if not _runs_before(operation("create_view", "", {"view": "v"}), operation("create_matview", "mv", {"view": "mv", "depends_on": ["v"]})):
+        bad.append("a materialized view must run after a source view it reads")
+    if not _runs_before(operation("create_matview", "mv1", {"view": "mv1"}), operation("create_matview", "mv2", {"view": "mv2", "depends_on": ["mv1"]})):
+        bad.append("a materialized view must run after a source materialized view it reads")
+    # a refresh trigger depends on the backing table (create_matview in the create_trigger rule).
+    if not _runs_before(operation("create_matview", "mv", {"view": "mv"}), operation("create_trigger", "t", {"trigger": "rt", "depends_on": ["mv"]})):
+        bad.append("a refresh trigger must run after its materialized view's backing table")
     # Every _MUST_PRECEDE rule: the drop runs before the table/column drop.
     must_precede = [("drop_foreign_key", "drop_table"), ("drop_foreign_key", "drop_column"), ("drop_index", "drop_table"), ("drop_index", "drop_column"), ("drop_constraint", "drop_table"), ("drop_constraint", "drop_column"), ("drop_column", "drop_table"), ("drop_view", "drop_table"), ("drop_trigger", "drop_table")]
     for early, late in must_precede:
         if not _runs_before(operation(early, "t", {}), operation(late, "t", {})):
             bad.append(f"{early} must run before {late}")
+    # a refresh-trigger drop must precede its materialized view's backing-table drop (drop_matview in
+    # the drop_trigger rule).
+    if not _runs_before(operation("drop_trigger", "t", {"trigger": "rt", "depends_on": ["mv"]}), operation("drop_matview", "mv", {"view": "mv"})):
+        bad.append("a refresh trigger drop must run before its materialized view is dropped")
 
     # _related's three branches: same table, a foreign-key reference, and a depends_on declaration.
     _subject_view = operation("create_view", "", {"view": "v", "depends_on": ["t"]})

@@ -67,13 +67,14 @@ async def _inspect_sqlite(conn):
     user table, so it is not reported among the tables. I/O. Returns ok of a full SchemaDefinition
     (section 4.15)."""
     objects = await _read_object_registry(conn)
+    owned = {"_hp_object"} | {name for name, view in objects["views"].items() if view.get("materialized")}
     listing = await conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
     )
     tables = {}
     for row in listing["rows"]:
         name = row["name"]
-        if name == "_hp_object":
+        if name in owned:
             continue
         info = await conn.execute("PRAGMA table_info(" + name + ")")
         tables[name] = {"columns": _columns_from_pragma(info["rows"])}

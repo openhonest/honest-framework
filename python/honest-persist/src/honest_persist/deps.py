@@ -14,7 +14,8 @@ _DEPENDS_ON = {
     "add_index": ("create_table", "add_column"),
     "add_constraint": ("create_table", "add_column"),
     "create_view": ("create_table", "create_view"),
-    "create_trigger": ("create_table",),
+    "create_matview": ("create_table", "create_view", "create_matview"),
+    "create_trigger": ("create_table", "create_matview"),
 }
 
 # An operation of this type must precede (run before) operations of the listed types on a
@@ -25,7 +26,7 @@ _MUST_PRECEDE = {
     "drop_constraint": ("drop_table", "drop_column"),
     "drop_column": ("drop_table",),
     "drop_view": ("drop_table",),
-    "drop_trigger": ("drop_table",),
+    "drop_trigger": ("drop_table", "drop_matview"),
 }
 
 

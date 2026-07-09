@@ -90,6 +90,16 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When _render_drop_view renders it
     Then it produces a DROP VIEW statement for that view
 
+  Scenario: _render_create_matview renders a materialized view's backing table
+    Given a create-matview operation and a dialect
+    When _render_create_matview renders it
+    Then it produces a CREATE TABLE AS statement populating the backing table from the view's query
+
+  Scenario: _render_drop_matview renders a DROP TABLE for the backing table
+    Given a drop-matview operation and a dialect
+    When _render_drop_matview renders it
+    Then it produces a DROP TABLE statement for the materialized view's backing table
+
   Scenario: _render_create_trigger renders a CREATE TRIGGER statement
     Given a create-trigger operation and a dialect
     When _render_create_trigger renders it

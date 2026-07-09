@@ -154,6 +154,15 @@ def _render_drop_view(op, dialect):
     return f"DROP VIEW {op['details']['view']}"
 
 
+def _render_create_matview(op, dialect):
+    details = op["details"]
+    return f"CREATE TABLE {details['view']} AS {details['definition']['query']}"
+
+
+def _render_drop_matview(op, dialect):
+    return f"DROP TABLE {op['details']['view']}"
+
+
 def _render_create_trigger(op, dialect):
     details = op["details"]
     trigger = details["definition"]
@@ -211,6 +220,8 @@ _RENDERERS = {
     "drop_constraint": _render_drop_constraint,
     "create_view": _render_create_view,
     "drop_view": _render_drop_view,
+    "create_matview": _render_create_matview,
+    "drop_matview": _render_drop_matview,
     "create_trigger": _render_create_trigger,
     "drop_trigger": _render_drop_trigger,
     "create_function": _render_create_function,

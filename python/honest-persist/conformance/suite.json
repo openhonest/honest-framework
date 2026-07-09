@@ -3654,6 +3654,7 @@
     "closure_move",
     "enum_seed_queries",
     "object_registry_queries",
+    "refresh_materialized_view",
     "empty_write_queue",
     "enqueue_write",
     "merge_pending",

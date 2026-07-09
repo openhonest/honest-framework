@@ -68,6 +68,46 @@ Feature: honest-persist — schema diffing, query building, and the write bounda
     Then added views become creates, dropped views become drops, and a changed view becomes a drop followed by a create
     And each change carries the view's declared dependencies for ordering
 
+  Scenario: _create_view_ops produces the ops to create one view
+    Given a view name and its definition
+    When _create_view_ops builds the create
+    Then it dispatches on whether the view is materialized, returning a plain create for a view and a backing table with refresh triggers for a materialized view
+
+  Scenario: _drop_view_ops produces the ops to drop one view
+    Given a view name and its definition
+    When _drop_view_ops builds the drop
+    Then it dispatches on whether the view is materialized, returning a plain drop for a view and the refresh-trigger drops with the backing-table drop for a materialized view
+
+  Scenario: _plain_view_create_ops produces the create op for a plain view
+    Given a view name and its definition
+    When _plain_view_create_ops builds it
+    Then it returns a single create_view op carrying the definition and dependencies
+
+  Scenario: _plain_view_drop_ops produces the drop op for a plain view
+    Given a view name and its definition
+    When _plain_view_drop_ops builds it
+    Then it returns a single drop_view op carrying the dependencies
+
+  Scenario: _matview_create_ops produces the ops to create a materialized view
+    Given a view name and its materialized definition
+    When _matview_create_ops builds them
+    Then it returns the backing-table create followed by a create_trigger per refresh trigger, each ordered after the backing table
+
+  Scenario: _matview_drop_ops produces the ops to drop a materialized view
+    Given a view name and its materialized definition
+    When _matview_drop_ops builds them
+    Then it returns the refresh-trigger drops, ordered before the backing table, followed by the backing-table drop
+
+  Scenario: _refresh_triggers produces a materialized view's refresh triggers
+    Given a view name and its materialized definition
+    When _refresh_triggers builds them
+    Then it returns an after insert, update, and delete trigger on each source table for a trigger or on_commit strategy, and none for a manual strategy
+
+  Scenario: refresh_materialized_view builds the statements to refresh a materialized view
+    Given a schema and a materialized view name
+    When refresh_materialized_view builds the refresh
+    Then it returns a delete of the backing table followed by a reinsert of the view's query
+
   Scenario: _diff_triggers produces the trigger changes between two schemas
     Given the current triggers and target triggers
     When _diff_triggers compares them
