@@ -5,7 +5,7 @@ the full taxonomy (every kind, store, and mutator), the lookup (a known kind and
 precise honest+disjoint law across all four combinations. Pure assertions: data in, data out.
 """
 
-from honest_state import mutator_of, second_mutator_legitimate, state_kinds
+from honest_state import dom_region_kind, mutator_of, second_mutator_legitimate, state_kinds
 
 _EXPECTED_KINDS = [
     {"kind": "user", "lives_in": "manifest-declared regions of the DOM", "mutator": "the user"},
@@ -24,7 +24,7 @@ def _law_exports():
     import honest_state
 
     bad = []
-    expected = ["state_kinds", "mutator_of", "second_mutator_legitimate"]
+    expected = ["state_kinds", "mutator_of", "second_mutator_legitimate", "dom_region_kind"]
     if sorted(getattr(honest_state, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_state, '__all__', None)}")
     missing = [name for name in expected if not hasattr(honest_state, name)]
@@ -70,11 +70,31 @@ def _law_second_mutator_legitimate():
     return bad
 
 
+def _law_dom_region_kind():
+    bad = []
+    # A manifest-declared region is user state; its single mutator is the user (an HTMX swap and an
+    # in-browser change are two mechanisms of that one mutator, not two mutators).
+    if dom_region_kind(True, False) != {"kind": "user", "mutator": "the user"}:
+        bad.append(f"a declared region is user state owned by the user: {dom_region_kind(True, False)}")
+    # Declared wins even when the server also drives it — still one mutator, the user.
+    if dom_region_kind(True, True) != {"kind": "user", "mutator": "the user"}:
+        bad.append(f"a declared region is user state even when server-driven: {dom_region_kind(True, True)}")
+    # A non-declared, server/SSE-driven region is server state; the alert source is a legitimate second
+    # mutator of the DOM because it is honest and disjoint (it never touches a manifest slot).
+    if dom_region_kind(False, True) != {"kind": "server", "mutator": "the alert source (honest-alerts)"}:
+        bad.append(f"a server-driven region is server state owned by the alert source: {dom_region_kind(False, True)}")
+    # Anything else is a side effect: a pure projection of the two above, with no mutator of its own.
+    if dom_region_kind(False, False) != {"kind": "side_effect", "mutator": None}:
+        bad.append(f"an undeclared, non-server region is a side effect with no mutator: {dom_region_kind(False, False)}")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
     "state_kinds": _law_state_kinds,
     "mutator_of": _law_mutator_of,
     "second_mutator_legitimate": _law_second_mutator_legitimate,
+    "dom_region_kind": _law_dom_region_kind,
 }
 
 

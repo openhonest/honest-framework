@@ -14,3 +14,8 @@ Feature: honest-state — the single-mutator law and the taxonomy of state kinds
     Given whether a second mutator is honest and whether it is disjoint
     When second_mutator_legitimate decides
     Then a second mutator is legitimate only when it is both honest and disjoint
+
+  Scenario: dom_region_kind decomposes a DOM region into state or a projection
+    Given whether a DOM region is manifest-declared and whether it is server-driven
+    When dom_region_kind classifies it
+    Then a declared region is user state owned by the user, a non-declared server-driven region is server state owned by the alert source, and anything else is a side effect with no mutator

@@ -18,6 +18,10 @@
     {"id": "value-law-honest-disjoint", "value_case": {"function": "second_mutator_legitimate", "args": [true, true], "expected": true}},
     {"id": "value-law-not-disjoint", "value_case": {"function": "second_mutator_legitimate", "args": [true, false], "expected": false}},
     {"id": "value-law-dishonest", "value_case": {"function": "second_mutator_legitimate", "args": [false, true], "expected": false}},
-    {"id": "value-law-neither", "value_case": {"function": "second_mutator_legitimate", "args": [false, false], "expected": false}}
+    {"id": "value-law-neither", "value_case": {"function": "second_mutator_legitimate", "args": [false, false], "expected": false}},
+    {"id": "value-dom-declared", "value_case": {"function": "dom_region_kind", "args": [true, false], "expected": {"kind": "user", "mutator": "the user"}}},
+    {"id": "value-dom-declared-and-server", "value_case": {"function": "dom_region_kind", "args": [true, true], "expected": {"kind": "user", "mutator": "the user"}}},
+    {"id": "value-dom-server", "value_case": {"function": "dom_region_kind", "args": [false, true], "expected": {"kind": "server", "mutator": "the alert source (honest-alerts)"}}},
+    {"id": "value-dom-side-effect", "value_case": {"function": "dom_region_kind", "args": [false, false], "expected": {"kind": "side_effect", "mutator": null}}}
   ]
 }

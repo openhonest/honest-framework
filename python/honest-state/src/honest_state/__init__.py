@@ -8,10 +8,11 @@ DOM-single-store rules, HC-SM01-05). Everything honest-state itself ships is pur
 """
 
 from honest_state.law import second_mutator_legitimate
-from honest_state.taxonomy import mutator_of, state_kinds
+from honest_state.taxonomy import dom_region_kind, mutator_of, state_kinds
 
 __all__ = [
     "state_kinds",
     "mutator_of",
     "second_mutator_legitimate",
+    "dom_region_kind",
 ]
