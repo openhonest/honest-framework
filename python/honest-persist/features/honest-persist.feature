@@ -524,6 +524,11 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When _columns_from_pragma resolves them
     Then it returns a map of column name to column definition
 
+  Scenario: _attach_foreign_keys attaches a table's foreign keys to its columns
+    Given a table's columns and its PRAGMA foreign_key_list rows
+    When _attach_foreign_keys attaches them
+    Then each referencing column gains a table.column reference and any non-default cascade action, and a row whose column is absent is ignored
+
   Scenario: _read_object_registry reconstructs extended objects from the _hp_object registry
     Given a connection and a registry-existence query
     When _read_object_registry reads it

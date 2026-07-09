@@ -47,6 +47,22 @@ def _columns_from_pragma(rows):
     return {row["name"]: _column_from_pragma_row(row) for row in rows}
 
 
+def _attach_foreign_keys(columns, fk_rows):
+    """Attach the foreign keys read from `PRAGMA foreign_key_list` to the columns they belong to
+    (section 9.1): a column gains a `references` of 'table.column' and any non-default cascade action,
+    so an inline foreign key round-trips against the schema that declared it. Pure."""
+    result = {name: dict(column) for name, column in columns.items()}
+    for row in fk_rows:
+        column = result.get(row["from"])
+        if column is not None:
+            column["references"] = row["table"] + "." + row["to"]
+            if row["on_delete"] != "NO ACTION":
+                column["on_delete"] = row["on_delete"].lower()
+            if row["on_update"] != "NO ACTION":
+                column["on_update"] = row["on_update"].lower()
+    return result
+
+
 async def _read_object_registry(conn, exists_sql):
     """Reconstruct the extended objects (views, triggers, procedures) of a live database from the
     `_hp_object` registry (section 9.1). I/O, dialect-independent apart from the `exists_sql` that
@@ -87,7 +103,8 @@ async def _inspect_sqlite(conn):
         if name in owned:
             continue
         info = await conn.execute("PRAGMA table_info(" + name + ")")
-        tables[name] = {"columns": _columns_from_pragma(info["rows"])}
+        fks = await conn.execute("PRAGMA foreign_key_list(" + name + ")")
+        tables[name] = {"columns": _attach_foreign_keys(_columns_from_pragma(info["rows"]), fks["rows"])}
     return ok({"tables": tables, **objects})
 
 
@@ -107,25 +124,40 @@ def _pg_type(data_type):
 _PG_REGISTRY_EXISTS = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '_hp_object'"
 _PG_SCHEMA = (
     "SELECT c.table_name, c.column_name, c.data_type, c.is_nullable, c.column_default, "
-    "CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key "
+    "CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key, "
+    "fk.ref_table, fk.ref_column, fk.delete_rule, fk.update_rule "
     "FROM information_schema.columns c "
     "JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE' "
     "LEFT JOIN (SELECT kcu.table_name, kcu.column_name FROM information_schema.table_constraints tc "
     "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
     "WHERE tc.table_schema = 'public' AND tc.constraint_type = 'PRIMARY KEY') pk "
     "ON pk.table_name = c.table_name AND pk.column_name = c.column_name "
+    "LEFT JOIN (SELECT kcu.table_name, kcu.column_name, ccu.table_name AS ref_table, ccu.column_name AS ref_column, rc.delete_rule, rc.update_rule "
+    "FROM information_schema.table_constraints tc "
+    "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
+    "JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema "
+    "JOIN information_schema.referential_constraints rc ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema "
+    "WHERE tc.table_schema = 'public' AND tc.constraint_type = 'FOREIGN KEY') fk "
+    "ON fk.table_name = c.table_name AND fk.column_name = c.column_name "
     "WHERE c.table_schema = 'public' ORDER BY c.table_name, c.ordinal_position"
 )
 
 
 def _pg_column(row):
-    """One `_PG_SCHEMA` row to a column definition (section 9.1). The primary-key flag and default
-    appear only when present, matching how a schema omits them. Pure."""
+    """One `_PG_SCHEMA` row to a column definition (section 9.1). The primary-key flag, default, and
+    inline foreign key (with any non-default cascade action) appear only when present, matching how a
+    schema omits them. Pure."""
     column = {"type": _pg_type(row["data_type"]), "nullable": row["is_nullable"] == "YES"}
     if row["is_primary_key"]:
         column["primary_key"] = True
     if row["column_default"] is not None:
         column["default"] = row["column_default"]
+    if row["ref_table"] is not None:
+        column["references"] = row["ref_table"] + "." + row["ref_column"]
+        if row["delete_rule"] != "NO ACTION":
+            column["on_delete"] = row["delete_rule"].lower()
+        if row["update_rule"] != "NO ACTION":
+            column["on_update"] = row["update_rule"].lower()
     return column
 
 

@@ -1345,33 +1345,50 @@ def _probe_postgres_pure():
         bad.append("_pg_type should resolve timestamptz and pass other types through")
     # _pg_tables groups the flat schema rows by table, skips owned bookkeeping tables, and resolves
     # every column shape: primary-key present, a resolved type with a default, and a plain nullable.
+    def _r(**fields):
+        return {"ref_table": None, "ref_column": None, "delete_rule": "NO ACTION", "update_rule": "NO ACTION", **fields}
+
     rows = [
-        {"table_name": "account", "column_name": "id", "data_type": "integer", "is_nullable": "NO", "column_default": None, "is_primary_key": 1},
-        {"table_name": "account", "column_name": "email", "data_type": "text", "is_nullable": "YES", "column_default": None, "is_primary_key": 0},
-        {"table_name": "account", "column_name": "created", "data_type": "timestamp with time zone", "is_nullable": "YES", "column_default": "now()", "is_primary_key": 0},
-        {"table_name": "_hp_object", "column_name": "name", "data_type": "text", "is_nullable": "NO", "column_default": None, "is_primary_key": 1},
+        _r(table_name="account", column_name="id", data_type="integer", is_nullable="NO", column_default=None, is_primary_key=1),
+        _r(table_name="account", column_name="email", data_type="text", is_nullable="YES", column_default=None, is_primary_key=0),
+        _r(table_name="account", column_name="created", data_type="timestamp with time zone", is_nullable="YES", column_default="now()", is_primary_key=0),
+        _r(table_name="account", column_name="team_id", data_type="integer", is_nullable="YES", column_default=None, is_primary_key=0, ref_table="team", ref_column="id", delete_rule="CASCADE"),
+        _r(table_name="_hp_object", column_name="name", data_type="text", is_nullable="NO", column_default=None, is_primary_key=1),
     ]
     tables = _pg_tables(rows, {"_hp_object"})
     if tables != {"account": {"columns": {
         "id": {"type": "integer", "nullable": False, "primary_key": True},
         "email": {"type": "text", "nullable": True},
         "created": {"type": "timestamptz", "nullable": True, "default": "now()"},
+        "team_id": {"type": "integer", "nullable": True, "references": "team.id", "on_delete": "cascade"},
     }}}:
         bad.append(f"_pg_tables should group, exclude owned tables, and resolve every column shape: {tables}")
-    # _pg_column omits the primary-key flag and the default when absent.
-    if _pg_column({"data_type": "text", "is_nullable": "YES", "column_default": None, "is_primary_key": 0}) != {"type": "text", "nullable": True}:
-        bad.append("_pg_column should omit primary_key and default when absent")
+    # _pg_column omits the primary-key flag, default, and foreign key when absent.
+    if _pg_column(_r(data_type="text", is_nullable="YES", column_default=None, is_primary_key=0)) != {"type": "text", "nullable": True}:
+        bad.append("_pg_column should omit primary_key, default, and references when absent")
+    # A foreign key with an on_update rule and the default on_delete: the update rule is set, the
+    # delete rule skipped.
+    if _pg_column(_r(data_type="integer", is_nullable="YES", column_default=None, is_primary_key=0, ref_table="usr", ref_column="id", update_rule="RESTRICT")) != {"type": "integer", "nullable": True, "references": "usr.id", "on_update": "restrict"}:
+        bad.append("_pg_column should set an on_update rule and skip a default on_delete")
     if _PG_REGISTRY_EXISTS != "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '_hp_object'":
         bad.append(f"the registry-existence query is wrong: {_PG_REGISTRY_EXISTS}")
     if _PG_SCHEMA != (
         "SELECT c.table_name, c.column_name, c.data_type, c.is_nullable, c.column_default, "
-        "CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key "
+        "CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key, "
+        "fk.ref_table, fk.ref_column, fk.delete_rule, fk.update_rule "
         "FROM information_schema.columns c "
         "JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE' "
         "LEFT JOIN (SELECT kcu.table_name, kcu.column_name FROM information_schema.table_constraints tc "
         "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
         "WHERE tc.table_schema = 'public' AND tc.constraint_type = 'PRIMARY KEY') pk "
         "ON pk.table_name = c.table_name AND pk.column_name = c.column_name "
+        "LEFT JOIN (SELECT kcu.table_name, kcu.column_name, ccu.table_name AS ref_table, ccu.column_name AS ref_column, rc.delete_rule, rc.update_rule "
+        "FROM information_schema.table_constraints tc "
+        "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
+        "JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema "
+        "JOIN information_schema.referential_constraints rc ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema "
+        "WHERE tc.table_schema = 'public' AND tc.constraint_type = 'FOREIGN KEY') fk "
+        "ON fk.table_name = c.table_name AND fk.column_name = c.column_name "
         "WHERE c.table_schema = 'public' ORDER BY c.table_name, c.ordinal_position"
     ):
         bad.append(f"the schema query is wrong: {_PG_SCHEMA}")
@@ -1531,6 +1548,13 @@ _ROUNDTRIP_SCHEMAS = {
         "id": {"type": "integer", "primary_key": True},
         "email": {"type": "text", "nullable": True},
     }}}},
+    "foreign-keys": {"tables": {
+        "team": {"columns": {"id": {"type": "integer", "primary_key": True}}},
+        "player": {"columns": {
+            "id": {"type": "integer", "primary_key": True},
+            "team_id": {"type": "integer", "nullable": True, "references": "team.id", "on_delete": "cascade"},
+        }},
+    }},
 }
 
 
@@ -2212,8 +2236,28 @@ def _probe_migrate():
     for an invalid target, and faulting on an unsupported dialect. Driven end-to-end on real SQLite."""
     from honest_persist import diff, expand_schema, inspect, migrate, object_registry_queries, refresh_materialized_view
 
+    from honest_persist.migrate import _attach_foreign_keys
+
     async def _run():
         bad = []
+
+        # _attach_foreign_keys attaches a PRAGMA foreign_key_list row to its column: a 'table.column'
+        # reference and any non-default cascade action, leaving other columns alone and ignoring a row
+        # whose column is not present. The two real rows cover on_delete/on_update set and skipped.
+        attached = _attach_foreign_keys(
+            {"team_id": {"type": "integer", "nullable": True}, "owner_id": {"type": "integer", "nullable": True}, "note": {"type": "text"}},
+            [
+                {"from": "team_id", "table": "team", "to": "id", "on_delete": "CASCADE", "on_update": "NO ACTION"},
+                {"from": "owner_id", "table": "usr", "to": "id", "on_delete": "NO ACTION", "on_update": "RESTRICT"},
+                {"from": "ghost", "table": "x", "to": "y", "on_delete": "NO ACTION", "on_update": "NO ACTION"},
+            ],
+        )
+        if attached != {
+            "team_id": {"type": "integer", "nullable": True, "references": "team.id", "on_delete": "cascade"},
+            "owner_id": {"type": "integer", "nullable": True, "references": "usr.id", "on_update": "restrict"},
+            "note": {"type": "text"},
+        }:
+            bad.append(f"_attach_foreign_keys should set references and cascade actions on the right column: {attached}")
 
         # inspect reads tables and columns back with type, nullability, primary key, and default.
         rich = _SqliteConn()
