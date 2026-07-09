@@ -40,6 +40,11 @@ Feature: honest-persist — schema diffing, query building, and the write bounda
     Then it reports each of type, nullability, and default that changed, with its old and new value
     But if nothing changed it reports no alterations
 
+  Scenario: _canonical_columns makes primary-key columns not-null
+    Given the tables of a schema
+    When _canonical_columns canonicalizes them
+    Then every column that is a primary key, column-level or in the table's primary_key list, becomes not-null, and other columns are unchanged
+
   Scenario: _diff_columns produces the column changes for a shared table
     Given the current columns and target columns of one table
     When _diff_columns compares them

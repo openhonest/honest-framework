@@ -30,10 +30,13 @@ _REGISTRY_MAP = {"view": "views", "trigger": "triggers", "procedure": "procedure
 def _column_from_pragma_row(row):
     """One `PRAGMA table_info` row to a column definition (section 9). The declared type is lowered
     so it round-trips against a schema declared in lower case; the primary-key flag and the default
-    appear only when present, matching how a schema omits them. Pure."""
+    appear only when present, matching how a schema omits them. A primary-key column is reported
+    NOT NULL, canonically — SQLite allows a NULL in a non-integer primary key, but honest-persist
+    models a primary key as not-null on every dialect (section 5.1). Pure."""
     column = {"type": row["type"].lower(), "nullable": row["notnull"] == 0}
     if row["pk"] > 0:
         column["primary_key"] = True
+        column["nullable"] = False
     if row["dflt_value"] is not None:
         column["default"] = row["dflt_value"]
     return column

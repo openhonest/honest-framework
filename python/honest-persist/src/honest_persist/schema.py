@@ -320,6 +320,21 @@ def validate_schema(schema):
     return ok(schema)
 
 
+def _canonical_columns(tables):
+    """Canonicalize columns so schemas that mean the same thing compare equal (section 5.1): a
+    primary-key column is not-null, whether declared with a column-level `primary_key` or named in the
+    table's `primary_key` list. This is what lets a declared `{primary_key: True}` round-trip against
+    an inspected column, which every dialect reports as not-null. Pure."""
+    result = {}
+    for name, table in tables.items():
+        pk_names = set(table.get("primary_key", []))
+        columns = {}
+        for column_name, column in table.get("columns", {}).items():
+            columns[column_name] = {**column, "nullable": False} if (column.get("primary_key") or column_name in pk_names) else column
+        result[name] = {**table, "columns": columns}
+    return result
+
+
 def diff(current, target, decisions=None):
     """Operations to transform the `current` schema into the `target` schema (section 5.1),
     dependency-ordered (section 5.4). Pure. Returns a DiffResult, or err(fault) when the target
@@ -329,8 +344,8 @@ def diff(current, target, decisions=None):
     invalid = validate_schema(target_def)
     if "err" in invalid:
         return invalid
-    current_tables = current_def["tables"]
-    target_tables = target_def["tables"]
+    current_tables = _canonical_columns(current_def["tables"])
+    target_tables = _canonical_columns(target_def["tables"])
     dropped = set(current_tables) - set(target_tables)
     added = set(target_tables) - set(current_tables)
     modified = set(current_tables) & set(target_tables)

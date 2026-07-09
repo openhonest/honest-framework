@@ -769,6 +769,15 @@ def _probe_extended():
     roster_drop = next((o for o in fk_drop["operations"] if o["op"] == "drop_table" and o["table"] == "roster"), None)
     if not roster_drop or roster_drop["details"].get("columns", {}).get("team_id", {}).get("references") != "team.id":
         bad.append(f"a drop_table op should carry the table's columns so inline foreign keys order the drop: {roster_drop}")
+    # A primary-key column is canonically not-null, whether declared column-level or in the table's
+    # primary_key list, so a declared primary key round-trips against the not-null the inspector reads.
+    from honest_persist.schema import _canonical_columns
+    column_pk = _canonical_columns({"t": {"columns": {"id": {"type": "integer", "primary_key": True}, "name": {"type": "text"}}}})
+    if column_pk["t"]["columns"]["id"] != {"type": "integer", "primary_key": True, "nullable": False} or column_pk["t"]["columns"]["name"] != {"type": "text"}:
+        bad.append(f"_canonical_columns should make a column-level primary key not-null and leave others alone: {column_pk}")
+    table_pk = _canonical_columns({"t": {"columns": {"a": {"type": "integer"}}, "primary_key": ["a"]}})
+    if table_pk["t"]["columns"]["a"] != {"type": "integer", "nullable": False}:
+        bad.append(f"_canonical_columns should make a table-primary_key column not-null: {table_pk}")
 
     # apply renders the op natively on PostgreSQL and backfilled on SQLite/Turso.
     op = create[0]
@@ -1514,6 +1523,48 @@ def _probe_sql_validity():
     return asyncio.run(_run())
 
 
+# Schemas that must survive a live round-trip (section 9.1): migrate in, inspect back, and the inspected
+# schema must diff to no operations. This is where inspector-completeness gaps surface — an attribute
+# the inspector fails to read makes a stable schema look changed and churns on the next migration.
+_ROUNDTRIP_SCHEMAS = {
+    "primary-key-nullability": {"tables": {"account": {"columns": {
+        "id": {"type": "integer", "primary_key": True},
+        "email": {"type": "text", "nullable": True},
+    }}}},
+}
+
+
+def _probe_roundtrip():
+    """A schema round-trips through a live database (section 9.1): after migrating it in, inspecting the
+    database back and diffing against the schema yields no operations, so re-migration is a no-op rather
+    than churn. Run against a real PostgreSQL and a real SQLite; skipped under the mutation loop like the
+    other real-database probes."""
+    if os.environ.get("HONEST_MUTATION"):
+        return []
+    from honest_persist import diff, expand_schema, inspect, migrate
+
+    async def _run():
+        bad = []
+        for dialect, conn in [("sqlite", _SqliteConn()), ("postgresql", postgres_connection())]:
+            if conn is None:
+                print(f"honest-persist: no {dialect} available; round-trip not checked for it", file=sys.stderr)
+                continue
+            for label, schema in _ROUNDTRIP_SCHEMAS.items():
+                made = await migrate(schema, conn, dialect)
+                back = await inspect(conn, dialect)
+                if "ok" not in made or not made["ok"]["success"] or "ok" not in back:
+                    bad.append(f"{dialect} could not migrate/inspect '{label}': {made}, {back}")
+                    continue
+                churn = diff(back["ok"], expand_schema(schema))
+                if churn["operations"]:
+                    bad.append(f"{dialect} schema '{label}' should round-trip to no operations, got: {churn['operations']}")
+                await migrate({"tables": {}, "views": {}, "triggers": {}, "procedures": {}}, conn, dialect)
+            conn.close()
+        return bad
+
+    return asyncio.run(_run())
+
+
 def _probe_pool_registry():
     """The pool registry (§8.1): create-on-first-contact, cache, and reuse — the cache threaded as a
     value with an injected connect — exercised end to end against a real in-memory SQLite database."""
@@ -2176,8 +2227,8 @@ def _probe_migrate():
             bad.append(f"inspect should read exactly the user tables: {read}")
         else:
             cols = read["ok"]["tables"]["rich"]["columns"]
-            if cols["id"] != {"type": "integer", "nullable": True, "primary_key": True}:
-                bad.append(f"inspect should read the primary key column: {cols.get('id')}")
+            if cols["id"] != {"type": "integer", "nullable": False, "primary_key": True}:
+                bad.append(f"inspect should read the primary key column as not-null: {cols.get('id')}")
             if cols["label"] != {"type": "text", "nullable": False}:
                 bad.append(f"inspect should read a NOT NULL column: {cols.get('label')}")
             if cols["score"] != {"type": "integer", "nullable": True, "default": "5"}:
@@ -3190,6 +3241,7 @@ def run():
         "postgres_pure": _probe_postgres_pure(),
         "postgres": _probe_postgres(),
         "sql_validity": _probe_sql_validity(),
+        "roundtrip": _probe_roundtrip(),
         "abstractions": _probe_abstractions(),
         "arrays_maps": _probe_arrays_maps(),
         "hierarchy": _probe_hierarchy(),
