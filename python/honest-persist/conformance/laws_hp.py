@@ -23,6 +23,7 @@ from contextlib import redirect_stderr
 
 from honest_test import law, verify_laws
 from postgres_fixture import postgres_connection
+from turso_fixture import turso_connection
 
 from honest_persist import (
     apply,
@@ -1604,7 +1605,7 @@ def _probe_sql_validity():
     async def _run():
         bad = []
         expanded = expand_schema(_VALIDITY_SCHEMA)
-        for dialect, conn in [("sqlite", _SqliteConn()), ("postgresql", postgres_connection())]:
+        for dialect, conn in [("sqlite", _SqliteConn()), ("turso", turso_connection()), ("postgresql", postgres_connection())]:
             if conn is None:
                 print(f"honest-persist: no {dialect} available; SQL-validity not checked for it", file=sys.stderr)
                 continue
@@ -1682,7 +1683,7 @@ def _probe_roundtrip():
 
     async def _run():
         bad = []
-        for dialect, conn in [("sqlite", _SqliteConn()), ("postgresql", postgres_connection())]:
+        for dialect, conn in [("sqlite", _SqliteConn()), ("turso", turso_connection()), ("postgresql", postgres_connection())]:
             if conn is None:
                 print(f"honest-persist: no {dialect} available; round-trip not checked for it", file=sys.stderr)
                 continue
