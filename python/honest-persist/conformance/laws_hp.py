@@ -1636,6 +1636,23 @@ _ROUNDTRIP_SCHEMAS = {
         "columns": {"id": {"type": "integer", "primary_key": True}, "amount": {"type": "integer", "nullable": True}, "kind": {"type": "text", "nullable": True}},
         "constraints": {"amount_nonneg": {"type": "check", "expression": "amount >= 0"}, "kind_known": {"type": "check", "expression": "kind IN ('debit', 'credit')"}},
     }}},
+    # Everything at once: a primary key, a unique column, a default, an inline foreign key that orders
+    # the two tables, an index, a check constraint, a plain view, and both materialized-view strategies.
+    "full-schema": {
+        "tables": {
+            "team": {"columns": {"id": {"type": "integer", "primary_key": True}, "name": {"type": "text", "unique": True}}},
+            "player": {
+                "columns": {"id": {"type": "integer", "primary_key": True}, "team_id": {"type": "integer", "nullable": True, "references": "team.id"}, "score": {"type": "integer", "nullable": True, "default": "0"}},
+                "indexes": {"player_by_score": {"columns": ["score"]}},
+                "constraints": {"score_nonneg": {"type": "check", "expression": "score >= 0"}},
+            },
+        },
+        "views": {
+            "roster": {"query": "SELECT id FROM player", "depends_on": ["player"]},
+            "scorers": {"query": "SELECT id FROM player WHERE score > 0", "materialized": True, "refresh": "trigger", "depends_on": ["player"]},
+            "team_players": {"query": "SELECT team_id FROM player", "materialized": True, "refresh": "manual", "depends_on": ["player"]},
+        },
+    },
 }
 
 
