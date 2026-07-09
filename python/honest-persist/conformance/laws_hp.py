@@ -16,6 +16,7 @@ apply, build fake connections, and feed deliberately-malformed CHECK strings.
 import asyncio
 import copy
 import io
+import json
 import sqlite3
 from contextlib import redirect_stderr
 
@@ -1207,6 +1208,107 @@ class _SqliteConn:
 
     def close(self):
         self._conn.close()
+
+
+class _PgCatalogConn:
+    """A stand-in async connection serving representative PostgreSQL information_schema rows to the
+    inspector, dispatching on the query. registry is the _hp_object rows (None when the registry
+    table is absent); tables maps a table name to its {columns, pk}. Conformance is not linted."""
+
+    def __init__(self, registry, tables):
+        self._registry = registry
+        self._tables = tables
+        self.queries = []
+
+    async def execute(self, sql):
+        self.queries.append(sql)
+        if "table_name = '_hp_object'" in sql:
+            return {"rows": ([{"table_name": "_hp_object"}] if self._registry is not None else []), "rowcount": 0}
+        if "FROM _hp_object" in sql:
+            return {"rows": self._registry, "rowcount": len(self._registry)}
+        if "'BASE TABLE'" in sql:
+            return {"rows": [{"table_name": name} for name in self._tables], "rowcount": len(self._tables)}
+        if "PRIMARY KEY" in sql:
+            name = sql.split("tc.table_name = '")[1].split("'")[0]
+            return {"rows": [{"column_name": column} for column in self._tables[name]["pk"]], "rowcount": 0}
+        name = sql.split("table_name = '")[1].split("'")[0]
+        return {"rows": self._tables[name]["columns"], "rowcount": 0}
+
+
+def _probe_inspect_postgresql():
+    """The PostgreSQL inspector (section 9.1): reconstruct the full live schema from information_schema
+    and the _hp_object registry against representative catalog rows. Verified at the same bar as the
+    rest of this module's PostgreSQL support — pinned catalog output, not a live server."""
+    from honest_persist import diff, expand_schema, inspect
+    from honest_persist.migrate import _pg_type
+
+    async def _run():
+        bad = []
+        # The reverse type map resolves the canonical forms honest-persist emits; others pass through.
+        if _pg_type("timestamp with time zone") != "timestamptz" or _pg_type("text") != "text":
+            bad.append("_pg_type should resolve timestamptz and pass other types through")
+
+        registry = [
+            {"name": "acct_v", "kind": "view", "definition": json.dumps({"query": "SELECT id FROM account", "depends_on": ["account"]}, sort_keys=True)},
+            {"name": "acct_mv", "kind": "view", "definition": json.dumps({"query": "SELECT id FROM account", "materialized": True, "refresh": "manual", "depends_on": ["account"]}, sort_keys=True)},
+        ]
+        tables = {
+            "account": {"pk": ["id"], "columns": [
+                {"column_name": "id", "data_type": "integer", "is_nullable": "NO", "column_default": None},
+                {"column_name": "email", "data_type": "text", "is_nullable": "YES", "column_default": None},
+                {"column_name": "created", "data_type": "timestamp with time zone", "is_nullable": "NO", "column_default": "now()"},
+            ]},
+            "acct_mv": {"pk": [], "columns": [{"column_name": "id", "data_type": "integer", "is_nullable": "YES", "column_default": None}]},
+            "_hp_object": {"pk": [], "columns": []},
+        }
+        pg = _PgCatalogConn(registry, tables)
+        read = await inspect(pg, "postgresql")
+        schema = read["ok"]
+        # Pin the exact catalog SQL the inspector issues (the whole module verifies PostgreSQL SQL by
+        # pinning it, not by running a server): the primary-key join and the column read.
+        expected_pk = "SELECT kcu.column_name FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema WHERE tc.table_schema = 'public' AND tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = 'account'"
+        expected_cols = "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'account' ORDER BY ordinal_position"
+        if expected_pk not in pg.queries:
+            bad.append(f"the primary-key query should read information_schema.key_column_usage: {pg.queries}")
+        if expected_cols not in pg.queries:
+            bad.append(f"the column query should read information_schema.columns in ordinal order: {pg.queries}")
+        if set(schema) != {"tables", "views", "triggers", "procedures"}:
+            bad.append(f"the PostgreSQL inspector should return a full SchemaDefinition: {schema}")
+        elif set(schema["tables"]) != {"account"}:
+            bad.append(f"it should hide the registry and materialized-view backing table: {set(schema['tables'])}")
+        else:
+            cols = schema["tables"]["account"]["columns"]
+            if cols["id"] != {"type": "integer", "nullable": False, "primary_key": True}:
+                bad.append(f"it should read a NOT NULL primary key: {cols['id']}")
+            if cols["email"] != {"type": "text", "nullable": True}:
+                bad.append(f"it should read a nullable column: {cols['email']}")
+            if cols["created"] != {"type": "timestamptz", "nullable": False, "default": "now()"}:
+                bad.append(f"it should resolve the type and read the default: {cols['created']}")
+            if schema["views"] != {
+                "acct_v": {"query": "SELECT id FROM account", "depends_on": ["account"]},
+                "acct_mv": {"query": "SELECT id FROM account", "materialized": True, "refresh": "manual", "depends_on": ["account"]},
+            }:
+                bad.append(f"it should round-trip the views and materialized views: {schema['views']}")
+            else:
+                target = {
+                    "tables": {"account": {"columns": {
+                        "id": {"type": "integer", "nullable": False, "primary_key": True},
+                        "email": {"type": "text", "nullable": True},
+                        "created": {"type": "timestamptz", "nullable": False, "default": "now()"},
+                    }}},
+                    "views": schema["views"],
+                }
+                stable = diff(schema, expand_schema(target))
+                if stable["operations"]:
+                    bad.append(f"an already-migrated PostgreSQL schema should diff to no operations: {stable['operations']}")
+
+        # A database honest-persist has not yet touched has no registry: extended objects are empty.
+        fresh = await inspect(_PgCatalogConn(None, {"account": {"pk": [], "columns": [{"column_name": "id", "data_type": "integer", "is_nullable": "YES", "column_default": None}]}}), "postgresql")
+        if fresh["ok"]["views"] or fresh["ok"]["triggers"] or fresh["ok"]["procedures"] or set(fresh["ok"]["tables"]) != {"account"}:
+            bad.append(f"a database with no registry should read its tables and no extended objects: {fresh['ok']}")
+        return bad
+
+    return asyncio.run(_run())
 
 
 def _probe_pool_registry():
@@ -2873,6 +2975,7 @@ def run():
         "connection_pool": _probe_connection_pool(),
         "connect_retry": _probe_connect_retry(),
         "migrate": _probe_migrate(),
+        "inspect_postgresql": _probe_inspect_postgresql(),
         "abstractions": _probe_abstractions(),
         "arrays_maps": _probe_arrays_maps(),
         "hierarchy": _probe_hierarchy(),

@@ -44,14 +44,15 @@ def _columns_from_pragma(rows):
     return {row["name"]: _column_from_pragma_row(row) for row in rows}
 
 
-async def _read_object_registry(conn):
-    """Reconstruct the extended objects (views, triggers, procedures) of a live SQLite database from
-    the `_hp_object` registry (section 9.1). I/O. Each row's canonical definition is stored as JSON,
-    so reconstruction is an exact round-trip that never parses the database's rendered DDL. A database
+async def _read_object_registry(conn, exists_sql):
+    """Reconstruct the extended objects (views, triggers, procedures) of a live database from the
+    `_hp_object` registry (section 9.1). I/O, dialect-independent apart from the `exists_sql` that
+    checks whether the registry table is there: each row's canonical definition is stored as JSON, so
+    reconstruction is an exact round-trip that never parses the database's rendered DDL. A database
     honest-persist has not yet touched has no registry table and therefore no extended objects.
     Returns {views, triggers, procedures}."""
     objects = {"views": {}, "triggers": {}, "procedures": {}}
-    present = await conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_hp_object'")
+    present = await conn.execute(exists_sql)
     if not present["rows"]:
         return objects
     rows = await conn.execute("SELECT name, kind, definition FROM _hp_object")
@@ -60,14 +61,20 @@ async def _read_object_registry(conn):
     return objects
 
 
+def _owned_tables(objects):
+    """The stored tables that are honest-persist's own bookkeeping rather than user tables (section
+    9.1): the `_hp_object` registry and every materialized view's backing table, which round-trips as
+    a view instead. Pure."""
+    return {"_hp_object"} | {name for name, view in objects["views"].items() if view.get("materialized")}
+
+
 async def _inspect_sqlite(conn):
     """Read the complete live schema of a SQLite database (section 9.1): the user tables and their
     columns from `sqlite_master` and `PRAGMA table_info`, and the views, triggers, and procedures
-    from the `_hp_object` registry. The registry itself is honest-persist's own bookkeeping, not a
-    user table, so it is not reported among the tables. I/O. Returns ok of a full SchemaDefinition
-    (section 4.15)."""
-    objects = await _read_object_registry(conn)
-    owned = {"_hp_object"} | {name for name, view in objects["views"].items() if view.get("materialized")}
+    from the `_hp_object` registry. Owned tables (the registry, materialized-view backing tables) are
+    not reported. I/O. Returns ok of a full SchemaDefinition (section 4.15)."""
+    objects = await _read_object_registry(conn, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_hp_object'")
+    owned = _owned_tables(objects)
     listing = await conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
     )
@@ -81,8 +88,58 @@ async def _inspect_sqlite(conn):
     return ok({"tables": tables, **objects})
 
 
-# The inspector for each supported dialect (section 9, 12). Each reads its own catalog.
-_INSPECTORS = {"sqlite": _inspect_sqlite, "turso": _inspect_sqlite}
+# A PostgreSQL information_schema data_type resolved back to honest-persist's abstract type (section
+# 9.1). Only the non-identity forms honest-persist emits need an entry; every other type is itself.
+_PG_TYPE = {"timestamp with time zone": "timestamptz"}
+
+
+def _pg_type(data_type):
+    """Resolve a PostgreSQL data_type back to honest-persist's abstract type (section 9.1). Pure."""
+    return _PG_TYPE.get(data_type, data_type)
+
+
+def _column_from_information_schema_row(row, primary_keys):
+    """One `information_schema.columns` row to a column definition (section 9.1). The primary-key flag
+    and default appear only when present, matching how a schema omits them. Pure."""
+    column = {"type": _pg_type(row["data_type"]), "nullable": row["is_nullable"] == "YES"}
+    if row["column_name"] in primary_keys:
+        column["primary_key"] = True
+    if row["column_default"] is not None:
+        column["default"] = row["column_default"]
+    return column
+
+
+async def _inspect_postgresql(conn):
+    """Read the complete live schema of a PostgreSQL database (section 9.1): the public base tables
+    with their columns, nullability, primary keys, and defaults from `information_schema`, and the
+    views, triggers, and procedures from the `_hp_object` registry. Owned tables (the registry,
+    materialized-view backing tables) are not reported. Table names are interpolated into the catalog
+    queries because an identifier cannot be a bound parameter, as with the SQLite inspector's PRAGMA.
+    I/O. Returns ok of a full SchemaDefinition (section 4.15)."""
+    objects = await _read_object_registry(conn, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '_hp_object'")
+    owned = _owned_tables(objects)
+    listing = await conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+    )
+    tables = {}
+    for row in listing["rows"]:
+        name = row["table_name"]
+        if name in owned:
+            continue
+        keys = await conn.execute(
+            "SELECT kcu.column_name FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema WHERE tc.table_schema = 'public' AND tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = '" + name + "'"
+        )
+        primary_keys = {row["column_name"] for row in keys["rows"]}
+        columns = await conn.execute(
+            "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '" + name + "' ORDER BY ordinal_position"
+        )
+        tables[name] = {"columns": {row["column_name"]: _column_from_information_schema_row(row, primary_keys) for row in columns["rows"]}}
+    return ok({"tables": tables, **objects})
+
+
+# The inspector for each supported dialect (section 9, 9.1). Each reads its own catalog; the
+# reconstruction contract is identical across dialects.
+_INSPECTORS = {"sqlite": _inspect_sqlite, "turso": _inspect_sqlite, "postgresql": _inspect_postgresql}
 
 
 async def inspect(conn, dialect):

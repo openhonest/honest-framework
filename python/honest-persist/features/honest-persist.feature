@@ -460,14 +460,34 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Then it returns a map of column name to column definition
 
   Scenario: _read_object_registry reconstructs extended objects from the _hp_object registry
-    Given a SQLite connection
+    Given a connection and a registry-existence query
     When _read_object_registry reads it
     Then it returns the views, triggers, and procedures rebuilt exactly from the registry rows, or empty maps when the database has no registry table yet
+
+  Scenario: _owned_tables names the stored tables that are honest-persist's own bookkeeping
+    Given the reconstructed extended objects
+    When _owned_tables reads them
+    Then it returns the registry table and every materialized view's backing table, which round-trip as views rather than tables
 
   Scenario: _inspect_sqlite reads the live schema of a SQLite database
     Given a SQLite connection
     When _inspect_sqlite reads it
     Then it returns a full SchemaDefinition, reading user tables and columns from the catalog and the extended objects from the registry, and does not report the registry table itself
+
+  Scenario: _pg_type resolves a PostgreSQL data type back to the abstract type
+    Given a PostgreSQL information_schema data_type
+    When _pg_type resolves it
+    Then it returns the abstract type honest-persist emitted, resolving the canonical forms and passing every other type through
+
+  Scenario: _column_from_information_schema_row resolves an information_schema row to a column
+    Given an information_schema column row and the table's primary-key columns
+    When _column_from_information_schema_row resolves it
+    Then it returns the column's abstract type and nullability, with primary_key and default only when present
+
+  Scenario: _inspect_postgresql reads the live schema of a PostgreSQL database
+    Given a PostgreSQL connection
+    When _inspect_postgresql reads it
+    Then it returns a full SchemaDefinition, reading tables, columns, primary keys, and defaults from information_schema and the extended objects from the registry, and does not report owned tables
 
   Scenario: inspect reads the live database schema for the dialect
     Given a connection and a dialect
