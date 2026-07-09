@@ -106,10 +106,10 @@ A generator that produces tokens in named classes, consumed by honest-test's aut
 | `missing` | NULL / empty / absent | `err(unauthenticated)` |
 | `forged` | A token that passes `actor_recognizer` but maps to no real identity | `err(forged)` (or the provider's `fault_mapping` equivalent) |
 
-The generator is exposed as:
+The generator is a plain callable, like the provider's other fields — the framework has no objects with methods:
 
 ```
-test_token_generator.generate(class: ClassName, context: TestContext) -> Token
+test_token_generator(class: ClassName, context: TestContext) -> Token
 ```
 
 `context` supplies any test-relevant state (e.g. which identity is the active one). The generator produces a deterministic, reproducible token for the requested class. (Whether a resolved actor is *authorized* for a particular target is business logic the application tests with its ordinary link verification, not part of the provider's token classes.)
@@ -185,6 +185,12 @@ The only source of an actor is `resolve_actor` at the boundary. The framework pa
 ### 4.6 Black-box testability
 
 The provider need not expose its internals. Conformance auditors predict the provider's behaviour using only the `test_token_generator` classes and the `fault_mapping` outputs. A provider whose behaviour cannot be predicted from the public contract fails conformance regardless of how secure its internals are.
+
+### 4.7 The authentication-honesty verifier
+
+honest-auth ships the contract of §4.2–§4.6 as an executable pure function, so a provider's honesty is checked, not asserted. `authentication_honesty(provider, context)` runs the provider's `test_token_generator` across every token class and, for each, sends the token through the boundary flow (`authenticate`) and checks the outcome the class names: a `valid` token resolves to an actor; a `malformed` one is rejected at the recognizer before `resolve_actor`; and `revoked`, `expired`, `missing`, and `forged` each fail as unauthenticated — no valid identity. It returns `ok(provider)` or an `err` listing every class whose outcome was wrong. It is pure over the provider's injected generator and resolver, so it is deterministic and mock-free. This is the executable core of §9.1's Core level, and the function honest-test auto-generates its authentication-honesty test around (§8).
+
+For the Full level, `resolve_actor_deterministic(provider, token)` resolves the same token twice under the same backing state and reports whether the two results agree (§4.4).
 
 ---
 
