@@ -59,14 +59,20 @@ def _column_ddl(name, definition, dialect):
     return " ".join(parts)
 
 
-def _render_create_table(op, dialect):
-    table = op["details"]
+def _table_body(table, dialect):
+    """The column and check-constraint definitions inside a table's parentheses (section 5.2): each
+    column's DDL, then each check constraint. Shared by create-table rendering and the reconstruction
+    rebuild so a rebuilt table keeps its check constraints. Pure."""
     columns = table.get("columns", {})
     parts = [_column_ddl(name, columns[name], dialect) for name in columns]
     for name, constraint in table.get("constraints", {}).items():
         if constraint.get("type") == "check" and constraint.get("expression"):
             parts.append(f"CONSTRAINT {name} CHECK ({constraint['expression']})")
-    return f"CREATE TABLE {op['table']} ({', '.join(parts)})"
+    return ", ".join(parts)
+
+
+def _render_create_table(op, dialect):
+    return f"CREATE TABLE {op['table']} ({_table_body(op['details'], dialect)})"
 
 
 def _render_drop_table(op, dialect):
@@ -396,18 +402,24 @@ def _dependent_matview_triggers(table, views):
     return statements
 
 
-def reconstruction_sql(table, target_table, common_columns, dialect, dependent_views=(), dependent_matview_triggers=(), temp_name=None):
+def _dependent_triggers(table, triggers, dialect):
+    """The user-declared triggers that fire on `table`, as CREATE statements (section 5.5): a
+    reconstruction drops the table and with it its triggers, so they are recreated on the rebuilt
+    table. Pure."""
+    return [_render_create_trigger({"details": {"trigger": name, "definition": triggers[name]}}, dialect) for name in sorted(triggers) if triggers[name].get("table") == table]
+
+
+def reconstruction_sql(table, target_table, common_columns, dialect, dependent_views=(), dependent_matview_triggers=(), dependent_triggers=(), temp_name=None):
     """The statement sequence that rebuilds `table` into `target_table` (section 5.5): drop the plain
-    views that read the table, create a temp table with the target columns, copy the common columns,
-    drop the old, rename the temp into place, recreate the target indexes, recreate the dropped views,
-    and recreate the refresh triggers of materialized views that read the table (dropped with it). Pure.
-    The transaction wrapping and foreign-key toggling are apply()'s boundary responsibility; `temp_name`
-    carries the unique id apply() mints, with a deterministic default so the plan is reproducible."""
+    views that read the table, create a temp table with the target columns and check constraints, copy
+    the common columns, drop the old, rename the temp into place, recreate the target indexes, recreate
+    the dropped views, and recreate the triggers dropped with the table — the refresh triggers of
+    materialized views that read it and the user triggers that fire on it. Pure. The transaction
+    wrapping and foreign-key toggling are apply()'s boundary responsibility; `temp_name` carries the
+    unique id apply() mints, with a deterministic default so the plan is reproducible."""
     temp = temp_name or f"_hp_tmp_{table}"
-    columns = target_table.get("columns", {})
-    columns_ddl = ", ".join(_column_ddl(name, columns[name], dialect) for name in columns)
     statements = [f"DROP VIEW {name}" for name, _ in dependent_views]
-    statements.append(f"CREATE TABLE {temp} ({columns_ddl})")
+    statements.append(f"CREATE TABLE {temp} ({_table_body(target_table, dialect)})")
     if common_columns:
         copied = ", ".join(common_columns)
         statements.append(f"INSERT INTO {temp} ({copied}) SELECT {copied} FROM {table}")
@@ -420,6 +432,7 @@ def reconstruction_sql(table, target_table, common_columns, dialect, dependent_v
     for name, query in dependent_views:
         statements.append(f"CREATE VIEW {name} AS {query}")
     statements.extend(dependent_matview_triggers)
+    statements.extend(dependent_triggers)
     return statements
 
 
@@ -439,7 +452,7 @@ async def _resume_push(conn):
         await conn.resume_push()
 
 
-async def _reconstruct(table, target_tables, target_views, operations, conn, dialect, executed):
+async def _reconstruct(table, target_tables, target_views, target_triggers, operations, conn, dialect, executed):
     """Rebuild one table to its target shape (section 5.5) with the full foreign-key lifecycle, pausing
     sync push for the duration (Turso). Foreign-key checks are disabled BEFORE the transaction — the
     pragma is connection-scoped, not transactional, so it cannot be toggled mid-transaction — the rebuild
@@ -456,7 +469,7 @@ async def _reconstruct(table, target_tables, target_views, operations, conn, dia
     await conn.disable_foreign_keys()
     await conn.begin()
     try:
-        for sql in reconstruction_sql(table, target_table, common, dialect, _dependent_views(table, target_views), _dependent_matview_triggers(table, target_views)):
+        for sql in reconstruction_sql(table, target_table, common, dialect, _dependent_views(table, target_views), _dependent_matview_triggers(table, target_views), _dependent_triggers(table, target_triggers, dialect)):
             await conn.execute(sql)
             executed.append(sql)
         violations = await conn.verify_foreign_keys()
@@ -511,7 +524,7 @@ async def apply(diff_result, target, conn, dialect, emit=None, db_id=""):
                 continue
             start = time.perf_counter_ns()
             mark = len(executed)
-            failure = await _reconstruct(op["table"], target_tables, target_definition["views"], operations, conn, dialect, executed)
+            failure = await _reconstruct(op["table"], target_tables, target_definition["views"], target_definition["triggers"], operations, conn, dialect, executed)
             rebuilt_sql = "; ".join(executed[mark:])
             if failure is not None:
                 await _emit_migration(emit, db_id, "reconstruct_table", op["table"], {}, rebuilt_sql, time.perf_counter_ns() - start, False, "reconstruction_failed")

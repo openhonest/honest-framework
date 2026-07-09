@@ -477,6 +477,16 @@ def _probe_apply():
             "CREATE TRIGGER _hp_refresh_mv_on_t_delete AFTER DELETE ON t BEGIN DELETE FROM mv; INSERT INTO mv SELECT x FROM t; END",
         ]:
             bad.append(f"_dependent_matview_triggers should regenerate only the reconstructed table's refresh triggers: {_dependent_matview_triggers('t', mv_views)}")
+
+        # User triggers on the reconstructed table are recreated; a trigger on another table is not.
+        from honest_persist.apply import _dependent_triggers
+        user_triggers = {"log_t": {"table": "t", "timing": "after", "events": ["insert"], "body": "BODY"}, "log_u": {"table": "u", "timing": "after", "events": ["insert"], "body": "BODY"}}
+        if _dependent_triggers("t", user_triggers, "sqlite") != ["CREATE TRIGGER log_t AFTER INSERT ON t BODY"]:
+            bad.append(f"_dependent_triggers should recreate only the triggers that fire on the table: {_dependent_triggers('t', user_triggers, 'sqlite')}")
+        # A reconstructed table keeps its check constraints (shared table-body builder).
+        checked = reconstruction_sql("t", {"columns": {"id": {"type": "integer"}}, "constraints": {"c": {"type": "check", "expression": "id > 0"}}}, ["id"], "sqlite", temp_name="_tmp")
+        if not any("CHECK (id > 0)" in s for s in checked):
+            bad.append(f"reconstruction_sql should keep the table's check constraints: {checked}")
         if not requires_reconstruction(operation("alter_column", "t", {}), "sqlite"):
             bad.append("alter_column should require reconstruction on sqlite")
         return bad
@@ -2382,6 +2392,27 @@ def _probe_migrate():
             refreshed = await mvr.execute("SELECT id FROM mv")
             if [r["id"] for r in refreshed["rows"]] != [1]:
                 bad.append(f"the materialized view's refresh trigger should survive its source's reconstruction: {refreshed['rows']}")
+
+        # §5.5: a reconstruction preserves the table's check constraints and recreates its user triggers.
+        ct = _SqliteConn()
+        ct_cols = lambda nn: {"id": {"type": "integer", "primary_key": True}, "bal": {"type": "integer", "nullable": nn}}
+        ct_extra = {"constraints": {"bal_ok": {"type": "check", "expression": "bal >= 0"}}}
+        ct_trig = {"acct_log": {"table": "acct", "timing": "after", "events": ["insert"], "body": "BEGIN SELECT 1; END"}}
+        await migrate({"tables": {"acct": {"columns": ct_cols(True), **ct_extra}}, "triggers": ct_trig}, ct, "sqlite")
+        ct_recon = await migrate({"tables": {"acct": {"columns": ct_cols(False), **ct_extra}}, "triggers": ct_trig}, ct, "sqlite")
+        if "ok" not in ct_recon or not ct_recon["ok"]["success"]:
+            bad.append(f"reconstructing a checked, triggered table should succeed: {ct_recon}")
+        else:
+            rejected = False
+            try:
+                await ct.execute("INSERT INTO acct (id, bal) VALUES (1, -1)")
+            except Exception:
+                rejected = True
+            if not rejected:
+                bad.append("the check constraint should survive the reconstruction and reject a bad row")
+            live_trigger = await ct.execute("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'acct_log'")
+            if not live_trigger["rows"]:
+                bad.append("the user trigger should be recreated on the rebuilt table")
 
         # inspect reads tables and columns back with type, nullability, primary key, and default.
         rich = _SqliteConn()

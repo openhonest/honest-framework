@@ -15,6 +15,11 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When _column_ddl renders it
     Then it produces the name and dialect type followed by the primary-key, not-null, unique, default, and foreign-key reference clauses the definition declares
 
+  Scenario: _table_body renders the columns and check constraints inside a table
+    Given a table definition and a dialect
+    When _table_body renders it
+    Then it returns each column's DDL followed by each check constraint, so a create and a reconstruction share one table body
+
   Scenario: _render_create_table renders a CREATE TABLE statement
     Given a create-table operation and a dialect
     When _render_create_table renders it
@@ -164,6 +169,11 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given a table and the schema's views
     When _dependent_matview_triggers collects them
     Then it returns the refresh-trigger statements that fire on that table for each materialized view reading it, and none for the matview's other sources, a manual matview, or a plain view
+
+  Scenario: _dependent_triggers recreates the user triggers on a reconstructed table
+    Given a table, the schema's triggers, and a dialect
+    When _dependent_triggers collects them
+    Then it returns a CREATE statement for each user trigger that fires on the table, and none for a trigger on another table
 
   Scenario: _mv_trigger_drops_native drops the PostgreSQL refresh triggers and function
     Given a materialized view name and its definition
