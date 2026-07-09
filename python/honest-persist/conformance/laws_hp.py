@@ -761,8 +761,14 @@ def _probe_extended():
     elif create[0]["table"] != "mv" or create[0]["details"]["view"] != "mv" or create[0]["details"]["definition"] != mv_view or create[0]["details"]["depends_on"] != ["src"]:
         bad.append(f"the create_matview op should carry the view, its definition, and its dependencies: {create[0]}")
     drop = _matview_drop_ops("mv", mv_view)
-    if [op["op"] for op in drop] != ["drop_matview"] or drop[0]["details"]["view"] != "mv" or drop[0]["details"]["definition"] != mv_view:
-        bad.append(f"_matview_drop_ops should emit a single drop_matview op carrying the definition: {drop}")
+    if [op["op"] for op in drop] != ["drop_matview"] or drop[0]["details"]["view"] != "mv" or drop[0]["details"]["definition"] != mv_view or drop[0]["details"]["depends_on"] != ["src"]:
+        bad.append(f"_matview_drop_ops should emit a single drop_matview op carrying the definition and dependencies: {drop}")
+    # A drop_table op carries the dropped table's columns, so an inline foreign key still orders the
+    # drop (the referencing table before the referenced one).
+    fk_drop = diff({"team": {"columns": {"id": {"type": "integer"}}}, "roster": {"columns": {"team_id": {"type": "integer", "references": "team.id"}}}}, {})
+    roster_drop = next((o for o in fk_drop["operations"] if o["op"] == "drop_table" and o["table"] == "roster"), None)
+    if not roster_drop or roster_drop["details"].get("columns", {}).get("team_id", {}).get("references") != "team.id":
+        bad.append(f"a drop_table op should carry the table's columns so inline foreign keys order the drop: {roster_drop}")
 
     # apply renders the op natively on PostgreSQL and backfilled on SQLite/Turso.
     op = create[0]
@@ -1283,12 +1289,35 @@ class _SqliteConn:
     {rows, rowcount}, named params, dict rows. Conformance is not linted, so a fixture class is fine."""
 
     def __init__(self):
-        self._conn = sqlite3.connect(":memory:")
+        # Autocommit (isolation_level=None) so the reconstruction lifecycle's explicit BEGIN/COMMIT and
+        # its foreign-key pragmas run as issued, rather than inside sqlite3's implicit transactions.
+        self._conn = sqlite3.connect(":memory:", isolation_level=None)
         self._conn.row_factory = sqlite3.Row
 
     async def execute(self, sql, params=None):
         cursor = self._conn.execute(sql, params or {})
         return {"rows": [dict(row) for row in cursor.fetchall()], "rowcount": cursor.rowcount}
+
+    # The reconstruction lifecycle (§5.5) against real SQLite: the pragma toggles run outside a
+    # transaction, verify_foreign_keys reports PRAGMA foreign_key_check violations, and push hooks are
+    # absent (this is not a synced connection).
+    async def begin(self):
+        self._conn.execute("BEGIN")
+
+    async def commit(self):
+        self._conn.execute("COMMIT")
+
+    async def rollback(self):
+        self._conn.execute("ROLLBACK")
+
+    async def disable_foreign_keys(self):
+        self._conn.execute("PRAGMA foreign_keys = OFF")
+
+    async def enable_foreign_keys(self):
+        self._conn.execute("PRAGMA foreign_keys = ON")
+
+    async def verify_foreign_keys(self):
+        return [dict(row) for row in self._conn.execute("PRAGMA foreign_key_check").fetchall()]
 
     def close(self):
         self._conn.close()
@@ -1420,6 +1449,66 @@ def _probe_postgres():
         if "ok" not in dropped or "big" in gone["ok"]["views"]:
             bad.append(f"dropping the materialized view should remove it: {dropped}, {gone['ok']['views']}")
         conn.close()
+        return bad
+
+    return asyncio.run(_run())
+
+
+# The SQL-construction validity schema (section 5): one rich schema whose creation emits the
+# framework's create vocabulary — tables with a primary key, a unique column, a default, an inline
+# foreign key (which orders the two table creations) and a check constraint; an index; a plain view;
+# and materialized views in both the trigger and manual strategies. Migrating it in and then out
+# against a real engine exercises every one of those constructions plus the drop vocabulary, proving
+# the generated SQL is valid dialect SQL, not merely the string our own assertions expected.
+_VALIDITY_SCHEMA = {
+    "tables": {
+        "team": {"columns": {"id": {"type": "integer", "primary_key": True}, "name": {"type": "text", "unique": True}}},
+        "player": {
+            "columns": {"id": {"type": "integer", "primary_key": True}, "team_id": {"type": "integer", "references": "team.id"}, "score": {"type": "integer", "nullable": True, "default": "0"}},
+            "indexes": {"player_by_score": {"columns": ["score"]}},
+            "constraints": {"score_nonneg": {"type": "check", "expression": "score >= 0"}},
+        },
+    },
+    "views": {
+        "roster": {"query": "SELECT id FROM player", "depends_on": ["player"]},
+        "scorers": {"query": "SELECT id FROM player WHERE score > 0", "materialized": True, "refresh": "trigger", "depends_on": ["player"]},
+        "team_players": {"query": "SELECT team_id FROM player", "materialized": True, "refresh": "manual", "depends_on": ["player"]},
+    },
+}
+
+
+def _probe_sql_validity():
+    """Catch invalid SQL before commit (section 5): the constructions the framework generates are
+    executed against a real PostgreSQL and a real SQLite to confirm the engine accepts them — the check
+    a pure assertion cannot make, since a pure test only confirms the string I meant to build, not that
+    it is valid dialect SQL. Migrating the rich schema in exercises the create vocabulary (this is where
+    the SQLite-vs-PostgreSQL materialized-view trigger difference lives) and migrating it back out
+    exercises the drop vocabulary. Decoupled from mutation: like the other real-database probes it skips
+    the per-mutant loop and runs in every normal and coverage pass. (Round-trip re-migration of an
+    unchanged schema and reconstruction under a dependent view are separate open inspector-completeness
+    items, tracked apart from this gate.)"""
+    if os.environ.get("HONEST_MUTATION"):
+        return []
+    from honest_persist import apply, diff, expand_schema
+
+    async def _run():
+        bad = []
+        expanded = expand_schema(_VALIDITY_SCHEMA)
+        for dialect, conn in [("sqlite", _SqliteConn()), ("postgresql", postgres_connection())]:
+            if conn is None:
+                print(f"honest-persist: no {dialect} available; SQL-validity not checked for it", file=sys.stderr)
+                continue
+            # Drive apply from the diff directly over declared schemas so ordering carries full
+            # foreign-key and dependency information; this gate is about whether the engine accepts the
+            # generated SQL, not about the inspector round-trip (which is tracked separately).
+            created = await apply(diff({}, expanded), expanded, conn, dialect)
+            if not created["success"]:
+                bad.append(f"{dialect} rejected a generated create construction: {created}")
+            else:
+                dropped = await apply(diff(expanded, {}), {}, conn, dialect)
+                if not dropped["success"]:
+                    bad.append(f"{dialect} rejected a generated drop construction: {dropped}")
+            conn.close()
         return bad
 
     return asyncio.run(_run())
@@ -3000,6 +3089,22 @@ def _probe_deps():
         bad.append("a materialized view must run after a source view it reads")
     if not _runs_before(operation("create_matview", "mv1", {"view": "mv1"}), operation("create_matview", "mv2", {"view": "mv2", "depends_on": ["mv1"]})):
         bad.append("a materialized view must run after a source materialized view it reads")
+    # An inline foreign key orders table creation: a table whose column references another is created
+    # after it, and dropped before it. _inline_references reads those references off a create/drop op.
+    from honest_persist.deps import _inline_references
+    player_create = operation("create_table", "player", {"columns": {"id": {"type": "integer"}, "team_id": {"type": "integer", "references": "team.id"}}})
+    if _inline_references(player_create) != {"team"} or _inline_references(operation("create_table", "t", {"columns": {"id": {"type": "integer"}}})) != set() or _inline_references(operation("add_column", "t", {"references": "x.y"})) != set():
+        bad.append(f"_inline_references should read a create/drop op's inline foreign keys and nothing else: {_inline_references(player_create)}")
+    if not _runs_before(operation("create_table", "team", {}), player_create):
+        bad.append("a table with an inline foreign key must be created after the table it references")
+    player_drop = operation("drop_table", "player", {"columns": {"team_id": {"type": "integer", "references": "team.id"}}})
+    if not _runs_before(player_drop, operation("drop_table", "team", {"columns": {}})):
+        bad.append("a table with an inline foreign key must be dropped before the table it references")
+    if _runs_before(operation("drop_table", "team", {"columns": {}}), player_drop):
+        bad.append("the referenced table must not be dropped before the referencing one")
+    # a materialized view is dropped before the source tables its refresh triggers fire on.
+    if not _runs_before(operation("drop_matview", "mv", {"view": "mv", "depends_on": ["src"]}), operation("drop_table", "src", {"columns": {}})):
+        bad.append("a materialized view must be dropped before the source tables it triggers on")
     # Every _MUST_PRECEDE rule: the drop runs before the table/column drop.
     must_precede = [("drop_foreign_key", "drop_table"), ("drop_foreign_key", "drop_column"), ("drop_index", "drop_table"), ("drop_index", "drop_column"), ("drop_constraint", "drop_table"), ("drop_constraint", "drop_column"), ("drop_column", "drop_table"), ("drop_view", "drop_table"), ("drop_trigger", "drop_table")]
     for early, late in must_precede:
@@ -3084,6 +3189,7 @@ def run():
         "migrate": _probe_migrate(),
         "postgres_pure": _probe_postgres_pure(),
         "postgres": _probe_postgres(),
+        "sql_validity": _probe_sql_validity(),
         "abstractions": _probe_abstractions(),
         "arrays_maps": _probe_arrays_maps(),
         "hierarchy": _probe_hierarchy(),

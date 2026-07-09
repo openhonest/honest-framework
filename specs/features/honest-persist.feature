@@ -133,10 +133,15 @@ Feature: honest-persist — schema diffing, query building, and the write bounda
     When _subject reads it
     Then it returns the view, trigger, or function name when present, otherwise the table
 
+  Scenario: _inline_references reads a table op's inline foreign keys
+    Given a create-table or drop-table operation
+    When _inline_references reads it
+    Then it returns the tables the operation's columns reference through inline foreign keys, and nothing for any other operation
+
   Scenario: _related decides whether two operations touch the same thing
     Given two operations
     When _related compares them
-    Then they are related when they share a table, when one's foreign key references the other's subject, or when one declares the other's subject as a dependency
+    Then they are related when they share a table, when one's foreign key — separate or inline in a table op — references the other's subject, or when one declares the other's subject as a dependency
 
   Scenario: _runs_before decides whether one operation must precede another
     Given two operations

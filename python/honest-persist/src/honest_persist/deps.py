@@ -9,6 +9,7 @@ schema design error and returns None (the caller raises a fault).
 # An operation of this type depends on (must run after) operations of the listed types on a
 # related table (section 5.4).
 _DEPENDS_ON = {
+    "create_table": ("create_table",),
     "add_foreign_key": ("create_table",),
     "add_column": ("create_table",),
     "add_index": ("create_table", "add_column"),
@@ -27,6 +28,8 @@ _MUST_PRECEDE = {
     "drop_column": ("drop_table",),
     "drop_view": ("drop_table",),
     "drop_trigger": ("drop_table",),
+    "drop_table": ("drop_table",),
+    "drop_matview": ("drop_table",),
 }
 
 
@@ -36,14 +39,24 @@ def _subject(op):
     return details.get("view") or details.get("trigger") or details.get("function") or op["table"]
 
 
+def _inline_references(op):
+    """The tables a create_table or drop_table op references through its columns' inline foreign keys
+    (section 5.4): a table is created after, and dropped before, the tables its columns point at. Pure."""
+    columns = op["details"].get("columns", {}) if op["op"] in ("create_table", "drop_table") else {}
+    return {column["references"].split(".")[0] for column in columns.values() if column.get("references")}
+
+
 def _related(op_a, op_b):
-    """Two operations are related when op_a touches the same table op_b does, op_a's foreign key
-    references op_b's subject, or op_a declares op_b's subject in its depends_on."""
+    """Two operations are related when op_a touches the same table op_b does, op_a's foreign key —
+    separate or inline in a create_table — references op_b's subject, or op_a declares op_b's subject
+    in its depends_on."""
     subject_b = _subject(op_b)
     if op_a["table"] and op_a["table"] == op_b["table"]:
         return True
     references = op_a["details"].get("references", "")
     if references and references.split(".")[0] == subject_b:
+        return True
+    if subject_b in _inline_references(op_a):
         return True
     return subject_b in op_a["details"].get("depends_on", [])
 

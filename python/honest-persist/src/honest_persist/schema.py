@@ -186,8 +186,9 @@ def _matview_create_ops(name, view):
 
 def _matview_drop_ops(name, view):
     """The op to drop a materialized view (section 6.6): one drop_matview carrying the definition so
-    apply knows which refresh triggers to drop alongside the storage."""
-    return [operation("drop_matview", name, {"view": name, "definition": dict(view)})]
+    apply knows which refresh triggers to drop alongside the storage. depends_on travels so it is
+    ordered before the source tables its refresh triggers fire on (section 5.4)."""
+    return [operation("drop_matview", name, {"view": name, "definition": dict(view), "depends_on": list(view.get("depends_on", []))})]
 
 
 # Create/drop of a view dispatches on whether it is materialized (section 6.6): a plain view is a
@@ -339,7 +340,7 @@ def diff(current, target, decisions=None):
     operations = []
     for table in sorted(dropped):
         if table not in rename_sources:
-            operations.append(operation("drop_table", table, {}))
+            operations.append(operation("drop_table", table, {"columns": dict(current_tables[table].get("columns", {}))}))
     for source, target_name in renames:
         operations.append(operation("rename_table", source, {"new_name": target_name}))
     for table in actual_adds:
