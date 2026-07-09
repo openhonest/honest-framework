@@ -14,10 +14,13 @@ _DEFAULT_STATUS = {"unauthenticated": 401, "forbidden": 403, "conflict": 409, "c
 
 
 def authenticate(provider, token):
-    """Validate a token at the boundary (section 2.2-2.3): if it does not match the provider's
-    `actor_recognizer` it is rejected as a malformed (client) fault, before `resolve_actor`; otherwise the
-    provider's `resolve_actor` resolves it to `ok(actor)` or `err(fault)`. Pure; the recognizer and
-    resolver are the provider's injected boundary I/O."""
+    """Validate a token at the boundary (section 2.2-2.4): a missing credential (None or empty) is
+    unauthenticated — no identity was presented — and never reaches the recognizer or resolver; a token
+    that does not match the provider's `actor_recognizer` is rejected as a malformed (client) fault,
+    before `resolve_actor`; otherwise the provider's `resolve_actor` resolves it to `ok(actor)` or
+    `err(fault)`. Pure; the recognizer and resolver are the provider's injected boundary I/O."""
+    if token is None or token == "":
+        return err(fault("unauthenticated", "no credential was presented at the boundary", "unauthenticated"))
     if not provider["actor_recognizer"](token):
         return err(fault("malformed_token", "token does not match the provider's wire format", "client"))
     return provider["resolve_actor"](token)

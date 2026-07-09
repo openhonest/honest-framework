@@ -44,3 +44,23 @@ Feature: honest-auth — authentication is validated at the boundary and passed 
     Given a provider and a token
     When resolve_actor_deterministic resolves it twice under fixed state
     Then it reports whether the two results agree
+
+  Scenario: dev_auth_provider builds a development-only plaintext user/password provider
+    Given an optional {username: password} table
+    When dev_auth_provider is called
+    Then it returns a conforming AuthProvider over that table, defaulting to a single 'dev' user with an empty password
+
+  Scenario: _dev_recognizer accepts the dev token wire format
+    Given a candidate token
+    When _dev_recognizer inspects it
+    Then it is recognised only when it is a string with a non-empty username before a colon
+
+  Scenario: _dev_resolver resolves a plaintext credential against the dev table
+    Given a dev user table and a username:password token
+    When _dev_resolver resolves it
+    Then the actor resolves when the user exists and the stored password is empty or matches, else an unauthenticated fault
+
+  Scenario: _dev_token_generator produces a token for each token class
+    Given a dev user table
+    When _dev_token_generator is asked for a token class
+    Then it yields a valid token for the first user, a colonless malformed token, a missing None credential, and unknown-user tokens for the revoked, expired, and forged classes

@@ -59,7 +59,7 @@ def _law_exports():
     import honest_auth
 
     bad = []
-    expected = ["AuthProvider", "Registry", "empty_registry", "register_auth_provider", "registered_provider", "validate_provider", "authenticate", "fault_status", "authentication_honesty", "resolve_actor_deterministic"]
+    expected = ["AuthProvider", "Registry", "empty_registry", "register_auth_provider", "registered_provider", "validate_provider", "authenticate", "fault_status", "authentication_honesty", "resolve_actor_deterministic", "dev_auth_provider"]
     if sorted(getattr(honest_auth, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_auth, '__all__', None)}")
     missing = [name for name in expected if not hasattr(honest_auth, name)]
@@ -123,6 +123,69 @@ def _law_authenticate():
         bad.append(f"a malformed token is rejected at the recognizer (client), before resolve_actor: {rf}")
     if authenticate(prov, "other").get("err", {}).get("category") != "unauthenticated":
         bad.append("a recognised but invalid token faults via resolve_actor")
+    # A missing credential (None / empty) is unauthenticated, not malformed (section 2.4), and never
+    # reaches the recognizer or resolver.
+    for absent in (None, ""):
+        mf = authenticate(prov, absent).get("err", {})
+        if mf.get("category") != "unauthenticated" or mf.get("code") != "unauthenticated" or mf.get("message") != "no credential was presented at the boundary":
+            bad.append(f"a missing credential ({absent!r}) should be unauthenticated, before the recognizer: {mf}")
+    return bad
+
+
+def _law_dev_provider():
+    from honest_auth import authentication_honesty, dev_auth_provider, validate_provider
+
+    bad = []
+    dev = dev_auth_provider({"alice": "secret", "bob": ""})
+    if "ok" not in validate_provider(dev):
+        bad.append("the dev provider should be a valid AuthProvider")
+    if "ok" not in authentication_honesty(dev, None):
+        bad.append(f"the dev provider should be authentication-honest: {authentication_honesty(dev, None)}")
+    # A real user with a matching password resolves; a wrong password fails.
+    if authenticate(dev, "alice:secret") != ok({"id": "alice"}):
+        bad.append(f"a correct username:password should resolve to the actor: {authenticate(dev, 'alice:secret')}")
+    if authenticate(dev, "alice:wrong").get("err", {}).get("category") != "unauthenticated":
+        bad.append("a wrong password should be unauthenticated")
+    # Requirement 2: a user whose stored password is empty accepts ANY password (dev convenience).
+    if authenticate(dev, "bob:anything-at-all") != ok({"id": "bob"}) or authenticate(dev, "bob:") != ok({"id": "bob"}):
+        bad.append(f"an empty stored password should accept any password: {authenticate(dev, 'bob:anything-at-all')}")
+    # An unknown user, a malformed token, and a missing credential each fail as the class expects.
+    if authenticate(dev, "ghost:x").get("err", {}).get("category") != "unauthenticated":
+        bad.append("an unknown user should be unauthenticated")
+    if authenticate(dev, "nocolon").get("err", {}).get("code") != "malformed_token":
+        bad.append("a token with no colon is malformed at the recognizer")
+    if authenticate(dev, None).get("err", {}).get("category") != "unauthenticated":
+        bad.append("a missing credential is unauthenticated")
+    # Requirement 1: the default table is a single dev user with an empty password — log in with anything.
+    default_dev = dev_auth_provider(None)
+    if authenticate(default_dev, "dev:whatever") != ok({"id": "dev"}):
+        bad.append(f"the default dev provider should log in the 'dev' user with any password: {authenticate(default_dev, 'dev:whatever')}")
+    if dev["name"] != "dev-plaintext":
+        bad.append(f"the dev provider is named dev-plaintext: {dev['name']}")
+    # An empty username (no name before the colon) is malformed at the recognizer, not an unknown user.
+    if authenticate(dev, ":secret").get("err", {}).get("code") != "malformed_token":
+        bad.append("a token with an empty username should be malformed at the recognizer")
+    # The resolver faults carry their own code and message, distinct per cause.
+    ghost = authenticate(dev, "ghost:x").get("err", {})
+    if ghost.get("code") != "forged" or ghost.get("message") != "no such dev user":
+        bad.append(f"an unknown dev user should fault as forged: {ghost}")
+    wrong = authenticate(dev, "alice:wrong").get("err", {})
+    if wrong.get("code") != "bad_password" or wrong.get("message") != "wrong password for the dev user":
+        bad.append(f"a wrong password should fault as bad_password: {wrong}")
+    # The generator: the valid token targets the first user; malformed is unrecognised; missing is None;
+    # and revoked/expired/forged are each recognised (real wire format) yet resolve unauthenticated via
+    # the resolver — not via the missing-credential guard, which an empty token would hit instead.
+    gen, recognises = dev["test_token_generator"], dev["actor_recognizer"]
+    if gen("valid", None) != "alice:secret":
+        bad.append(f"the valid test token should target the first user: {gen('valid', None)}")
+    if recognises(gen("malformed", None)):
+        bad.append("the malformed test token should be rejected by the recognizer")
+    if gen("missing", None) is not None:
+        bad.append("the missing test token should be a None credential")
+    for cls in ("revoked", "expired", "forged"):
+        token = gen(cls, None)
+        if not recognises(token) or authenticate(dev, token).get("err", {}).get("category") != "unauthenticated":
+            bad.append(f"the {cls} test token should be recognised yet resolve unauthenticated: {token!r}")
     return bad
 
 
@@ -185,6 +248,7 @@ _LAWS = {
     "fault_status": _law_fault_status,
     "authentication_honesty": _law_authentication_honesty,
     "resolve_actor_deterministic": _law_resolve_actor_deterministic,
+    "dev_provider": _law_dev_provider,
 }
 
 
