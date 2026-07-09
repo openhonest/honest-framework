@@ -121,14 +121,20 @@ caller — are assigned to the application/boundary by spec §11, and HF001/HF00
 are honest-check's. Legitimately deferred, but it means **Full/Complete
 conformance is not met by this package alone**.
 
-### honest-state — COMPLETE AT MANDATE (15/18)
-The single-mutator law (`second_mutator_legitimate`) and the nine-kind taxonomy
-with one mutator each are complete and tested. The gaps are integration-facing:
-honest-state names the §3 honest-check rules that enforce the law but provides
-no reference to them, and there is **no conformance test that those rules
-actually fire on a planted violation** — only that the law's truth-table holds.
-Its own mandate ("define the law and the taxonomy; primitives live in home
-modules") is met.
+### honest-state — COMPLETE AT MANDATE (17/18)
+Every normative statement in §1 is now a tested function: the single-mutator law
+(`second_mutator_legitimate`), the nine-kind taxonomy with one mutator each
+(`state_kinds`/`mutator_of`), and the §1.3 DOM decomposition
+(`dom_region_kind` — a region is user state, server state, or a mutator-less
+projection). §1.3 was previously prose-only; it is now gated like the rest.
+The §3 enforcement rules exist in honest-check (HC-P004 subsumes the
+boundary-write rule since a persist write is I/O outside a boundary; HC-P016;
+HC-SM01–05). Remaining gaps are integration-facing, not honest-state's Python
+surface: (1) the hub conformance suite (§5) that asserts each §3 rule **fires on
+a planted violation** is not yet written — the module tests the law's truth-table,
+not the linter's firing; (2) the **DOM-single-store rule** is JS-side and belongs
+to the in-progress honest-DOM JS toolchain. Its own mandate ("define the law and
+the taxonomy; primitives live in home modules") is met.
 
 ### honest-auth — SUBSET (~39%)
 The AuthProvider TypedDict (five fields), the pure value-registry
