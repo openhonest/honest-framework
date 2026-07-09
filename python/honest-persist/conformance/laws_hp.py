@@ -1574,6 +1574,17 @@ _VALIDITY_SCHEMA = {
         "team_players": {"query": "SELECT team_id FROM player", "materialized": True, "refresh": "manual", "depends_on": ["player"]},
     },
 }
+# A modification of the validity schema that exercises the alter vocabulary: player gains a column and
+# loses its index and check constraint, with its views and materialized views still depending on it.
+# PostgreSQL renders these in place; SQLite rebuilds the table, which must carry the survivors and
+# recreate the dependent views and materialized-view refresh triggers.
+_VALIDITY_MODIFIED = {
+    "tables": {
+        "team": _VALIDITY_SCHEMA["tables"]["team"],
+        "player": {"columns": {**_VALIDITY_SCHEMA["tables"]["player"]["columns"], "position": {"type": "text", "nullable": True}}},
+    },
+    "views": _VALIDITY_SCHEMA["views"],
+}
 
 
 def _probe_sql_validity():
@@ -1600,11 +1611,15 @@ def _probe_sql_validity():
             # Drive apply from the diff directly over declared schemas so ordering carries full
             # foreign-key and dependency information; this gate is about whether the engine accepts the
             # generated SQL, not about the inspector round-trip (which is tracked separately).
+            modified = expand_schema(_VALIDITY_MODIFIED)
             created = await apply(diff({}, expanded), expanded, conn, dialect)
             if not created["success"]:
                 bad.append(f"{dialect} rejected a generated create construction: {created}")
             else:
-                dropped = await apply(diff(expanded, {}), {}, conn, dialect)
+                altered = await apply(diff(expanded, modified), modified, conn, dialect)
+                if not altered["success"]:
+                    bad.append(f"{dialect} rejected a generated alter construction: {altered}")
+                dropped = await apply(diff(modified, {}), {}, conn, dialect)
                 if not dropped["success"]:
                     bad.append(f"{dialect} rejected a generated drop construction: {dropped}")
             conn.close()
