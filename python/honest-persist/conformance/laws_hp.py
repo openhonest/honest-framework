@@ -462,6 +462,21 @@ def _probe_apply():
         recon = reconstruction_sql("t", {"columns": {"id": {"type": "text"}}}, ["id"], "sqlite", [("v_dep", "SELECT id FROM t")], temp_name="_tmp")
         if recon[0] != "DROP VIEW v_dep" or recon[-1] != "CREATE VIEW v_dep AS SELECT id FROM t":
             bad.append(f"reconstruction_sql should drop the dependent views first and recreate them last: {recon}")
+
+        # A materialized view's refresh triggers on the reconstructed table are regenerated — only those
+        # on that table, not on the matview's other sources, not for a manual view, not for a plain view.
+        from honest_persist.apply import _dependent_matview_triggers
+        mv_views = {
+            "mv": {"query": "SELECT x FROM t", "materialized": True, "refresh": "trigger", "depends_on": ["t", "u"]},
+            "mvm": {"query": "SELECT x FROM t", "materialized": True, "refresh": "manual", "depends_on": ["t"]},
+            "pv": {"query": "SELECT x FROM t", "depends_on": ["t"]},
+        }
+        if _dependent_matview_triggers("t", mv_views) != [
+            "CREATE TRIGGER _hp_refresh_mv_on_t_insert AFTER INSERT ON t BEGIN DELETE FROM mv; INSERT INTO mv SELECT x FROM t; END",
+            "CREATE TRIGGER _hp_refresh_mv_on_t_update AFTER UPDATE ON t BEGIN DELETE FROM mv; INSERT INTO mv SELECT x FROM t; END",
+            "CREATE TRIGGER _hp_refresh_mv_on_t_delete AFTER DELETE ON t BEGIN DELETE FROM mv; INSERT INTO mv SELECT x FROM t; END",
+        ]:
+            bad.append(f"_dependent_matview_triggers should regenerate only the reconstructed table's refresh triggers: {_dependent_matview_triggers('t', mv_views)}")
         if not requires_reconstruction(operation("alter_column", "t", {}), "sqlite"):
             bad.append("alter_column should require reconstruction on sqlite")
         return bad
@@ -2351,6 +2366,22 @@ def _probe_migrate():
             bad.append(f"the dependent view should survive the reconstruction: {rv_back['ok']['views']}")
         elif rv_back["ok"]["tables"]["acct"]["columns"]["note"]["nullable"] is not False:
             bad.append(f"the reconstruction should have applied the column change: {rv_back['ok']['tables']['acct']['columns']['note']}")
+
+        # §5.5: a materialized view whose source is reconstructed keeps refreshing — its refresh
+        # triggers, dropped with the old table, are recreated on the rebuilt one.
+        mvr = _SqliteConn()
+        mvr_v1 = {"tables": {"src": {"columns": {"id": {"type": "integer", "primary_key": True}, "flag": {"type": "integer", "nullable": True}}}}, "views": {"mv": {"query": "SELECT id FROM src WHERE flag > 0", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}}}
+        await migrate(mvr_v1, mvr, "sqlite")
+        mvr_v2 = {"tables": {"src": {"columns": {"id": {"type": "integer", "primary_key": True}, "flag": {"type": "integer", "nullable": False}}}}, "views": {"mv": {"query": "SELECT id FROM src WHERE flag > 0", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}}}
+        mvr_recon = await migrate(mvr_v2, mvr, "sqlite")
+        if "ok" not in mvr_recon or not mvr_recon["ok"]["success"]:
+            bad.append(f"reconstructing a materialized view's source should succeed: {mvr_recon}")
+        else:
+            # After the rebuild, inserting a matching row fires the recreated refresh trigger.
+            await mvr.execute("INSERT INTO src (id, flag) VALUES (1, 5)")
+            refreshed = await mvr.execute("SELECT id FROM mv")
+            if [r["id"] for r in refreshed["rows"]] != [1]:
+                bad.append(f"the materialized view's refresh trigger should survive its source's reconstruction: {refreshed['rows']}")
 
         # inspect reads tables and columns back with type, nullability, primary key, and default.
         rich = _SqliteConn()

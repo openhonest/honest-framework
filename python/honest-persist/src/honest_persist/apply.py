@@ -209,11 +209,16 @@ def _mv_triggers_native(name, view):
     return statements
 
 
+def _mv_refresh_trigger_backing(name, view, source, event):
+    """One SQLite/Turso refresh trigger: an inline-body trigger on `source` that re-runs the refresh in
+    place (section 6.6). Pure."""
+    return f"CREATE TRIGGER {_mv_trigger_name(name, source, event)} AFTER {event.upper()} ON {source} BEGIN DELETE FROM {name}; INSERT INTO {name} {view['query']}; END"
+
+
 def _mv_triggers_backing(name, view):
     """SQLite/Turso refresh triggers: an inline-body trigger on each source that re-runs the refresh
     in place (section 6.6). Pure."""
-    body = f"BEGIN DELETE FROM {name}; INSERT INTO {name} {view['query']}; END"
-    return [f"CREATE TRIGGER {_mv_trigger_name(name, source, event)} AFTER {event.upper()} ON {source} {body}" for source, event in _mv_refresh_events(name, view)]
+    return [_mv_refresh_trigger_backing(name, view, source, event) for source, event in _mv_refresh_events(name, view)]
 
 
 def _mv_trigger_drops_native(name, view):
@@ -366,8 +371,7 @@ def requires_reconstruction(operation, dialect):
 def _dependent_views(table, views):
     """The plain views that read `table`, as (name, query) in name order (section 5.5): a
     reconstruction drops and recreates them around the rebuild, because a dialect that rebuilds by
-    dropping the table cannot drop it while a view references it. Materialized views are not handled
-    here — they carry their own backing table and refresh triggers. Pure."""
+    dropping the table cannot drop it while a view references it. Pure."""
     dependent = []
     for name in sorted(views):
         view = views[name]
@@ -376,13 +380,29 @@ def _dependent_views(table, views):
     return dependent
 
 
-def reconstruction_sql(table, target_table, common_columns, dialect, dependent_views=(), temp_name=None):
-    """The statement sequence that rebuilds `table` into `target_table` (section 5.5): drop the views
-    that read the table, create a temp table with the target columns, copy the common columns, drop
-    the old, rename the temp into place, recreate the target indexes, and recreate the dropped views.
-    Pure. The transaction wrapping and foreign-key toggling are apply()'s boundary responsibility;
-    `temp_name` carries the unique id apply() mints, with a deterministic default so the plan is
-    reproducible for testing."""
+def _dependent_matview_triggers(table, views):
+    """The refresh-trigger statements that fire on `table` for the materialized views that read it
+    (section 5.5): a reconstruction drops `table` and with it these triggers, so they are recreated on
+    the rebuilt table. Only the triggers on `table` are recreated — those on the matview's other
+    sources are untouched. Reconstruction is a SQLite/Turso path, so the SQLite trigger form is used.
+    Pure."""
+    statements = []
+    for name in sorted(views):
+        view = views[name]
+        if view.get("materialized"):
+            for source, event in _mv_refresh_events(name, view):
+                if source == table:
+                    statements.append(_mv_refresh_trigger_backing(name, view, source, event))
+    return statements
+
+
+def reconstruction_sql(table, target_table, common_columns, dialect, dependent_views=(), dependent_matview_triggers=(), temp_name=None):
+    """The statement sequence that rebuilds `table` into `target_table` (section 5.5): drop the plain
+    views that read the table, create a temp table with the target columns, copy the common columns,
+    drop the old, rename the temp into place, recreate the target indexes, recreate the dropped views,
+    and recreate the refresh triggers of materialized views that read the table (dropped with it). Pure.
+    The transaction wrapping and foreign-key toggling are apply()'s boundary responsibility; `temp_name`
+    carries the unique id apply() mints, with a deterministic default so the plan is reproducible."""
     temp = temp_name or f"_hp_tmp_{table}"
     columns = target_table.get("columns", {})
     columns_ddl = ", ".join(_column_ddl(name, columns[name], dialect) for name in columns)
@@ -399,6 +419,7 @@ def reconstruction_sql(table, target_table, common_columns, dialect, dependent_v
         statements.append(f"CREATE {unique}INDEX {index_name} ON {table} ({index_columns})")
     for name, query in dependent_views:
         statements.append(f"CREATE VIEW {name} AS {query}")
+    statements.extend(dependent_matview_triggers)
     return statements
 
 
@@ -435,7 +456,7 @@ async def _reconstruct(table, target_tables, target_views, operations, conn, dia
     await conn.disable_foreign_keys()
     await conn.begin()
     try:
-        for sql in reconstruction_sql(table, target_table, common, dialect, _dependent_views(table, target_views)):
+        for sql in reconstruction_sql(table, target_table, common, dialect, _dependent_views(table, target_views), _dependent_matview_triggers(table, target_views)):
             await conn.execute(sql)
             executed.append(sql)
         violations = await conn.verify_foreign_keys()

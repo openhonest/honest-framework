@@ -150,10 +150,20 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When _mv_triggers_native builds them
     Then it returns a trigger function that calls REFRESH and a statement-level trigger on each source, or none for manual
 
+  Scenario: _mv_refresh_trigger_backing renders one SQLite refresh trigger
+    Given a materialized view name and definition, a source table, and an event
+    When _mv_refresh_trigger_backing builds it
+    Then it returns an inline-body AFTER trigger on the source that re-runs the in-place refresh
+
   Scenario: _mv_triggers_backing renders SQLite refresh triggers
     Given a materialized view name and its definition
     When _mv_triggers_backing builds them
     Then it returns an inline-body trigger on each source that re-runs the in-place refresh
+
+  Scenario: _dependent_matview_triggers regenerates a reconstructed table's refresh triggers
+    Given a table and the schema's views
+    When _dependent_matview_triggers collects them
+    Then it returns the refresh-trigger statements that fire on that table for each materialized view reading it, and none for the matview's other sources, a manual matview, or a plain view
 
   Scenario: _mv_trigger_drops_native drops the PostgreSQL refresh triggers and function
     Given a materialized view name and its definition
