@@ -72,7 +72,7 @@ Verdicts use three honest categories:
 | honest-observe | **SPEC-COMPLETE** | auth attrs + grouped metrics done | none (proof_checked, persist metrics, install_otel_exporter, dev-mode are by-design elsewhere/boundary) |
 | honest-test | **SPEC-COMPLETE** | §4.4 + §8.2 + §8.4 done | none (the runner, HC-P009, and §6/§7 are not-gaps — by design) |
 | honest-parse | **SPEC-COMPLETE** | 7 grammars (6 source + HTML) | none (Ruby/PHP/Go/Elixir — f793594; HTML/HTMX — 6de18bb) |
-| honest-persist | **SUBSET** | SQLite/Turso substantial; Postgres non-functional | no PostgreSQL inspector; no view/trigger/procedure DDL apply; no RETURNING; no materialized-view refresh |
+| honest-persist | **SPEC-COMPLETE (SQLite/Turso)** | FK cascade, view/trigger/proc DDL, full inspector, and materialized views all built | §6.6 materialized-view emulation (backing table + refresh triggers + registry) and §9.1 full-schema inspector (tables + views + triggers + procedures via `_hp_object`) done. PostgreSQL inspector catalog SQL stays implementation-defined per dialect (§12); its contract is in-spec. RETURNING/upsert remain by-design out-of-scope |
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
 | honest-DOM | **SUBSET** | ~45% of Full | injected-param signatures with no browser-binding wrapper; §4 React hooks absent; §5 observability absent; conformance suite has 3 cases |
 
