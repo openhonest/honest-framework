@@ -87,11 +87,34 @@ def _owned_tables(objects):
     return {"_hp_object"} | {name for name, view in objects["views"].items() if view.get("materialized")}
 
 
+def _index_from_pragma(unique, info_rows):
+    """One index's definition from its `PRAGMA index_list` unique flag and its `PRAGMA index_info`
+    rows (section 9.1): its columns in order, and `unique` only when set. Pure."""
+    index = {"columns": [row["name"] for row in info_rows]}
+    if unique:
+        index["unique"] = True
+    return index
+
+
+async def _read_sqlite_indexes(conn, table):
+    """The explicitly-created indexes of one SQLite table (section 9.1). I/O. Only `PRAGMA index_list`
+    rows with origin 'c' are user indexes — origin 'u' and 'pk' back a unique or primary-key
+    constraint on a column and travel with the column, not as a declared index."""
+    indexes = {}
+    listing = await conn.execute("PRAGMA index_list(" + table + ")")
+    for row in listing["rows"]:
+        if row["origin"] != "c":
+            continue
+        info = await conn.execute("PRAGMA index_info(" + row["name"] + ")")
+        indexes[row["name"]] = _index_from_pragma(row["unique"], info["rows"])
+    return indexes
+
+
 async def _inspect_sqlite(conn):
-    """Read the complete live schema of a SQLite database (section 9.1): the user tables and their
-    columns from `sqlite_master` and `PRAGMA table_info`, and the views, triggers, and procedures
-    from the `_hp_object` registry. Owned tables (the registry, materialized-view backing tables) are
-    not reported. I/O. Returns ok of a full SchemaDefinition (section 4.15)."""
+    """Read the complete live schema of a SQLite database (section 9.1): the user tables with their
+    columns, foreign keys, and indexes from `sqlite_master` and the `PRAGMA` catalog, and the views,
+    triggers, and procedures from the `_hp_object` registry. Owned tables (the registry,
+    materialized-view backing tables) are not reported. I/O. Returns ok of a full SchemaDefinition."""
     objects = await _read_object_registry(conn, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_hp_object'")
     owned = _owned_tables(objects)
     listing = await conn.execute(
@@ -104,7 +127,11 @@ async def _inspect_sqlite(conn):
             continue
         info = await conn.execute("PRAGMA table_info(" + name + ")")
         fks = await conn.execute("PRAGMA foreign_key_list(" + name + ")")
-        tables[name] = {"columns": _attach_foreign_keys(_columns_from_pragma(info["rows"]), fks["rows"])}
+        table = {"columns": _attach_foreign_keys(_columns_from_pragma(info["rows"]), fks["rows"])}
+        indexes = await _read_sqlite_indexes(conn, name)
+        if indexes:
+            table["indexes"] = indexes
+        tables[name] = table
     return ok({"tables": tables, **objects})
 
 
@@ -161,15 +188,48 @@ def _pg_column(row):
     return column
 
 
-def _pg_tables(rows, owned):
-    """Assemble the tables map from the flat `_PG_SCHEMA` result (section 9.1): group the ordered rows
-    by table, skip honest-persist's own bookkeeping tables, and resolve each column. Pure."""
-    tables = {}
+# The explicit indexes of every public table, from pg_catalog (section 9.1): each row is one index
+# column in order. Primary-key indexes and the indexes backing a unique or primary-key constraint are
+# excluded — they travel with their column, not as a declared index.
+_PG_INDEXES = (
+    "SELECT t.relname AS table_name, i.relname AS index_name, a.attname AS column_name, ix.indisunique "
+    "FROM pg_index ix "
+    "JOIN pg_class i ON i.oid = ix.indexrelid "
+    "JOIN pg_class t ON t.oid = ix.indrelid "
+    "JOIN pg_namespace n ON n.oid = t.relnamespace "
+    "JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true "
+    "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum "
+    "WHERE n.nspname = 'public' AND NOT ix.indisprimary "
+    "AND ix.indexrelid NOT IN (SELECT conindid FROM pg_constraint WHERE contype IN ('p', 'u')) "
+    "ORDER BY t.relname, i.relname, k.ord"
+)
+
+
+def _pg_indexes(rows):
+    """The explicit indexes per table from the pg_catalog index rows (section 9.1): grouped by table
+    then index, columns in ordinal order, `unique` only when set. Pure."""
+    result = {}
     for row in rows:
+        index = result.setdefault(row["table_name"], {}).setdefault(row["index_name"], {"columns": []})
+        index["columns"].append(row["column_name"])
+        if row["indisunique"]:
+            index["unique"] = True
+    return result
+
+
+def _pg_tables(column_rows, index_rows, owned):
+    """Assemble the tables map from the flat `_PG_SCHEMA` and index results (section 9.1): group the
+    ordered column rows by table, skip honest-persist's own bookkeeping tables, resolve each column,
+    and attach each table's explicit indexes. Pure."""
+    tables = {}
+    for row in column_rows:
         name = row["table_name"]
         if name in owned:
             continue
         tables.setdefault(name, {"columns": {}})["columns"][row["column_name"]] = _pg_column(row)
+    for name, indexes in _pg_indexes(index_rows).items():
+        if name in tables:
+            tables[name]["indexes"] = indexes
     return tables
 
 
@@ -181,7 +241,8 @@ async def _inspect_postgresql(conn):
     SchemaDefinition (section 4.15)."""
     objects = await _read_object_registry(conn, _PG_REGISTRY_EXISTS)
     rows = await conn.execute(_PG_SCHEMA)
-    return ok({"tables": _pg_tables(rows["rows"], _owned_tables(objects)), **objects})
+    index_rows = await conn.execute(_PG_INDEXES)
+    return ok({"tables": _pg_tables(rows["rows"], index_rows["rows"], _owned_tables(objects)), **objects})
 
 
 # The inspector for each supported dialect (section 9, 9.1). Each reads its own catalog; the

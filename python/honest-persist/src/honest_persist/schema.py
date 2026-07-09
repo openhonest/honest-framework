@@ -360,6 +360,8 @@ def diff(current, target, decisions=None):
         operations.append(operation("rename_table", source, {"new_name": target_name}))
     for table in actual_adds:
         operations.append(operation("create_table", table, dict(target_tables[table])))
+        for index_name in sorted(target_tables[table].get("indexes", {})):
+            operations.append(operation("add_index", table, {"index": index_name, "definition": dict(target_tables[table]["indexes"][index_name])}))
     for table in sorted(modified):
         operations.extend(_diff_table(table, current_tables[table], target_tables[table]))
     operations.extend(_diff_views(current_def["views"], target_def["views"]))

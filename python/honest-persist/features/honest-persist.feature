@@ -529,6 +529,21 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When _attach_foreign_keys attaches them
     Then each referencing column gains a table.column reference and any non-default cascade action, and a row whose column is absent is ignored
 
+  Scenario: _index_from_pragma resolves one index from its PRAGMA rows
+    Given an index's PRAGMA index_list unique flag and its PRAGMA index_info rows
+    When _index_from_pragma resolves them
+    Then it returns the index's columns in order, with unique only when the index is unique
+
+  Scenario: _read_sqlite_indexes reads a table's explicit indexes
+    Given a SQLite connection and a table name
+    When _read_sqlite_indexes reads it
+    Then it returns each explicitly-created index (PRAGMA index_list origin 'c') with its columns, and not the auto-index backing a unique or primary-key constraint
+
+  Scenario: _pg_indexes groups the pg_catalog index rows into per-table indexes
+    Given the pg_catalog index rows
+    When _pg_indexes groups them
+    Then it returns, per table, each index's columns in order with unique only when the index is unique
+
   Scenario: _read_object_registry reconstructs extended objects from the _hp_object registry
     Given a connection and a registry-existence query
     When _read_object_registry reads it

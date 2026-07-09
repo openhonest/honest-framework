@@ -769,6 +769,12 @@ def _probe_extended():
     roster_drop = next((o for o in fk_drop["operations"] if o["op"] == "drop_table" and o["table"] == "roster"), None)
     if not roster_drop or roster_drop["details"].get("columns", {}).get("team_id", {}).get("references") != "team.id":
         bad.append(f"a drop_table op should carry the table's columns so inline foreign keys order the drop: {roster_drop}")
+    # A new table's indexes are created too: create_table is followed by an add_index per index, so
+    # the index is not silently lost.
+    new_indexed = diff({}, {"t": {"columns": {"id": {"type": "integer"}, "s": {"type": "integer"}}, "indexes": {"by_s": {"columns": ["s"]}}}})
+    added_index = [o for o in new_indexed["operations"] if o["op"] == "add_index"]
+    if len(added_index) != 1 or added_index[0]["table"] != "t" or added_index[0]["details"]["index"] != "by_s" or added_index[0]["details"]["definition"] != {"columns": ["s"]}:
+        bad.append(f"a new table's indexes should be created via add_index: {added_index}")
     # A primary-key column is canonically not-null, whether declared column-level or in the table's
     # primary_key list, so a declared primary key round-trips against the not-null the inspector reads.
     from honest_persist.schema import _canonical_columns
@@ -1338,7 +1344,7 @@ def _probe_postgres_pure():
     (which skips the real-server integration probe), so the PostgreSQL pure logic stays
     mutation-tested."""
     from honest_persist.migrate import (
-        _PG_REGISTRY_EXISTS, _PG_SCHEMA, _pg_column, _pg_tables, _pg_type,
+        _PG_INDEXES, _PG_REGISTRY_EXISTS, _PG_SCHEMA, _pg_column, _pg_tables, _pg_type,
     )
     bad = []
     if _pg_type("timestamp with time zone") != "timestamptz" or _pg_type("text") != "text" or _pg_type("integer") != "integer":
@@ -1355,14 +1361,23 @@ def _probe_postgres_pure():
         _r(table_name="account", column_name="team_id", data_type="integer", is_nullable="YES", column_default=None, is_primary_key=0, ref_table="team", ref_column="id", delete_rule="CASCADE"),
         _r(table_name="_hp_object", column_name="name", data_type="text", is_nullable="NO", column_default=None, is_primary_key=1),
     ]
-    tables = _pg_tables(rows, {"_hp_object"})
+    index_rows = [
+        {"table_name": "account", "index_name": "account_by_email", "column_name": "email", "indisunique": False},
+        {"table_name": "account", "index_name": "account_uq_created_team", "column_name": "created", "indisunique": True},
+        {"table_name": "account", "index_name": "account_uq_created_team", "column_name": "team_id", "indisunique": True},
+        {"table_name": "_hp_object", "index_name": "hp_ix", "column_name": "name", "indisunique": False},
+    ]
+    tables = _pg_tables(rows, index_rows, {"_hp_object"})
     if tables != {"account": {"columns": {
         "id": {"type": "integer", "nullable": False, "primary_key": True},
         "email": {"type": "text", "nullable": True},
         "created": {"type": "timestamptz", "nullable": True, "default": "now()"},
         "team_id": {"type": "integer", "nullable": True, "references": "team.id", "on_delete": "cascade"},
+    }, "indexes": {
+        "account_by_email": {"columns": ["email"]},
+        "account_uq_created_team": {"columns": ["created", "team_id"], "unique": True},
     }}}:
-        bad.append(f"_pg_tables should group, exclude owned tables, and resolve every column shape: {tables}")
+        bad.append(f"_pg_tables should group columns and attach explicit indexes, excluding owned tables: {tables}")
     # _pg_column omits the primary-key flag, default, and foreign key when absent.
     if _pg_column(_r(data_type="text", is_nullable="YES", column_default=None, is_primary_key=0)) != {"type": "text", "nullable": True}:
         bad.append("_pg_column should omit primary_key, default, and references when absent")
@@ -1392,6 +1407,19 @@ def _probe_postgres_pure():
         "WHERE c.table_schema = 'public' ORDER BY c.table_name, c.ordinal_position"
     ):
         bad.append(f"the schema query is wrong: {_PG_SCHEMA}")
+    if _PG_INDEXES != (
+        "SELECT t.relname AS table_name, i.relname AS index_name, a.attname AS column_name, ix.indisunique "
+        "FROM pg_index ix "
+        "JOIN pg_class i ON i.oid = ix.indexrelid "
+        "JOIN pg_class t ON t.oid = ix.indrelid "
+        "JOIN pg_namespace n ON n.oid = t.relnamespace "
+        "JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true "
+        "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum "
+        "WHERE n.nspname = 'public' AND NOT ix.indisprimary "
+        "AND ix.indexrelid NOT IN (SELECT conindid FROM pg_constraint WHERE contype IN ('p', 'u')) "
+        "ORDER BY t.relname, i.relname, k.ord"
+    ):
+        bad.append(f"the index query is wrong: {_PG_INDEXES}")
     from honest_persist.migrate import _INSPECTORS, _inspect_postgresql
     if _INSPECTORS.get("postgresql") is not _inspect_postgresql:
         bad.append("postgresql should dispatch to the PostgreSQL inspector")
@@ -1555,6 +1583,10 @@ _ROUNDTRIP_SCHEMAS = {
             "team_id": {"type": "integer", "nullable": True, "references": "team.id", "on_delete": "cascade"},
         }},
     }},
+    "indexes": {"tables": {"event": {
+        "columns": {"id": {"type": "integer", "primary_key": True}, "kind": {"type": "text", "nullable": True}, "at": {"type": "integer", "nullable": True}},
+        "indexes": {"event_by_kind": {"columns": ["kind"]}, "event_by_kind_at": {"columns": ["kind", "at"], "unique": True}},
+    }}},
 }
 
 
@@ -2258,6 +2290,17 @@ def _probe_migrate():
             "note": {"type": "text"},
         }:
             bad.append(f"_attach_foreign_keys should set references and cascade actions on the right column: {attached}")
+
+        # inspect reads a table's explicit indexes (PRAGMA index_list origin 'c') with their columns and
+        # unique flag, but not the auto-index backing a UNIQUE column or the primary key.
+        ix = _SqliteConn()
+        await ix.execute("CREATE TABLE ev (id integer PRIMARY KEY, kind text UNIQUE, a integer, b integer)")
+        await ix.execute("CREATE INDEX ev_by_a ON ev (a)")
+        await ix.execute("CREATE UNIQUE INDEX ev_uq_ab ON ev (a, b)")
+        read_ix = await inspect(ix, "sqlite")
+        got_ix = read_ix["ok"]["tables"]["ev"].get("indexes", {})
+        if got_ix != {"ev_by_a": {"columns": ["a"]}, "ev_uq_ab": {"columns": ["a", "b"], "unique": True}}:
+            bad.append(f"inspect should read only explicit indexes, with their columns and unique flag: {got_ix}")
 
         # inspect reads tables and columns back with type, nullability, primary key, and default.
         rich = _SqliteConn()
