@@ -1821,7 +1821,7 @@ def _probe_migrate():
     composes inspect + diff + apply against a real database — creating a table, then adding a column
     on a second pass — refusing without applying when the diff is ambiguous, surfacing a diff fault
     for an invalid target, and faulting on an unsupported dialect. Driven end-to-end on real SQLite."""
-    from honest_persist import inspect, migrate
+    from honest_persist import diff, expand_schema, inspect, migrate, object_registry_queries
 
     async def _run():
         bad = []
@@ -1832,10 +1832,12 @@ def _probe_migrate():
             "CREATE TABLE rich (id integer PRIMARY KEY, label text NOT NULL, score integer DEFAULT 5, note text)"
         )
         read = await inspect(rich, "sqlite")
-        if set(read["ok"]) != {"rich"}:
+        if set(read["ok"]) != {"tables", "views", "triggers", "procedures"}:
+            bad.append(f"inspect should return a full SchemaDefinition (section 9.1): {read}")
+        if set(read["ok"]["tables"]) != {"rich"}:
             bad.append(f"inspect should read exactly the user tables: {read}")
         else:
-            cols = read["ok"]["rich"]["columns"]
+            cols = read["ok"]["tables"]["rich"]["columns"]
             if cols["id"] != {"type": "integer", "nullable": True, "primary_key": True}:
                 bad.append(f"inspect should read the primary key column: {cols.get('id')}")
             if cols["label"] != {"type": "text", "nullable": False}:
@@ -1854,8 +1856,52 @@ def _probe_migrate():
         v2 = {"notes": {"columns": {"body": {"type": "text", "nullable": True}, "ts": {"type": "integer", "nullable": True}, "tag": {"type": "text", "nullable": True}}}}
         second = await migrate(v2, conn, "sqlite")
         after = await inspect(conn, "sqlite")
-        if "ok" not in second or "tag" not in after["ok"]["notes"]["columns"]:
+        if "ok" not in second or "tag" not in after["ok"]["tables"]["notes"]["columns"]:
             bad.append(f"migrate should add the new column on the second pass: {second}, {after}")
+
+        # §9.1: extended objects round-trip through the _hp_object registry. A view and a trigger
+        # declared in the schema are read back exactly by the next inspect, so a stable schema diffs
+        # to no operations rather than re-creating them on every migration. (Procedures are not a
+        # SQLite object, so their registry round-trip is exercised directly below.)
+        ext = _SqliteConn()
+        with_objects = {
+            "tables": {"widget": {"columns": {"id": {"type": "integer", "nullable": True}, "qty": {"type": "integer", "nullable": True}}}},
+            "views": {"widget_v": {"query": "SELECT id FROM widget", "depends_on": ["widget"]}},
+            "triggers": {"widget_t": {"table": "widget", "timing": "after", "events": ["insert"], "body": "BEGIN SELECT 1; END"}},
+        }
+        made = await migrate(with_objects, ext, "sqlite")
+        back = await inspect(ext, "sqlite")
+        if "ok" not in made or not made["ok"]["success"]:
+            bad.append(f"migrate should create the tables and extended objects: {made}")
+        elif back["ok"]["views"] != with_objects["views"] or back["ok"]["triggers"] != with_objects["triggers"]:
+            bad.append(f"inspect should round-trip views and triggers from the registry: {back['ok']}")
+        elif set(back["ok"]["tables"]) != {"widget"}:
+            bad.append(f"inspect should hide the _hp_object registry from the tables it reports: {back['ok']['tables']}")
+        else:
+            stable = diff(back["ok"], expand_schema(with_objects))
+            if stable["operations"]:
+                bad.append(f"a schema whose extended objects already exist should diff to no operations: {stable['operations']}")
+            dropped = await migrate({"tables": with_objects["tables"], "views": {}, "triggers": {}, "procedures": {}}, ext, "sqlite")
+            gone = await inspect(ext, "sqlite")
+            if "ok" not in dropped or gone["ok"]["views"] or gone["ok"]["triggers"]:
+                bad.append(f"dropping the extended objects should clear them from the registry: {dropped}, {gone['ok']}")
+
+        # object_registry_queries records every extended-object kind, including procedures, which are
+        # not a SQLite object but still round-trip through the registry exactly as declared.
+        proc_conn = _SqliteConn()
+        proc_schema = {"tables": {}, "procedures": {"total": {"kind": "function", "params": [{"name": "n", "type": "integer"}], "returns": "integer", "language": "sql", "body": "BEGIN RETURN n; END"}}}
+        for query in object_registry_queries(proc_schema, "sqlite"):
+            await proc_conn.execute(query["sql"], query["params"])
+        proc_back = await inspect(proc_conn, "sqlite")
+        if proc_back["ok"]["procedures"] != proc_schema["procedures"]:
+            bad.append(f"the registry should round-trip a procedure definition exactly: {proc_back['ok']['procedures']}")
+
+        # The stored definition JSON is key-sorted, so the same logical object always serializes to
+        # the same bytes regardless of dict insertion order — deterministic registry rows.
+        ordered = object_registry_queries({"tables": {}, "views": {"v": {"query": "SELECT 1", "materialized": False}}}, "sqlite")
+        stored = [q["params"]["definition"] for q in ordered if q["params"].get("name") == "v"]
+        if stored != ['{"materialized": false, "query": "SELECT 1"}']:
+            bad.append(f"object_registry_queries should store the definition as key-sorted JSON: {stored}")
 
         # An ambiguous diff (a likely rename) is refused — the database is left untouched.
         amb = _SqliteConn()
@@ -1866,7 +1912,7 @@ def _probe_migrate():
         err_amb = refused.get("err", {})
         if err_amb.get("code") != "migration_ambiguous" or err_amb.get("message") != "Diff is ambiguous; a human must resolve the renames before applying" or err_amb.get("category") != "server" or "ambiguities" not in (err_amb.get("detail") or {}):
             bad.append(f"the ambiguous-diff fault should be fully named with its ambiguities: {refused}")
-        if "emial" not in still["ok"]["acct"]["columns"]:
+        if "emial" not in still["ok"]["tables"]["acct"]["columns"]:
             bad.append(f"migrate should refuse an ambiguous diff without applying: {still}")
 
         # An invalid target schema fails at the diff, before any apply.
@@ -1888,7 +1934,7 @@ def _probe_migrate():
         target = {"t": {"columns": {"id": {"type": "integer", "nullable": True}, "x": {"type": "integer", "nullable": True, "check": "x @@ 1"}}}}
         construction = await migrate(target, badcheck, "turso")
         left = await inspect(badcheck, "turso")
-        if construction.get("err", {}).get("code") != "uncompilable_check" or "t" in left["ok"]:
+        if construction.get("err", {}).get("code") != "uncompilable_check" or "t" in left["ok"]["tables"]:
             bad.append(f"migrate should refuse an uncompilable CHECK at construction without applying: {construction}, {left}")
         return bad
 
@@ -1922,6 +1968,22 @@ def _probe_abstractions():
         plain = {"t": {"columns": {"a": {"type": "text"}}}}
         if expand_schema(plain) != plain:
             bad.append("expand_schema should leave a plain schema unchanged in shape")
+        # A full SchemaDefinition is expanded in shape: its tables' abstractions are rewritten while
+        # views, triggers, and procedures pass through untouched (section 9.1).
+        definition = {
+            "tables": {"e": {"columns": {"span": {"type": "range", "bound_type": "integer"}}}},
+            "views": {"v": {"query": "SELECT 1"}},
+        }
+        expanded_def = expand_schema(definition)
+        if set(expanded_def) != {"tables", "views"} or expanded_def["views"] != {"v": {"query": "SELECT 1"}}:
+            bad.append(f"expand_schema should expand a definition in shape, passing views through: {expanded_def}")
+        elif set(expanded_def["tables"]["e"]["columns"]) != {"span_lower", "span_upper"}:
+            bad.append(f"expand_schema should rewrite abstractions in a definition's tables: {expanded_def['tables']}")
+        # A bare schema is detected by its keys, not by a reserved-looking name: a lone table named
+        # 'views' is still a table whose abstraction column is expanded, not an extended-object map.
+        reserved_name = expand_schema({"views": {"columns": {"s": {"type": "range", "bound_type": "integer"}}}})
+        if set(reserved_name.get("views", {}).get("columns", {})) != {"s_lower", "s_upper"}:
+            bad.append(f"expand_schema should treat a bare schema by its keys, not a reserved name: {reserved_name}")
         # A range column without a declared nullability gives bounds without a nullable key.
         loose = expand_schema({"r": {"columns": {"s": {"type": "range", "bound_type": "text"}}}})
         if loose["r"]["columns"]["s_lower"] != {"type": "text"}:

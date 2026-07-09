@@ -13,12 +13,18 @@ own catalog. SQLite is read through `sqlite_master` and `PRAGMA table_info`. Res
 PRAGMA row to a column definition is pure; only the catalog reads are I/O.
 """
 
+import json
+
 from honest_type import err, fault, ok
 
 from honest_persist.abstractions import enum_seed_queries, expand_schema
 from honest_persist.apply import apply
 from honest_persist.check import validate_checks
-from honest_persist.schema import diff
+from honest_persist.schema import diff, object_registry_queries
+
+# The `kind` recorded in the `_hp_object` registry (section 9.1) maps to the SchemaDefinition map the
+# reconstructed object belongs in.
+_REGISTRY_MAP = {"view": "views", "trigger": "triggers", "procedure": "procedures"}
 
 
 def _column_from_pragma_row(row):
@@ -38,19 +44,40 @@ def _columns_from_pragma(rows):
     return {row["name"]: _column_from_pragma_row(row) for row in rows}
 
 
+async def _read_object_registry(conn):
+    """Reconstruct the extended objects (views, triggers, procedures) of a live SQLite database from
+    the `_hp_object` registry (section 9.1). I/O. Each row's canonical definition is stored as JSON,
+    so reconstruction is an exact round-trip that never parses the database's rendered DDL. A database
+    honest-persist has not yet touched has no registry table and therefore no extended objects.
+    Returns {views, triggers, procedures}."""
+    objects = {"views": {}, "triggers": {}, "procedures": {}}
+    present = await conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_hp_object'")
+    if not present["rows"]:
+        return objects
+    rows = await conn.execute("SELECT name, kind, definition FROM _hp_object")
+    for row in rows["rows"]:
+        objects[_REGISTRY_MAP[row["kind"]]][row["name"]] = json.loads(row["definition"])
+    return objects
+
+
 async def _inspect_sqlite(conn):
-    """Read the live schema of a SQLite database (section 9): list the user tables from
-    `sqlite_master`, then read each table's columns through `PRAGMA table_info`. I/O. Returns
-    ok(schema) — a bare Schema of table name to {columns}."""
+    """Read the complete live schema of a SQLite database (section 9.1): the user tables and their
+    columns from `sqlite_master` and `PRAGMA table_info`, and the views, triggers, and procedures
+    from the `_hp_object` registry. The registry itself is honest-persist's own bookkeeping, not a
+    user table, so it is not reported among the tables. I/O. Returns ok of a full SchemaDefinition
+    (section 4.15)."""
+    objects = await _read_object_registry(conn)
     listing = await conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
     )
-    schema = {}
+    tables = {}
     for row in listing["rows"]:
         name = row["name"]
+        if name == "_hp_object":
+            continue
         info = await conn.execute("PRAGMA table_info(" + name + ")")
-        schema[name] = {"columns": _columns_from_pragma(info["rows"])}
-    return ok(schema)
+        tables[name] = {"columns": _columns_from_pragma(info["rows"])}
+    return ok({"tables": tables, **objects})
 
 
 # The inspector for each supported dialect (section 9, 12). Each reads its own catalog.
@@ -94,5 +121,7 @@ async def migrate(schema, conn, dialect):
     applied = await apply(result, expanded, conn, dialect)
     if applied["success"]:
         for query in enum_seed_queries(expanded, dialect):
+            await conn.execute(query["sql"], query["params"])
+        for query in object_registry_queries(expanded, dialect):
             await conn.execute(query["sql"], query["params"])
     return ok(applied)

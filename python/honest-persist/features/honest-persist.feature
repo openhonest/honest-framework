@@ -449,10 +449,15 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When _columns_from_pragma resolves them
     Then it returns a map of column name to column definition
 
+  Scenario: _read_object_registry reconstructs extended objects from the _hp_object registry
+    Given a SQLite connection
+    When _read_object_registry reads it
+    Then it returns the views, triggers, and procedures rebuilt exactly from the registry rows, or empty maps when the database has no registry table yet
+
   Scenario: _inspect_sqlite reads the live schema of a SQLite database
     Given a SQLite connection
     When _inspect_sqlite reads it
-    Then it lists the user tables from sqlite_master and reads each table's columns through PRAGMA table_info
+    Then it returns a full SchemaDefinition, reading user tables and columns from the catalog and the extended objects from the registry, and does not report the registry table itself
 
   Scenario: inspect reads the live database schema for the dialect
     Given a connection and a dialect
@@ -479,10 +484,15 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     When _expand_table expands it
     Then it passes plain columns through, rewrites abstraction columns to their relational form, and collects any tables an abstraction generates
 
+  Scenario: _expand_tables expands every abstraction column in a bare tables map
+    Given a bare tables map
+    When _expand_tables expands it
+    Then it rewrites each table's abstraction columns and adds the tables those abstractions generate
+
   Scenario: expand_schema expands every abstraction in a schema
-    Given a bare schema
+    Given a bare schema or a full SchemaDefinition
     When expand_schema expands it
-    Then it returns a schema with each abstraction rewritten and any generated tables added, leaving a schema with no abstractions unchanged in shape
+    Then it rewrites each abstraction and adds any generated tables, expanding a full definition in shape so its views, triggers, and procedures pass through, and leaving a schema with no abstractions unchanged in shape
 
   Scenario: range_overlaps builds an overlap condition over the bound columns
     Given a column and a query range
@@ -603,6 +613,11 @@ Feature: honest-persist (Python supplement) — SQL rendering and query construc
     Given an expanded schema and a dialect
     When enum_seed_queries builds the inserts
     Then it returns one insert-or-ignore per seed row in the dialect's ignore form, so re-running adds new values without disturbing existing rows
+
+  Scenario: object_registry_queries brings the _hp_object registry in step with a schema
+    Given a schema and a dialect
+    When object_registry_queries builds the queries
+    Then it ensures the registry table exists, clears it, and records each view, trigger, and procedure as a row carrying its canonical definition as JSON
 
   Scenario: table marks a Pydantic model as a named table
     Given a table name

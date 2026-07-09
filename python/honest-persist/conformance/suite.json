@@ -3653,6 +3653,7 @@
     "closure_delete",
     "closure_move",
     "enum_seed_queries",
+    "object_registry_queries",
     "empty_write_queue",
     "enqueue_write",
     "merge_pending",

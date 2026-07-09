@@ -74,7 +74,7 @@ from honest_persist.query import (
     update,
 )
 from honest_persist.transaction import transaction
-from honest_persist.schema import diff, validate_schema
+from honest_persist.schema import diff, object_registry_queries, validate_schema
 from honest_persist.instrument import (
     POOL_FAULT_CODES,
     build_migration_event,
@@ -185,6 +185,7 @@ __all__ = [
     "closure_delete",
     "closure_move",
     "enum_seed_queries",
+    "object_registry_queries",
     "empty_write_queue",
     "enqueue_write",
     "merge_pending",

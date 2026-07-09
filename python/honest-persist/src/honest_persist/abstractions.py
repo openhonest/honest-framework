@@ -181,17 +181,27 @@ def _expand_table(table_name, table):
     return expanded, generated
 
 
-def expand_schema(schema):
-    """Expand every abstraction declaration in a bare Schema into ordinary tables, columns, and
-    constraints (section 6). Pure schema -> schema: a schema with no abstractions is returned
-    unchanged in shape; abstraction columns are rewritten, and the tables an abstraction generates
-    are added alongside the owning table. Runs before diff and apply."""
+def _expand_tables(tables):
+    """Expand every abstraction column in a bare tables map (section 6). Pure."""
     result = {}
-    for table_name, table in schema.items():
+    for table_name, table in tables.items():
         expanded, generated = _expand_table(table_name, table)
         result[table_name] = expanded
         result.update(generated)
     return result
+
+
+def expand_schema(schema):
+    """Expand every abstraction declaration into ordinary tables, columns, and constraints (section
+    6). Pure schema -> schema: a schema with no abstractions is returned unchanged in shape;
+    abstraction columns are rewritten, and the tables an abstraction generates are added alongside
+    the owning table. Runs before diff and apply. A full SchemaDefinition (section 4.15) is expanded
+    in shape — only its `tables` are rewritten; views, triggers, and procedures pass through — so a
+    schema that declares extended objects survives expansion. A bare tables map expands to a bare
+    tables map."""
+    if "tables" in schema and set(schema) <= {"tables", "views", "triggers", "procedures"}:
+        return {**schema, "tables": _expand_tables(schema["tables"])}
+    return _expand_tables(schema)
 
 
 def range_overlaps(column, lower, upper):

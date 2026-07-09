@@ -10,11 +10,17 @@ ordered (section 5.4); a cycle in the dependency graph is a schema design error 
 fault. Ambiguity detection (section 5.3) and apply() (section 5.2) are separate.
 """
 
+import json
+
 from honest_type import err, fault, ok
 
 from honest_persist.ambiguity import detect_ambiguities
 from honest_persist.deps import build_dependencies, topological_sort
 from honest_persist.types import diff_result, operation
+
+# The extended-object maps of a SchemaDefinition and the `kind` each is stored under in the
+# `_hp_object` registry (section 9.1).
+_REGISTRY_KINDS = (("views", "view"), ("triggers", "trigger"), ("procedures", "procedure"))
 
 
 def _resolve_renames(added, dropped, target_mapping):
@@ -138,6 +144,27 @@ def _normalize(schema):
             "procedures": schema.get("procedures", {}),
         }
     return {"tables": schema, "views": {}, "triggers": {}, "procedures": {}}
+
+
+def object_registry_queries(schema, dialect):
+    """The queries that bring the `_hp_object` registry (section 9.1) in step with a schema's extended
+    objects, run after apply in the same workflow slot as `enum_seed_queries` (section 6.1). Pure
+    query builder: ensure the registry table exists, clear it, and record every view, trigger, and
+    procedure as a row carrying its canonical definition as JSON — so the inspector reconstructs each
+    one exactly without ever parsing the database's rendered DDL. Clearing then re-recording lets the
+    registry shed objects the schema has dropped. Returns a list of `{sql, params}`."""
+    definition = _normalize(schema)
+    queries = [
+        {"sql": "CREATE TABLE IF NOT EXISTS _hp_object (name TEXT PRIMARY KEY, kind TEXT NOT NULL, definition TEXT NOT NULL)", "params": {}},
+        {"sql": "DELETE FROM _hp_object", "params": {}},
+    ]
+    for key, kind in _REGISTRY_KINDS:
+        for name in sorted(definition[key]):
+            queries.append({
+                "sql": "INSERT INTO _hp_object (name, kind, definition) VALUES (:name, :kind, :definition)",
+                "params": {"name": name, "kind": kind, "definition": json.dumps(definition[key][name], sort_keys=True)},
+            })
+    return queries
 
 
 def _diff_views(current_views, target_views):
