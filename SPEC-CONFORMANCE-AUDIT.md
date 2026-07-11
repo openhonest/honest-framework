@@ -66,8 +66,8 @@ Verdicts use three honest categories:
 | honest-errors | **SPEC-COMPLETE** | 27/27 | none |
 | honest-gherkin | **SPEC-COMPLETE** | 13/13 | none |
 | honest-features | **COMPLETE AT MANDATE** | 9/9 lib functions | Full/Complete need app-layer routes/CLI (spec §11 defers) |
-| honest-state | **COMPLETE AT MANDATE** | 15/18 | law+taxonomy complete; no conformance test that the §3 honest-check rules actually fire |
-| honest-auth | **SUBSET** | ~11/28 (~39%) | `test_token_generator.generate()` contract wrong/absent; no 6-token-class enforcement; no conformance-suite app; `"unauthenticated"` fault key not enforced |
+| honest-state | **COMPLETE AT MANDATE** | 17/18 | law + taxonomy + §1.3 DOM decomposition complete; remaining: hub-suite test that the §3 rules fire, and the JS-side DOM-single-store rule |
+| honest-auth | **COMPLETE AT MANDATE** | 13/13 fns; all 5 gates | contract-shape gaps resolved; §4.7 authentication-honesty verifier, §2.4 missing-credential rule, §5.3 dev provider + adopter templates added; remaining: §9.2 hub conformance app + `[honest-auth-provider]` metadata |
 | honest-check | **SPEC-COMPLETE** | 36/36 static rules; HC002 first-link live | none (HC011 spec reconciled to the pure-static design — eac7ae7) |
 | honest-observe | **SPEC-COMPLETE** | auth attrs + grouped metrics done | none (proof_checked, persist metrics, install_otel_exporter, dev-mode are by-design elsewhere/boundary) |
 | honest-test | **SPEC-COMPLETE** | §4.4 + §8.2 + §8.4 done | none (the runner, HC-P009, and §6/§7 are not-gaps — by design) |
@@ -81,8 +81,8 @@ Score: of 13 modules, **7 spec-complete, 2 complete-at-mandate, 4 genuine subset
 Remediation is proceeding in the spec's bootstrap/dependency order
 (`specs/01-framework/honest-framework-spec.md` §299): parse → check → test →
 observe → persist → auth → state → features → DOM → alerts. Completed:
-**parse**, **honest-check**, **honest-test**, **observe** (2026-07-08). Next:
-**persist**.
+**parse**, **honest-check**, **honest-test**, **observe** (2026-07-08),
+**persist**, **auth**, **state** (2026-07-11). Next: **features**.
 
 (Tier 3 honest-components and honest-page have specs but are not yet built in
 this tree, so they are outside this audit's scope; they were never reported
@@ -136,25 +136,45 @@ not the linter's firing; (2) the **DOM-single-store rule** is JS-side and belong
 to the in-progress honest-DOM JS toolchain. Its own mandate ("define the law and
 the taxonomy; primitives live in home modules") is met.
 
-### honest-auth — SUBSET (~39%)
-The AuthProvider TypedDict (five fields), the pure value-registry
+### honest-auth — COMPLETE AT MANDATE (resolved 2026-07-11; the ~39% audit is superseded)
+The Python reference surface is complete and passes all five gates (10
+conformance laws, 0 lint errors, 100% line+branch, 294/294 value cases,
+13-function bijection, mutation-adequate). The AuthProvider TypedDict (five
+fields), the pure value-registry
 (`empty_registry`/`register_auth_provider`/`registered_provider`, immutable),
-`authenticate()` boundary dispatch, and `fault_status()` mapping are implemented
-and pure. Verified gaps:
-- **`test_token_generator` contract is wrong** — spec §2.4 requires
-  `.generate(class, context) → Token`; the impl carries only a `Callable` with a
-  `(class_name) → token` comment and no `.generate()`; honest-test cannot drive it.
-- **No enforcement of the six token classes** (valid/revoked/expired/malformed/
-  missing/forged) a provider must produce.
-- **No conformance-suite app** (§9.2 `honest/honest-auth-conformance/` synthetic
-  boundary) — only portable value cases exist.
-- **`"unauthenticated"` fault-mapping key not enforced** (§2.5/§4.5 require it
-  always present); a provider with `fault_mapping: {}` registers successfully.
-- Conformance metadata is `[tool.honest-check]`, not the spec's
-  `[honest-auth-provider]`.
-Much of what remains (domain-mutation prevention, determinism, boundary
-placement) is correctly deferred to honest-check/honest-test/host, per
-[[auth-is-boundary-validation]]; the contract-shape gaps above are the real ones.
+`authenticate()` boundary dispatch, and `fault_status()` mapping were already
+present; this session closed the contract-shape gaps the old audit flagged and
+added the missing verifier:
+- **`test_token_generator` contract resolved.** The framework has no methods, so
+  spec §2.4 was corrected to a plain callable `test_token_generator(class,
+  context) → Token`; the impl matches. There is no `.generate()` to be missing.
+- **The six token classes are enforced.** `authentication_honesty(provider,
+  context)` (§4.7) drives all six (valid/revoked/expired/malformed/missing/
+  forged) through the boundary and returns `authentication_dishonest` listing any
+  class whose outcome breaks the contract; `resolve_actor_deterministic` checks a
+  token resolves the same way twice under fixed state.
+- **`"unauthenticated"` mapping is guaranteed by design, not a gap.**
+  `fault_status` falls back to the framework defaults (`unauthenticated → 401`),
+  so the effective mapping always maps `unauthenticated` even when a provider
+  ships `fault_mapping: {}`. §2.5's "as long as unauthenticated remains" holds
+  structurally.
+- **§2.4 missing-credential rule added.** A `None`/empty credential is
+  `unauthenticated` before the recognizer, not malformed.
+- **A dev provider ships (§5.3).** `dev_auth_provider` — plaintext username/
+  password, empty stored password = any-password wildcard — registered
+  explicitly, never a default (§3.2). Four adopter provider templates
+  (auth0/firebase/supabase/clerk) live in `honest-auth/examples/`, outside the
+  gate, failing closed until wired.
+
+Remaining, integration-facing (not the Python surface): the **§9.2 conformance
+app** — the synthetic-boundary application (actor resolved at the boundary and
+passed inward as data, an expected HTTP response per token class, a check that no
+operation reads an actor from request input) — is not built; like the
+honest-state hub suite it is a hub-repo artifact (`honest/honest-auth-
+conformance/`), and its `[honest-auth-provider]` package-metadata declaration
+(name/conformance/version) goes with it. Domain-mutation prevention, determinism,
+and boundary placement remain correctly deferred to honest-check/honest-test/
+host, per [[auth-is-boundary-validation]].
 
 ### honest-check — SPEC-COMPLETE (resolved 2026-07-08; the audit's own claims were partly wrong)
 Reading the spec directly corrected three of this module's audit claims:
