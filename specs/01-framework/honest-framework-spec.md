@@ -42,6 +42,25 @@ For a worked example of this principle taken to its hardest case — the connect
 
 ---
 
+## Apophasis: correctness attested by refusal
+
+There is one method under all of it, and it has a name: **apophasis** — definition by negation, the *via negativa*. The framework never asserts the positive claim "this program is correct." A positive claim about behaviour has to account for every behaviour the program can have, and for any non-trivial system that set is unbounded and unprovable — so the framework refuses to make it. It asserts the negative instead: "this program *cannot contain* category X." A claim about the absence of a category is decidable on the shape of the code, and where it is decidable it is complete.
+
+This is why the framework proves what other approaches only hope for. You cannot demonstrate correctness directly; you can make whole categories of incorrectness impossible to express and then attest their absence. Every mechanism here is that one move:
+
+- **DATAOS** refuses the parallel state model — there is no second copy to disagree, so the synchronization bug cannot exist.
+- **Honest Code** refuses Big State — no hidden state, no undifferentiated state, no duplicate truth; the categories are unrepresentable, not merely discouraged.
+- **honest-check** is complete and *defaults to rejecting*: there is no way to write a class that "no classes" fails to see. It attests what cannot slip through, not what passes.
+- **The input boundary is closed** — not an enumeration of valid inputs but the refusal of any unknowable channel; the refused catch-all recognizer makes an unbounded input impossible even to *declare*.
+- **Every reference resolves, or the gate stops** — the dangling reference is refused.
+- **Mutation adequacy** — a change no test would catch is refused entry; a test that checks itself against itself surfaces as an uncaught change.
+- **Poka-yoke** is the design expression: every capability is defined by the category of bug it makes structurally impossible (`principles/poka-yoke.md`).
+- **Root-cause analysis** is the debugging expression: not "X is the root cause" (a positive, unfalsifiable claim) but "under a stated evidence set and method, no upstream cause was found" (`methodology/root-cause-analysis.md`).
+
+And the honesty that makes an apophatic claim more than a boast: **every one states its bound.** honest-check is complete on limited input and best-effort-*but-marked* on purity. The closed boundary is closed relative to the source the one parser reads. Root-cause analysis is complete relative to its evidence set and method. You attest the completeness of a *bounded search*, never omniscience — and you say where the bound is. A positive claim hides its bound and so cannot be checked; the apophatic claim wears its bound on its face. Refuse the category, attest its absence, state the limit: that is the whole discipline.
+
+---
+
 ## The Third Pillar: Architecture-First IDE
 
 The framework is not a linter plus a plugin plus a code generator stapled together. It is the foundation for a new category of development environment: **an IDE whose organizing unit is the architecture, not the file**.

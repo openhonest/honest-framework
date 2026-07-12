@@ -10,6 +10,8 @@
 
 Honest Code's advantage over class-based frameworks is not primarily a stylistic preference. It is a structural velocity multiplier. Every bug category that a framework makes **structurally unreachable** is effort a developer never has to spend defending against that category. Industry productivity baselines are measured against stacks that leave most of those categories reachable. Honest Code doesn't.
 
+Poka-yoke is the **design expression of the framework's apophatic core** (framework spec, "Apophasis: correctness attested by refusal"). The framework does not assert that code is correct; it makes categories of incorrectness impossible to express and attests their absence. "Which category of bug does this make structurally impossible?" is that same *via negativa* asked at design time — every guardrail below is a category refused.
+
 The direct implication: *any Honest Code developer's steady-state throughput should exceed industry baselines by a margin roughly proportional to the catalogue of bug categories the framework has eliminated.* This is a testable claim, not a marketing one.
 
 ---
