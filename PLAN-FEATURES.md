@@ -1,6 +1,6 @@
 # Build Plan — honest-features
 
-**Status:** not started (this document is for review before any code changes).
+**Status:** DONE (2026-07-12, `cbefe16`). `validate_vocabulary` hardened to full §2.1/§10.2 structure via `_flag_wellformed` (exactly the keys `{states, initial_value}`, a collection of ≥2 distinct states, a member `initial_value`; never a `KeyError`); all five gates green. States-as-set was deliberately not enforced — the portable oracle carries states as a list and membership works identically, so requiring a set would be style, not poka-yoke. Cross-module checks recorded satisfied: observe event strings match §8.1/§8.2; honest-test Cartesian enumeration (§6.3) exists; HC-HF001/HF002 pass honest-check's own gate. Full/Complete conformance levels remain deferred to the app layer per §11.
 **Spec:** `specs/02-code-quality/honest-features-architecture.md`.
 **Finding in one line:** the module is almost entirely built and already passes all five gates; there is exactly **one** real implementation gap, and the rest of the spec is adopter-layer or explicitly deferred.
 
