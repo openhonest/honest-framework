@@ -88,10 +88,17 @@ starting with **page**.
 
 One cross-cutting exception rides forward with honest-check: the Tier-1 "every
 reference resolves" principle is a rolling capability, not a sealed one. Tier A
-(HC-REF001) is live; Tiers B/C enforce references on rendered surfaces and so are
-blocked on the application-production tier existing and on a CSS grammar in parse.
-They are future honest-check work, tracked in the HC-REF note and
-`PLAN-STATIC-REFERENCE-CHECK.md`, not part of any module reported complete.
+(HC-REF001) is live. Tiers B/C are **not blocked** — like Tier A they are testable
+against synthetic fixtures, so they need no real reference app. What they need is
+(a) a spec written first (HC-REF002+ as first-class rules, not trailing prose), and
+(b) a grammar addition to parse for each new reference kind: a template grammar to
+extract `{% include %}`/`{% extends %}` targets (parse's HTML grammar does not see
+Jinja), and a CSS grammar to read a stylesheet's definitions. There is also an open
+design question — the framework styles by custom-property tokens (honest-page §7),
+not CSS classes, so the styling-reference rule likely resolves `var(--token)` to a
+declared token rather than `class` to a rule. These are future honest-check work,
+tracked in the HC-REF note and `PLAN-STATIC-REFERENCE-CHECK.md`, not part of any
+module reported complete.
 
 (Tier 3 honest-components and honest-page have specs but are not yet built in
 this tree, so they are outside this audit's scope; they were never reported
