@@ -118,7 +118,7 @@ Each row: the architectural decision and the bug category it makes unreachable.
 | **Guarded mutations** (HC-P015 + honest-persist §7.5) | TOCTOU, lost-update, stale-read-based writes |
 | **State invariants + K-step sequences** (honest-test §5.4, §5.6) | Illegal-state-transition, multi-step aggregate bugs, orphaning |
 | **Adversarial neighbour testing** (honest-test §3.6) | Near-miss injection, Unicode confusable attacks, control-char bypass |
-| **Actor-identity-in-guard** (honest-auth, commercial) | Session-revocation TOCTOU, stale-actor privilege escalation |
+| **Actor-identity-in-guard** (honest-auth) | Session-revocation TOCTOU, stale-actor privilege escalation |
 | **Orchestrator non-compose** (HC-OR001) | Dispatcher-of-dispatchers nesting, invisible wire-up, I/O accounting loss |
 | **Function role declaration** (HC-R001) | Orphan code, coverage gaps, hidden entry points |
 | **Non-determinism monitor watch list** (HC008 published list) | Clock / random / env-var / I/O leaks into pure functions |

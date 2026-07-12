@@ -98,8 +98,8 @@ guessed: components use **real BEM CSS classes** owned per component, anchored b
 `data-component` as the BEM block name (honest-components, BEM namespace contract),
 sharing static `--ht-` custom-property tokens (honest-page §7); a genX `h*-`
 attribute runtime lazy-loads behaviour modules (framework spec, the h*- attribute
-skill registry); and a commercial themer regenerates CSS from a `style.json` token
-contract (honest-components, dynamic-theme tooling, out of FOSS scope).
+skill registry); dynamic-theme regeneration from a `style.json` token contract is
+out of FOSS scope.
 So Tier C's styling rule is a honest-components BEM-contract check (does a class
 resolve to a rule the component's CSS defines, with its prefix matching
 `data-component`), which cannot be specced until honest-components is read and

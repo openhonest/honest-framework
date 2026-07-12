@@ -80,7 +80,7 @@ A challenger whose argument is "the spec itself is incomplete" — vocabularies 
 - Performance bugs — slow code with correct output does not count
 - Bugs that require external dependencies to fail (network down, disk full, clock skew)
 - Resource lifecycle bugs that require sustained load to manifest
-- Concurrency bugs in code paths protected by `example-auth-pro` (commercial, black-box installed layer). Concurrency bugs in FOSS-only code paths remain in scope.
+- Concurrency bugs in code paths protected by `example-auth-pro` (a black-box installed layer, out of scope). Concurrency bugs in FOSS-only code paths remain in scope.
 
 ## Integration-test catchable — definition
 

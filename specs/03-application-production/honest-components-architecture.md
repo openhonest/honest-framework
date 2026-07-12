@@ -82,7 +82,7 @@ This is the same principle that made Neonto extraordinary: a single component sp
 
 - The templating syntax for any specific language (Jinja2, ERB, Blade, Go templates — all are valid implementations)
 - The HTTP routing mechanism for any specific framework (FastAPI, Rails, Laravel, Gin — all are valid implementations)
-- Visual assembly, certification, or a visual design mode — out of scope for this standard; handled by separate tooling
+- Visual assembly, certification, or a visual design mode — out of scope for this standard
 - Dynamic theme management and visual theme editing — out of scope for this standard. FOSS theming is the component runtime's startup merge of component token defaults (§6.4) plus honest-page's `--ht-` base tokens and `light-dark()`
 - CSS custom property values — declared as defaults in each component's `style.json`, merged at startup and overridable by the host
 
@@ -306,7 +306,7 @@ Components never declare their own CSS custom property values. They only referen
 
 **Normative (FOSS) path.** At startup, the component runtime reads the style manifest (`style.json`) from every installed component, collects every declared token across all components, and merges their declared default values into a single `:root {}` CSS block served to the browser. The installed component set determines the token set, exactly as it determines the stylesheet. Dark mode is honest-page's `light-dark()` mechanism (honest-page §7), not server-side mode resolution; the component runtime emits the declared defaults and the browser resolves light/dark. This static startup merge, combined with honest-page's `--ht-` base tokens, is the complete FOSS theming story. A conformant application themes fully with nothing more.
 
-**Out of scope for this standard.** Dynamic theme management — resolving token values against a theme record stored in honest-persist at serve time, regenerating the CSS when a theme record changes, and a visual token editor — is provided by separate tooling and is not part of the FOSS standard. Such tooling consumes the same `style.json` contract the FOSS component runtime does; the FOSS runtime never depends on it.
+**Out of scope for this standard.** Dynamic theme management — resolving token values against a theme record stored in honest-persist at serve time, regenerating the CSS when a theme record changes, and a visual token editor — is out of scope for this standard. The FOSS component runtime never depends on it.
 
 ### 6.5 style.json: The CSS Token Contract
 
@@ -336,7 +336,7 @@ Token values are absent by design. A token's value comes from the installed comp
 1. **Source for the startup token block.** The component runtime reads every installed component's `style.json` to assemble the single `:root {}` default-merge block (§6.4). The installed set determines the token set.
 2. **Override documentation for the host.** A host application reads `style.json` to know exactly what it can override. Every key is a supported customization point.
 
-Separate tooling outside this standard (visual token editors, assembly-time namespace-compatibility checkers) may also read `style.json`, but the standard does not require those tools, and `style.json` is fully meaningful without them.
+`style.json` is fully meaningful on its own; the standard requires no additional tooling to read it.
 
 Atoms and molecules have no `style.json`. Their CSS uses tokens from the application's `_variables.css` directly. Their token surface is implicit in their CSS files, not declared separately. Only organisms carry an explicit token contract because only organisms are packaged components with a declared external interface.
 

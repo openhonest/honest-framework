@@ -44,7 +44,7 @@ Identity is *good for the request*: it is resolved once, at the start, from the 
 - Multi-factor extensions (biometrics, device attestation, location, TOTP) — **provider implementation detail**
 - **Authorization for a specific target** (does this actor own this record? hold this role?) — this is ordinary business logic. A link checks it with an early-return guard or a role vocabulary, using the actor the boundary resolved, the same as any other business rule. honest-auth resolves *who the actor is*; the application decides *what that actor may do*.
 
-These are deliberately excluded. They are neither standardized across providers nor required by the framework's core claim. A provider that does the minimum (a demo with plaintext tokens) and a provider that does everything (a production-grade commercial offering) both satisfy the same `AuthProvider` contract.
+These are deliberately excluded. They are neither standardized across providers nor required by the framework's core claim. A provider that does the minimum (a demo with plaintext tokens) and a provider that does everything (a full production-grade implementation) both satisfy the same `AuthProvider` contract.
 
 ---
 
@@ -198,7 +198,7 @@ For the Full level, `resolve_actor_deterministic(provider, token)` resolves the 
 
 The following are illustrative. The framework does not privilege any specific provider.
 
-### 5.1 example-auth-pro (proprietary)
+### 5.1 example-auth-pro
 
 ```
 example_auth_pro = AuthProvider(
@@ -212,7 +212,7 @@ example_auth_pro = AuthProvider(
 register_auth_provider(example_auth_pro)
 ```
 
-Implementation is proprietary and ships as a black-box service or container. The session schema, rotation mechanics, and storage tier are not part of the FOSS spec.
+Its implementation ships as a black-box service or container. The session schema, rotation mechanics, and storage tier are not part of the FOSS spec.
 
 ### 5.2 honest-auth-capabilities (illustrative)
 

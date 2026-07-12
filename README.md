@@ -43,7 +43,7 @@ It points git at the in-repo hooks, verifies `uv`, and syncs the workspace. Idem
 - `python/test-affected.sh` / `python/test-all.sh` — behavioral gate: the conformance suite over the changed modules (pre-commit) / every module (CI).
 - `python/honest-check/conformance/suite.json` — honest-check's conformance suite (section 9.2): each case is source-as-data plus the diagnostics it must produce. `run_conformance.py` runs it. The test-of-record, with no hand-coded per-rule tests.
 
-The architectural-diagram renderer (honest-design) is proprietary and lives at `~/dev/commercial-honest/copyright/software/explorer/`; rendered output for FOSS modules is published at `~/dev/open-honest/honestframework-website/explorer/`. The `ui-audit` reference tool lives at `~/dev/open-honest/slop-audit/tools/ui-audit/` since it instruments one aspect of Slop Audit dimension 4.18.
+The architectural-diagram renderer (honest-design) is out of scope for this repo; rendered output for FOSS modules is published at `~/dev/open-honest/honestframework-website/explorer/`. The `ui-audit` reference tool lives at `~/dev/open-honest/slop-audit/tools/ui-audit/` since it instruments one aspect of Slop Audit dimension 4.18.
 
 ## Companion standards under the Foundation
 

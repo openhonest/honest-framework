@@ -27,7 +27,7 @@ honest-page is not a component. It is not a layout engine. It is a contract: a d
 ### 1.2 What honest-page Does Not Define
 
 - Visual design, colors, or typography — declared as CSS custom properties, resolved by the host
-- Visual assembly of component layout within main — out of scope for this standard (separate tooling); the FOSS layout primitives are defined here
+- Visual assembly of component layout within main — out of scope for this standard; the FOSS layout primitives are defined here
 - Dynamic theme authoring and visual token management — out of scope for this standard. FOSS theming is honest-page's `--ht-` base tokens plus `light-dark()` (§7), combined with the component runtime's startup merge of component token defaults (honest-components §6.4)
 - Authentication surfaces — honest-auth owns login, session expiry, and access denial rendering
 - Navigation structure — application-specific

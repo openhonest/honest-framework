@@ -39,7 +39,7 @@ So honest-state today claims ownership of DATAOS (→ DOM) and state-machine mec
 
 Identity is validated **at the boundary** (the FastAPI middleware, or the equivalent in another stack): the user is verified once at the edge, turned into a plain validated `actor` value, and passed inward as data. The pure business logic never re-checks; it receives the actor like any other input. This is the framework's own *I/O-at-the-boundary* rule applied to authentication — reading a token / hitting a session store is I/O, so it lives at the boundary, not in the middle.
 
-The boundary→commit **gap is accepted**: identity is "good for this request," not re-verified at the instant of the write (nearly all web auth works this way). A stricter verify-at-write mechanism exists as a **separate commercial option and is deliberately out of scope for this FOSS spec — do not describe it here.** If one operation needs a stricter per-write check, that is ordinary code (a plain early-return) inside that operation, not a framework feature.
+The boundary→commit **gap is accepted**: identity is "good for this request," not re-verified at the instant of the write (nearly all web auth works this way). A stricter verify-at-write mechanism is **deliberately out of scope for this FOSS spec — do not describe it here.** If one operation needs a stricter per-write check, that is ordinary code (a plain early-return) inside that operation, not a framework feature.
 
 Consequences for the rewrite:
 
@@ -55,7 +55,7 @@ Consequences for the rewrite:
 4. **Reconcile honest-persist** if the model needs anything from it (model 1/3: confirm persist's "preconditions are ordinary code" already suffices and add a one-line pointer; model 2: nothing in persist).
 5. **Reconcile honest-test** §4.5 (determinism monitor) and the auth token-class table (these reference the guard's determinism) to the chosen model.
 6. **Reconcile the conformance suite** (`honest-auth/conformance/suite.json` once the module is built; for now the spec's §9 suite description) so its cases match the new model.
-7. **Patent boundary (§6).** auth has a "Relationship to Patent-Protected Implementations" section. Keep the spec at the **contract** level (what a provider must satisfy), never the patented mechanism. Per the track CLAUDE.md, do not move commercial/patent detail into the FOSS spec.
+7. **Patent boundary (§6).** auth has a "Relationship to Patent-Protected Implementations" section. Keep the spec at the **contract** level (what a provider must satisfy), never the patented mechanism. Per the track CLAUDE.md, do not move out-of-scope implementation detail into the FOSS spec.
 8. **Verify alignment with what is already built:** honest-check HC-A001/HC-A002 and any auth references in honest-test are implemented and mutation-adequate. The rewritten spec must not contradict them; where it does, decide whether the spec or those rules move (spec leads, then the rules follow — but those rules currently match the *static* reading, which models 1/3 preserve).
 
 ---
