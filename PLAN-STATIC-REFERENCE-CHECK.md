@@ -1,6 +1,6 @@
 # Scoping Plan — static-reference resolution in honest-check
 
-**Status:** Tiers A (`706c5e9`) and B (`763d5bb`, on the `tree-sitter-honest-jinja` grammar `eba702c`) built and gated. Tier C remains, scoped below.
+**Status:** Tiers A (`706c5e9`), B (`763d5bb`, on `tree-sitter-honest-jinja` `eba702c`), and the template-class half of C (`4188b4b`, on the official CSS grammar `a6437a1`) built and gated. Remaining: Tier C's JS-emitted classes (`classList` in `h*-` modules) and the attribute→config-key kind.
 **Principle:** framework spec, Verification Model, *"Every reference resolves, or the gate stops"* (Tier 1, committed `15778f6`). Methodology source: `methodology/contract-testing.md`, "Static references are boundaries too."
 **Goal:** enforce, at the structural gate, that every identifier a rendered surface *emits* resolves to a definition elsewhere — the dual of HC002's "the input boundary is closed."
 

@@ -68,10 +68,10 @@ Verdicts use three honest categories:
 | honest-features | **COMPLETE AT MANDATE** | 10/10 lib functions; validate_vocabulary now full §2.1/§10.2 | Full/Complete need app-layer routes/CLI (spec §11 defers) |
 | honest-state | **COMPLETE AT MANDATE** | 17/18 | law + taxonomy + §1.3 DOM decomposition complete; remaining: hub-suite test that the §3 rules fire, and the JS-side DOM-single-store rule |
 | honest-auth | **COMPLETE AT MANDATE** | 13/13 fns; all 5 gates | contract-shape gaps resolved; §4.7 authentication-honesty verifier, §2.4 missing-credential rule, §5.3 dev provider + adopter templates added; remaining: §9.2 hub conformance app + `[honest-auth-provider]` metadata |
-| honest-check | **SPEC-COMPLETE for its rule set; HC-REF Tier C pending** | 36/36 static rules; HC002 first-link live; HC-REF001 (route) + HC-REF002 (template include/extends) live | the Tier-1 "every reference resolves" principle is enforced at Tier A (HC-REF001) and Tier B (HC-REF002); Tier C (`class`→stylesheet, attribute→config key) remains — see the HC-REF note below |
+| honest-check | **SPEC-COMPLETE for its rule set; HC-REF Tier C partial** | 36/36 static rules; HC002 first-link live; HC-REF001 (route) + HC-REF002 (template include/extends) + HC-REF003 (template class→stylesheet) live | Tier A/B and the template-class half of Tier C are enforced; the JS-emitted-class extension (`classList` in `h*-` modules) and the attribute→config-key kind remain — see the HC-REF note below |
 | honest-observe | **SPEC-COMPLETE** | auth attrs + grouped metrics done | none (proof_checked, persist metrics, install_otel_exporter, dev-mode are by-design elsewhere/boundary) |
 | honest-test | **SPEC-COMPLETE** | §4.4 + §8.2 + §8.4 done | none (the runner, HC-P009, and §6/§7 are not-gaps — by design) |
-| honest-parse | **SPEC-COMPLETE for its grammar set** | 7 grammars (6 source + HTML) | complete for the declared grammars; a CSS grammar is a known future addition the static-reference mandate needs for HC-REF Tier C (`class`→stylesheet) |
+| honest-parse | **SPEC-COMPLETE for its grammar set** | 9 grammars (6 source + HTML + Jinja + CSS) | complete; the Jinja grammar (own `tree-sitter-honest-jinja`, `eba702c`) and the official CSS grammar (`a6437a1`) were added for HC-REF Tiers B/C |
 | honest-persist | **SPEC-COMPLETE** | Native matviews; full inspector round-trip (columns, PK, defaults, FKs, indexes, check constraints); reconstruction restores everything attached to a rebuilt table; create/alter/drop all tested on a real PostgreSQL, a real SQLite, and a real Turso | §6.6 matviews native on PostgreSQL / backfilled on SQLite-Turso; §9.1 inspectors round-trip a full combined schema with zero churn. A SQL-validity gate runs every generated construction — create, alter, drop — against a real PostgreSQL, a real SQLite, and a real Turso (real DB, no mocks — spec §8.6; Turso via pyturso, verified not-1:1-with-SQLite — its adapter handles tuple rows and the missing `foreign_key_check`); it caught a seven-bug cluster (inline-FK create/drop order, matview drop order, PK nullability, FK/index/check-constraint round-trip, reconstruction under a view), all fixed, plus reconstruction silently dropping check constraints and user triggers. Reconstruction now restores columns, check constraints, indexes, dependent plain views, matview refresh triggers, and user triggers. Mutation and the real DB are decoupled: integration probes run in the normal/coverage pass, the mutation loop stays pure. RETURNING/upsert remain by-design out-of-scope |
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
 | honest-DOM | **SUBSET** | ~45% of Full | injected-param signatures with no browser-binding wrapper; §4 React hooks absent; §5 observability absent; conformance suite has 3 cases |
@@ -249,10 +249,18 @@ once. **Tier B is built and gated (2026-07-12, `763d5bb`):** HC-REF002 —
 text) and surfaces each include/extends tag with its literal targets (one plain,
 several conditional, none dynamic); `check_template_references` resolves every
 literal target against the template search path (templates dir + sibling `atoms/`
-/`molecules/` roots), skipping dynamic ones. Both tiers red-first with a pure
-probe and a CLI-level test; boundary/templates/cli all mutation-adequate. Tier C
-(`class`→stylesheet, attribute→config key) remains, awaiting a CSS grammar / the
-JS toolchain (scoped in `PLAN-STATIC-REFERENCE-CHECK.md`).
+/`molecules/` roots), skipping dynamic ones. **The template-class half of Tier C is
+built and gated (2026-07-12, `4188b4b`):** HC-REF003 — `stylesheet_classes` reads
+each component stylesheet through the official CSS grammar (`a6437a1`; a pseudo-class
+is not mistaken for a class), `template_class_references` extracts each element's
+static class tokens (a class value carrying interpolation is skipped whole, the
+stated bound), and `check_class_references` resolves each against the union of
+defined classes — BEM namespace ownership stays honest-components' mount-time
+concern. All red-first with pure probes and CLI-level tests; boundary/templates/cli
+mutation-adequate. What remains of Tier C: the **JS-emitted-class** extension
+(classes a client `h*-` module adds via `classList`, statically knowable from the
+module source) and the **attribute→config-key** kind (scoped in
+`PLAN-STATIC-REFERENCE-CHECK.md`).
 
 ### honest-observe — SPEC-COMPLETE (resolved 2026-07-08; re-verified)
 Event envelope, `emit()`, all framework event builders, projections + snapshots,
