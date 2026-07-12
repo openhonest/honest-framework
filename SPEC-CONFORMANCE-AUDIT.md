@@ -68,10 +68,10 @@ Verdicts use three honest categories:
 | honest-features | **COMPLETE AT MANDATE** | 10/10 lib functions; validate_vocabulary now full §2.1/§10.2 | Full/Complete need app-layer routes/CLI (spec §11 defers) |
 | honest-state | **COMPLETE AT MANDATE** | 17/18 | law + taxonomy + §1.3 DOM decomposition complete; remaining: hub-suite test that the §3 rules fire, and the JS-side DOM-single-store rule |
 | honest-auth | **COMPLETE AT MANDATE** | 13/13 fns; all 5 gates | contract-shape gaps resolved; §4.7 authentication-honesty verifier, §2.4 missing-credential rule, §5.3 dev provider + adopter templates added; remaining: §9.2 hub conformance app + `[honest-auth-provider]` metadata |
-| honest-check | **SPEC-COMPLETE** | 36/36 static rules; HC002 first-link live | none (HC011 spec reconciled to the pure-static design — eac7ae7) |
+| honest-check | **SPEC-COMPLETE for its rule set; HC-REF partial** | 36/36 static rules; HC002 first-link live; HC-REF001 Tier A live | the Tier-1 "every reference resolves" principle is enforced only at Tier A (HC-REF001); HC-REF Tiers B (`{% include %}`→template) and C (`class`→stylesheet, attribute→config key) are unbuilt — see the HC-REF note below |
 | honest-observe | **SPEC-COMPLETE** | auth attrs + grouped metrics done | none (proof_checked, persist metrics, install_otel_exporter, dev-mode are by-design elsewhere/boundary) |
 | honest-test | **SPEC-COMPLETE** | §4.4 + §8.2 + §8.4 done | none (the runner, HC-P009, and §6/§7 are not-gaps — by design) |
-| honest-parse | **SPEC-COMPLETE** | 7 grammars (6 source + HTML) | none (Ruby/PHP/Go/Elixir — f793594; HTML/HTMX — 6de18bb) |
+| honest-parse | **SPEC-COMPLETE for its grammar set** | 7 grammars (6 source + HTML) | complete for the declared grammars; a CSS grammar is a known future addition the static-reference mandate needs for HC-REF Tier C (`class`→stylesheet) |
 | honest-persist | **SPEC-COMPLETE** | Native matviews; full inspector round-trip (columns, PK, defaults, FKs, indexes, check constraints); reconstruction restores everything attached to a rebuilt table; create/alter/drop all tested on a real PostgreSQL, a real SQLite, and a real Turso | §6.6 matviews native on PostgreSQL / backfilled on SQLite-Turso; §9.1 inspectors round-trip a full combined schema with zero churn. A SQL-validity gate runs every generated construction — create, alter, drop — against a real PostgreSQL, a real SQLite, and a real Turso (real DB, no mocks — spec §8.6; Turso via pyturso, verified not-1:1-with-SQLite — its adapter handles tuple rows and the missing `foreign_key_check`); it caught a seven-bug cluster (inline-FK create/drop order, matview drop order, PK nullability, FK/index/check-constraint round-trip, reconstruction under a view), all fixed, plus reconstruction silently dropping check constraints and user triggers. Reconstruction now restores columns, check constraints, indexes, dependent plain views, matview refresh triggers, and user triggers. Mutation and the real DB are decoupled: integration probes run in the normal/coverage pass, the mutation loop stays pure. RETURNING/upsert remain by-design out-of-scope |
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
 | honest-DOM | **SUBSET** | ~45% of Full | injected-param signatures with no browser-binding wrapper; §4 React hooks absent; §5 observability absent; conformance suite has 3 cases |
@@ -82,7 +82,16 @@ Remediation is proceeding in the spec's bootstrap/dependency order
 (`specs/01-framework/honest-framework-spec.md` §299): parse → check → test →
 observe → persist → auth → state → features → DOM → alerts. Completed:
 **parse**, **honest-check**, **honest-test**, **observe** (2026-07-08),
-**persist**, **auth**, **state** (2026-07-11). Next: **features**.
+**persist**, **auth**, **state** (2026-07-11), **features** (2026-07-12). The
+whole code-quality tier is now built; next is the application-production tier,
+starting with **page**.
+
+One cross-cutting exception rides forward with honest-check: the Tier-1 "every
+reference resolves" principle is a rolling capability, not a sealed one. Tier A
+(HC-REF001) is live; Tiers B/C enforce references on rendered surfaces and so are
+blocked on the application-production tier existing and on a CSS grammar in parse.
+They are future honest-check work, tracked in the HC-REF note and
+`PLAN-STATIC-REFERENCE-CHECK.md`, not part of any module reported complete.
 
 (Tier 3 honest-components and honest-page have specs but are not yet built in
 this tree, so they are outside this audit's scope; they were never reported
