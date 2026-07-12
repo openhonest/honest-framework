@@ -7,7 +7,8 @@
 # with tree-sitter (js_function_points.py), so a data `const` is never mistaken for a function.
 set -uo pipefail
 root=$(git rev-parse --show-toplevel)
-pkg="$root/javascript/honest-dom"
+name="${1:-honest-dom}"
+pkg="$root/javascript/$name"
 
 funcs=$( (cd "$root/python" && uv run python "$root/javascript/js_function_points.py" "$pkg"/src/*.js) | sort )
 scen=$(grep -hE '^  Scenario:' "$pkg"/features/*.feature 2>/dev/null | sed -E 's/^  Scenario: ([A-Za-z_$][A-Za-z0-9_$]*).*/\1/' | sort)
@@ -18,10 +19,10 @@ missing=$(comm -23 <(printf '%s\n' "$funcs" | uniq) <(printf '%s\n' "$scen" | un
 extra=$(comm -13 <(printf '%s\n' "$funcs" | uniq) <(printf '%s\n' "$scen" | uniq))
 
 if [ "$nf" != "$ns" ] || [ -n "$missing" ] || [ -n "$extra" ]; then
-  echo "feature-gate: honest-dom — the gherkin features do not match the code ($nf functions, $ns scenarios)."
+  echo "feature-gate: '"$name"' — the gherkin features do not match the code ($nf functions, $ns scenarios)."
   echo "  Every function has exactly one scenario named after it: Scenario: <functionName> <plain description>"
   [ -n "$missing" ] && { echo "  ADD a scenario for each of these functions:"; printf '    %s\n' $missing; }
   [ -n "$extra" ] && { echo "  These scenarios name no function — rename or remove:"; printf '    %s\n' $extra; }
   exit 1
 fi
-echo "feature-gate: honest-dom OK ($nf functions = $ns scenarios)"
+echo "feature-gate: "$name" OK ($nf functions = $ns scenarios)"

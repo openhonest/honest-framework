@@ -1,0 +1,10 @@
+{
+  "name": "honest-format",
+  "version": "0.0.0",
+  "description": "honest-format: declarative value formatting. An element declares its format in hf-format; pure formatter tables render it. Spec-captured from genX fmtx/smartx.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test --experimental-test-coverage --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 --test-coverage-include='src/**' 'test/*.test.js'"
+  }
+}

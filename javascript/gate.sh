@@ -8,7 +8,8 @@
 # feature-gate, conformance, and mutation are added as they land. Run from anywhere.
 set -euo pipefail
 root=$(git rev-parse --show-toplevel)
-pkg="$root/javascript/honest-dom"
+name="${1:-honest-dom}"
+pkg="$root/javascript/$name"
 
 echo "lint (honest-check)…"
 (cd "$root/python/honest-check" && uv run honest-check "$pkg"/src/*.js)
@@ -22,11 +23,11 @@ echo "conformance (portable suite)…"
 node "$pkg/conformance/run.js"
 
 echo "feature gate (one gherkin per function)…"
-"$root/javascript/feature-gate.sh"
+"$root/javascript/feature-gate.sh" "$name"
 
 echo "mutation (adequacy)…"
 for f in "$pkg"/src/*.js; do
   (cd "$root/python" && uv run python "$root/javascript/js_mutate.py" "$f")
 done
 
-echo "honest-dom gate: passed."
+echo "$name gate: passed."

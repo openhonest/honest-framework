@@ -1,0 +1,28 @@
+{
+  "module": "honest-format",
+  "note": "The portable honest-format conformance suite: language-agnostic input/output cases every implementation must pass. A case names a public function and its arguments; the runner resolves the function, applies it, and deep-compares the result. Ground truth is genX's fmtx (the reference of record): e.g. cents of '4250' formats as '$42.50', so convert('4250','cents') is 42.5. Date-valued and undefined-valued conversions are not JSON-expressible and are covered by the unit tests.",
+  "cases": [
+    {"id": "num-parse", "function": "toNumber", "args": ["42.5"], "expected": 42.5},
+    {"id": "num-null", "function": "toNumber", "args": ["abc"], "expected": null},
+    {"id": "convert-absent", "function": "convert", "args": ["x"], "expected": "x"},
+    {"id": "convert-auto", "function": "convert", "args": ["x", "auto"], "expected": "x"},
+    {"id": "convert-unknown", "function": "convert", "args": ["5", "bogus"], "expected": "5"},
+    {"id": "convert-number", "function": "convert", "args": ["42", "number"], "expected": 42},
+    {"id": "convert-cents", "function": "convert", "args": ["4250", "cents"], "expected": 42.5},
+    {"id": "convert-pennies-alias", "function": "convert", "args": ["4250", "pennies"], "expected": 42.5},
+    {"id": "convert-minutes", "function": "convert", "args": ["2", "minutes"], "expected": 120},
+    {"id": "convert-hours", "function": "convert", "args": ["2", "hours"], "expected": 7200},
+    {"id": "convert-kilobytes", "function": "convert", "args": ["2", "kilobytes"], "expected": 2000},
+    {"id": "convert-megabytes", "function": "convert", "args": ["2", "megabytes"], "expected": 2000000},
+    {"id": "convert-gigabytes", "function": "convert", "args": ["2", "gigabytes"], "expected": 2000000000},
+    {"id": "convert-integer", "function": "convert", "args": ["3.9", "integer"], "expected": 3},
+    {"id": "convert-decimal-alias", "function": "convert", "args": ["0.5", "decimal"], "expected": 0.5},
+    {"id": "convert-string", "function": "convert", "args": [42, "string"], "expected": "42"},
+    {"id": "convert-bool-false", "function": "convert", "args": ["false", "boolean"], "expected": false},
+    {"id": "convert-bool-zero", "function": "convert", "args": ["0", "boolean"], "expected": false},
+    {"id": "convert-bool-off-alias", "function": "convert", "args": ["off", "bool"], "expected": false},
+    {"id": "convert-bool-true", "function": "convert", "args": ["yes", "boolean"], "expected": true},
+    {"id": "convert-bool-empty", "function": "convert", "args": ["", "boolean"], "expected": false},
+    {"id": "convert-null", "function": "convert", "args": ["x", "null"], "expected": null}
+  ]
+}
