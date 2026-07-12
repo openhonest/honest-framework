@@ -25,6 +25,7 @@ from honest_parse import (
     node_text,
     parse,
     parse_elixir,
+    parse_css,
     parse_go,
     parse_html,
     parse_jinja,
@@ -134,6 +135,20 @@ _GRAMMARS = {
             "",
         ],
         "invalid": ['{% include "x"', "{{ y", "{# c", '{% include "x %}'],
+    },
+    # CSS: the official grammar reads component stylesheets so honest-check can resolve a class reference
+    # against the rules a stylesheet defines (HC-REF003). The corpus carries BEM class selectors, custom
+    # properties, pseudo-classes, and media queries; the invalid set is genuinely malformed — an
+    # unterminated declaration, an unclosed rule, a stray close brace, an empty declaration.
+    "css": {
+        "parse": parse_css,
+        "corpus": [
+            ".button { color: var(--ht-color-accent); }\n",
+            ".button__text { font-weight: 600; }\n.button--primary:hover { background: red; }\n",
+            ":root { --ht-space-md: 1rem; }\n@media (min-width: 700px) { .data-table .row { margin: 0; } }\n",
+            "",
+        ],
+        "invalid": [".button { color: ", ".a {", "} garbage {", ".x { : ; }"],
     },
 }
 

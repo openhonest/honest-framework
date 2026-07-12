@@ -9,6 +9,7 @@ target language is adding a row, not branching control flow.
 
 import types
 
+import tree_sitter_css as ts_css
 import tree_sitter_elixir as ts_elixir
 import tree_sitter_go as ts_go
 import tree_sitter_honest_jinja as ts_jinja
@@ -31,6 +32,8 @@ from tree_sitter import Language, Parser
 # The `jinja` grammar (honest-parse's own `tree-sitter-honest-jinja`) is the template grammar the HTML
 # grammar cannot supply: tree-sitter-html reads Jinja `{% %}` tags as opaque text, so a second grammar
 # surfaces `{% include %}`/`{% extends %}` targets for honest-check's reference resolution (HC-REF002).
+# The `css` grammar reads component stylesheets so honest-check can resolve a `class` reference against the
+# rules a stylesheet defines (HC-REF003, the honest-components BEM contract).
 _LANGUAGES = types.MappingProxyType(
     {
         "python": Language(ts_python.language()),
@@ -41,6 +44,7 @@ _LANGUAGES = types.MappingProxyType(
         "elixir": Language(ts_elixir.language()),
         "html": Language(ts_html.language()),
         "jinja": Language(ts_jinja.language()),
+        "css": Language(ts_css.language()),
     }
 )
 
@@ -88,6 +92,11 @@ def parse_html(source: bytes):
 def parse_jinja(source: bytes):
     """Convenience wrapper for the Jinja template grammar (surfaces {% include %}/{% extends %} targets)."""
     return parse(source, "jinja")
+
+
+def parse_css(source: bytes):
+    """Convenience wrapper for the CSS grammar (surfaces the class selectors a stylesheet defines)."""
+    return parse(source, "css")
 
 
 def node_text(node, source: bytes) -> str:

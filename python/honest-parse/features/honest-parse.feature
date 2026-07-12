@@ -41,3 +41,8 @@ Feature: honest-parse — Python supplement
     Given Jinja template text
     When parse_jinja reads it
     Then it returns the syntax tree, using the Jinja grammar that surfaces include and extends targets
+
+  Scenario: parse_css parses source with the CSS grammar
+    Given CSS stylesheet text
+    When parse_css reads it
+    Then it returns the syntax tree, using the CSS grammar that surfaces the class selectors it defines
