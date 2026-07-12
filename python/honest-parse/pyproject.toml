@@ -12,7 +12,11 @@ dependencies = [
     "tree-sitter-go>=0.23",
     "tree-sitter-elixir>=0.3",
     "tree-sitter-html>=0.23",
+    "tree-sitter-honest-jinja",
 ]
+
+[tool.uv.sources]
+tree-sitter-honest-jinja = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

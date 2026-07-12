@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [tool.uv.workspace]
-members = ["honest-*"]
+members = ["honest-*", "tree-sitter-honest-jinja"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"

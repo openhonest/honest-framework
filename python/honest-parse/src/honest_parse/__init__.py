@@ -11,6 +11,7 @@ import types
 
 import tree_sitter_elixir as ts_elixir
 import tree_sitter_go as ts_go
+import tree_sitter_honest_jinja as ts_jinja
 import tree_sitter_html as ts_html
 import tree_sitter_javascript as ts_javascript
 import tree_sitter_php as ts_php
@@ -27,6 +28,9 @@ from tree_sitter import Language, Parser
 # template grammar the single parser must also read, so no channel into an application is opaque
 # (framework spec, "The input boundary is closed"). The PHP grammar exposes its handle as
 # `language_php()` (the tag-aware grammar that accepts `<?php`), not `language()`, named explicitly.
+# The `jinja` grammar (honest-parse's own `tree-sitter-honest-jinja`) is the template grammar the HTML
+# grammar cannot supply: tree-sitter-html reads Jinja `{% %}` tags as opaque text, so a second grammar
+# surfaces `{% include %}`/`{% extends %}` targets for honest-check's reference resolution (HC-REF002).
 _LANGUAGES = types.MappingProxyType(
     {
         "python": Language(ts_python.language()),
@@ -36,6 +40,7 @@ _LANGUAGES = types.MappingProxyType(
         "go": Language(ts_go.language()),
         "elixir": Language(ts_elixir.language()),
         "html": Language(ts_html.language()),
+        "jinja": Language(ts_jinja.language()),
     }
 )
 
@@ -78,6 +83,11 @@ def parse_elixir(source: bytes):
 def parse_html(source: bytes):
     """Convenience wrapper for the HTML/HTMX template grammar."""
     return parse(source, "html")
+
+
+def parse_jinja(source: bytes):
+    """Convenience wrapper for the Jinja template grammar (surfaces {% include %}/{% extends %} targets)."""
+    return parse(source, "jinja")
 
 
 def node_text(node, source: bytes) -> str:

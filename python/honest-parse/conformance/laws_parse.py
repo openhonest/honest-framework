@@ -27,6 +27,7 @@ from honest_parse import (
     parse_elixir,
     parse_go,
     parse_html,
+    parse_jinja,
     parse_javascript,
     parse_php,
     parse_python,
@@ -117,6 +118,22 @@ _GRAMMARS = {
             "",
         ],
         "invalid": ["<button hx-post=>", "<form", "<<<", '<a href=">'],
+    },
+    # Jinja templates: honest-parse's own template grammar, surfacing {% include %}/{% extends %} targets
+    # the HTML grammar cannot (it reads Jinja tags as opaque text). The grammar is deliberately
+    # error-tolerant of tag interiors and HTML, so the corpus mixes extends/include (literal and dynamic),
+    # blocks, output, comments, and HTML; the invalid set is genuinely malformed — an unclosed statement,
+    # output, or comment, and an unterminated string — each of which the grammar cannot complete.
+    "jinja": {
+        "parse": parse_jinja,
+        "corpus": [
+            '{% extends "base.html" %}\n',
+            '{% block main %}{% include "molecules/card/card.html" %}{% endblock %}\n',
+            '{% include some_var %}{{ user.name }}{# note #}\n',
+            '<div class="x" hx-get="/y">text</div>\n',
+            "",
+        ],
+        "invalid": ['{% include "x"', "{{ y", "{# c", '{% include "x %}'],
     },
 }
 

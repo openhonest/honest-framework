@@ -36,3 +36,8 @@ Feature: honest-parse — Python supplement
     Given HTML or HTMX template text
     When parse_html reads it
     Then it returns the syntax tree, using the HTML grammar
+
+  Scenario: parse_jinja parses source with the Jinja template grammar
+    Given Jinja template text
+    When parse_jinja reads it
+    Then it returns the syntax tree, using the Jinja grammar that surfaces include and extends targets
