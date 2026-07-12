@@ -113,7 +113,7 @@ The following is the authoritative list of skills the framework ships. Each is d
 5. **Forms (genX pattern)** — validation rules declared as `hf-*` attributes on inputs; submission produces a manifest; rejections are data; invalid-state rendering is a pure function of the rejection. No form class, no validator-as-method, no ModelForm.
 6. **Components** — atoms/molecules/organisms boundary; promotion rules; token flow; the convention for `hb-*`/`ha-*` attribute vocabulary per component.
 7. **Tables** — column declarations as a vocabulary; sort, filter, selection, row actions, column visibility, export, pagination-aware selection; table state resident in the DOM (DATAOS), not in a client store.
-8. **Number formatting (genX pattern)** — `hf-money`, `hf-percent`, `hf-duration`, `hf-bytes`, `hf-date` attributes resolved against locale and precision config at render time.
+8. **Value formatting (honest-format)** — an element declares its format in the value of one attribute (`hf-format="currency"`, `hf-format="date"`) with sibling option attributes (`hf-decimals`, `hf-currency`, `hf-date-format`); pure formatter tables render the value at scan time. The closed format vocabulary is declared as data and resolved by honest-check (HC-REF004). Specified in `specs/03-application-production/honest-format-architecture.md`.
 9. **a11y (genX pattern)** — ARIA expanded from `hb-*` role declarations; keyboard bindings automatic; missing labels and contrast violations surfaced by honest-check.
 10. **i18n (genX pattern)** — `hf-t` attributes for translated strings; resource bundle extraction; hardcoded-string diagnostics; per-locale recognizer sets so every translation key is bounded.
 11. **Search and filtering** — filter fields as recognizer vocabulary; DOM-resident filter state; SQL generation from the filter manifest; debounce defaults.
@@ -311,7 +311,7 @@ The input space is therefore closed, just as a Set-based vocabulary is closed at
 
 ### Every reference resolves, or the gate stops
 
-A boundary is not only what enters the application; it is also everything a rendered surface *points at*. An artifact the server emits — an HTML fragment, a stylesheet, a behavioural attribute — routinely names identifiers defined in another file: an `hx-get` that must reach a mounted route, an attribute value (`fx-format="currency"`) that must be a member of the closed vocabulary a client runtime recognizes, a class a stylesheet must define, a template include that must exist. Asserting the artifact *contains* the right string proves it was written; it proves nothing about whether the string it *points at* resolves. Two checks can both pass — one describing a control, one describing its target — while the control names a target nothing defines: a dead reference that renders, reports green, and does nothing.
+A boundary is not only what enters the application; it is also everything a rendered surface *points at*. An artifact the server emits — an HTML fragment, a stylesheet, a behavioural attribute — routinely names identifiers defined in another file: an `hx-get` that must reach a mounted route, an attribute value (`hf-format="currency"`) that must be a member of the closed vocabulary a client runtime recognizes, a class a stylesheet must define, a template include that must exist. Asserting the artifact *contains* the right string proves it was written; it proves nothing about whether the string it *points at* resolves. Two checks can both pass — one describing a control, one describing its target — while the control names a target nothing defines: a dead reference that renders, reports green, and does nothing.
 
 The single parser that makes the input boundary closed makes these references closed as well. The template, the stylesheet, the client code, and the server routes are all source the framework reads, so every identifier one artifact emits can be resolved to a definition in another without running anything. A reference that resolves to no definition is a **structural** fault — the same kind of fact as an undeclared name — so it belongs at the gate, not in a running browser. An end-to-end run is the expensive way to find it: a browser meets a dead reference only incidentally, as the first thing that happens to depend on it, and pays start-up, latency, and flakiness to report what a file read decides for certain.
 
@@ -358,7 +358,11 @@ features   → type, check, test, observe            feature flags as a bounded 
 # Application-production tier
 page       → type                                   the host-page structural contract
 DOM        → type, state, observe                   DOM-as-state (DATAOS) primitives
-components → type, page, observe                     atoms / molecules / organisms
+format     → type, DOM, observe                      declarative value formatting: pure
+                                                    formatter/converter tables + a DOM
+                                                    binding; a value's element declares how
+                                                    it reads (hf-format), no imperative call
+components → type, page, observe, format             atoms / molecules / organisms
 alerts     → errors, observe, persist, state, auth  server-push notifications
 ```
 
@@ -367,7 +371,7 @@ Three rules fix this order:
 - **Leaves first, then `errors`.** `parse` and `type` depend on nothing. `errors` depends only on `type` (it returns faults as data in the shared `Result` shape) and is otherwise a pure leaf — it normalizes failures into one report, decides behavior as a pure function of the environment, and throttles repeats, all with no I/O. It is *composed* by `observe` (the normalizers) and `alerts` (the behavior table and rate-limiter), so it must precede both.
 - **`gherkin` before `test`.** honest-gherkin is the BDD execution *engine* (parse a feature, match its steps against a registry, fold the scenario, report). honest-test *runs on* it — it generates the step scaffolding and ships the standard step library, and the engine runs them (honest-test §8.1, honest-gherkin §1.3). So the engine must exist before test, not the other way round; the engine itself depends only on `type` (for the `Result`/fault-as-data shape).
 - **`observe` before `persist`.** Every persistence boundary (execute, apply, transactions) emits to the event log: persist instruments *through* observe. (observe's own emit stores via persist, but it receives that writer at the boundary rather than importing persist, so the dependency runs one way: persist → observe.)
-- **Application tier last.** `page`, `DOM`, `components`, and `alerts` build on the code-quality tier; `components` and `alerts` mount into `page`.
+- **Application tier last.** `page`, `DOM`, `format`, `components`, and `alerts` build on the code-quality tier; `components` and `alerts` mount into `page`. `format` sits between `DOM` and `components`: it binds through the DOM's shared observer and `components` render values through its formatters.
 
 **`parse` is the real starting point, not `check`.** The gate depends on the parser, so the parser is built and checked by hand first. A language whose grammar tree-sitter does not yet cover must add that grammar to the parser before anything else; the rest of the framework only ever reaches the parser through this one module, never tree-sitter directly. And `parse` covers more than the programming languages: the checker resolves references *across* the rendered surface — a template's `hx-get` to a mounted route, and in time a `class` to a stylesheet rule or a `{% include %}` to a template — so the template grammar, and later the style grammar, are part of what `parse` must supply before the checker can close those references ("Every reference resolves, or the gate stops," above). A reference kind cannot be checked before its grammar is in `parse`.
 
