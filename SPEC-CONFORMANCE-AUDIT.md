@@ -80,11 +80,13 @@ Score: of 13 modules, **7 spec-complete, 2 complete-at-mandate, 4 genuine subset
 
 Remediation is proceeding in the spec's bootstrap/dependency order
 (`specs/01-framework/honest-framework-spec.md` §299): parse → check → test →
-observe → persist → auth → state → features → DOM → alerts. Completed:
+observe → **rca** → persist → auth → state → features → DOM → alerts. Completed:
 **parse**, **honest-check**, **honest-test**, **observe** (2026-07-08),
-**persist**, **auth**, **state** (2026-07-11), **features** (2026-07-12). The
-whole code-quality tier is now built; next is the application-production tier,
-starting with **page**.
+**persist**, **auth**, **state** (2026-07-11), **features** (2026-07-12). Every
+code-quality module except **honest-rca** is built; `honest-rca` (the
+causal-completeness solver — apophasis for debugging, composes parse/check/observe,
+methodology in `methodology/root-cause-analysis.md`) is a newly-placed, unbuilt
+code-quality module. Then the application-production tier, starting with **page**.
 
 One cross-cutting exception rides forward with honest-check: the Tier-1 "every
 reference resolves" principle is a rolling capability, not a sealed one. Tier A

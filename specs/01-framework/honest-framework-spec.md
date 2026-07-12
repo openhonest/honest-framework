@@ -343,6 +343,12 @@ test       → parse, type, gherkin                  builds and runs the tests; 
                                                    files through the gherkin engine
 observe    → type, errors                          the event log and projections;
                                                    composes errors' normalizers
+rca        → parse, check, observe                 the causal-completeness solver (apophasis
+                                                   for debugging): reads observe's event log
+                                                   as the evidence set, grounds deterministic
+                                                   causal edges in parse/check, traces to a
+                                                   fixpoint, and attests the negative — no
+                                                   upstream cause found under a stated E and M
 persist    → type, observe                         schema/query/transaction boundaries
                                                    emit to the event log
 auth       → type                                  authentication (boundary validation): the AuthProvider contract, a value registry, the boundary dispatch
