@@ -93,10 +93,17 @@ against synthetic fixtures, so they need no real reference app. What they need i
 (a) a spec written first (HC-REF002+ as first-class rules, not trailing prose), and
 (b) a grammar addition to parse for each new reference kind: a template grammar to
 extract `{% include %}`/`{% extends %}` targets (parse's HTML grammar does not see
-Jinja), and a CSS grammar to read a stylesheet's definitions. There is also an open
-design question — the framework styles by custom-property tokens (honest-page §7),
-not CSS classes, so the styling-reference rule likely resolves `var(--token)` to a
-declared token rather than `class` to a rule. These are future honest-check work,
+Jinja), and a CSS grammar to read a stylesheet's definitions. The styling-reference kind must be grounded in the framework's real idiom, not
+guessed: components use **real BEM CSS classes** owned per component, anchored by
+`data-component` as the BEM block name (honest-components, BEM namespace contract),
+sharing static `--ht-` custom-property tokens (honest-page §7); a genX `h*-`
+attribute runtime lazy-loads behaviour modules (framework spec, the h*- attribute
+skill registry); and a commercial themer regenerates CSS from a `style.json` token
+contract (honest-components, dynamic-theme tooling, out of FOSS scope).
+So Tier C's styling rule is a honest-components BEM-contract check (does a class
+resolve to a rule the component's CSS defines, with its prefix matching
+`data-component`), which cannot be specced until honest-components is read and
+built. These are future honest-check work,
 tracked in the HC-REF note and `PLAN-STATIC-REFERENCE-CHECK.md`, not part of any
 module reported complete.
 
