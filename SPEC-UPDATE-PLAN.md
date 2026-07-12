@@ -1,9 +1,10 @@
 # Spec Update Plan — honest-auth and honest-state
 
-**Status:** not started.
-**Why this exists:** `auth` and `state` are the next two modules in the bootstrap build order (both dependency-unblocked), but neither can be implemented under the *spec → implementation → conformance* rule, because each spec is internally contradictory or unreconciled. This plan brings the two specs to a buildable state. It is **spec-only**: no module code is written until the specs settle and the named decisions are made.
+**Status:** COMPLETE (2026-07-11). Both specs were rewritten to a buildable state, the built honest-check/honest-test artifacts were reconciled to them, and **both modules are now implemented and pass all five gates** (see the closing section and `SPEC-CONFORMANCE-AUDIT.md`). This document is retained as the historical record of why the two specs were reconciled and what was decided; it drives no further work.
 
-`features` and `page` have no such debt and can be built now, independent of this plan.
+**Why this existed:** `auth` and `state` were the next two modules in the bootstrap build order (both dependency-unblocked), but neither could be implemented under the *spec → implementation → conformance* rule, because each spec was internally contradictory or unreconciled. This plan brought the two specs to a buildable state. It was **spec-only**: no module code was written until the specs settled and the named decisions were made.
+
+`features` and `page` had no such debt and were buildable independent of this plan.
 
 ---
 
@@ -98,7 +99,7 @@ B (state spec)  ── independent; unblocks DOM and alerts (both need state)
 - Each track ends at a **buildable spec**, not at code. Implementation (auth, state) follows under the normal four-gate bootstrap (shape, conformance, coverage, mutation adequacy), after the A0/B0 decisions are made and the rewrites land.
 - **Spec changes propagate** per the stability rule: a Tier-2 change that touches honest-check rule wording (HC-A001/A002), honest-test (§4.5, token classes), honest-DOM, or honest-type must update those specs in the same pass, and the cross-tier conformance suite where affected.
 
-## Status: specs rewritten
+## Status: specs rewritten, both modules built and gated
 
 Both specs are rewritten and the spec layer is internally consistent:
 
@@ -113,6 +114,15 @@ Both built artifacts were reconciled to the boundary-auth spec (each still mutat
 
 - **honest-check HC-A001/HC-A002** (`8321067`) — HC-A002 now flags an authorizing link that does not use the boundary-resolved `actor`; the derivation-signature machinery (`registered_provider_signature`, `_derivation_signature`) was replaced by `is_provider_registered`. Concrete mechanism introduced and recorded in the auth + honest-check specs: the framework passes the resolved actor inward as the reserved name `actor`, and the link must reference it. honest-check at 0 undeclared (3879/189), 100% coverage, Honest.
 - **honest-test `authhonesty.py`** (`db6528b`) — `test_auth_honesty(provider)` probes `resolve_actor` over six authentication classes (`valid` + revoked/expired/malformed/missing/forged), with a malformed token rejected by the `actor_recognizer`; per-provider, not per-link. Feature scenarios + suite.json value cases updated. honest-test at 0 undeclared (1905/85), 100% coverage, Honest.
+
+### Modules built — DONE (2026-07-11)
+
+Both modules were then implemented from the reconciled specs under the five-gate bootstrap (honest-check lint, 100% line+branch coverage, portable value oracle, feature bijection, mutation adequacy):
+
+- **honest-auth** — the boundary-validation surface: `AuthProvider` contract, the pure value-registry, `authenticate()` dispatch, `fault_status()`, the §4.7 `authentication_honesty` / `resolve_actor_deterministic` verifier, the §2.4 missing-credential rule, a §5.3 `dev_auth_provider` (plaintext, empty-password wildcard, never a default), and four adopter provider templates (auth0/firebase/supabase/clerk) under `examples/`, outside the gate. All five gates green. Remaining, integration-facing: the §9.2 hub conformance app.
+- **honest-state** — the single-mutator law (`second_mutator_legitimate`), the nine-kind taxonomy (`state_kinds`/`mutator_of`), and the §1.3 DOM decomposition (`dom_region_kind`). All five gates green. Remaining, integration-facing: the hub-suite test that the §3 honest-check rules fire, and the JS-side DOM-single-store rule.
+
+The audit row for each is `COMPLETE AT MANDATE` in `SPEC-CONFORMANCE-AUDIT.md`.
 
 ## Definition of done (per track)
 
