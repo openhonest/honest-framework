@@ -110,7 +110,7 @@ from honest_parse import parse_python, parse_javascript, parse_html, node_text, 
 from honest_check.rules import language_for_path
 from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_enclosing_function, _js_equality_target, _js_else_if, _js_impure_name, _js_mutable_decl_names, _js_qualified_name, _js_reassigned_names, _js_scope_lets, _js_type_check
 from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _object_keys, _open_tag, _tag_name, manifest_keys, request_sites, scan_template
-from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, route_boundary
+from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_references, route_boundary
 
 
 def _rules(source: str) -> list[str]:
@@ -2606,6 +2606,13 @@ def _probe_templates() -> list:
     plain = scan_template(b'<img hx-get="/img"/>')
     if plain["manifest_keys"] != frozenset() or {s["path"] for s in plain["sites"]} != {"/img"}:
         bad.append(f"no-script / self-closing: {plain}")
+    # scan_template carries the template's own path (for HC-REF001 to name it), and each site carries its
+    # 1-based (line, col) location (so a dead reference is reported where it is authored).
+    located = scan_template(b'<button hx-get="/x"></button>', "tpl.html")
+    if located["path"] != "tpl.html":
+        bad.append(f"scan_template should carry the template path under 'path': {located.get('path')}")
+    if not located["sites"] or located["sites"][0]["location"] != (1, 1):
+        bad.append(f"a site should carry its 1-based (line, col) location: {[s.get('location') for s in located['sites']]}")
     # _is_resolvable: each interpolation form is unresolvable; a clean path is resolvable.
     if any(_is_resolvable(v) for v in ("/x/{{i}}", "/x/{% if %}", "/x/${i}")) or not _is_resolvable("/x/1"):
         bad.append("_is_resolvable misclassified an interpolation form")
@@ -2719,6 +2726,47 @@ def _probe_boundary() -> list:
     return bad
 
 
+def _probe_references() -> list:
+    """HC-REF001 (section 4.2): every resolvable template action target resolves to a mounted route.
+    A static target matching a mounted route is clean; one matching no route is a dead reference flagged
+    at the template location; an interpolated (unresolvable) target is HC002's unknowable-boundary domain
+    and is not flagged here; the route map is the project-wide union, so a target mounted in another file
+    resolves. Path parameters match through normalisation."""
+    bad = []
+    routes = [
+        {"method": "GET", "path": "/dashboard", "chain": "show"},
+        {"method": "POST", "path": "/api/orders", "chain": "create"},
+    ]
+    tpl = {"path": "page.html", "sites": [
+        {"method": "GET", "path": "/dashboard", "resolvable": True, "fields": frozenset(), "location": (2, 1)},
+        {"method": "POST", "path": "/ghost", "resolvable": True, "fields": frozenset(), "location": (5, 3)},
+        {"method": "POST", "path": "/items/{{id}}", "resolvable": False, "fields": frozenset(), "location": (7, 1)},
+    ]}
+    diags = check_references(routes, [tpl])
+    if [(d["rule"], d["severity"]) for d in diags] != [("HC-REF001", "error")]:
+        bad.append(f"only the unmounted static target should fire HC-REF001: {[(d['rule'], d['severity']) for d in diags]}")
+    if diags and (diags[0]["line"], diags[0]["col"], diags[0]["path"]) != (5, 3, "page.html"):
+        bad.append(f"HC-REF001 should point at the dead reference in its template: {diags[0]}")
+    if diags and ("/ghost" not in diags[0]["message"] or "POST" not in diags[0]["message"] or "add the route" not in diags[0]["message"]):
+        bad.append(f"HC-REF001 message should name the unmounted target and the remedy: {diags[0]['message']}")
+    # The route map is the project-wide union: a target mounted in another file still resolves.
+    union = check_references(
+        [{"method": "GET", "path": "/only-there", "chain": "c"}],
+        [{"path": "t.html", "sites": [{"method": "GET", "path": "/only-there", "resolvable": True, "fields": frozenset(), "location": (1, 1)}]}],
+    )
+    if union:
+        bad.append(f"a target mounted anywhere in the project should not fire HC-REF001: {union}")
+    # A path parameter matches through normalisation: /items/5 targets no static route, but an interpolated
+    # /items/{{id}} is skipped (HC002 owns it), and a static /items resolves to route /items.
+    param = check_references(
+        [{"method": "GET", "path": "/items", "chain": "c"}],
+        [{"path": "t.html", "sites": [{"method": "GET", "path": "/items", "resolvable": True, "fields": frozenset(), "location": (1, 1)}]}],
+    )
+    if param:
+        bad.append(f"a static target matching a mounted route should not fire: {param}")
+    return bad
+
+
 def run() -> int:
     failed = 0
     passed = 0
@@ -2776,6 +2824,14 @@ def run() -> int:
     if boundary_bad:
         failed += 1
         print(f"FAIL HC-rule [boundary]: {boundary_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    references_bad = _probe_references()
+    if references_bad:
+        failed += 1
+        print(f"FAIL HC-rule [references]: {references_bad}")
     else:
         passed += 1
 

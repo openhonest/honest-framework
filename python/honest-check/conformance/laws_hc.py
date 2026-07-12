@@ -334,6 +334,41 @@ def _probe_cli():
             bad.append(f"_discover_templates should list the .html under the configured dir: {_discover_templates(str(tdir))}")
         if _discover_templates("") != [] or _discover_templates(str(Path(tmp, "nope"))) != []:
             bad.append("_discover_templates should be empty for no dir or a missing dir")
+
+    # HC-REF001 wired through the CLI: a template action targeting no mounted route is a dead reference,
+    # resolved against the project-wide route union (spec section 4.2; "Every reference resolves").
+    with tempfile.TemporaryDirectory() as tmp:
+        # The first link is a boundary link, exempt from HC002, so this test isolates HC-REF001.
+        app = (
+            "from honest_type import link, vocabulary, chain\n"
+            "V = vocabulary({'qty': {'1'}})\n"
+            "@link(accepts=V, emits=V, boundary=True)\n"
+            "def validate(x):\n    return x\n"
+            "c = chain(validate)\n"
+            "ROUTES = {('GET', '/dashboard'): c}\n"
+        )
+        Path(tmp, "app.py").write_text(app, encoding="utf-8")
+        tdir = Path(tmp, "templates")
+        tdir.mkdir()
+        cfg = Path(tmp, "honest-check.toml")
+        cfg.write_text(f'[check]\ntemplates = "{tdir}"\n', encoding="utf-8")
+        page = Path(tdir, "page.html")
+        # A button whose hx-get targets a route nothing mounts: the dead reference fires HC-REF001.
+        page.write_text('<button hx-get="/ghost">Go</button>', encoding="utf-8")
+        code, out, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg), "--format", "json"])
+        if code != 1 or "HC-REF001" not in out:
+            bad.append(f"a template action targeting no mounted route should fire HC-REF001: {code} {out[:80]}")
+        # Point it at the mounted route: the reference resolves, so the run is clean.
+        page.write_text('<button hx-get="/dashboard">Go</button>', encoding="utf-8")
+        code, _, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg)])
+        if code != 0:
+            bad.append(f"a template action targeting a mounted route should be clean, got {code}")
+        # The route union is project-wide: a target mounted in a second file resolves, no false positive.
+        page.write_text('<button hx-get="/elsewhere">Go</button>', encoding="utf-8")
+        Path(tmp, "more.py").write_text(app.replace("/dashboard", "/elsewhere"), encoding="utf-8")
+        code, _, _ = _run_cli([str(Path(tmp, "app.py")), str(Path(tmp, "more.py")), "--config", str(cfg)])
+        if code != 0:
+            bad.append(f"a target mounted in another checked file should resolve, got {code}")
     # The watch loop re-runs once per trigger line and returns the last code at EOF.
     runs = {"n": 0}
 

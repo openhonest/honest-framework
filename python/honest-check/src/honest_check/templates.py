@@ -8,7 +8,7 @@ input boundary is closed"). Parsing is honest-parse's single boundary; this modu
 trees. Template file reading stays at the caller's I/O boundary — every function here takes source in.
 """
 
-from honest_parse import node_text, parse_html, parse_javascript, walk
+from honest_parse import line_col, node_text, parse_html, parse_javascript, walk
 
 # HTMX request attributes -> HTTP method (honest-page section 9: hx-post / hx-get name a path).
 _HX_METHOD = {"hx-post": "POST", "hx-get": "GET", "hx-put": "PUT", "hx-patch": "PATCH", "hx-delete": "DELETE"}
@@ -121,14 +121,16 @@ def request_sites(root, source: bytes) -> tuple:
             if path is None:
                 continue
             fields = _form_field_names(node, source) | _hx_vals_keys(_attr(node, "hx-vals", source))
-            sites.append({"method": method, "path": path, "resolvable": _is_resolvable(path), "fields": fields})
+            sites.append({"method": method, "path": path, "resolvable": _is_resolvable(path), "fields": fields, "location": line_col(node)})
     return tuple(sites)
 
 
-def scan_template(source: bytes) -> dict:
-    """Scan a rendered HTML/HTMX template for HC002's boundary derivation: its request sites and the
-    application-state manifest keys declared in its <script> blocks. Parsing is honest-parse's; this
-    reads the trees. Source is passed in — template file reading stays at the caller's I/O boundary."""
+def scan_template(source: bytes, path: str = "") -> dict:
+    """Scan a rendered HTML/HTMX template for the boundary derivation (HC002) and reference resolution
+    (HC-REF001): its request sites — each with the location of its action, so a dead reference is reported
+    where it is authored — and the application-state manifest keys declared in its <script> blocks. `path`
+    is the template's own path, carried so HC-REF001 can name it. Parsing is honest-parse's; this reads the
+    trees. Source is passed in — template file reading stays at the caller's I/O boundary."""
     root = parse_html(source).root_node
     keys = set()
     for node in walk(root):
@@ -138,4 +140,4 @@ def scan_template(source: bytes) -> dict:
             if child.type == "raw_text":
                 script = node_text(child, source).encode("utf-8")
                 keys = keys | manifest_keys(parse_javascript(script).root_node, script)
-    return {"sites": request_sites(root, source), "manifest_keys": frozenset(keys)}
+    return {"path": path, "sites": request_sites(root, source), "manifest_keys": frozenset(keys)}

@@ -809,3 +809,8 @@ Feature: honest-check — Python supplement
     Given a parsed source file, its path, and the scanned templates
     When boundary_diagnostics reads the file's route map, chains, and links
     Then it reports the first-link boundary faults, or nothing when the file declares no ROUTES
+
+  Scenario: check_references flags a template action that resolves to no mounted route
+    Given the project-wide route map and the scanned templates
+    When check_references resolves each resolvable action target against the route patterns
+    Then it reports HC-REF001 at the template site for a target no route mounts, skipping interpolated targets and passing targets mounted anywhere in the project

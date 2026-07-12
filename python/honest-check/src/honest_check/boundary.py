@@ -73,6 +73,30 @@ def check_boundary(routes: list, chains: list, links: dict, scanned_templates: l
     return out
 
 
+def check_references(routes: list, scanned_templates: list) -> list:
+    """HC-REF001: every resolvable template action target resolves to a mounted route (honest-check spec
+    section 4.2; framework spec, "Every reference resolves, or the gate stops"). This is the dual of
+    HC002's route-to-template check — a template action pointing at a route nothing mounts is a dead
+    reference, flagged at the site's own location. `routes` is the project-wide union of route patterns,
+    so a target mounted in another file resolves; path parameters match through `_normalize_path`. An
+    interpolated (unresolvable) target is HC002's unknowable-boundary domain and is not judged here. Pure
+    over the already-parsed route map and scanned templates."""
+    patterns = {(route["method"], _normalize_path(route["path"])) for route in routes}
+    out = []
+    for scanned in scanned_templates:
+        for site in scanned["sites"]:
+            if not site["resolvable"]:
+                continue
+            if (site["method"], _normalize_path(site["path"])) not in patterns:
+                line, col = site["location"]
+                out.append(diagnostic(
+                    "HC-REF001", "error", scanned["path"], line, col,
+                    f"Template action targets {site['method']} {site['path']}, which no route mounts. "
+                    "Point it at a mounted route, or add the route.",
+                ))
+    return out
+
+
 def boundary_diagnostics(root, source: bytes, path: str, scanned_templates: list) -> list:
     """Run the first-link boundary check on one parsed source file given the scanned templates: read its
     route map, chains, and links, then check_boundary against the templates. A file that declares no

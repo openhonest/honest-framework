@@ -25,7 +25,8 @@ from honest_check.config import (
     resolve_paths,
     resolve_severity,
 )
-from honest_check.boundary import boundary_diagnostics
+from honest_check.boundary import boundary_diagnostics, check_references
+from honest_check.declgraph import extract_routes
 from honest_check.diagnostics import Diagnostic
 from honest_check.formats import (
     filter_by_rule,
@@ -102,7 +103,8 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
     HC002's first-link boundary check against them (spec section 4.2)."""
     diagnostics: list[Diagnostic] = []
     try:
-        scanned = [scan_template(template.read_bytes()) for template in _discover_templates(templates_dir)]
+        scanned = [scan_template(template.read_bytes(), str(template)) for template in _discover_templates(templates_dir)]
+        all_routes: list = []
         for file in _discover_files(paths, exclude):
             source = file.read_text(encoding="utf-8")
             diagnostics.extend(check_source(source, str(file)))
@@ -110,6 +112,11 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
                 src_bytes = source.encode("utf-8")
                 root = parse(src_bytes, language_for_path(str(file))).root_node
                 diagnostics.extend(boundary_diagnostics(root, src_bytes, str(file), scanned))
+                all_routes.extend(extract_routes(root, src_bytes))
+        # HC-REF001 resolves every template action against the project-wide route union, so a target
+        # mounted in a different file is not a false dead reference. With no templates both lists are
+        # empty and this yields nothing.
+        diagnostics.extend(check_references(all_routes, scanned))
     except OSError as exc:
         print(f"honest-check: cannot read source: {exc}", file=sys.stderr)
         return 2
