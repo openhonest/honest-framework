@@ -1,6 +1,6 @@
 # Plan — subsume genX into the Honest Framework as rebranded Tier 3 modules
 
-**Status:** approved; spec-first execution started. honest-format spec drafted (`specs/03-application-production/honest-format-architecture.md`) and registered in the build order (DOM → format → components); `fmtx`/`smartx` are its reference of record. Implementation to the five gates next. Remaining spokes unstarted.
+**Status:** approved; spec-first execution under way. honest-format spec drafted (`specs/03-application-production/honest-format-architecture.md`) and registered in the build order (DOM → format → components); `fmtx`/`smartx` are its reference of record. **Implementation started** at `javascript/honest-format/` — increment 1 (value coercion + hf-type conversion) passes all five JS gates. Next honest-format increments: `format.js`, `detect.js`, `manifest.js` (unblocks HC-REF004), `bind.js`. Remaining spokes (uix/dragx/loadx/accx → components, navx → page, bindx → DOM) unstarted.
 **Source library:** `~/dev/genX` (MIT, ~20k LoC JS + TS bindings + CSS), a declarative HTML-attribute client runtime.
 **Target:** the application-production tier (`specs/03-application-production/`) and its `javascript/` reference implementation.
 
