@@ -208,18 +208,20 @@ Reading the spec directly corrected three of this module's audit claims:
   stale "CLI/LSP sandboxed evaluator" note is gone.
 - Minor: `pyproject.toml` declares `conformance = "python"`, not a valid level.
 
-**New capability in flight — static-reference resolution (HC-REF).** The Tier-1
+**New capability — static-reference resolution (HC-REF).** The Tier-1
 Verification Model now carries "Every reference resolves, or the gate stops"
 (framework spec, committed `15778f6`): every identifier a rendered surface emits
 must resolve to a definition — the dual of "the input boundary is closed." HC002
-already runs *route → template*; the `HC-REF` family runs the reverse. HC-REF001
-(a template action target resolves to a mounted route — the "dead reference") is
-specified in honest-check §4.2 and scoped in `PLAN-STATIC-REFERENCE-CHECK.md`
-(Tier A: no new machinery — reuses `extract_routes` + template `sites` +
-`normalize_path`). Tiers B (`{% include %}`→template) and C (`class`→stylesheet,
-attribute→config key) await a template-scanner extension and a CSS grammar / the
-JS toolchain. Not yet built; principle and rule spec are in place, implementation
-is the next honest-check pass.
+already runs *route → template*; the `HC-REF` family runs the reverse.
+**Tier A is built and gated (2026-07-12, `706c5e9`):** HC-REF001 —
+`check_references` resolves every resolvable template action against the
+project-wide route union; `scan_template` now carries the template path and each
+site its 1-based location, so the diagnostic names where the dead reference is
+authored; the CLI aggregates routes across all checked files and runs the check
+once. Red-first, with a pure probe and a CLI-level test; boundary/templates/cli
+all mutation-adequate. Tiers B (`{% include %}`→template) and C (`class`→
+stylesheet, attribute→config key) remain, awaiting a template-scanner extension
+and a CSS grammar / the JS toolchain (scoped in `PLAN-STATIC-REFERENCE-CHECK.md`).
 
 ### honest-observe — SPEC-COMPLETE (resolved 2026-07-08; re-verified)
 Event envelope, `emit()`, all framework event builders, projections + snapshots,

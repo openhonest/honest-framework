@@ -1,6 +1,6 @@
 # Scoping Plan — static-reference resolution in honest-check
 
-**Status:** not started (scoping for review; no code yet).
+**Status:** Tier A built and gated (2026-07-12, `706c5e9`). Tiers B and C remain, scoped below.
 **Principle:** framework spec, Verification Model, *"Every reference resolves, or the gate stops"* (Tier 1, committed `15778f6`). Methodology source: `methodology/contract-testing.md`, "Static references are boundaries too."
 **Goal:** enforce, at the structural gate, that every identifier a rendered surface *emits* resolves to a definition elsewhere — the dual of HC002's "the input boundary is closed."
 
