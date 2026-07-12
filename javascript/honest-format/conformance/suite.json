@@ -59,6 +59,16 @@
     {"id": "fmt-date-bad", "function": "format", "args": ["date", "not-a-date"], "expected": "not-a-date"},
     {"id": "fmt-time-only", "function": "format", "args": ["time", "14:30:00"], "expected": "2:30 PM"},
     {"id": "fmt-relative-past", "function": "format", "args": ["relative", "2024-03-15T11:55:00.000Z", {"now": 1710504000000}], "expected": "5 minutes ago"},
-    {"id": "fmt-relative-future", "function": "format", "args": ["relative", "2024-03-17T12:00:00.000Z", {"now": 1710504000000}], "expected": "in 2 days"}
+    {"id": "fmt-relative-future", "function": "format", "args": ["relative", "2024-03-17T12:00:00.000Z", {"now": 1710504000000}], "expected": "in 2 days"},
+
+    {"id": "fmt-phone-us", "function": "format", "args": ["phone", "5551234567"], "expected": "(555) 123-4567"},
+    {"id": "fmt-phone-dash", "function": "format", "args": ["phone", "5551234567", {"phoneFormat": "us-dash"}], "expected": "555-123-4567"},
+    {"id": "fmt-phone-intl-input", "function": "format", "args": ["phone", "+44 20 7946 0958"], "expected": "+44 20 7946 0958"},
+    {"id": "fmt-phone-short", "function": "format", "args": ["phone", "12345"], "expected": "12345"},
+    {"id": "fmt-ssn-masked", "function": "format", "args": ["ssn", "123456789"], "expected": "***-**-6789"},
+    {"id": "fmt-ssn-full", "function": "format", "args": ["ssn", "123456789", {"mask": false}], "expected": "123-45-6789"},
+    {"id": "fmt-cc-masked", "function": "format", "args": ["creditcard", "4111111111111111"], "expected": "****-****-****-1111"},
+    {"id": "fmt-cc-full", "function": "format", "args": ["creditcard", "4111111111111111", {"mask": false}], "expected": "4111-1111-1111-1111"},
+    {"id": "fmt-compact", "function": "format", "args": ["compact", "1500000"], "expected": "1.5M"}
   ]
 }

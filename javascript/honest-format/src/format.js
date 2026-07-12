@@ -12,7 +12,7 @@ const _DEFAULT_LOCALE = "en-US";
 // The formats that need a parsed number. A value that does not parse renders as its own string.
 const _NUMERIC = new Set([
   "number", "currency", "percent", "scientific", "accounting",
-  "abbreviated", "millions", "billions", "trillions", "filesize", "duration", "fraction",
+  "abbreviated", "compact", "millions", "billions", "trillions", "filesize", "duration", "fraction",
 ]);
 
 // The formats that need a parsed date. A value that does not parse renders as its own string. `time` is
@@ -65,6 +65,16 @@ const _ABBREV = [[1e12, "T"], [1e9, "B"], [1e6, "M"]];
 // The filesize unit ladders, decimal and binary.
 const _SIZE_DECIMAL = ["B", "KB", "MB", "GB", "TB", "PB"];
 const _SIZE_BINARY = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+
+// Phone renderings of ten digits, keyed by phoneFormat. _US_PHONE is the subset that also reformats a
+// +1 international number. Anonymous table values, not function points.
+const _PHONE = {
+  us: (d) => `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`,
+  "us-dash": (d) => `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`,
+  "us-dot": (d) => `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`,
+  intl: (d) => `+1 ${d.slice(0, 3)} ${d.slice(3, 6)} ${d.slice(6)}`,
+};
+const _US_PHONE = new Set(["us", "us-dash", "us-dot"]);
 
 // duration render styles, over seconds already split into whole days/hours/minutes/seconds. `human` is
 // `short`; `compact` and any unknown style are `clock`. Anonymous table values, not function points.
@@ -216,6 +226,11 @@ const _FORMATTERS = {
     }
     return `${whole} ${remainder}/${den}`;
   },
+  // genX's `compact` asked Intl for a `compact-short`/`compact-long` notation, which is not a valid Intl
+  // notation, so the call always threw and fell back to `abbreviated` with no suffix. The observable
+  // behaviour is therefore abbreviated-without-suffix (the `long` option has no effect); that is
+  // reproduced directly here rather than carrying the dead Intl attempt and its catch.
+  compact: (num, str, opts) => _FORMATTERS.abbreviated(num, str, { ...opts, suffix: "" }),
   date: (num, str, opts, date) => {
     const df = opts.dateFormat || opts.format || "short";
     if (df === "iso") {
@@ -269,6 +284,38 @@ const _FORMATTERS = {
     const length = opts.length ?? 50;
     const suffix = opts.suffix || "...";
     return str.length <= length ? str : str.slice(0, length - suffix.length) + suffix;
+  },
+  phone: (num, str, opts) => {
+    const pf = opts.phoneFormat || "us";
+    const trimmed = str.trim();
+    if (trimmed.startsWith("+") || trimmed.startsWith("00")) {
+      const normalized = (trimmed.startsWith("00") ? `+${trimmed.slice(2)}` : trimmed).replace(/\s+/g, " ");
+      const digits = normalized.replace(/\D/g, "");
+      if (digits.startsWith("1") && digits.length === 11 && _US_PHONE.has(pf)) {
+        return _PHONE[pf](digits.slice(1));
+      }
+      return normalized;
+    }
+    const raw = str.replace(/\D/g, "");
+    const digits = raw.length === 11 && raw.startsWith("1") ? raw.slice(1) : raw;
+    if (digits.length !== 10) {
+      return str;
+    }
+    return _PHONE[pf]?.(digits) ?? str;
+  },
+  ssn: (num, str, opts) => {
+    const clean = str.replace(/\D/g, "");
+    if (clean.length !== 9) {
+      return str;
+    }
+    return opts.mask !== false ? `***-**-${clean.slice(-4)}` : `${clean.slice(0, 3)}-${clean.slice(3, 5)}-${clean.slice(5)}`;
+  },
+  creditcard: (num, str, opts) => {
+    const clean = str.replace(/\D/g, "");
+    if (clean.length < 12) {
+      return str;
+    }
+    return opts.mask !== false ? `****-****-****-${clean.slice(-4)}` : clean.match(/.{1,4}/g).join("-");
   },
 };
 
