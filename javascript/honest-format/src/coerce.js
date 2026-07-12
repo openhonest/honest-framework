@@ -9,3 +9,11 @@ export function toNumber(value) {
   const parsed = parseFloat(value);
   return Number.isNaN(parsed) ? null : parsed;
 }
+
+// A value to a Date, or null when it does not parse. `new Date(value)` constructs deterministically from
+// its argument (it is the argument-less `new Date()` that reads the clock); an unparseable value is a
+// Date whose time is NaN, which collapses to null so the caller has one "not a date" signal.
+export function toDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}

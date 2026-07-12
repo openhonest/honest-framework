@@ -52,6 +52,13 @@
     {"id": "fmt-truncate", "function": "format", "args": ["truncate", "the quick brown fox", {"length": 9}], "expected": "the qu..."},
     {"id": "best-den-2", "function": "bestDenominator", "args": [0.5], "expected": 2},
     {"id": "best-den-4", "function": "bestDenominator", "args": [0.25], "expected": 4},
-    {"id": "best-den-64", "function": "bestDenominator", "args": [0.333], "expected": 64}
+    {"id": "best-den-64", "function": "bestDenominator", "args": [0.333], "expected": 64},
+
+    {"id": "num-date-parse", "function": "toDate", "args": ["not-a-date"], "expected": null},
+    {"id": "fmt-date-iso", "function": "format", "args": ["date", "2024-03-15", {"dateFormat": "iso"}], "expected": "2024-03-15"},
+    {"id": "fmt-date-bad", "function": "format", "args": ["date", "not-a-date"], "expected": "not-a-date"},
+    {"id": "fmt-time-only", "function": "format", "args": ["time", "14:30:00"], "expected": "2:30 PM"},
+    {"id": "fmt-relative-past", "function": "format", "args": ["relative", "2024-03-15T11:55:00.000Z", {"now": 1710504000000}], "expected": "5 minutes ago"},
+    {"id": "fmt-relative-future", "function": "format", "args": ["relative", "2024-03-17T12:00:00.000Z", {"now": 1710504000000}], "expected": "in 2 days"}
   ]
 }

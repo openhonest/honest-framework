@@ -10,6 +10,11 @@ Feature: honest-format — declarative value formatting
     When toNumber reads it
     Then it returns the parsed number, or null when the value does not parse
 
+  Scenario: toDate reads a value to a Date or null
+    Given a value
+    When toDate reads it
+    Then it returns the constructed Date, or null when the value does not parse
+
   Scenario: convert applies an hf-type input conversion before formatting
     Given a value and an hf-type name
     When convert reads it
@@ -24,3 +29,8 @@ Feature: honest-format — declarative value formatting
     Given a decimal
     When bestDenominator searches
     Then it returns the smallest power-of-two denominator whose fraction approximates it within a hundredth, up to the guaranteed 64
+
+  Scenario: formatCustomDate renders a date through a token pattern
+    Given a date and a pattern of date tokens
+    When formatCustomDate substitutes each token
+    Then it returns the pattern with YYYY, MM, DD and the rest replaced by the date's components, longer tokens before their prefixes

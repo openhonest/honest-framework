@@ -4,7 +4,7 @@
 // NaN, null, or a thrown error. Pure: the same value and options give the same string, with no DOM and
 // no clock. This spoke carries the numeric and text families; temporal, phone-family, compact, and
 // smart formats land in the spokes that follow.
-import { toNumber } from "./coerce.js";
+import { toDate, toNumber } from "./coerce.js";
 import { convert } from "./convert.js";
 
 const _DEFAULT_LOCALE = "en-US";
@@ -14,6 +14,50 @@ const _NUMERIC = new Set([
   "number", "currency", "percent", "scientific", "accounting",
   "abbreviated", "millions", "billions", "trillions", "filesize", "duration", "fraction",
 ]);
+
+// The formats that need a parsed date. A value that does not parse renders as its own string. `time` is
+// not here: it self-guards, accepting a bare time-of-day string (`14:30`) that is not a full date.
+const _TEMPORAL = new Set(["date", "datetime", "relative"]);
+
+// Intl option sets for the named date styles (short/medium/long/full); iso and custom are handled
+// outside this table. Data, not code.
+const _DATE_OPTS = {
+  short: { month: "numeric", day: "numeric", year: "numeric" },
+  medium: { month: "short", day: "numeric", year: "numeric" },
+  long: { month: "long", day: "numeric", year: "numeric" },
+  full: { weekday: "long", month: "long", day: "numeric", year: "numeric" },
+};
+
+// Intl option sets for the named time styles, as functions of the resolved hour12 flag. There are no
+// separate -24 entries: a `-24` style strips to its base and renders with hour12 forced false, which
+// gives the identical string (Intl pads a numeric hour to two digits under 24-hour), so the -24 entries
+// genX carried are redundant and not kept. Anonymous table values, not function points.
+const _TIME_OPTS = {
+  short: (hour12) => ({ hour: "numeric", minute: "numeric", hour12 }),
+  medium: (hour12) => ({ hour: "numeric", minute: "numeric", second: "numeric", hour12 }),
+  long: (hour12) => ({ hour: "numeric", minute: "numeric", second: "numeric", timeZoneName: "short", hour12 }),
+};
+
+// A bare time of day (`14:30` or `14:30:00`), parsed into 1970-01-01 so a time-only value formats.
+const _TIME_ONLY = /^\d{1,2}:\d{2}(:\d{2})?$/;
+
+// The relative-past ladder: [max diff-seconds exclusive, seconds per unit, unit label] with a null label
+// for "just now". The relative-future ladder: [min abs-seconds inclusive, seconds per unit, unit label],
+// falling to "in a moment". Data, not code.
+const _PAST = [
+  [60, 0, null],
+  [3600, 60, "minute"],
+  [86400, 3600, "hour"],
+  [604800, 86400, "day"],
+  [2419200, 604800, "week"],
+  [31104000, 2592000, "month"],
+];
+const _SECONDS_PER_YEAR = 31536000;
+const _FUTURE = [
+  [86400, 86400, "day"],
+  [3600, 3600, "hour"],
+  [60, 60, "minute"],
+];
 
 // The fixed magnitude buckets for `abbreviated` above the variable K threshold. Data, not code.
 const _ABBREV = [[1e12, "T"], [1e9, "B"], [1e6, "M"]];
@@ -69,6 +113,31 @@ export function bestDenominator(decimal) {
     }
   }
   return 64;
+}
+
+// A date rendered through a pattern of tokens (YYYY, YY, MM, M, DD, D, HH, H, mm, m, ss, s) against the
+// date's local-time components. Longer tokens are replaced before their prefixes (YYYY before YY, MM
+// before M), so a two-digit field is not eaten by a one-digit token. Pure over the Date's own methods.
+export function formatCustomDate(date, pattern) {
+  const tokens = {
+    YYYY: date.getFullYear(),
+    YY: String(date.getFullYear()).slice(-2),
+    MM: String(date.getMonth() + 1).padStart(2, "0"),
+    M: date.getMonth() + 1,
+    DD: String(date.getDate()).padStart(2, "0"),
+    D: date.getDate(),
+    HH: String(date.getHours()).padStart(2, "0"),
+    H: date.getHours(),
+    mm: String(date.getMinutes()).padStart(2, "0"),
+    m: date.getMinutes(),
+    ss: String(date.getSeconds()).padStart(2, "0"),
+    s: date.getSeconds(),
+  };
+  let result = pattern;
+  for (const [token, value] of Object.entries(tokens)) {
+    result = result.replaceAll(token, String(value));
+  }
+  return result;
 }
 
 const _FORMATTERS = {
@@ -147,6 +216,51 @@ const _FORMATTERS = {
     }
     return `${whole} ${remainder}/${den}`;
   },
+  date: (num, str, opts, date) => {
+    const df = opts.dateFormat || opts.format || "short";
+    if (df === "iso") {
+      return date.toISOString().split("T")[0];
+    }
+    if (df === "custom" && opts.pattern) {
+      return formatCustomDate(date, opts.pattern);
+    }
+    return date.toLocaleDateString(opts.locale ?? _DEFAULT_LOCALE, _DATE_OPTS[df] ?? _DATE_OPTS.short);
+  },
+  time: (num, str, opts, date) => {
+    const tf = opts.timeFormat || "short";
+    const hour12 = opts.hour12 !== false && !tf.includes("24");
+    const style = tf.replace("-24", "");
+    const timeDate = date ?? (_TIME_ONLY.test(str) ? new Date(`1970-01-01T${str}`) : null);
+    if (timeDate === null) {
+      return str;
+    }
+    return timeDate.toLocaleTimeString(opts.locale ?? _DEFAULT_LOCALE, (_TIME_OPTS[style] ?? _TIME_OPTS.short)(hour12));
+  },
+  datetime: (num, str, opts, date) => date.toLocaleString(opts.locale ?? _DEFAULT_LOCALE),
+  relative: (num, str, opts, date) => {
+    const diffSec = Math.floor((opts.now - date) / 1000);
+    if (diffSec < 0) {
+      const absSec = -diffSec;
+      for (const [min, per, unit] of _FUTURE) {
+        if (absSec >= min) {
+          const count = Math.floor(absSec / per);
+          return `in ${count} ${unit}${count > 1 ? "s" : ""}`;
+        }
+      }
+      return "in a moment";
+    }
+    for (const [max, per, unit] of _PAST) {
+      if (diffSec < max) {
+        if (unit === null) {
+          return "just now";
+        }
+        const count = Math.floor(diffSec / per);
+        return `${count} ${unit}${count > 1 ? "s" : ""} ago`;
+      }
+    }
+    const years = Math.floor(diffSec / _SECONDS_PER_YEAR);
+    return `${years} year${years > 1 ? "s" : ""} ago`;
+  },
   uppercase: (num, str) => str.toUpperCase(),
   lowercase: (num, str) => str.toLowerCase(),
   capitalize: (num, str) => str.replace(/\b\w/g, (letter) => letter.toUpperCase()),
@@ -169,5 +283,12 @@ export function format(type, value, opts = {}) {
   if (_NUMERIC.has(type) && num === null) {
     return str;
   }
-  return formatter(num, str, opts);
+  // The date is parsed from the string form. When opts.type produced a Date, its string form round-trips
+  // back to the same instant (temporal formats never show sub-second precision), so no Date special-case
+  // is needed here.
+  const date = toDate(str);
+  if (_TEMPORAL.has(type) && date === null) {
+    return str;
+  }
+  return formatter(num, str, opts, date);
 }
