@@ -21,6 +21,7 @@ honest-page is not a component. It is not a layout engine. It is a contract: a d
 - The CSS custom property token contract for base page layout
 - The honest-alerts SSE wiring contract
 - The server-side context variables the template expects
+- The requirement that every reference the rendered surface emits — an `hx-*` action target, a `{% include %}` — resolves to a definition (a mounted route, an existing template), checked statically at the gate, never left to the browser (framework spec, "Every reference resolves, or the gate stops"; enforced by honest-check HC-REF)
 - Conformance requirements for spoke implementations
 
 ### 1.2 What honest-page Does Not Define

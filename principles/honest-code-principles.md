@@ -21,6 +21,9 @@ The DOM *is* the state. Instead of Redux/MobX/Zustand synchronizing a shadow cop
 ## HTML Attributes Over Imperative DOM Manipulation
 Instead of `addEventListener`, `querySelector`, `innerHTML` in JavaScript, use `hx-post="/endpoint"`, `hx-target="#result"`, `fx-format="currency"`. The attribute declares intent; the library handles mechanism. Seventy-three lines of JS become six attributes.
 
+## References Resolve Statically
+Every identifier a rendered artifact names is a reference across a boundary: an `hx-get` to a route, a `class` to a stylesheet rule, a `{% include %}` to a template. Asserting the artifact contains the string proves it was written, not that it resolves — two green tests can describe a button and a menu that never connect. Resolve every emitted reference to its definition at the gate, not in a running browser, and generate agreeing artifacts from one declaration so they cannot disagree.
+
 ## Typed Exceptions at the Boundary
 Don't catch inside business logic. Let functions raise. The route handler (or supervisor) catches, inspects the exception type (`ValidationError`, `GatewayTimeout`), and returns the appropriate status code. Retry logic belongs in the task queue infrastructure, not inline in the function.
 

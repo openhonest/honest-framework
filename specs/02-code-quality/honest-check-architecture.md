@@ -138,7 +138,7 @@ The LSP server reads stdin/stdout using the JSON-RPC 2.0 protocol. Configuration
 
 **Editor integration notes:**
 
-In LSP mode, honest-check re-runs affected rules incrementally on each file save. Construction-time rules (HC003, HC006, HC011) re-run when any vocabulary definition file changes. Chain rules (HC001, HC002, HC007) re-run when any chain or link definition file changes.
+In LSP mode, honest-check re-runs affected rules incrementally on each file save. Construction-time rules (HC003, HC006, HC011) re-run when any vocabulary definition file changes. Chain rules (HC001, HC002, HC007) re-run when any chain or link definition file changes. Reference rules (HC-REF001) re-run when any template or route definition changes, since they resolve a rendered surface's references against the route map.
 
 ### 2.3 Framework Startup Integration
 
@@ -432,6 +432,7 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-A002 | Error | ✓ | Actor trusted from request input instead of the boundary |
 | HC-HF001 | Error | ✓ | feature_state references a flag not declared in FEATURES |
 | HC-HF002 | Warning | ✓ | Handler table missing an entry for a declared flag state |
+| HC-REF001 | Error | ✓ | Template action target resolves to no mounted route (dead reference) |
 
 #### HC001 — Link missing vocabulary
 
@@ -459,6 +460,22 @@ FUNCTION check_HC002(chain):
 ```
 
 The first link has no predecessor, but its input is not unknown: it receives the manifest `classify()` produces at intake from the request the templates send — the closed, statically-inspectable input boundary (see honest-framework-spec.md, "The input boundary is closed"). So the first link's `accepts` is checked against that **derived** boundary vocabulary, not a separately declared one. The derivation follows the route map (honest-page-architecture.md §9): for a chain, take its `(method, path)` entries; find the templates whose `hx-post`/`hx-get` target those paths; the union of the fields those templates send — the application-state manifest keys (honest-page §5), the form field `name`s, and the `hx-vals` keys, plus the route's path and query parameters — is the boundary vocabulary. A field name that is not statically resolvable (a fully dynamic template expression) makes the boundary unknowable and is itself a violation. A first link declared `boundary=True` is the intake boundary itself and is exempt (it receives the raw request, by design); a first link that declares no vocabulary at all is HC001's concern, exactly as for any other link.
+
+#### HC-REF001 — Template action target resolves to a mounted route
+
+HC002 runs the boundary *route → template* (does a template supply this route's fields?). HC-REF001 runs the dual, *template → route*: every `hx-get`/`hx-post`/`hx-*` action a template emits must target a mounted route. This is the "Every reference resolves, or the gate stops" principle (honest-framework-spec.md, Verification Model) applied to the rendered surface — a template action pointing at a route nothing mounts is a **dead reference**: it renders, passes every shape test, and does nothing.
+
+```
+FUNCTION check_HC_REF001(routes, scanned_templates):
+    route_patterns ← { (r.method, normalize_path(r.path)) FOR r IN routes }
+    FOR EACH site IN scanned_templates.sites:
+        IF (site.method, normalize_path(site.path)) NOT IN route_patterns:
+            EMIT error(HC-REF001, site.location,
+                "Template action targets {site.method} {site.path}, which no route mounts. "
+                "Point it at a mounted route, or add the route.")
+```
+
+The route map is the **union across the project** — a template may target a route mounted in another file — the same closed route set HC002 derives its boundary vocabulary from. Path parameters match through `normalize_path`, so an interpolated target (`/items/{{item.id}}`) resolves against its route pattern (`/items/{id}`). Reference kinds beyond the action target — a `{% include %}` to a template, a `class` to a stylesheet rule, an attribute value to a client-config key — extend the same `HC-REF` family as their grammars land in `parse`.
 
 #### HC004 — Dead vocabulary type
 

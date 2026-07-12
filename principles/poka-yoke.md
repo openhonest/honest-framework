@@ -147,6 +147,8 @@ Features in the current specs where additional poka-yoke is available but not ye
 
 7. **Chain idempotency declaration.** Chains with boundary links could declare explicitly whether they are idempotent (safe to retry) or not. honest-check could then enforce that retry logic only wraps chains whose idempotency is declared true. Eliminates "retried a non-idempotent operation and double-charged" bugs.
 
+8. **Static cross-artifact reference resolution.** A rendered surface names identifiers defined elsewhere — an `hx-get` targeting a mounted route, a `class` a stylesheet must define, a `{% include %}` that must exist, an attribute value keyed into a client config. A shape test asserts the string is present, never that it resolves; two green tests can describe a control and a target that never connect. honest-check resolving every emitted reference to its definition (the `HC-REF` family, built on the single parser that already reads templates, styles, and routes) eliminates the *dead reference* — the button that renders, tests green, and does nothing. The framework spec now carries this as a Verification Model principle ("Every reference resolves, or the gate stops"); the deeper elimination is single-source generation, where the agreeing artifacts derive from one declaration and cannot disagree.
+
 Each item: one more category, gone.
 
 ---
