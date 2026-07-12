@@ -849,3 +849,18 @@ Feature: honest-check — Python supplement
     Given a directory
     When _discover_css is asked
     Then it returns the sorted .css files under it, or nothing when the directory is empty or absent
+
+  Scenario: js_class_references extracts the classes a JS module emits
+    Given a JS module's source
+    When js_class_references reads its classList calls and className assignments
+    Then it yields each static class literal located at the call, skipping a dynamic argument or a non-classList call
+
+  Scenario: _member_property reads a JS member expression's property name
+    Given a member expression node
+    When _member_property is asked
+    Then it returns the property name
+
+  Scenario: _discover_js lists the client modules under a directory
+    Given a directory
+    When _discover_js is asked
+    Then it returns the sorted .js files under it, or nothing when the directory is empty or absent

@@ -109,7 +109,7 @@ from honest_check.declgraph import (
 from honest_parse import parse_python, parse_javascript, parse_html, node_text, walk as _w
 from honest_check.rules import language_for_path
 from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_enclosing_function, _js_equality_target, _js_else_if, _js_impure_name, _js_mutable_decl_names, _js_qualified_name, _js_reassigned_names, _js_scope_lets, _js_type_check
-from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _object_keys, _open_tag, _tag_name, manifest_keys, request_sites, scan_template, stylesheet_classes, template_class_references, template_includes
+from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _member_property, _object_keys, _open_tag, _tag_name, js_class_references, manifest_keys, request_sites, scan_template, stylesheet_classes, template_class_references, template_includes
 from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_class_references, check_references, check_template_references, route_boundary
 
 
@@ -2843,6 +2843,33 @@ def _probe_class_references() -> list:
         bad.append(f"HC-REF003 message should name the class and the remedy: {diags[0].get('message')}")
     if check_class_references(frozenset({"button"}), [{"path": "t.html", "class_refs": [{"class": "button", "location": (1, 1)}]}]):
         bad.append("a defined class should not fire HC-REF003")
+    # The runtime half: js_class_references extracts a literal through every classList method and every
+    # className token, and skips a dynamic argument, a non-classList method on classList, a classList method
+    # on a plain identifier, a non-member function, a member receiver that is not classList, an assignment
+    # whose left is a plain identifier, an assignment to a non-className property, and a non-string className.
+    js_refs = js_class_references(
+        b'el.classList.add("m-add");\n'
+        b'el.classList.remove("m-remove");\n'
+        b'el.classList.toggle("m-toggle");\n'
+        b'el.classList.replace("m-old", "m-replace");\n'
+        b'el.classList.contains("m-contains");\n'
+        b'n.className = "c1 c2";\n'
+        b'el.classList.toggle(dyn);\n'
+        b'el.classList.freeze("skip1");\n'
+        b'el.add("skip2");\n'
+        b'foo("skip3");\n'
+        b'o.other.add("skip4");\n'
+        b'plain = "skip5";\n'
+        b'x.title = "skip6";\n'
+        b'x.className = dyn;\n'
+    )
+    if [r["class"] for r in js_refs] != ["m-add", "m-remove", "m-toggle", "m-old", "m-replace", "m-contains", "c1", "c2"]:
+        bad.append(f"js_class_references should extract every classList literal and className token and skip everything else: {[r['class'] for r in js_refs]}")
+    if js_refs and js_refs[0]["location"][0] != 1:
+        bad.append(f"a JS class reference is located at its call: {js_refs[0]}")
+    member = next(n for n in _w(parse_javascript(b"a.classList").root_node) if n.type == "member_expression")
+    if _member_property(member, b"a.classList") != "classList":
+        bad.append("_member_property returns a member expression's property name")
     return bad
 
 

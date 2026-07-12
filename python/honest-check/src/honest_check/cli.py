@@ -37,7 +37,7 @@ from honest_check.formats import (
 )
 from honest_check.lsp import serve
 from honest_check.rules import check_source, language_for_path
-from honest_check.templates import scan_template, stylesheet_classes
+from honest_check.templates import js_class_references, scan_template, stylesheet_classes
 from honest_parse import parse
 
 
@@ -75,6 +75,13 @@ def _discover_css(css_dir: str) -> list[Path]:
     class references against. Empty when the directory is empty or does not exist."""
     root = Path(css_dir)
     return sorted(root.rglob("*.css")) if css_dir and root.is_dir() else []
+
+
+def _discover_js(js_dir: str) -> list[Path]:
+    """Expand a directory into a sorted list of .js files — the client modules HC-REF003 reads for the
+    classes they emit via classList/className. Empty when the directory is empty or does not exist."""
+    root = Path(js_dir)
+    return sorted(root.rglob("*.js")) if js_dir and root.is_dir() else []
 
 
 def _find_config(explicit: str | None) -> Path | None:
@@ -128,8 +135,10 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
         resolvable = frozenset(str(f.relative_to(troot)) for troot, f in pairs)
         scanned = [scan_template(f.read_bytes(), str(f)) for troot, f in pairs]
         # HC-REF003 resolves class references against the union of the classes every component stylesheet
-        # under the search roots defines.
+        # under the search roots defines. The class references come from templates (scanned above) and from
+        # the .js modules under the roots (the classes they emit via classList/className).
         defined_classes = frozenset(cls for troot in _template_roots(templates_dir) for f in _discover_css(str(troot)) for cls in stylesheet_classes(f.read_bytes()))
+        js_scanned = [{"path": str(f), "class_refs": js_class_references(f.read_bytes())} for troot in _template_roots(templates_dir) for f in _discover_js(str(troot))]
         all_routes: list = []
         for file in _discover_files(paths, exclude):
             source = file.read_text(encoding="utf-8")
@@ -144,7 +153,7 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
         # include/extends target against the template search path. With no templates both yield nothing.
         diagnostics.extend(check_references(all_routes, scanned))
         diagnostics.extend(check_template_references(resolvable, scanned))
-        diagnostics.extend(check_class_references(defined_classes, scanned))
+        diagnostics.extend(check_class_references(defined_classes, scanned + js_scanned))
     except OSError as exc:
         print(f"honest-check: cannot read source: {exc}", file=sys.stderr)
         return 2

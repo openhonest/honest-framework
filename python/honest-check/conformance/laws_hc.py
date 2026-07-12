@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 from honest_check import HonestCheckError, check_source, startup_check
-from honest_check.cli import _discover_css, _discover_files, _discover_templates, _find_config, _load_config, _template_roots, main as cli_main, watch
+from honest_check.cli import _discover_css, _discover_files, _discover_js, _discover_templates, _find_config, _load_config, _template_roots, main as cli_main, watch
 from honest_check.rules import is_fixable
 from honest_check.config import (
     empty_config,
@@ -426,6 +426,16 @@ def _probe_cli():
             bad.append(f"_discover_css should list the .css files under a dir: {_discover_css(str(Path(tmp, 'atoms')))}")
         if _discover_css("") != []:
             bad.append("_discover_css is empty when no directory is given")
+        # HC-REF003's runtime half: a class a .js module emits via classList must resolve too. The page is
+        # clean; button.js emits a defined class and a typo'd one.
+        atoms.joinpath("button.js").write_text('el.classList.add("button"); n.classList.add("buton");', encoding="utf-8")
+        code, out, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg), "--format", "json"])
+        if code != 1 or "HC-REF003" not in out or "buton" not in out:
+            bad.append(f"a class a JS module emits that no stylesheet defines should fire HC-REF003: {code} {out[:100]}")
+        if _discover_js(str(Path(tmp, "atoms"))) != [atoms / "button.js"]:
+            bad.append(f"_discover_js should list the .js files under a dir: {_discover_js(str(Path(tmp, 'atoms')))}")
+        if _discover_js("") != []:
+            bad.append("_discover_js is empty when no directory is given")
     # The watch loop re-runs once per trigger line and returns the last code at EOF.
     runs = {"n": 0}
 

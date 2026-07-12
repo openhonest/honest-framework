@@ -13,6 +13,9 @@ from honest_parse import line_col, node_text, parse_css, parse_html, parse_javas
 # The Jinja composition tags whose target must resolve to a template (HC-REF002, honest-check §4.2).
 _INCLUDING_TAGS = frozenset({"include", "extends"})
 
+# The classList methods whose string arguments are classes a JS module emits at runtime (HC-REF003).
+_CLASSLIST_METHODS = frozenset({"add", "remove", "toggle", "replace", "contains"})
+
 # HTMX request attributes -> HTTP method (honest-page section 9: hx-post / hx-get name a path).
 _HX_METHOD = {"hx-post": "POST", "hx-get": "GET", "hx-put": "PUT", "hx-patch": "PATCH", "hx-delete": "DELETE"}
 # Elements whose `name` submits a value within a form (honest-page section 9: form field names).
@@ -172,6 +175,43 @@ def template_class_references(source: bytes) -> tuple:
             continue
         for token in value.split():
             out.append({"class": token, "location": line_col(node)})
+    return tuple(out)
+
+
+def _member_property(member_node, source: bytes):
+    """The property name of a JS member expression (`a.b` -> "b"). A member expression always carries a
+    property field, so this never returns None for parsed source."""
+    return node_text(member_node.child_by_field_name("property"), source)
+
+
+def js_class_references(source: bytes) -> tuple:
+    """Every static class a JS module emits (HC-REF003, the runtime half): the string-literal arguments to
+    a `classList` method (`add`/`remove`/`toggle`/`replace`/`contains`) and the tokens of a `className`
+    assignment, located at the call or assignment. The classes a client `h*-` module adds are statically
+    knowable from its source, so they resolve against the stylesheets the same way a template's classes do.
+    A non-literal argument (a variable or expression) is dynamic and skipped, as an interpolated template
+    class value is. Pure over the parsed JS."""
+    out = []
+    for node in walk(parse_javascript(source).root_node):
+        if node.type == "call_expression":
+            function = node.child_by_field_name("function")
+            if function is None or function.type != "member_expression":
+                continue
+            receiver = function.child_by_field_name("object")
+            if _member_property(function, source) not in _CLASSLIST_METHODS or receiver is None or receiver.type != "member_expression" or _member_property(receiver, source) != "classList":
+                continue
+            strings = [child for child in node.child_by_field_name("arguments").children if child.type == "string"]
+        elif node.type == "assignment_expression":
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            if left is None or left.type != "member_expression" or _member_property(left, source) != "className" or right is None or right.type != "string":
+                continue
+            strings = [right]
+        else:
+            continue
+        for string in strings:
+            for token in node_text(string, source)[1:-1].split():
+                out.append({"class": token, "location": line_col(node)})
     return tuple(out)
 
 
