@@ -109,8 +109,8 @@ from honest_check.declgraph import (
 from honest_parse import parse_python, parse_javascript, parse_html, node_text, walk as _w
 from honest_check.rules import language_for_path
 from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_enclosing_function, _js_equality_target, _js_else_if, _js_impure_name, _js_mutable_decl_names, _js_qualified_name, _js_reassigned_names, _js_scope_lets, _js_type_check
-from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _object_keys, _open_tag, _tag_name, manifest_keys, request_sites, scan_template
-from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_references, route_boundary
+from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _object_keys, _open_tag, _tag_name, manifest_keys, request_sites, scan_template, template_includes
+from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_references, check_template_references, route_boundary
 
 
 def _rules(source: str) -> list[str]:
@@ -2613,6 +2613,10 @@ def _probe_templates() -> list:
         bad.append(f"scan_template should carry the template path under 'path': {located.get('path')}")
     if not located["sites"] or located["sites"][0]["location"] != (1, 1):
         bad.append(f"a site should carry its 1-based (line, col) location: {[s.get('location') for s in located['sites']]}")
+    # scan_template also carries the template's include/extends references (HC-REF002).
+    incl = scan_template(b'{% include "card.html" %}<button hx-get="/x"></button>')
+    if [(r["tag"], r["targets"]) for r in incl["includes"]] != [("include", ("card.html",))]:
+        bad.append(f"scan_template should carry the template's include/extends references: {incl['includes']}")
     # _is_resolvable: each interpolation form is unresolvable; a clean path is resolvable.
     if any(_is_resolvable(v) for v in ("/x/{{i}}", "/x/{% if %}", "/x/${i}")) or not _is_resolvable("/x/1"):
         bad.append("_is_resolvable misclassified an interpolation form")
@@ -2767,6 +2771,48 @@ def _probe_references() -> list:
     return bad
 
 
+def _probe_template_references() -> list:
+    """HC-REF002 (section 4.2): every literal include/extends target resolves to a template in the search
+    path. template_includes extracts the tag, literal target (None when dynamic), and the tag location;
+    check_template_references flags a dangling literal at its tag, skips a dynamic target, and passes a
+    resolvable one."""
+    bad = []
+    refs = template_includes(
+        b'{% extends "base.html" %}\n'
+        b'{% block m %}{% include "molecules/card/card.html" %}{% include v %}{% endblock %}\n'
+        b'{% include "a.html" if cond else "b.html" %}\n'
+    )
+    # Only include/extends are references — a block/endblock (or any other tag) must not be extracted.
+    if {r["tag"] for r in refs} != {"extends", "include"}:
+        bad.append(f"template_includes should extract only include/extends tags: {sorted({r['tag'] for r in refs})}")
+    got = {(r["tag"], r["targets"]): r for r in refs}
+    for expected in (("extends", ("base.html",)), ("include", ("molecules/card/card.html",)), ("include", ()), ("include", ("a.html", "b.html"))):
+        if expected not in got:
+            bad.append(f"template_includes should carry a literal / dynamic / conditional target set: {expected} not in {refs}")
+    if got.get(("include", ("molecules/card/card.html",)), {}).get("location", (0,))[0] != 2:
+        bad.append(f"an include is located at its tag on its own line: {got.get(('include', ('molecules/card/card.html',)))}")
+    tpl = {"path": "page.html", "includes": [
+        {"tag": "extends", "targets": ("base.html",), "location": (1, 4)},
+        {"tag": "include", "targets": ("ghost.html",), "location": (2, 6)},
+        {"tag": "include", "targets": (), "location": (3, 6)},
+        {"tag": "include", "targets": ("card.html", "missing.html"), "location": (4, 6)},
+    ]}
+    diags = check_template_references(frozenset({"base.html", "card.html"}), [tpl])
+    # The dangling plain include and the missing branch of the conditional each fire; the resolvable
+    # targets and the dynamic one do not.
+    if [(d["rule"], d["severity"]) for d in diags] != [("HC-REF002", "error"), ("HC-REF002", "error")]:
+        bad.append(f"each unresolved literal target should fire HC-REF002: {[(d['rule'], d['severity']) for d in diags]}")
+    if diags and (diags[0]["line"], diags[0]["col"], diags[0]["path"]) != (2, 6, "page.html"):
+        bad.append(f"HC-REF002 should point at the dead include: {diags[0]}")
+    if diags and ("ghost.html" not in diags[0]["message"] or "include" not in diags[0]["message"] or "fix the path" not in diags[0]["message"]):
+        bad.append(f"HC-REF002 message should name the tag, the target, and the remedy: {diags[0].get('message')}")
+    if len(diags) == 2 and "missing.html" not in diags[1]["message"]:
+        bad.append(f"the missing branch of a conditional include fires its own HC-REF002: {diags[1].get('message')}")
+    if check_template_references(frozenset({"base.html"}), [{"path": "t.html", "includes": [{"tag": "include", "targets": ("base.html",), "location": (1, 1)}]}]):
+        bad.append("a resolvable include target should not fire HC-REF002")
+    return bad
+
+
 def run() -> int:
     failed = 0
     passed = 0
@@ -2832,6 +2878,14 @@ def run() -> int:
     if references_bad:
         failed += 1
         print(f"FAIL HC-rule [references]: {references_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    template_references_bad = _probe_template_references()
+    if template_references_bad:
+        failed += 1
+        print(f"FAIL HC-rule [template_references]: {template_references_bad}")
     else:
         passed += 1
 

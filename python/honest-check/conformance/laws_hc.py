@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 from honest_check import HonestCheckError, check_source, startup_check
-from honest_check.cli import _discover_files, _discover_templates, _find_config, _load_config, main as cli_main, watch
+from honest_check.cli import _discover_files, _discover_templates, _find_config, _load_config, _template_roots, main as cli_main, watch
 from honest_check.rules import is_fixable
 from honest_check.config import (
     empty_config,
@@ -369,6 +369,36 @@ def _probe_cli():
         code, _, _ = _run_cli([str(Path(tmp, "app.py")), str(Path(tmp, "more.py")), "--config", str(cfg)])
         if code != 0:
             bad.append(f"a target mounted in another checked file should resolve, got {code}")
+
+    # HC-REF002 wired through the CLI: an include/extends target must resolve to a template in the search
+    # path — the templates dir plus its sibling atoms/ and molecules/ roots (honest-components).
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "app.py").write_text("x = 1\n", encoding="utf-8")
+        tdir = Path(tmp, "templates")
+        tdir.mkdir()
+        atoms = Path(tmp, "atoms", "button")
+        atoms.mkdir(parents=True)
+        atoms.joinpath("button.html").write_text("<button>x</button>", encoding="utf-8")
+        Path(tdir, "base.html").write_text("<html></html>", encoding="utf-8")
+        cfg = Path(tmp, "honest-check.toml")
+        cfg.write_text(f'[check]\ntemplates = "{tdir}"\n', encoding="utf-8")
+        page = Path(tdir, "page.html")
+        # extends a real base, includes a real atom (resolved via the atoms/ root), and a missing template.
+        page.write_text('{% extends "base.html" %}{% include "button/button.html" %}{% include "ghost.html" %}', encoding="utf-8")
+        code, out, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg), "--format", "json"])
+        if code != 1 or "HC-REF002" not in out or "ghost.html" not in out:
+            bad.append(f"a dangling include target should fire HC-REF002: {code} {out[:100]}")
+        # Point it at a real template: every include/extends now resolves, so the run is clean.
+        page.write_text('{% extends "base.html" %}{% include "button/button.html" %}', encoding="utf-8")
+        code, _, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg)])
+        if code != 0:
+            bad.append(f"resolvable include/extends targets should be clean, got {code}")
+        # _template_roots discovers the templates dir plus the existing sibling atoms/ (molecules/ absent).
+        roots = _template_roots(str(tdir))
+        if roots != [tdir, Path(tmp, "atoms")]:
+            bad.append(f"_template_roots should be the templates dir plus existing sibling roots: {roots}")
+        if _template_roots("") != []:
+            bad.append("_template_roots is empty when no templates dir is configured")
     # The watch loop re-runs once per trigger line and returns the last code at EOF.
     runs = {"n": 0}
 

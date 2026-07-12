@@ -8,7 +8,10 @@ input boundary is closed"). Parsing is honest-parse's single boundary; this modu
 trees. Template file reading stays at the caller's I/O boundary — every function here takes source in.
 """
 
-from honest_parse import line_col, node_text, parse_html, parse_javascript, walk
+from honest_parse import line_col, node_text, parse_html, parse_javascript, parse_jinja, walk
+
+# The Jinja composition tags whose target must resolve to a template (HC-REF002, honest-check §4.2).
+_INCLUDING_TAGS = frozenset({"include", "extends"})
 
 # HTMX request attributes -> HTTP method (honest-page section 9: hx-post / hx-get name a path).
 _HX_METHOD = {"hx-post": "POST", "hx-get": "GET", "hx-put": "PUT", "hx-patch": "PATCH", "hx-delete": "DELETE"}
@@ -125,6 +128,24 @@ def request_sites(root, source: bytes) -> tuple:
     return tuple(sites)
 
 
+def template_includes(source: bytes) -> tuple:
+    """Every `{% include %}`/`{% extends %}` reference in a template (HC-REF002): its `tag`, its literal
+    `targets` (every string argument, quotes and whitespace stripped — one for a plain include, more for a
+    conditional `{% include "a" if x else "b" %}` where both branches must resolve, none for a dynamic
+    variable target), and the site `location` at the tag keyword. Read through honest-parse's Jinja
+    grammar, which the HTML grammar cannot supply (it reads `{% %}` as opaque text). Pure."""
+    out = []
+    for node in walk(parse_jinja(source).root_node):
+        # Only a `statement` node carries a `tag` field; every other node yields None here and is skipped,
+        # so this single guard covers both non-statements and non-include/extends tags.
+        tag = node.child_by_field_name("tag")
+        if tag is None or node_text(tag, source) not in _INCLUDING_TAGS:
+            continue
+        targets = tuple(node_text(child, source).strip().strip("\"'") for child in node.children if child.type == "string")
+        out.append({"tag": node_text(tag, source), "targets": targets, "location": line_col(tag)})
+    return tuple(out)
+
+
 def scan_template(source: bytes, path: str = "") -> dict:
     """Scan a rendered HTML/HTMX template for the boundary derivation (HC002) and reference resolution
     (HC-REF001): its request sites — each with the location of its action, so a dead reference is reported
@@ -140,4 +161,4 @@ def scan_template(source: bytes, path: str = "") -> dict:
             if child.type == "raw_text":
                 script = node_text(child, source).encode("utf-8")
                 keys = keys | manifest_keys(parse_javascript(script).root_node, script)
-    return {"path": path, "sites": request_sites(root, source), "manifest_keys": frozenset(keys)}
+    return {"path": path, "sites": request_sites(root, source), "manifest_keys": frozenset(keys), "includes": template_includes(source)}

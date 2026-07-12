@@ -138,7 +138,7 @@ The LSP server reads stdin/stdout using the JSON-RPC 2.0 protocol. Configuration
 
 **Editor integration notes:**
 
-In LSP mode, honest-check re-runs affected rules incrementally on each file save. Construction-time rules (HC003, HC006, HC011) re-run when any vocabulary definition file changes. Chain rules (HC001, HC002, HC007) re-run when any chain or link definition file changes. Reference rules (HC-REF001) re-run when any template or route definition changes, since they resolve a rendered surface's references against the route map.
+In LSP mode, honest-check re-runs affected rules incrementally on each file save. Construction-time rules (HC003, HC006, HC011) re-run when any vocabulary definition file changes. Chain rules (HC001, HC002, HC007) re-run when any chain or link definition file changes. Reference rules (HC-REF001, HC-REF002) re-run when any template or route definition changes, since they resolve a rendered surface's references against the route map (HC-REF001) or the template search path (HC-REF002).
 
 ### 2.3 Framework Startup Integration
 
@@ -433,6 +433,7 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-HF001 | Error | ✓ | feature_state references a flag not declared in FEATURES |
 | HC-HF002 | Warning | ✓ | Handler table missing an entry for a declared flag state |
 | HC-REF001 | Error | ✓ | Template action target resolves to no mounted route (dead reference) |
+| HC-REF002 | Error | ✓ | Template include/extends target resolves to no template (dead reference) |
 
 #### HC001 — Link missing vocabulary
 
@@ -476,6 +477,24 @@ FUNCTION check_HC_REF001(routes, scanned_templates):
 ```
 
 The route map is the **union across the project** — a template may target a route mounted in another file — the same closed route set HC002 derives its boundary vocabulary from. Path parameters match through `normalize_path`, so an interpolated target (`/items/{{item.id}}`) resolves against its route pattern (`/items/{id}`). Reference kinds beyond the action target extend the same `HC-REF` family as their grammars land in `parse`: a `{% include %}` to a template; a `class` — whether written in a template or emitted at runtime by an `h*-` module, both statically knowable from source — to a stylesheet rule within its component's BEM namespace (honest-components); an attribute value to a client-config key.
+
+#### HC-REF002 — Template include/extends target resolves to a template
+
+A template composes others with `{% include "path" %}` and `{% extends "path" %}` (honest-components mounts `atoms/` and `molecules/` on the template search path; honest-page defines the base-template `extends` contract). HC-REF002 resolves each **literal** target against that search path — the "Every reference resolves, or the gate stops" principle applied to composition. A target naming a template no search root holds is a **dead reference**: the page renders until that branch is reached, then fails.
+
+```
+FUNCTION check_HC_REF002(template_roots, scanned_templates):
+    resolvable ← { relative_path(file, root)
+                   FOR root IN template_roots
+                   FOR file IN html_files_under(root) }
+    FOR EACH ref IN scanned_templates.includes:
+        IF ref.target IS a string literal AND ref.target NOT IN resolvable:
+            EMIT error(HC-REF002, ref.location,
+                "Template {ref.tag} targets '{ref.target}', which no template provides. "
+                "Add the template, or fix the path.")
+```
+
+The **search path is the union of the roots the application registers with its template engine** — the configured templates directory and, by the honest-components convention, its sibling `atoms/` and `molecules/` directories when they exist. A target resolves if it matches a template file relative to any root, exactly as the loader searches: `{% include "button/button.html" %}` resolves under `atoms/`, `{% include "molecules/card/card.html" %}` under the templates root. A **dynamic** target — a variable or expression with no string literal (`{% include some_var %}`) — is unresolvable and is skipped, exactly as HC-REF001 skips an interpolated route path. honest-parse's Jinja grammar (which the HTML grammar cannot supply, reading `{% %}` as opaque text) surfaces a literal target as a `string` child of the include/extends statement and a dynamic one as none.
 
 #### HC004 — Dead vocabulary type
 

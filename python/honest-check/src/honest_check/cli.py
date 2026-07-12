@@ -25,7 +25,7 @@ from honest_check.config import (
     resolve_paths,
     resolve_severity,
 )
-from honest_check.boundary import boundary_diagnostics, check_references
+from honest_check.boundary import boundary_diagnostics, check_references, check_template_references
 from honest_check.declgraph import extract_routes
 from honest_check.diagnostics import Diagnostic
 from honest_check.formats import (
@@ -57,6 +57,17 @@ def _discover_templates(templates_dir: str) -> list[Path]:
     only where an application declares its templates."""
     root = Path(templates_dir)
     return sorted(root.rglob("*.html")) if templates_dir and root.is_dir() else []
+
+
+def _template_roots(templates_dir: str) -> list[Path]:
+    """The template search roots HC-REF002 resolves include/extends targets against: the configured
+    templates directory and its sibling `atoms/` and `molecules/` directories, which honest-components
+    mounts on the template search path (honest-components section 3.1), when they exist. Empty when no
+    templates directory is configured."""
+    if not templates_dir:
+        return []
+    base = Path(templates_dir)
+    return [d for d in (base, base.parent / "atoms", base.parent / "molecules") if d.is_dir()]
 
 
 def _find_config(explicit: str | None) -> Path | None:
@@ -103,7 +114,12 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
     HC002's first-link boundary check against them (spec section 4.2)."""
     diagnostics: list[Diagnostic] = []
     try:
-        scanned = [scan_template(template.read_bytes(), str(template)) for template in _discover_templates(templates_dir)]
+        # Scan every template across the search roots (templates dir + atoms/ + molecules/), tracking each
+        # file's root so HC-REF002 can resolve include/extends targets by path relative to a root, exactly
+        # as the loader searches.
+        pairs = [(troot, f) for troot in _template_roots(templates_dir) for f in _discover_templates(str(troot))]
+        resolvable = frozenset(str(f.relative_to(troot)) for troot, f in pairs)
+        scanned = [scan_template(f.read_bytes(), str(f)) for troot, f in pairs]
         all_routes: list = []
         for file in _discover_files(paths, exclude):
             source = file.read_text(encoding="utf-8")
@@ -114,9 +130,10 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
                 diagnostics.extend(boundary_diagnostics(root, src_bytes, str(file), scanned))
                 all_routes.extend(extract_routes(root, src_bytes))
         # HC-REF001 resolves every template action against the project-wide route union, so a target
-        # mounted in a different file is not a false dead reference. With no templates both lists are
-        # empty and this yields nothing.
+        # mounted in a different file is not a false dead reference; HC-REF002 resolves every literal
+        # include/extends target against the template search path. With no templates both yield nothing.
         diagnostics.extend(check_references(all_routes, scanned))
+        diagnostics.extend(check_template_references(resolvable, scanned))
     except OSError as exc:
         print(f"honest-check: cannot read source: {exc}", file=sys.stderr)
         return 2

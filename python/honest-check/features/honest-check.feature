@@ -814,3 +814,18 @@ Feature: honest-check — Python supplement
     Given the project-wide route map and the scanned templates
     When check_references resolves each resolvable action target against the route patterns
     Then it reports HC-REF001 at the template site for a target no route mounts, skipping interpolated targets and passing targets mounted anywhere in the project
+
+  Scenario: template_includes extracts a template's include and extends references
+    Given a template's source
+    When template_includes reads it through the Jinja grammar
+    Then it yields each include/extends tag with its literal target, or None when the target is dynamic, located at the tag
+
+  Scenario: check_template_references flags an include/extends target that resolves to no template
+    Given the resolvable template paths and the scanned templates
+    When check_template_references resolves each literal include/extends target against them
+    Then it reports HC-REF002 at the tag for a literal target no template provides, skipping dynamic targets
+
+  Scenario: _template_roots lists the template search roots
+    Given the configured templates directory
+    When _template_roots is asked
+    Then it returns that directory plus its sibling atoms and molecules directories when they exist, or nothing when none is configured

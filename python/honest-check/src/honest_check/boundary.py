@@ -97,6 +97,29 @@ def check_references(routes: list, scanned_templates: list) -> list:
     return out
 
 
+def check_template_references(resolvable: frozenset, scanned_templates: list) -> list:
+    """HC-REF002: every literal `{% include %}`/`{% extends %}` target resolves to a template in the
+    search path (honest-check spec section 4.2; framework spec, "Every reference resolves"). `resolvable`
+    is the set of template paths relative to the search roots — the configured templates directory and
+    its sibling `atoms/`/`molecules/` roots (honest-components) — so a target matches exactly as the
+    loader searches. A dynamic target (a variable/expression, so `targets` is empty) is unresolvable and
+    skipped, as HC-REF001 skips an interpolated route path; a conditional include contributes every literal
+    branch, all of which must resolve. A literal target that no template provides is a dead reference,
+    flagged at the tag. Pure over the already-parsed includes."""
+    out = []
+    for scanned in scanned_templates:
+        for ref in scanned["includes"]:
+            for target in ref["targets"]:
+                if target not in resolvable:
+                    line, col = ref["location"]
+                    out.append(diagnostic(
+                        "HC-REF002", "error", scanned["path"], line, col,
+                        f"Template {ref['tag']} targets '{target}', which no template provides. "
+                        "Add the template, or fix the path.",
+                    ))
+    return out
+
+
 def boundary_diagnostics(root, source: bytes, path: str, scanned_templates: list) -> list:
     """Run the first-link boundary check on one parsed source file given the scanned templates: read its
     route map, chains, and links, then check_boundary against the templates. A file that declares no
