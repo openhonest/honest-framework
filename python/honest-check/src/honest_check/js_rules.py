@@ -441,11 +441,23 @@ def _js_impure_name(node, source: bytes):
             return name
     if node.type == "new_expression":
         constructor = node_text(node.child_by_field_name("constructor"), source)
-        if constructor in _JS_IO_CONSTRUCTORS or constructor in _JS_NONDETERMINISTIC_CONSTRUCTORS:
+        if constructor in _JS_IO_CONSTRUCTORS:
+            return f"new {constructor}()"
+        # A nondeterministic constructor is only nondeterministic argument-less: `new Date()` reads the
+        # clock, but `new Date(value)` deterministically constructs from its argument (spec §5.4).
+        if constructor in _JS_NONDETERMINISTIC_CONSTRUCTORS and _js_new_is_argless(node):
             return f"new {constructor}()"
     if node.type == "member_expression" and _js_reads_impure(node, source):
         return _js_qualified_name(node, source)
     return None
+
+
+def _js_new_is_argless(node) -> bool:
+    """A `new X` / `new X()` with no arguments — the nondeterministic form of a clock constructor.
+    `new X(a)` passes an argument and constructs deterministically. tree-sitter gives an optional
+    `arguments` node whose named children are the arguments; none (or no node) means argument-less."""
+    arguments = node.child_by_field_name("arguments")
+    return arguments is None or not any(child.is_named for child in arguments.children)
 
 
 def _js_enclosing_function(node):

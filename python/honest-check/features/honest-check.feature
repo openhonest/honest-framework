@@ -703,6 +703,11 @@ Feature: honest-check — Python supplement
     When _js_impure_name inspects it
     Then it returns the watched name of a matching I/O or non-deterministic construct, else nothing
 
+  Scenario: _js_new_is_argless tells a clock constructor from a deterministic construction
+    Given a JavaScript new expression
+    When _js_new_is_argless inspects it
+    Then it is true when no argument is passed (new Date() or bare new Date), false when an argument constructs deterministically
+
   Scenario: _js_reads_impure detects a nondeterministic member read
     Given a JavaScript member expression that is not a call's callee
     When _js_reads_impure inspects it

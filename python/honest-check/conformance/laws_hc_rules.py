@@ -156,6 +156,10 @@ _js_case("js_p004_console", "function f() { console.log(x); }", must_fire=("HC-P
 _js_case("js_p004_member_chain", "function f() { process.stdin.read(); }", must_fire=("HC-P004",))
 _js_case("js_p004_math_random", "function f() { return Math.random(); }", must_fire=("HC-P004",))
 _js_case("js_p004_new_date", "function f() { return new Date(); }", must_fire=("HC-P004",))
+# A clock constructor is only nondeterministic argument-less: `new Date()` and bare `new Date` read the
+# clock; `new Date(value)` constructs deterministically from its argument and is pure.
+_js_case("js_p004_new_date_noparens", "function f() { return new Date; }", must_fire=("HC-P004",))
+_js_case("js_p004_new_date_arg_clean", "function f() { return new Date(x); }", must_not_fire=("HC-P004",))
 _js_case("js_p004_new_websocket", "function f() { return new WebSocket(u); }", must_fire=("HC-P004",))
 _js_case("js_p004_new_xhr", "function f() { return new XMLHttpRequest(); }", must_fire=("HC-P004",))
 _js_case("js_p004_new_eventsource", "function f() { return new EventSource(u); }", must_fire=("HC-P004",))
@@ -1745,6 +1749,10 @@ def _probe_javascript() -> list[str]:
     ctor = [d for d in check_source("function f() { return new WebSocket(u); }", "f.js") if d["rule"] == "HC-P004"]
     if not ctor or ctor[0]["message"] != "'new WebSocket()' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity.":
         bad.append(f"JS HC-P004 constructor name format drifted: {ctor}")
+    # An argument-less clock constructor reports the same way; the argument form is not flagged at all.
+    clock = [d for d in check_source("function f() { return new Date(); }", "f.js") if d["rule"] == "HC-P004"]
+    if not clock or clock[0]["message"] != "'new Date()' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity.":
+        bad.append(f"JS HC-P004 clock constructor name format drifted: {clock}")
     # navigator.sendBeacon() is a watched call whose callee also matches the nondeterministic-read
     # family; it must be flagged once (the call), not a second time as a member read.
     beacon = [d for d in check_source("function f() { navigator.sendBeacon(u); }", "f.js") if d["rule"] == "HC-P004"]
