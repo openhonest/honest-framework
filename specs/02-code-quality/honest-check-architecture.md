@@ -138,7 +138,7 @@ The LSP server reads stdin/stdout using the JSON-RPC 2.0 protocol. Configuration
 
 **Editor integration notes:**
 
-In LSP mode, honest-check re-runs affected rules incrementally on each file save. Construction-time rules (HC003, HC006, HC011) re-run when any vocabulary definition file changes. Chain rules (HC001, HC002, HC007) re-run when any chain or link definition file changes. Reference rules (HC-REF001, HC-REF002) re-run when any template or route definition changes, since they resolve a rendered surface's references against the route map (HC-REF001) or the template search path (HC-REF002).
+In LSP mode, honest-check re-runs affected rules incrementally on each file save. Construction-time rules (HC003, HC006, HC011) re-run when any vocabulary definition file changes. Chain rules (HC001, HC002, HC007) re-run when any chain or link definition file changes. Reference rules (HC-REF001, HC-REF002, HC-REF003) re-run when any template, route, or stylesheet definition changes, since they resolve a rendered surface's references against the route map (HC-REF001), the template search path (HC-REF002), or the classes the stylesheets define (HC-REF003).
 
 ### 2.3 Framework Startup Integration
 
@@ -434,6 +434,7 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-HF002 | Warning | ✓ | Handler table missing an entry for a declared flag state |
 | HC-REF001 | Error | ✓ | Template action target resolves to no mounted route (dead reference) |
 | HC-REF002 | Error | ✓ | Template include/extends target resolves to no template (dead reference) |
+| HC-REF003 | Error | ✓ | Template class reference resolves to no defined rule (dead reference) |
 
 #### HC001 — Link missing vocabulary
 
@@ -495,6 +496,20 @@ FUNCTION check_HC_REF002(template_roots, scanned_templates):
 ```
 
 The **search path is the union of the roots the application registers with its template engine** — the configured templates directory and, by the honest-components convention, its sibling `atoms/` and `molecules/` directories when they exist. A target resolves if it matches a template file relative to any root, exactly as the loader searches: `{% include "button/button.html" %}` resolves under `atoms/`, `{% include "molecules/card/card.html" %}` under the templates root. A **dynamic** target — a variable or expression with no string literal (`{% include some_var %}`) — is unresolvable and is skipped, exactly as HC-REF001 skips an interpolated route path. honest-parse's Jinja grammar (which the HTML grammar cannot supply, reading `{% %}` as opaque text) surfaces a literal target as a `string` child of the include/extends statement and a dynamic one as none.
+
+#### HC-REF003 — Template class reference resolves to a defined rule
+
+A component's markup references CSS classes; a class no stylesheet defines styles nothing — the element renders unstyled (honest-components: every class a component uses is defined in that component's stylesheet). HC-REF003 resolves each **static** class a template emits against the classes the discovered component stylesheets define — the "Every reference resolves, or the gate stops" principle applied to styling. A class no stylesheet defines is a **dead reference**.
+
+```
+FUNCTION check_HC_REF003(defined_classes, scanned_templates):
+    FOR EACH ref IN scanned_templates.class_refs:
+        IF ref.class NOT IN defined_classes:
+            EMIT error(HC-REF003, ref.location,
+                "Class '{ref.class}' is defined by no stylesheet. Add the rule, or fix the class.")
+```
+
+`defined_classes` is the union of the class selectors every discovered component stylesheet defines, read through honest-parse's CSS grammar (a `class_name` under a `class_selector`, so a pseudo-class like `:hover` is not mistaken for a class); a class defined for any component resolves, because the BEM namespace *ownership* is enforced separately, at mount time (honest-components §6.2). A class **value** that carries interpolation (`class="card {{ variant }}"`) is dynamic and skipped whole — only fully-static values are resolved — exactly as HC-REF001 skips an interpolated route path and HC-REF002 a variable include target; this is the stated bound of the check, not an oversight. Classes a client `h*-` module adds at runtime are equally statically knowable from the module source and extend the same rule once the JS class-emit extraction lands.
 
 #### HC004 — Dead vocabulary type
 

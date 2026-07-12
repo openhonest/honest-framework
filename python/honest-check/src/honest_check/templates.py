@@ -8,7 +8,7 @@ input boundary is closed"). Parsing is honest-parse's single boundary; this modu
 trees. Template file reading stays at the caller's I/O boundary — every function here takes source in.
 """
 
-from honest_parse import line_col, node_text, parse_html, parse_javascript, parse_jinja, walk
+from honest_parse import line_col, node_text, parse_css, parse_html, parse_javascript, parse_jinja, walk
 
 # The Jinja composition tags whose target must resolve to a template (HC-REF002, honest-check §4.2).
 _INCLUDING_TAGS = frozenset({"include", "extends"})
@@ -146,6 +146,35 @@ def template_includes(source: bytes) -> tuple:
     return tuple(out)
 
 
+def stylesheet_classes(source: bytes) -> frozenset:
+    """Every class a stylesheet defines (HC-REF003): the `class_name` of each `class_selector`, read
+    through honest-parse's CSS grammar. A `class_name` under a pseudo-class (`:hover`) is not a
+    `class_selector` child, so it is not mistaken for a defined class. Pure."""
+    out = set()
+    for node in walk(parse_css(source).root_node):
+        if node.type != "class_selector":
+            continue
+        for child in node.children:
+            if child.type == "class_name":
+                out.add(node_text(child, source))
+    return frozenset(out)
+
+
+def template_class_references(source: bytes) -> tuple:
+    """Every static class a template's elements reference (HC-REF003): for each element whose `class`
+    attribute value carries no interpolation, one entry per whitespace-separated class token, located at
+    the element. A class value that carries interpolation (`class="card {{ variant }}"`) is dynamic and
+    skipped whole, as HC-REF001/HC-REF002 skip an interpolated target. Pure."""
+    out = []
+    for node in walk(parse_html(source).root_node):
+        value = _attr(node, "class", source)
+        if value is None or not _is_resolvable(value):
+            continue
+        for token in value.split():
+            out.append({"class": token, "location": line_col(node)})
+    return tuple(out)
+
+
 def scan_template(source: bytes, path: str = "") -> dict:
     """Scan a rendered HTML/HTMX template for the boundary derivation (HC002) and reference resolution
     (HC-REF001): its request sites — each with the location of its action, so a dead reference is reported
@@ -161,4 +190,4 @@ def scan_template(source: bytes, path: str = "") -> dict:
             if child.type == "raw_text":
                 script = node_text(child, source).encode("utf-8")
                 keys = keys | manifest_keys(parse_javascript(script).root_node, script)
-    return {"path": path, "sites": request_sites(root, source), "manifest_keys": frozenset(keys), "includes": template_includes(source)}
+    return {"path": path, "sites": request_sites(root, source), "manifest_keys": frozenset(keys), "includes": template_includes(source), "class_refs": template_class_references(source)}

@@ -120,6 +120,25 @@ def check_template_references(resolvable: frozenset, scanned_templates: list) ->
     return out
 
 
+def check_class_references(defined_classes: frozenset, scanned_templates: list) -> list:
+    """HC-REF003: every static class a template references resolves to a class the discovered component
+    stylesheets define (honest-check spec section 4.2; framework spec, "Every reference resolves").
+    `defined_classes` is the union of the class selectors across every stylesheet — a class defined for
+    any component resolves, since the BEM namespace ownership is enforced at mount time, not here. A class
+    that no stylesheet defines is a dead reference, flagged at the element. A class value carrying
+    interpolation was already skipped whole at scan time. Pure over the already-parsed class references."""
+    out = []
+    for scanned in scanned_templates:
+        for ref in scanned["class_refs"]:
+            if ref["class"] not in defined_classes:
+                line, col = ref["location"]
+                out.append(diagnostic(
+                    "HC-REF003", "error", scanned["path"], line, col,
+                    f"Class '{ref['class']}' is defined by no stylesheet. Add the rule, or fix the class.",
+                ))
+    return out
+
+
 def boundary_diagnostics(root, source: bytes, path: str, scanned_templates: list) -> list:
     """Run the first-link boundary check on one parsed source file given the scanned templates: read its
     route map, chains, and links, then check_boundary against the templates. A file that declares no

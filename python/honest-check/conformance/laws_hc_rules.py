@@ -109,8 +109,8 @@ from honest_check.declgraph import (
 from honest_parse import parse_python, parse_javascript, parse_html, node_text, walk as _w
 from honest_check.rules import language_for_path
 from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_enclosing_function, _js_equality_target, _js_else_if, _js_impure_name, _js_mutable_decl_names, _js_qualified_name, _js_reassigned_names, _js_scope_lets, _js_type_check
-from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _object_keys, _open_tag, _tag_name, manifest_keys, request_sites, scan_template, template_includes
-from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_references, check_template_references, route_boundary
+from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _object_keys, _open_tag, _tag_name, manifest_keys, request_sites, scan_template, stylesheet_classes, template_class_references, template_includes
+from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_class_references, check_references, check_template_references, route_boundary
 
 
 def _rules(source: str) -> list[str]:
@@ -2617,6 +2617,10 @@ def _probe_templates() -> list:
     incl = scan_template(b'{% include "card.html" %}<button hx-get="/x"></button>')
     if [(r["tag"], r["targets"]) for r in incl["includes"]] != [("include", ("card.html",))]:
         bad.append(f"scan_template should carry the template's include/extends references: {incl['includes']}")
+    # scan_template also carries the template's static class references (HC-REF003).
+    cls = scan_template(b'<button class="button button--primary">x</button>')
+    if [r["class"] for r in cls["class_refs"]] != ["button", "button--primary"]:
+        bad.append(f"scan_template should carry the template's static class references: {cls['class_refs']}")
     # _is_resolvable: each interpolation form is unresolvable; a clean path is resolvable.
     if any(_is_resolvable(v) for v in ("/x/{{i}}", "/x/{% if %}", "/x/${i}")) or not _is_resolvable("/x/1"):
         bad.append("_is_resolvable misclassified an interpolation form")
@@ -2813,6 +2817,35 @@ def _probe_template_references() -> list:
     return bad
 
 
+def _probe_class_references() -> list:
+    """HC-REF003 (section 4.2): every static class a template references resolves to a class the component
+    stylesheets define. stylesheet_classes reads the CSS grammar (a class_name under class_selector, so a
+    pseudo-class is excluded); template_class_references extracts static class tokens per element and skips
+    a value carrying interpolation; check_class_references flags a class no stylesheet defines, at the
+    element."""
+    bad = []
+    defined = stylesheet_classes(b".button {} .button--primary:hover {} .a.b {} :root{--ht-x:1} input:focus {}")
+    if defined != frozenset({"button", "button--primary", "a", "b"}):
+        bad.append(f"stylesheet_classes should be the defined class names, pseudo-classes excluded: {sorted(defined)}")
+    refs = template_class_references(b'<div class="button button--primary">x</div><span class="card {{ v }}">y</span>')
+    if [r["class"] for r in refs] != ["button", "button--primary"]:
+        bad.append(f"template_class_references should extract static tokens and skip an interpolated value: {refs}")
+    tpl = {"path": "page.html", "class_refs": [
+        {"class": "button", "location": (1, 1)},
+        {"class": "buton", "location": (2, 5)},
+    ]}
+    diags = check_class_references(frozenset({"button"}), [tpl])
+    if [(d["rule"], d["severity"]) for d in diags] != [("HC-REF003", "error")]:
+        bad.append(f"only the undefined class should fire HC-REF003: {[(d['rule'], d['severity']) for d in diags]}")
+    if diags and (diags[0]["line"], diags[0]["col"], diags[0]["path"]) != (2, 5, "page.html"):
+        bad.append(f"HC-REF003 should point at the element with the dead class: {diags[0]}")
+    if diags and ("buton" not in diags[0]["message"] or "no stylesheet" not in diags[0]["message"] or "fix the class" not in diags[0]["message"]):
+        bad.append(f"HC-REF003 message should name the class and the remedy: {diags[0].get('message')}")
+    if check_class_references(frozenset({"button"}), [{"path": "t.html", "class_refs": [{"class": "button", "location": (1, 1)}]}]):
+        bad.append("a defined class should not fire HC-REF003")
+    return bad
+
+
 def run() -> int:
     failed = 0
     passed = 0
@@ -2886,6 +2919,14 @@ def run() -> int:
     if template_references_bad:
         failed += 1
         print(f"FAIL HC-rule [template_references]: {template_references_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    class_references_bad = _probe_class_references()
+    if class_references_bad:
+        failed += 1
+        print(f"FAIL HC-rule [class_references]: {class_references_bad}")
     else:
         passed += 1
 

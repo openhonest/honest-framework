@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 from honest_check import HonestCheckError, check_source, startup_check
-from honest_check.cli import _discover_files, _discover_templates, _find_config, _load_config, _template_roots, main as cli_main, watch
+from honest_check.cli import _discover_css, _discover_files, _discover_templates, _find_config, _load_config, _template_roots, main as cli_main, watch
 from honest_check.rules import is_fixable
 from honest_check.config import (
     empty_config,
@@ -399,6 +399,33 @@ def _probe_cli():
             bad.append(f"_template_roots should be the templates dir plus existing sibling roots: {roots}")
         if _template_roots("") != []:
             bad.append("_template_roots is empty when no templates dir is configured")
+
+    # HC-REF003 wired through the CLI: a class a template references must resolve to a class the component
+    # stylesheets define (union across the search roots).
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "app.py").write_text("x = 1\n", encoding="utf-8")
+        tdir = Path(tmp, "templates")
+        tdir.mkdir()
+        atoms = Path(tmp, "atoms", "button")
+        atoms.mkdir(parents=True)
+        atoms.joinpath("button.css").write_text(".button { color: red } .button--primary {}", encoding="utf-8")
+        cfg = Path(tmp, "honest-check.toml")
+        cfg.write_text(f'[check]\ntemplates = "{tdir}"\n', encoding="utf-8")
+        page = Path(tdir, "page.html")
+        # references a defined class and a typo'd one.
+        page.write_text('<button class="button buton">x</button>', encoding="utf-8")
+        code, out, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg), "--format", "json"])
+        if code != 1 or "HC-REF003" not in out or "buton" not in out:
+            bad.append(f"a class no stylesheet defines should fire HC-REF003: {code} {out[:100]}")
+        # Fix the class: every reference now resolves, so the run is clean.
+        page.write_text('<button class="button button--primary">x</button>', encoding="utf-8")
+        code, _, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg)])
+        if code != 0:
+            bad.append(f"classes the stylesheets define should be clean, got {code}")
+        if _discover_css(str(Path(tmp, "atoms"))) != [atoms / "button.css"]:
+            bad.append(f"_discover_css should list the .css files under a dir: {_discover_css(str(Path(tmp, 'atoms')))}")
+        if _discover_css("") != []:
+            bad.append("_discover_css is empty when no directory is given")
     # The watch loop re-runs once per trigger line and returns the last code at EOF.
     runs = {"n": 0}
 

@@ -829,3 +829,23 @@ Feature: honest-check — Python supplement
     Given the configured templates directory
     When _template_roots is asked
     Then it returns that directory plus its sibling atoms and molecules directories when they exist, or nothing when none is configured
+
+  Scenario: stylesheet_classes reads the classes a stylesheet defines
+    Given a stylesheet's source
+    When stylesheet_classes reads it through the CSS grammar
+    Then it returns each class_selector's class name, excluding pseudo-class names
+
+  Scenario: template_class_references extracts the static classes a template references
+    Given a template's source
+    When template_class_references reads each element's class attribute
+    Then it yields each static class token located at its element, skipping a class value that carries interpolation
+
+  Scenario: check_class_references flags a class reference that resolves to no defined rule
+    Given the defined class set and the scanned templates
+    When check_class_references resolves each static class against them
+    Then it reports HC-REF003 at the element for a class no stylesheet defines
+
+  Scenario: _discover_css lists the stylesheets under a directory
+    Given a directory
+    When _discover_css is asked
+    Then it returns the sorted .css files under it, or nothing when the directory is empty or absent
