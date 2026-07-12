@@ -1,6 +1,6 @@
 # Scoping Plan — static-reference resolution in honest-check
 
-**Status:** Tiers A (`706c5e9`), B (`763d5bb`, on `tree-sitter-honest-jinja` `eba702c`), and C — both the template-class half (`4188b4b`, on the official CSS grammar `a6437a1`) and the JS-emitted-class half (`classList` methods and `className` assignments in `h*-` modules) — built and gated. Remaining: Tier C's attribute→config-key kind.
+**Status:** Tiers A (`706c5e9`), B (`763d5bb`, on `tree-sitter-honest-jinja` `eba702c`), and C — both the template-class half (`4188b4b`, on the official CSS grammar `a6437a1`) and the JS-emitted-class half (`classList` methods and `className` assignments in `h*-` modules) — built and gated. Remaining: Tier C's behavioural-attribute-vocabulary kind (HC-REF004: an `fx-*` value resolves to a member of genX's declared `fx-*` vocabulary), which waits on genX exposing that vocabulary as data.
 **Principle:** framework spec, Verification Model, *"Every reference resolves, or the gate stops"* (Tier 1, committed `15778f6`). Methodology source: `methodology/contract-testing.md`, "Static references are boundaries too."
 **Goal:** enforce, at the structural gate, that every identifier a rendered surface *emits* resolves to a definition elsewhere — the dual of HC002's "the input boundary is closed."
 
@@ -50,7 +50,7 @@ A new check: **every template action site resolves to a mounted route.** For eac
 ## Dependencies and out of scope
 
 - **Tier C (CSS) is blocked** on a CSS grammar in honest-parse — a honest-parse work item to file before it can start. Until then, a pragmatic class/selector extractor is possible but is not the single-parser-clean form the framework wants; note that trade-off rather than smuggling it in.
-- **Tier C (config key)** rides on the JS toolchain already in progress; sequence it after the JS reference-resolution primitives land.
+- **Tier C (behavioural-attribute vocabulary, HC-REF004)** resolves an `fx-*` attribute value (`fx-format="currency"`, `fx-phone-format="us"`, `fx-input-type="cents"`) against the closed vocabulary its client runtime recognizes. The model is *not* an adopter-authored config dict — it is genX's own recognized `fx-*` vocabulary, which today lives implicitly in `fmtx.js` `case` labels. Prerequisite (a genX FOSS change): genX must **declare** that vocabulary as data (an `fx-*` → allowed-values manifest); the check then resolves each authored value against the declared set, per "declared, never inferred." Do not scrape the `case` labels — that couples the guard to implementation. Sequence: genX vocabulary manifest, then HC-REF004 consumes it.
 - **The elimination tier** — generating the agreeing artifacts from one declaration (the deeper remedy in the principle) — is a honest-DOM / honest-components / honest-page concern (single-source rendering), not a honest-check rule. honest-check is the *guard* that holds until a surface reaches single-source form. Out of scope here; note it as the eventual direction.
 
 ---
