@@ -20,8 +20,8 @@ from honest_features import (
 )
 
 _FEATURES = {
-    "new_checkout": {"states": ["on", "off"], "default": "off"},
-    "pricing": {"states": ["a", "b", "control"], "default": "control"},
+    "new_checkout": {"states": ["on", "off"], "initial_value": "off"},
+    "pricing": {"states": ["a", "b", "control"], "initial_value": "control"},
 }
 _SECRET = b"shared-secret"
 
@@ -53,23 +53,23 @@ def _law_validate_vocabulary():
     bad = []
     if validate_vocabulary(_FEATURES) != {"ok": _FEATURES}:
         bad.append(f"a valid vocabulary should pass: {validate_vocabulary(_FEATURES)}")
-    too_few = validate_vocabulary({"f": {"states": ["on"], "default": "on"}})
+    too_few = validate_vocabulary({"f": {"states": ["on"], "initial_value": "on"}})
     if too_few.get("err", {}).get("code") != "invalid_vocabulary" or too_few["err"]["detail"] != ["f"]:
         bad.append(f"a flag with fewer than two states is invalid: {too_few}")
     if too_few.get("err", {}).get("message") != "flags violate the vocabulary rules: ['f']":
         bad.append(f"invalid_vocabulary message wrong: {too_few}")
-    bad_default = validate_vocabulary({"f": {"states": ["on", "off"], "default": "x"}})
-    if bad_default.get("err", {}).get("code") != "invalid_vocabulary" or bad_default["err"]["detail"] != ["f"]:
-        bad.append(f"a default outside the states is invalid: {bad_default}")
-    if bad_default.get("err", {}).get("category") != "client":
-        bad.append(f"an invalid vocabulary is a client fault: {bad_default}")
+    bad_initial = validate_vocabulary({"f": {"states": ["on", "off"], "initial_value": "x"}})
+    if bad_initial.get("err", {}).get("code") != "invalid_vocabulary" or bad_initial["err"]["detail"] != ["f"]:
+        bad.append(f"an initial_value outside the states is invalid: {bad_initial}")
+    if bad_initial.get("err", {}).get("category") != "client":
+        bad.append(f"an invalid vocabulary is a client fault: {bad_initial}")
     return bad
 
 
 def _law_initial_state():
     bad = []
     if initial_state(_FEATURES) != {"new_checkout": "off", "pricing": "control"}:
-        bad.append(f"initial_state should be each flag at its default: {initial_state(_FEATURES)}")
+        bad.append(f"initial_state should be each flag at its initial_value: {initial_state(_FEATURES)}")
     return bad
 
 

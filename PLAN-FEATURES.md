@@ -26,21 +26,21 @@ So this is a **hardening + verification** pass, not a build.
 
 ## The one real gap — `validate_vocabulary` is structurally incomplete
 
-`validate_vocabulary` enforces the two *semantic* rules from the §2.1 table (a `states` set of at least two members; a `default` that is one of them) but not the *structural* rules from §2.1 and §10.2. Probed against malformed vocabularies:
+`validate_vocabulary` enforces the two *semantic* rules from the §2.1 table (a `states` set of at least two members; an `initial_value` that is one of them) but not the *structural* rules from §2.1 and §10.2. Probed against malformed vocabularies:
 
 | Malformed entry | Spec says | Current behaviour |
 |---|---|---|
 | extra key (`owner`) | §2.1 "No other keys are permitted" | **ACCEPTED** (should reject) |
-| missing `default` | §10.2 "a plain dict with `states` and `default` per entry" | **RAISES `KeyError`** (should be a clean `invalid_vocabulary` fault) |
+| missing `initial_value` | §10.2 "a plain dict with `states` and `initial_value` per entry" | **RAISES `KeyError`** (should be a clean `invalid_vocabulary` fault) |
 | `states` is a list, not a set | §10.2 "`states` (set)" | **ACCEPTED** (should reject) |
-| `default` is not a str | §10.2 "`default` (str)" | rejected today, but only incidentally (the non-str is not in `states`) |
+| `initial_value` is not a str | §10.2 "`initial_value` (str)" | rejected today, but only incidentally (the non-str is not in `states`) |
 
 A malformed `FEATURES` is exactly the class of bug this validator exists to catch, so leaving it partial defeats its purpose. This is the whole of the implementation work.
 
 ### Plan to close it (red-first, per house rule)
 
-1. **RED** — add conformance laws in `conformance/laws_hf.py` and portable value cases in `conformance/suite.json` asserting `validate_vocabulary` returns an `invalid_vocabulary` client fault (never raises) for each: an entry with a key other than `states`/`default`; an entry missing `states`; an entry missing `default`; a `states` that is not a set; a `default` that is not a str. Confirm they fail against the current code.
-2. **GREEN** — harden `validate_vocabulary` to check each entry's key set is exactly `{"states", "default"}`, `states` is a `set` with at least two members, and `default` is a `str` in `states` — collecting offenders into the existing `invalid_vocabulary` fault detail (no exceptions escape; pure).
+1. **RED** — add conformance laws in `conformance/laws_hf.py` and portable value cases in `conformance/suite.json` asserting `validate_vocabulary` returns an `invalid_vocabulary` client fault (never raises) for each: an entry with a key other than `states`/`initial_value`; an entry missing `states`; an entry missing `initial_value`; a `states` that is not a set; an `initial_value` that is not a str. Confirm they fail against the current code.
+2. **GREEN** — harden `validate_vocabulary` to check each entry's key set is exactly `{"states", "initial_value"}`, `states` is a `set` with at least two members, and `initial_value` is a `str` in `states` — collecting offenders into the existing `invalid_vocabulary` fault detail (no exceptions escape; pure).
 3. **Feature bijection** — `validate_vocabulary` already has a scenario; extend its `Then` wording to cover the structural rules. No new function, so the 9 = 9 bijection holds.
 4. **Re-gate** — lint, `coverage-all.sh honest-features` (must stay 100%), value oracle, feature-gate, `mutate.py features:vocabulary.py` (must be mutation-adequate).
 5. **Commit** `impl:` — one commit, the vocabulary hardening.

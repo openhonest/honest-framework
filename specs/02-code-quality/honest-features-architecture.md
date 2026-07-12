@@ -20,13 +20,13 @@ Conventional feature flags use environment variables. Changing a flag requires a
 honest-features eliminates all of these problems:
 
 - Flags are declared in code as a vocabulary. The full set is always visible.
-- State is ephemeral in-memory data, initialized from defaults at startup.
+- State is ephemeral in-memory data, initialized from the declared initial values at startup.
 - State changes happen via a single HMAC-protected API endpoint. No restart. No redeploy.
 - Tests build a state value and pass it in. No environment manipulation, no shared mutable state between cases.
 
 ### 1.2 What honest-features Does Not Cover
 
-- Persistent flag state across process restarts — state resets to defaults on restart by design. Persistence belongs in honest-persist if required.
+- Persistent flag state across process restarts — state resets to the declared initial values on restart by design. Persistence belongs in honest-persist if required.
 - User-level or tenant-level flag targeting — honest-features is process-level. Targeting logic belongs in application code above the flag layer.
 - Audit logging of flag changes — emit to honest-observe; honest-features does not own observability.
 - Authentication of the HMAC shared secret — key distribution is out of scope. The secret is loaded from configuration at startup.
@@ -48,9 +48,9 @@ Flags are declared as a plain dict. The vocabulary is the complete, enumerable s
 # features.py
 
 FEATURES: dict[str, dict] = {
-    "new_checkout":  {"states": {"on", "off"},           "default": "off"},
-    "dark_mode":     {"states": {"on", "off"},           "default": "off"},
-    "pricing":       {"states": {"a", "b", "control"},   "default": "control"},
+    "new_checkout":  {"states": {"on", "off"},           "initial_value": "off"},
+    "dark_mode":     {"states": {"on", "off"},           "initial_value": "off"},
+    "pricing":       {"states": {"a", "b", "control"},   "initial_value": "control"},
 }
 ```
 
@@ -61,7 +61,7 @@ Each entry in `FEATURES` must declare:
 | Key | Type | Description |
 |---|---|---|
 | `states` | `set[str]` | The complete set of valid states for this flag. Must contain at least two members. |
-| `default` | `str` | The state the flag holds at process startup. Must be a member of `states`. |
+| `initial_value` | `str` | The state the flag holds at process startup. Must be a member of `states`. It is the startup value, not a runtime fallback — nothing ever silently returns it, and it is read exactly once, by `initial_state`. |
 
 No other keys are permitted at the vocabulary level. Metadata (owner, description, created date) belongs in a separate registry outside the runtime vocabulary.
 
@@ -73,12 +73,12 @@ The `states` set of each flag is a Set recognizer in the honest-type sense: fini
 
 ## 3. Flag State as a Value
 
-Flag state is ephemeral, and it is a **value**, not module state — the single mutator is the toggle endpoint (the "dynamic config" kind in honest-state's taxonomy). `initial_state` builds it from the vocabulary defaults; the application's startup holds it and the toggle boundary updates it. Threading the state as a value is what keeps `feature_state` a pure lookup and lets honest-features pass its own gate (no hidden module mutable state, the auth/registry pattern).
+Flag state is ephemeral, and it is a **value**, not module state — the single mutator is the toggle endpoint (the "dynamic config" kind in honest-state's taxonomy). `initial_state` builds it from each flag's declared `initial_value`; the application's startup holds it and the toggle boundary updates it. Threading the state as a value is what keeps `feature_state` a pure lookup and lets honest-features pass its own gate (no hidden module mutable state, the auth/registry pattern).
 
 ```python
 def initial_state(features: dict) -> dict:
-    """The flag state at startup: each flag at its declared default. Pure, no I/O."""
-    return {flag: spec["default"] for flag, spec in features.items()}
+    """The flag state at startup: each flag at its declared initial_value. Pure, no I/O."""
+    return {flag: spec["initial_value"] for flag, spec in features.items()}
 
 def feature_state(state: dict, flag: str) -> str:
     """The current state of a flag, read from the state value. Pure.
@@ -93,11 +93,11 @@ def feature_state(state: dict, flag: str) -> str:
 
 ### 3.1 State Initialization
 
-`initial_state(features)` copies each flag's declared default. No environment variables, config files, or database are read — initialization is deterministic and requires no I/O. The application calls it once at startup and holds the returned value.
+`initial_state(features)` copies each flag's declared `initial_value`. No environment variables, config files, or database are read — initialization is deterministic and requires no I/O. The application calls it once at startup and holds the returned value.
 
 ### 3.2 State Reset
 
-There is no persistence: a fresh `initial_state(features)` is always the declared defaults, so a restarted process starts from a known state. Operators who want persistent flag state persist it externally and replay the toggles after startup.
+There is no persistence: a fresh `initial_state(features)` is always the declared initial values, so a restarted process starts from a known state. Operators who want persistent flag state persist it externally and replay the toggles after startup.
 
 ---
 
@@ -408,7 +408,7 @@ An A/B flag is a standard honest-features multi-state flag:
 
 ```python
 FEATURES = {
-    "checkout_flow": {"states": {"a", "b", "control"}, "default": "control"},
+    "checkout_flow": {"states": {"a", "b", "control"}, "initial_value": "control"},
 }
 ```
 
@@ -559,7 +559,7 @@ All other honest-features behaviour — HMAC toggle API, handler tables, honest-
 
 A conformant implementation satisfies all of the following:
 
-- `FEATURES` is declared at module scope as a plain dict with `states` (set) and `default` (str) per entry
+- `FEATURES` is declared at module scope as a plain dict with `states` (set) and `initial_value` (str) per entry
 - The flag state is a value built by `initial_state(FEATURES)` with no I/O and held by the application — never a module global
 - `feature_state(state, flag)` raises `KeyError` for undeclared flag names — not a silent default
 - The toggle endpoint verifies HMAC signature using `hmac.compare_digest` — not string equality
