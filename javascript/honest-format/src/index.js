@@ -4,3 +4,4 @@
 // input conversion.
 export { toNumber } from "./coerce.js";
 export { convert } from "./convert.js";
+export { format, bestDenominator } from "./format.js";

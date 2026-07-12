@@ -14,3 +14,13 @@ Feature: honest-format — declarative value formatting
     Given a value and an hf-type name
     When convert reads it
     Then it returns the value scaled, parsed, or coerced by the named conversion, or the value unchanged for an absent, auto, or unknown type
+
+  Scenario: format renders a value to a display string under a named format
+    Given a value, a format name, and options
+    When format renders it
+    Then it returns the named numeric or text formatting, or the value's own string form for an unknown format or a numeric format applied to an unparseable value
+
+  Scenario: bestDenominator finds the nearest power-of-two denominator for a decimal
+    Given a decimal
+    When bestDenominator searches
+    Then it returns the smallest power-of-two denominator whose fraction approximates it within a hundredth, up to the guaranteed 64
