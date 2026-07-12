@@ -68,7 +68,7 @@ Verdicts use three honest categories:
 | honest-features | **COMPLETE AT MANDATE** | 10/10 lib functions; validate_vocabulary now full §2.1/§10.2 | Full/Complete need app-layer routes/CLI (spec §11 defers) |
 | honest-state | **COMPLETE AT MANDATE** | 17/18 | law + taxonomy + §1.3 DOM decomposition complete; remaining: hub-suite test that the §3 rules fire, and the JS-side DOM-single-store rule |
 | honest-auth | **COMPLETE AT MANDATE** | 13/13 fns; all 5 gates | contract-shape gaps resolved; §4.7 authentication-honesty verifier, §2.4 missing-credential rule, §5.3 dev provider + adopter templates added; remaining: §9.2 hub conformance app + `[honest-auth-provider]` metadata |
-| honest-check | **SPEC-COMPLETE for its rule set; HC-REF partial** | 36/36 static rules; HC002 first-link live; HC-REF001 Tier A live | the Tier-1 "every reference resolves" principle is enforced only at Tier A (HC-REF001); HC-REF Tiers B (`{% include %}`→template) and C (`class`→stylesheet, attribute→config key) are unbuilt — see the HC-REF note below |
+| honest-check | **SPEC-COMPLETE for its rule set; HC-REF Tier C pending** | 36/36 static rules; HC002 first-link live; HC-REF001 (route) + HC-REF002 (template include/extends) live | the Tier-1 "every reference resolves" principle is enforced at Tier A (HC-REF001) and Tier B (HC-REF002); Tier C (`class`→stylesheet, attribute→config key) remains — see the HC-REF note below |
 | honest-observe | **SPEC-COMPLETE** | auth attrs + grouped metrics done | none (proof_checked, persist metrics, install_otel_exporter, dev-mode are by-design elsewhere/boundary) |
 | honest-test | **SPEC-COMPLETE** | §4.4 + §8.2 + §8.4 done | none (the runner, HC-P009, and §6/§7 are not-gaps — by design) |
 | honest-parse | **SPEC-COMPLETE for its grammar set** | 7 grammars (6 source + HTML) | complete for the declared grammars; a CSS grammar is a known future addition the static-reference mandate needs for HC-REF Tier C (`class`→stylesheet) |
@@ -241,10 +241,16 @@ already runs *route → template*; the `HC-REF` family runs the reverse.
 project-wide route union; `scan_template` now carries the template path and each
 site its 1-based location, so the diagnostic names where the dead reference is
 authored; the CLI aggregates routes across all checked files and runs the check
-once. Red-first, with a pure probe and a CLI-level test; boundary/templates/cli
-all mutation-adequate. Tiers B (`{% include %}`→template) and C (`class`→
-stylesheet, attribute→config key) remain, awaiting a template-scanner extension
-and a CSS grammar / the JS toolchain (scoped in `PLAN-STATIC-REFERENCE-CHECK.md`).
+once. **Tier B is built and gated (2026-07-12, `763d5bb`):** HC-REF002 —
+`template_includes` reads each template through honest-parse's own Jinja grammar
+(`tree-sitter-honest-jinja`, `eba702c` — the HTML grammar reads `{% %}` as opaque
+text) and surfaces each include/extends tag with its literal targets (one plain,
+several conditional, none dynamic); `check_template_references` resolves every
+literal target against the template search path (templates dir + sibling `atoms/`
+/`molecules/` roots), skipping dynamic ones. Both tiers red-first with a pure
+probe and a CLI-level test; boundary/templates/cli all mutation-adequate. Tier C
+(`class`→stylesheet, attribute→config key) remains, awaiting a CSS grammar / the
+JS toolchain (scoped in `PLAN-STATIC-REFERENCE-CHECK.md`).
 
 ### honest-observe — SPEC-COMPLETE (resolved 2026-07-08; re-verified)
 Event envelope, `emit()`, all framework event builders, projections + snapshots,
