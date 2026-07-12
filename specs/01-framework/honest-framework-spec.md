@@ -984,7 +984,6 @@ honest-js handles everything else: formatting, accessibility, drag-and-drop, dat
 | Navigation | **honest.nav** | genX navX | `hn-*` | Client-side routing, URL management. |
 | Drag & drop | **honest.drag** | genX dragX | `hd-*` | Drag sources, drop zones, visual feedback. |
 | Data binding | **honest.bind** | genX bindX | `hb-*` | Reactive two-way data binding. |
-| Tables | **honest.table** | genX tableX | `ht-*` | Sorting, filtering, pagination, responsive layouts. |
 | Smart detect | **honest.smart** | genX smartX | `hs-*` | Auto-detection formatting. |
 | UI enhance | **honest.ui** | genX uiX | `hu-*` | UI enhancements. |
 | React bridge | **honest.react** | stateless | (none) | `useDomState`, `useDomValue`, `useDomArray`, `useDomMap` hooks. |
@@ -1210,7 +1209,6 @@ end
 | `hn-` | honest.nav | `<a hn-route="/users">` |
 | `hd-` | honest.drag | `<div hd-draggable="card">` |
 | `hb-` | honest.bind | `<input hb-model="username">` |
-| `ht-` | honest.table | `<th ht-sortable="name">` |
 | `hs-` | honest.smart | `<span hs-detect>42.5%</span>` |
 | `hu-` | honest.ui | `<div hu-tooltip="Help text">` |
 

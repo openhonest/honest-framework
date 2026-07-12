@@ -59,6 +59,17 @@ Every component at every tier stamps its root HTML element with `data-component=
 2. **BEM anchor.** The `data-component` value is the BEM block name. `data-component="button"` means the CSS block is `.button`. One declaration, two purposes.
 3. **Composition identity.** When components nest, `data-component` is how the system tells them apart. Two separate instrumentation events. Two separate CSS namespaces. Composition does not create confusion about ownership.
 
+### The complete styling model
+
+A page's appearance is produced by four cooperating parts, specified in different places. This is the map, so the pieces are not assembled from four documents by guesswork.
+
+1. **Component classes (BEM).** Every atom, molecule, and organism owns a CSS class namespace anchored by `data-component` — the value *is* the BEM block name. The server renders these classes into the HTML; organism namespaces are enforced at mount time (§6). Specified here.
+2. **Custom-property tokens.** Shared values components reference via `var(--...)` but never own: honest-page's `--ht-` base tokens (honest-page §7) plus each organism's `style.json` defaults, merged into one `:root {}` block at startup (§6.4). Tokens are the *only* visual coupling between components.
+3. **The `h*-` attribute runtime.** Client behaviour declared on `h*-` attributes (framework spec, the `h*-` skill registry): a bootloader lazy-loads the module, honest-type classifies the attribute value, and the module enhances the element — within that element's component (§2.3). A module may add or remove CSS classes at runtime.
+4. **The correctness net.** Because the templates, the stylesheet, and the client modules are all source the framework's single parser reads, the classes a template *or* an `h*-` module can emit are statically knowable, and each must resolve to a defined CSS rule within its component's namespace (honest-check HC-REF; framework spec, "Every reference resolves, or the gate stops"). A class that resolves to no rule — whether server-rendered or added by a module at runtime — is a dead reference, caught at the gate rather than in the browser.
+
+The invariant that ties them: no styling is decided at runtime that the gate has not already checked statically.
+
 ---
 
 ## 1. Purpose and Scope
@@ -138,6 +149,8 @@ This is visible in rendered HTML:
 ```
 
 honest-observe sees two independent instrumentation events: one for `data-component="data-table"` and one for `data-component="button"`. Each component is observable independently, regardless of nesting.
+
+Behavioural enhancement is sovereign in the same way. An `h*-` attribute — a declaration handled by a lazy-loaded client module (framework spec, the `h*-` skill registry) — acts only on the element it sits on, within that element's component; it never reaches across a `data-component` boundary into a nested component. A module enhancing an organism does not enhance an atom composed inside it, and vice versa. Composition does not create confusion about ownership for behaviour any more than it does for CSS.
 
 ---
 
@@ -304,7 +317,7 @@ CSS custom properties (`--color-primary`, `--button-height`, etc.) are global by
 
 Components never declare their own CSS custom property values. They only reference tokens via `var(--...)`. The values come from the installed components' declared defaults, resolved at startup.
 
-**Normative (FOSS) path.** At startup, the component runtime reads the style manifest (`style.json`) from every installed component, collects every declared token across all components, and merges their declared default values into a single `:root {}` CSS block served to the browser. The installed component set determines the token set, exactly as it determines the stylesheet. Dark mode is honest-page's `light-dark()` mechanism (honest-page §7), not server-side mode resolution; the component runtime emits the declared defaults and the browser resolves light/dark. This static startup merge, combined with honest-page's `--ht-` base tokens, is the complete FOSS theming story. A conformant application themes fully with nothing more.
+**Normative (FOSS) path.** At startup, the component runtime reads the style manifest (`style.json`) from every installed component, collects every declared token across all components, and merges their declared default values into a single `:root {}` CSS block served to the browser. The installed component set determines the token set, exactly as it determines the stylesheet. Two components must never declare the same token key: every token is block-namespaced (`--data-table-bg`, `--button-height`), so a duplicate is a namespace violation, not two values to reconcile. The merge **fails loudly at startup** on a duplicate key — it never silently picks a winner — so a clash is caught immediately, not left to produce styling that depends on component load order. Dark mode is honest-page's `light-dark()` mechanism (honest-page §7), not server-side mode resolution; the component runtime emits the declared defaults and the browser resolves light/dark. This static startup merge, combined with honest-page's `--ht-` base tokens, is the complete FOSS theming story. A conformant application themes fully with nothing more.
 
 **Out of scope for this standard.** Dynamic theme management — resolving token values against a theme record stored in honest-persist at serve time, regenerating the CSS when a theme record changes, and a visual token editor — is out of scope for this standard. The FOSS component runtime never depends on it.
 

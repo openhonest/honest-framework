@@ -475,7 +475,7 @@ FUNCTION check_HC_REF001(routes, scanned_templates):
                 "Point it at a mounted route, or add the route.")
 ```
 
-The route map is the **union across the project** — a template may target a route mounted in another file — the same closed route set HC002 derives its boundary vocabulary from. Path parameters match through `normalize_path`, so an interpolated target (`/items/{{item.id}}`) resolves against its route pattern (`/items/{id}`). Reference kinds beyond the action target — a `{% include %}` to a template, a `class` to a stylesheet rule, an attribute value to a client-config key — extend the same `HC-REF` family as their grammars land in `parse`.
+The route map is the **union across the project** — a template may target a route mounted in another file — the same closed route set HC002 derives its boundary vocabulary from. Path parameters match through `normalize_path`, so an interpolated target (`/items/{{item.id}}`) resolves against its route pattern (`/items/{id}`). Reference kinds beyond the action target extend the same `HC-REF` family as their grammars land in `parse`: a `{% include %}` to a template; a `class` — whether written in a template or emitted at runtime by an `h*-` module, both statically knowable from source — to a stylesheet rule within its component's BEM namespace (honest-components); an attribute value to a client-config key.
 
 #### HC004 — Dead vocabulary type
 
