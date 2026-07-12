@@ -63,6 +63,20 @@ def _law_validate_vocabulary():
         bad.append(f"an initial_value outside the states is invalid: {bad_initial}")
     if bad_initial.get("err", {}).get("category") != "client":
         bad.append(f"an invalid vocabulary is a client fault: {bad_initial}")
+    # Structural rules (§2.1, §10.2): each entry carries exactly {states, initial_value}, a collection of
+    # at least two distinct states, and a member initial_value — a malformed entry is a clean
+    # invalid_vocabulary fault, never a KeyError.
+    malformed = (
+        ({"f": {"states": ["on", "off"], "initial_value": "off", "owner": "team"}}, "a key other than states/initial_value"),
+        ({"f": {"states": ["on", "off"]}}, "a missing initial_value"),
+        ({"f": {"initial_value": "on"}}, "a missing states"),
+        ({"f": {"states": "on", "initial_value": "on"}}, "states that is not a collection"),
+        ({"f": {"states": ["on", "on"], "initial_value": "on"}}, "fewer than two distinct states"),
+    )
+    for vocab, why in malformed:
+        result = validate_vocabulary(vocab)
+        if result.get("err", {}).get("code") != "invalid_vocabulary" or result.get("err", {}).get("detail") != ["f"]:
+            bad.append(f"{why} should be invalid_vocabulary (never a raise): {result}")
     return bad
 
 

@@ -1,14 +1,19 @@
 Feature: honest-features — runtime feature flags as a static vocabulary and a threaded state value
 
-  Scenario: validate_vocabulary checks each flag's states and default
+  Scenario: validate_vocabulary checks each flag's states and initial value
     Given a flag vocabulary
     When validate_vocabulary checks it
-    Then a flag with fewer than two states or a default outside its states is a client fault
+    Then a flag whose entry is not exactly states and initial_value, or has fewer than two distinct states, or an initial_value outside them, is a client fault, never a raise
 
-  Scenario: initial_state builds the startup state from the defaults
+  Scenario: _flag_wellformed checks one flag entry's structure and contents
+    Given one flag entry
+    When _flag_wellformed inspects it
+    Then it holds only when the entry has exactly states and initial_value, a collection of at least two distinct states, and a member initial_value
+
+  Scenario: initial_state builds the startup state from the initial values
     Given a flag vocabulary
     When initial_state is built
-    Then every flag holds its declared default
+    Then every flag holds its declared initial value
 
   Scenario: feature_state reads a flag from the state value
     Given a flag state value
