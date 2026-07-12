@@ -290,6 +290,14 @@ Conventional web frameworks treat a request as an open channel — a browser run
 
 The input space is therefore closed, just as a Set-based vocabulary is closed at definition time — there is no "unknown input" category. The contract for what enters a chain is **derived, never separately declared**: it is the manifest `classify()` produces at intake (Layer 2, below) from the tokens the templates — and any developer-authored client code — targeting that chain's route send. Requests from outside the application's own UI — third-party webhooks, partner systems — are equally closed: they enter through a declared translator (honest-observe §8c) that converts a known external shape into the canonical manifest. Either way, what reaches a chain's first link is statically knowable, so a tool can check the first link against it without running the application.
 
+### Every reference resolves, or the gate stops
+
+A boundary is not only what enters the application; it is also everything a rendered surface *points at*. An artifact the server emits — an HTML fragment, a stylesheet, a client-side config table — routinely names identifiers defined in another file: an `hx-get` that must reach a mounted route, an attribute value that must match a key a config table holds, a class a stylesheet must define, a template include that must exist. Asserting the artifact *contains* the right string proves it was written; it proves nothing about whether the string it *points at* resolves. Two checks can both pass — one describing a control, one describing its target — while the control names a target nothing defines: a dead reference that renders, reports green, and does nothing.
+
+The single parser that makes the input boundary closed makes these references closed as well. The template, the stylesheet, the client code, and the server routes are all source the framework reads, so every identifier one artifact emits can be resolved to a definition in another without running anything. A reference that resolves to no definition is a **structural** fault — the same kind of fact as an undeclared name — so it belongs at the gate, not in a running browser. An end-to-end run is the expensive way to find it: a browser meets a dead reference only incidentally, as the first thing that happens to depend on it, and pays start-up, latency, and flakiness to report what a file read decides for certain.
+
+The deeper remedy removes the disagreement at its source. When a feature is correct only if several hand-authored artifacts agree — the markup, the config, the stylesheet — the artifacts should be **generated from one declaration**, so there is nothing left for them to disagree about. That is the same move the framework makes everywhere: one owned declaration, everything else derived from it. The reference-resolves check is the guard that holds until a surface reaches that single-source form.
+
 ---
 
 ## Bootstrapping a New Language Implementation
