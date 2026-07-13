@@ -39,3 +39,33 @@ Feature: honest-format — declarative value formatting
     Given a value
     When detect scores it against the patterns
     Then it returns the highest-confidence match, or text at full confidence when the value is empty or nothing matches
+
+  Scenario: readSource reads an element's value to format
+    Given an element
+    When readSource reads it
+    Then it returns the recorded hf-raw source, else hf-value, else the trimmed text, else the input value, else empty
+
+  Scenario: readOptions reads an element's hf-* option attributes
+    Given an element
+    When readOptions reads its hf-* attributes
+    Then it returns the format options, each coerced to a number, a boolean, or a string per attribute
+
+  Scenario: writeDisplay writes the display to an element only when it changes
+    Given an element and a display string
+    When writeDisplay writes it
+    Then it sets the input value or the text content, and does nothing when the display is unchanged
+
+  Scenario: formatElement formats an element and records its source
+    Given an element and the current instant
+    When formatElement renders it
+    Then it writes the formatted display, delegating a smart format to detection, and records the source in hf-raw
+
+  Scenario: unformatElement restores an element to its recorded source
+    Given an element
+    When unformatElement is asked
+    Then it writes the hf-raw source back, or returns nothing when the element was never formatted
+
+  Scenario: scan formats every unprocessed element under a root
+    Given a root and the current instant
+    When scan reads the elements carrying hf-format
+    Then it formats each one that lacks hf-raw, leaving the already-processed elements untouched

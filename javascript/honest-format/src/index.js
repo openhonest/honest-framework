@@ -7,3 +7,4 @@ export { convert } from "./convert.js";
 export { format, bestDenominator, formatCustomDate } from "./format.js";
 export { detect } from "./detect.js";
 export { MANIFEST } from "./manifest.js";
+export { scan, formatElement, unformatElement, readSource, readOptions, writeDisplay } from "./bind.js";
