@@ -65,3 +65,7 @@ export function convert(value, inputType) {
   const converter = _CONVERTERS[_ALIAS[inputType] ?? inputType];
   return converter === undefined ? value : converter(String(value), value);
 }
+
+// The hf-type names convert recognizes, exposed as data for the manifest (spec §5.4). Derived from the
+// converter and alias tables so it cannot drift; `auto` (like an absent type) is the identity conversion.
+export const INPUT_TYPE_NAMES = [...Object.keys(_CONVERTERS), ...Object.keys(_ALIAS), "auto"];

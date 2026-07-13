@@ -339,3 +339,13 @@ export function format(type, value, opts = {}) {
   }
   return formatter(num, str, opts, date);
 }
+
+// The vocabulary honest-format recognizes, exposed as data for the manifest (spec §5.4). Each set is
+// derived from a dispatch table so it cannot drift from what format() actually handles. `smart` is a
+// valid hf-format value resolved at the bind boundary (detection), not a formatter here; the -24 time
+// styles and the human/compact duration aliases are accepted values that resolve to a base entry.
+export const FORMAT_NAMES = [...Object.keys(_FORMATTERS), "smart"];
+export const PHONE_FORMATS = Object.keys(_PHONE);
+export const DATE_FORMATS = [...Object.keys(_DATE_OPTS), "iso", "custom"];
+export const TIME_FORMATS = [...Object.keys(_TIME_OPTS), "short-24", "medium-24", "long-24"];
+export const DURATION_FORMATS = [...Object.keys(_DURATION), "human", "compact"];
