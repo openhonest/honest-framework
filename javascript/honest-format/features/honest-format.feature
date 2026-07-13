@@ -34,3 +34,8 @@ Feature: honest-format — declarative value formatting
     Given a date and a pattern of date tokens
     When formatCustomDate substitutes each token
     Then it returns the pattern with YYYY, MM, DD and the rest replaced by the date's components, longer tokens before their prefixes
+
+  Scenario: detect auto-detects the type of a value by a confidence-scored pattern table
+    Given a value
+    When detect scores it against the patterns
+    Then it returns the highest-confidence match, or text at full confidence when the value is empty or nothing matches

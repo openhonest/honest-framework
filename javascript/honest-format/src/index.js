@@ -5,3 +5,4 @@
 export { toNumber, toDate } from "./coerce.js";
 export { convert } from "./convert.js";
 export { format, bestDenominator, formatCustomDate } from "./format.js";
+export { detect } from "./detect.js";

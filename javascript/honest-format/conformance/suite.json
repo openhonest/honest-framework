@@ -69,6 +69,17 @@
     {"id": "fmt-ssn-full", "function": "format", "args": ["ssn", "123456789", {"mask": false}], "expected": "123-45-6789"},
     {"id": "fmt-cc-masked", "function": "format", "args": ["creditcard", "4111111111111111"], "expected": "****-****-****-1111"},
     {"id": "fmt-cc-full", "function": "format", "args": ["creditcard", "4111111111111111", {"mask": false}], "expected": "4111-1111-1111-1111"},
-    {"id": "fmt-compact", "function": "format", "args": ["compact", "1500000"], "expected": "1.5M"}
+    {"id": "fmt-compact", "function": "format", "args": ["compact", "1500000"], "expected": "1.5M"},
+
+    {"id": "detect-text", "function": "detect", "args": ["hello"], "expected": {"type": "text", "confidence": 100}},
+    {"id": "detect-currency", "function": "detect", "args": ["$1,234.56"], "expected": {"type": "currency", "confidence": 95}},
+    {"id": "detect-currency-word", "function": "detect", "args": ["50 usd"], "expected": {"type": "currency", "confidence": 92}},
+    {"id": "detect-percent", "function": "detect", "args": ["50%"], "expected": {"type": "percentage", "confidence": 100}},
+    {"id": "detect-phone", "function": "detect", "args": ["+1 555 123 4567"], "expected": {"type": "phone", "confidence": 95}},
+    {"id": "detect-date", "function": "detect", "args": ["2024-03-15"], "expected": {"type": "date", "confidence": 98}},
+    {"id": "detect-email", "function": "detect", "args": ["user@example.com"], "expected": {"type": "email", "confidence": 100}},
+    {"id": "detect-url", "function": "detect", "args": ["https://www.site.org/path"], "expected": {"type": "url", "confidence": 100}},
+    {"id": "detect-number", "function": "detect", "args": ["1,234"], "expected": {"type": "number", "confidence": 85}},
+    {"id": "detect-multi", "function": "detect", "args": ["50"], "expected": {"type": "number", "confidence": 50}}
   ]
 }
