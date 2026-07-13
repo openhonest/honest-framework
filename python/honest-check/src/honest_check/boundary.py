@@ -139,6 +139,39 @@ def check_class_references(defined_classes: frozenset, scanned_templates: list) 
     return out
 
 
+def hf_vocabulary(manifest: dict) -> dict:
+    """The checked-attribute -> allowed-values map HC-REF004 resolves against, built from honest-format's
+    declared manifest (honest-check spec section 4.2): hf-format against the format names, hf-type against
+    the input-type names, and each enumerated hf-*-format option against its own set. An attribute not in
+    this map (a free value like hf-decimals or hf-currency) is not judged. Pure over the manifest data."""
+    vocabulary = {"hf-format": frozenset(manifest["formats"]), "hf-type": frozenset(manifest["inputTypes"])}
+    for attr, values in manifest["options"].items():
+        vocabulary[attr] = frozenset(values)
+    return vocabulary
+
+
+def check_hf_references(vocabulary: dict, scanned_templates: list) -> list:
+    """HC-REF004: every authored `hf-*` attribute value whose attribute names an enumerated vocabulary is
+    a member of honest-format's declared vocabulary (honest-check spec section 4.2; framework spec, "Every
+    reference resolves, or the gate stops"). `vocabulary` maps each checked attribute to its allowed
+    values, read from honest-format's emitted manifest — declared, never inferred from source. An
+    attribute carrying a free value (hf-decimals, hf-currency) is in no vocabulary and is not judged. A
+    value naming no member — a typo'd hf-format="curency" that would render raw — is a dead reference,
+    flagged at the element. Pure over the already-parsed hf-* references."""
+    out = []
+    for scanned in scanned_templates:
+        for ref in scanned["hf_refs"]:
+            allowed = vocabulary.get(ref["attr"])
+            if allowed is not None and ref["value"] not in allowed:
+                line, col = ref["location"]
+                out.append(diagnostic(
+                    "HC-REF004", "error", scanned["path"], line, col,
+                    f'Attribute {ref["attr"]}="{ref["value"]}" names no member of honest-format\'s declared '
+                    "vocabulary. Fix the value, or extend the vocabulary.",
+                ))
+    return out
+
+
 def boundary_diagnostics(root, source: bytes, path: str, scanned_templates: list) -> list:
     """Run the first-link boundary check on one parsed source file given the scanned templates: read its
     route map, chains, and links, then check_boundary against the templates. A file that declares no

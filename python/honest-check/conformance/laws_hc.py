@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 from honest_check import HonestCheckError, check_source, startup_check
-from honest_check.cli import _discover_css, _discover_files, _discover_js, _discover_templates, _find_config, _load_config, _template_roots, main as cli_main, watch
+from honest_check.cli import _discover_css, _discover_files, _discover_js, _discover_templates, _find_config, _load_config, _load_manifest, _template_roots, main as cli_main, watch
 from honest_check.rules import is_fixable
 from honest_check.config import (
     empty_config,
@@ -436,6 +436,39 @@ def _probe_cli():
             bad.append(f"_discover_js should list the .js files under a dir: {_discover_js(str(Path(tmp, 'atoms')))}")
         if _discover_js("") != []:
             bad.append("_discover_js is empty when no directory is given")
+
+    # HC-REF004 wired through the CLI: an authored hf-* value must resolve to honest-format's declared
+    # vocabulary, read from the configured manifest.
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "app.py").write_text("x = 1\n", encoding="utf-8")
+        tdir = Path(tmp, "templates")
+        tdir.mkdir()
+        manifest = Path(tmp, "manifest.json")
+        manifest.write_text('{"formats": ["currency", "date"], "inputTypes": ["cents", "auto"], "options": {"hf-phone-format": ["us"]}}', encoding="utf-8")
+        cfg = Path(tmp, "honest-check.toml")
+        cfg.write_text(f'[check]\ntemplates = "{tdir}"\nformat_manifest = "{manifest}"\n', encoding="utf-8")
+        page = Path(tdir, "page.html")
+        # a typo'd format value; hf-decimals is a free value and must not fire.
+        page.write_text('<span hf-format="curency" hf-decimals="2">1</span>', encoding="utf-8")
+        code, out, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg), "--format", "json"])
+        if code != 1 or "HC-REF004" not in out or "curency" not in out:
+            bad.append(f"an hf-format value naming no member should fire HC-REF004: {code} {out[:120]}")
+        # Fix the value: it now resolves against the manifest, so the run is clean.
+        page.write_text('<span hf-format="currency" hf-decimals="2">1</span>', encoding="utf-8")
+        code, _, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg)])
+        if code != 0:
+            bad.append(f"a resolvable hf-format value should be clean, got {code}")
+        # _load_manifest parses the configured manifest; an absent path or missing file is None.
+        if _load_manifest(str(manifest))["formats"] != ["currency", "date"]:
+            bad.append("_load_manifest should parse the configured manifest")
+        if _load_manifest("") is not None or _load_manifest(str(Path(tmp, "nope.json"))) is not None:
+            bad.append("_load_manifest is None when no path is configured or the file is absent")
+        # A malformed manifest is a boundary error: exit 2.
+        manifest.write_text("{ not json", encoding="utf-8")
+        code, _, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg)])
+        if code != 2:
+            bad.append(f"a malformed manifest should exit 2, got {code}")
+
     # The watch loop re-runs once per trigger line and returns the last code at EOF.
     runs = {"n": 0}
 

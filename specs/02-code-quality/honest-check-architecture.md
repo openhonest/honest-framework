@@ -138,7 +138,7 @@ The LSP server reads stdin/stdout using the JSON-RPC 2.0 protocol. Configuration
 
 **Editor integration notes:**
 
-In LSP mode, honest-check re-runs affected rules incrementally on each file save. Construction-time rules (HC003, HC006, HC011) re-run when any vocabulary definition file changes. Chain rules (HC001, HC002, HC007) re-run when any chain or link definition file changes. Reference rules (HC-REF001, HC-REF002, HC-REF003) re-run when any template, route, or stylesheet definition changes, since they resolve a rendered surface's references against the route map (HC-REF001), the template search path (HC-REF002), or the classes the stylesheets define (HC-REF003).
+In LSP mode, honest-check re-runs affected rules incrementally on each file save. Construction-time rules (HC003, HC006, HC011) re-run when any vocabulary definition file changes. Chain rules (HC001, HC002, HC007) re-run when any chain or link definition file changes. Reference rules (HC-REF001, HC-REF002, HC-REF003, HC-REF004) re-run when any template, route, stylesheet, or vocabulary-manifest definition changes, since they resolve a rendered surface's references against the route map (HC-REF001), the template search path (HC-REF002), the classes the stylesheets define (HC-REF003), or honest-format's declared vocabulary manifest (HC-REF004).
 
 ### 2.3 Framework Startup Integration
 
@@ -435,6 +435,7 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-REF001 | Error | ✓ | Template action target resolves to no mounted route (dead reference) |
 | HC-REF002 | Error | ✓ | Template include/extends target resolves to no template (dead reference) |
 | HC-REF003 | Error | ✓ | Template class reference resolves to no defined rule (dead reference) |
+| HC-REF004 | Error | ✓ | Behavioural `hf-*` attribute value resolves to no declared vocabulary member (dead reference) |
 
 #### HC001 — Link missing vocabulary
 
@@ -510,6 +511,22 @@ FUNCTION check_HC_REF003(defined_classes, scanned_templates):
 ```
 
 `defined_classes` is the union of the class selectors every discovered component stylesheet defines, read through honest-parse's CSS grammar (a `class_name` under a `class_selector`, so a pseudo-class like `:hover` is not mistaken for a class); a class defined for any component resolves, because the BEM namespace *ownership* is enforced separately, at mount time (honest-components §6.2). A class **value** that carries interpolation (`class="card {{ variant }}"`) is dynamic and skipped whole — only fully-static values are resolved — exactly as HC-REF001 skips an interpolated route path and HC-REF002 a variable include target; this is the stated bound of the check, not an oversight. Classes a client `h*-` module adds at runtime are equally statically knowable from the module source: honest-check reads the `.js` modules under the search roots and resolves the string-literal arguments to a `classList` method (`add`/`remove`/`toggle`/`replace`/`contains`) and the tokens of a `className` assignment against the same defined-class set — a class a module *can* add that no stylesheet defines is a dead reference too, caught before the module ever runs. A non-literal argument (a variable or expression) is dynamic and skipped, the same bound as an interpolated template class. (Which `.js` honest-check reads is the search roots for now; a broader client-JS location is a configuration extension.)
+
+#### HC-REF004 — Behavioural attribute value resolves to a declared vocabulary member
+
+An `hf-*` attribute names a behaviour by value: `hf-format="currency"` selects a formatter, `hf-phone-format="us"` a phone style. A value the client runtime does not recognize selects nothing — the element renders raw and silently formats nothing, the styling-family analogue of a class no stylesheet defines. HC-REF004 resolves each authored `hf-*` value whose attribute names an **enumerated** vocabulary against honest-format's declared manifest — the same "Every reference resolves" principle applied to behavioural attributes. A value naming no member is a **dead reference**.
+
+```
+FUNCTION check_HC_REF004(vocabulary, scanned_templates):
+    FOR EACH ref IN scanned_templates.hf_refs:
+        allowed = vocabulary[ref.attr]           # None for a free-value attribute
+        IF allowed IS NOT None AND ref.value NOT IN allowed:
+            EMIT error(HC-REF004, ref.location,
+                "Attribute {ref.attr}=\"{ref.value}\" names no member of honest-format's "
+                "declared vocabulary. Fix the value, or extend the vocabulary.")
+```
+
+`vocabulary` maps each checked attribute — `hf-format` to the format names, `hf-type` to the input-type names, and each `hf-*-format` option to its enumerated set — to its allowed values, read from the **manifest honest-format emits** (`manifest.json`), never inferred by scraping the runtime's dispatch tables (declared, never inferred). An attribute carrying a free value — `hf-decimals`, `hf-currency`, a raw prefix — names no enumerated vocabulary, is absent from the map, and is not judged; only the closed-vocabulary attributes are resolved. A value carrying interpolation (`hf-format="{{ kind }}"`) is dynamic and skipped whole, exactly as HC-REF001 skips an interpolated route path. The manifest is read only where a `format_manifest` path is configured, so HC-REF004 runs only where an application declares which honest-format vocabulary its templates target — exactly as HC002/HC-REF001 run only where templates are configured.
 
 #### HC004 — Dead vocabulary type
 

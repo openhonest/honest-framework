@@ -14,6 +14,7 @@ it; until then the boundary is declared here (section 7.2).
 # honest: disable HC-P004, HC-P002, HC-P010
 
 import argparse
+import json
 import sys
 import tomllib
 from pathlib import Path
@@ -25,7 +26,7 @@ from honest_check.config import (
     resolve_paths,
     resolve_severity,
 )
-from honest_check.boundary import boundary_diagnostics, check_class_references, check_references, check_template_references
+from honest_check.boundary import boundary_diagnostics, check_class_references, check_hf_references, check_references, check_template_references, hf_vocabulary
 from honest_check.declgraph import extract_routes
 from honest_check.diagnostics import Diagnostic
 from honest_check.formats import (
@@ -84,6 +85,17 @@ def _discover_js(js_dir: str) -> list[Path]:
     return sorted(root.rglob("*.js")) if js_dir and root.is_dir() else []
 
 
+def _load_manifest(manifest_path: str) -> dict | None:
+    """honest-format's declared vocabulary manifest HC-REF004 resolves hf-* values against, read from the
+    configured path (boundary I/O), or None when no manifest is configured or the file is absent — HC-REF004
+    then does not run, exactly as HC002/HC-REF001 do not run without a templates directory."""
+    path = Path(manifest_path)
+    if not manifest_path or not path.is_file():
+        return None
+    with path.open("rb") as handle:
+        return json.load(handle)
+
+
 def _find_config(explicit: str | None) -> Path | None:
     """The honest-check.toml to use: --config if given, else the nearest ancestor's."""
     if explicit:
@@ -121,7 +133,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str, templates_dir: str) -> int:
+def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str, templates_dir: str, format_manifest: str) -> int:
     """Check the paths once and print the rendered report; return the exit code (1 on errors, 2 on a
     read failure, else 0). The single-pass core that both a plain run and --watch repeat. When a
     template directory is configured, its templates are scanned once and every checked file also runs
@@ -154,7 +166,13 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
         diagnostics.extend(check_references(all_routes, scanned))
         diagnostics.extend(check_template_references(resolvable, scanned))
         diagnostics.extend(check_class_references(defined_classes, scanned + js_scanned))
-    except OSError as exc:
+        # HC-REF004 resolves every authored hf-* attribute value against honest-format's declared
+        # vocabulary. With no manifest configured it does not run, exactly as the checks above do not
+        # without templates.
+        manifest = _load_manifest(format_manifest)
+        if manifest is not None:
+            diagnostics.extend(check_hf_references(hf_vocabulary(manifest), scanned))
+    except (OSError, json.JSONDecodeError) as exc:
         print(f"honest-check: cannot read source: {exc}", file=sys.stderr)
         return 2
     diagnostics = filter_by_rule(diagnostics, only, suppress)
@@ -203,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     def run() -> int:
-        return _run_once(paths, config["exclude"], severity, suppress, only, args.format, config["templates"])
+        return _run_once(paths, config["exclude"], severity, suppress, only, args.format, config["templates"], config["format_manifest"])
 
     if args.watch:
         return watch(run)

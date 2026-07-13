@@ -31,6 +31,7 @@ def normalize_config(raw: dict) -> dict:
         "exclude": list(check.get("exclude", [])),
         "severity": check.get("severity", _DEFAULT_SEVERITY),
         "templates": check.get("templates", ""),
+        "format_manifest": check.get("format_manifest", ""),
         "disable": list(rules.get("disable", [])),
         "rule_config": {name: dict(value) for name, value in rules.items() if name != "disable" and hasattr(value, "items")},
         "startup_on_error": raw.get("startup", {}).get("on_error"),

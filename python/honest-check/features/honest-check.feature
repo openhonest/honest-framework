@@ -372,6 +372,11 @@ Feature: honest-check — Python supplement
     When _find_config looks for one
     Then it returns the explicit path when given, otherwise the nearest ancestor's configuration, otherwise nothing
 
+  Scenario: _load_manifest reads honest-format's declared vocabulary
+    Given a configured manifest path
+    When _load_manifest is asked
+    Then it returns the parsed manifest, or nothing when no path is configured or the file is absent
+
   Scenario: _load_config reads and normalizes the configuration file
     Given a configuration path
     When _load_config reads it
@@ -849,6 +854,21 @@ Feature: honest-check — Python supplement
     Given the defined class set and the scanned templates
     When check_class_references resolves each static class against them
     Then it reports HC-REF003 at the element for a class no stylesheet defines
+
+  Scenario: hf_references collects the hf-* attribute references a template carries
+    Given a template's source
+    When hf_references reads each element's hf-* attributes
+    Then it yields each hf-* attribute with a resolvable value located at its element, skipping an interpolated value and a non-hf attribute
+
+  Scenario: hf_vocabulary maps each checked attribute to its allowed values
+    Given honest-format's declared manifest
+    When hf_vocabulary is built
+    Then it maps hf-format, hf-type, and each enumerated hf-*-format option to the manifest's allowed values
+
+  Scenario: check_hf_references flags an hf-* value that names no vocabulary member
+    Given the declared vocabulary and the scanned templates
+    When check_hf_references resolves each authored hf-* value against it
+    Then it reports HC-REF004 at the element for a value naming no member, leaving a free-value attribute unjudged
 
   Scenario: _discover_css lists the stylesheets under a directory
     Given a directory

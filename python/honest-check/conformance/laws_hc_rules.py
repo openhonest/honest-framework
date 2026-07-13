@@ -109,8 +109,8 @@ from honest_check.declgraph import (
 from honest_parse import parse_python, parse_javascript, parse_html, node_text, walk as _w
 from honest_check.rules import language_for_path
 from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_enclosing_function, _js_equality_target, _js_else_if, _js_impure_name, _js_mutable_decl_names, _js_qualified_name, _js_reassigned_names, _js_scope_lets, _js_type_check
-from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _member_property, _object_keys, _open_tag, _tag_name, js_class_references, manifest_keys, request_sites, scan_template, stylesheet_classes, template_class_references, template_includes
-from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_class_references, check_references, check_template_references, route_boundary
+from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _member_property, _object_keys, _open_tag, _tag_name, hf_references, js_class_references, manifest_keys, request_sites, scan_template, stylesheet_classes, template_class_references, template_includes
+from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_class_references, check_hf_references, check_references, check_template_references, hf_vocabulary, route_boundary
 
 
 def _rules(source: str) -> list[str]:
@@ -2881,6 +2881,42 @@ def _probe_class_references() -> list:
     return bad
 
 
+def _probe_hf_references() -> list:
+    """HC-REF004 (section 4.2): every authored hf-* attribute value naming an enumerated vocabulary
+    resolves to a member of honest-format's declared manifest. hf_references collects the hf-* attributes
+    with resolvable values, skipping an interpolated value and a non-hf attribute; hf_vocabulary builds the
+    attribute->allowed map from the manifest; check_hf_references flags a value naming no member, at the
+    element, and leaves a free-value attribute (hf-decimals) unjudged."""
+    bad = []
+    refs = hf_references(
+        b'<span hf-format="currency" hf-decimals="2">1</span>'
+        b'<span hf-format="{{ dynamic }}">2</span>'
+        b'<span class="x">3</span>'
+    )
+    got = [(r["attr"], r["value"]) for r in refs]
+    if got != [("hf-format", "currency"), ("hf-decimals", "2")]:
+        bad.append(f"hf_references should collect resolvable hf-* attributes, skipping interpolated and non-hf: {got}")
+    manifest = {"formats": ["currency", "date"], "inputTypes": ["cents", "auto"], "options": {"hf-phone-format": ["us", "intl"]}}
+    vocab = hf_vocabulary(manifest)
+    if vocab.get("hf-format") != frozenset({"currency", "date"}) or vocab.get("hf-type") != frozenset({"cents", "auto"}) or vocab.get("hf-phone-format") != frozenset({"us", "intl"}):
+        bad.append(f"hf_vocabulary should map each checked attribute to its allowed values: {vocab}")
+    tpl = {"path": "page.html", "hf_refs": [
+        {"attr": "hf-format", "value": "currency", "location": (1, 1)},
+        {"attr": "hf-format", "value": "curency", "location": (2, 3)},
+        {"attr": "hf-decimals", "value": "bogus", "location": (3, 1)},
+        {"attr": "hf-phone-format", "value": "uk", "location": (4, 2)},
+    ]}
+    diags = check_hf_references(vocab, [tpl])
+    kinds = [(d["rule"], d["severity"], d["line"], d["col"]) for d in diags]
+    if kinds != [("HC-REF004", "error", 2, 3), ("HC-REF004", "error", 4, 2)]:
+        bad.append(f"HC-REF004 should flag only the unknown hf-format and hf-phone-format, at their elements: {kinds}")
+    if diags and ('hf-format="curency"' not in diags[0]["message"] or "no member" not in diags[0]["message"] or "Fix the value" not in diags[0]["message"]):
+        bad.append(f"HC-REF004 message should name the attribute value and the remedy: {diags[0].get('message')}")
+    if diags and diags[0]["path"] != "page.html":
+        bad.append(f"HC-REF004 should carry the template path: {diags[0]}")
+    return bad
+
+
 def run() -> int:
     failed = 0
     passed = 0
@@ -2962,6 +2998,14 @@ def run() -> int:
     if class_references_bad:
         failed += 1
         print(f"FAIL HC-rule [class_references]: {class_references_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    hf_references_bad = _probe_hf_references()
+    if hf_references_bad:
+        failed += 1
+        print(f"FAIL HC-rule [hf_references]: {hf_references_bad}")
     else:
         passed += 1
 

@@ -1,6 +1,6 @@
 # Scoping Plan — static-reference resolution in honest-check
 
-**Status:** Tiers A (`706c5e9`), B (`763d5bb`, on `tree-sitter-honest-jinja` `eba702c`), and C — both the template-class half (`4188b4b`, on the official CSS grammar `a6437a1`) and the JS-emitted-class half (`classList` methods and `className` assignments in `h*-` modules) — built and gated. Remaining: Tier C's behavioural-attribute-vocabulary kind (HC-REF004: an `fx-*` value resolves to a member of genX's declared `fx-*` vocabulary), which waits on genX exposing that vocabulary as data.
+**Status: COMPLETE.** Tiers A (`706c5e9`), B (`763d5bb`, on `tree-sitter-honest-jinja` `eba702c`), C — both the template-class half (`4188b4b`, on the official CSS grammar `a6437a1`) and the JS-emitted-class half — and **HC-REF004** (a behavioural `hf-*` attribute value resolves to a member of honest-format's declared vocabulary manifest) are built and gated. The whole static-reference family (HC-REF001/002/003/004) ships: every reference a rendered surface emits — route, include/extends, class, and behavioural attribute value — resolves, or the gate stops.
 **Principle:** framework spec, Verification Model, *"Every reference resolves, or the gate stops"* (Tier 1, committed `15778f6`). Methodology source: `methodology/contract-testing.md`, "Static references are boundaries too."
 **Goal:** enforce, at the structural gate, that every identifier a rendered surface *emits* resolves to a definition elsewhere — the dual of HC002's "the input boundary is closed."
 
