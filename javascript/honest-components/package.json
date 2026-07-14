@@ -1,0 +1,10 @@
+{
+  "name": "honest-components",
+  "version": "0.0.0",
+  "description": "honest-components: interactive component behaviours as pure h*- enhancement modules over the DOM and honest-DOM's injected event bus. Spec-captured from genX uix.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test --experimental-test-coverage --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 --test-coverage-include='src/**' 'test/*.test.js'"
+  }
+}

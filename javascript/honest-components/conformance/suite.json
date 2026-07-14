@@ -1,0 +1,14 @@
+{
+  "module": "honest-components",
+  "note": "The portable honest-components conformance suite: language-agnostic cases every implementation must pass. A case names a public function, an `element` (its attributes, wrapped so getAttribute reads it), and any `rest` args; the runner applies the function and deep-compares. Only the pure behaviours (toggled, handle) are portable; enhance and scan need an event bus and are covered by the unit tests. genX's uix switch is the reference of record.",
+  "cases": [
+    {"id": "toggled-on", "function": "toggled", "element": {"aria-checked": "true"}, "expected": false},
+    {"id": "toggled-off", "function": "toggled", "element": {"aria-checked": "false"}, "expected": true},
+    {"id": "toggled-absent", "function": "toggled", "element": {}, "expected": true},
+    {"id": "handle-click", "function": "handle", "element": {"aria-checked": "false"}, "rest": [{"type": "click"}], "expected": {"aria-checked": "true", "_preventDefault": false}},
+    {"id": "handle-click-on", "function": "handle", "element": {"aria-checked": "true"}, "rest": [{"type": "click"}], "expected": {"aria-checked": "false", "_preventDefault": false}},
+    {"id": "handle-enter", "function": "handle", "element": {"aria-checked": "false"}, "rest": [{"type": "keydown", "key": "Enter"}], "expected": {"aria-checked": "true", "_preventDefault": true}},
+    {"id": "handle-space", "function": "handle", "element": {"aria-checked": "false"}, "rest": [{"type": "keydown", "key": " "}], "expected": {"aria-checked": "true", "_preventDefault": true}},
+    {"id": "handle-other-key", "function": "handle", "element": {"aria-checked": "false"}, "rest": [{"type": "keydown", "key": "a"}], "expected": null}
+  ]
+}

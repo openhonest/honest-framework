@@ -85,6 +85,7 @@ This is the same principle that made Neonto extraordinary: a single component sp
 - The three-tier hierarchy: atoms, molecules, organisms, and the distinct mounting behavior of each tier
 - The CSS namespace contract: how each tier owns its CSS classes and how organism namespaces are enforced at mount time
 - The `data-component` instrumentation contract: how honest-observe hooks into rendered organisms automatically
+- The client behaviour contract (§2.4): how an `h*-` module makes a component interactive as a pure enhancement over the DOM and honest-DOM's injected event bus — no lifecycle hooks, no module state, no runtime-constructed structure or styling
 - The honest-type marshalling requirement: what must happen at the organism boundary
 - The multi-target implementation structure for organisms: one implementation directory per target language
 - The component runtime: discovery, organism mount and `register()` lifecycle, CSS-namespace enforcement, grid assembly, and the startup merge of component token defaults into `:root` (§6.4). The runtime is part of this module's reference implementation, not a separate package.
@@ -151,6 +152,22 @@ This is visible in rendered HTML:
 honest-observe sees two independent instrumentation events: one for `data-component="data-table"` and one for `data-component="button"`. Each component is observable independently, regardless of nesting.
 
 Behavioural enhancement is sovereign in the same way. An `h*-` attribute — a declaration handled by a lazy-loaded client module (framework spec, the `h*-` skill registry) — acts only on the element it sits on, within that element's component; it never reaches across a `data-component` boundary into a nested component. A module enhancing an organism does not enhance an atom composed inside it, and vice versa. Composition does not create confusion about ownership for behaviour any more than it does for CSS.
+
+### 2.4 The Client Behaviour Contract
+
+An interactive component declares its behaviour on an `h*-` attribute (`hc-switch`, `hc-accordion`) and a client module supplies it. The module *enhances* server-rendered structure; it never becomes an imperative widget. Five rules make the behaviour honest — each eliminates a named category of client-side bug, and each keeps the module inside what honest-check can verify (no classes, no lifecycle hooks, no hidden state, I/O at the boundary):
+
+1. **The module is pure over the DOM and an injected event bus.** A behaviour is a pure `handle(element, event) -> changes` — given the element and a DOM event, it returns the attribute changes to apply (or nothing for a no-op). It reads no clock, opens no `addEventListener`, and constructs no DOM. The actual event subscription is honest-DOM's injected bus (the same `bus` `observe`/`on` take), so a module wires behaviour through `bus.onEvent(element, type, handler)` and returns an unsubscribe, exactly as honest-DOM's `on` does — never an `addEventListener` (an HC-P011 lifecycle hook) of its own. *Eliminates: the leaked listener, the un-testable handler.*
+
+2. **Interactive state is DOM state (DATAOS).** The current state of an interactive component is read from and written to the DOM — an ARIA attribute (`aria-checked`, `aria-expanded`), a class, an input's `checked`. A module holds no instance object, no `Map` of element-to-state, no module-level mutable. `handle` reads the element's current state from the element and returns the next state as attribute changes; there is nowhere for a shadow copy of state to drift from what the DOM shows. *Eliminates: the state-desync bug (the widget's internal state disagreeing with what the user sees).*
+
+3. **Structure is server-rendered; the module enhances, never constructs.** Every element a component needs — a switch's track, a tab's panels, a menu's items — is rendered by the server template. The module adds behaviour and ARIA to existing structure; it never calls `createElement` or injects markup. What renders without JavaScript is the whole structure; JavaScript only makes it interactive. *Eliminates: the flash-of-unstructured-content and the JS-only element that the static gate never saw.*
+
+4. **No styling is decided at runtime that the gate has not checked.** A module may add or remove a CSS class — but only a class its component's stylesheet defines, which honest-check resolves statically (HC-REF003; the styling model, item 4 above). A module never computes an inline style value (`element.style.color = …`); visual variation comes from tokens the template sets, not from JavaScript reading an option and writing a colour. *Eliminates: the runtime style the gate could not check, and the dead class that styles nothing.*
+
+5. **Enhancement is idempotent and scanned by a DOM-visible marker.** A module marks an element enhanced with an attribute (`hc-enhanced`); the scan enhances exactly the elements carrying the behaviour attribute and lacking the marker — the same processed-marker predicate honest-format's bind uses (honest-format §8.3), never an in-memory seen-set. Re-scanning is a no-op on an already-enhanced element, and content added after the initial scan (an HTMX swap) enhances on the next pass. *Eliminates: the double-bound handler and the swapped-in element that never got wired.*
+
+The behaviour vocabulary — the set of `hc-*` behaviour names and their enumerated option values — is declared as data and resolved by honest-check exactly as honest-format's format vocabulary is (HC-REF004): an `hc-switch` typo names no module and is a dead reference the gate stops. The interactive-component reference implementation is a set of these pure enhancement modules, each passing the five gates, mounted through the same `atoms/`/`molecules/` discovery as their markup and styles.
 
 ---
 
