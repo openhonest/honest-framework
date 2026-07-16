@@ -60,4 +60,4 @@ The persona-aware reading guide lives at [honestframework.software](https://hone
 - Code: Apache-2.0
 - Documentation content: CC-BY-NC-4.0
 
-Foundation-governed; in formation. Will be flipped public when the Foundation incorporates and the framework reaches v1 reference implementation.
+Foundation-governed. Will be flipped public when the framework reaches v1 reference implementation.
