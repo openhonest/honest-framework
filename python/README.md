@@ -80,16 +80,41 @@ behaviourally, two complementary ways, and both must pass:
   return the wrong answer; the value oracle is the known-good `(input, expected)` pair
   that catches it. A function is `proved` only when it passes the honesty checks, is fully
   covered, and its value oracle holds — or, where a value oracle cannot apply, it is
-  declared exempt with a reason. Every public function across the twelve packages is so
-  accounted for.
+  declared exempt with a reason. Every public function that exists across the twelve
+  packages is so accounted for.
 
-Completeness is **measured, not asserted**: the gate (`coverage-all.sh`) fails below
-**100% line and branch coverage**, and below a clean value-oracle run. An unhit line is
-dead code or an unspecified behaviour — both are defects the gate surfaces. All twelve
-packages are at 100%, and each is self-verifying in isolation. The full path — build
-order, seeding, and what carries across languages — is in
+**Coverage** is measured, not asserted: the gate (`coverage-all.sh`) fails below **100%
+line and branch coverage**, and below a clean value-oracle run. An unhit line is dead code
+or an unspecified behaviour — both are defects the gate surfaces. All twelve packages are
+at 100%, and each is self-verifying in isolation.
+
+Coverage is not spec-completeness, and the difference matters. 100% coverage proves every
+line *that exists* is honest, reached, and value-checked; it cannot prove a package
+implements every requirement of its specification, because a line never written is a line
+the gate never misses. A module can sit at 100% coverage with a whole spec section unbuilt.
+So the gate answers "is what is here correct?" — an emphatic yes across all twelve — but
+not "is everything the spec asks for here?" That second question is answered per package
+below. The full path — build order, seeding, and what carries across languages — is in
 [`../specs/01-framework/honest-framework-spec.md`](../specs/01-framework/honest-framework-spec.md)
 under *Bootstrapping a New Language Implementation*.
+
+## Where each package stands
+
+Every package's pure decision core is built to full depth and passes all gates. What varies
+is how much of each spec's *surface* — the orchestration, drivers, CLIs, and cross-module
+enforcement rules layered on that core — is built.
+
+| Package | Spec surface |
+|---|---|
+| honest-parse, honest-errors, honest-type, honest-check, honest-features | Spec-complete — no significant in-scope gaps. |
+| honest-gherkin | Spec-complete for its current milestone; later Gherkin features (Scenario Outline, Background execution, data tables, `Rule:`) are deferred by the spec itself. |
+| honest-persist, honest-auth | Substantially complete, one bounded gap each — persist: the Turso migrate-remote DDL path; auth: the no-domain-mutation conformance probe and the end-to-end conformance suite. |
+| honest-observe | Pure core substantially complete; the runnable CLI (`tail`/`inspect`/`query`), the config loader, and the default threshold-projection records are unbuilt. |
+| honest-test | Generation engine, honesty checks, state-machine and mutation adequacy complete; the orchestrating runner and the persist/component contract-test kinds are unbuilt. |
+| honest-alerts | Pure schema and decision core complete; the active runtime drivers (escalation, TTL-expiry, the SSE live surface, channel handlers) are unbuilt. |
+| honest-state | Taxonomy and the single-mutator law predicates complete; two of the four enforcement rules the module exists to provide are not yet in honest-check. |
+
+Two build-order modules are specified but unbuilt: **honest-design** (the `.hd` read path — the architecture spec has landed, no code yet) and **honest-rca** (no spec yet). The application-production tier (`page`, `DOM`, `format`, `components`) is JavaScript, of which `honest-format` is gate-complete and the rest are in progress. The per-package detail lives in each spec under [`../specs/`](../specs/).
 
 ## Running things
 
