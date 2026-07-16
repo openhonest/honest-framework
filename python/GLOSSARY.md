@@ -106,4 +106,4 @@ Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1),
 | Term | Definition |
 |---|---|
 | **tree-sitter** | The *sole* AST mechanism (no Python `ast`, Lark, libcst, or regex-as-parser). One parse boundary (`parse.py`); grammars in a per-language table; rules consume tree-sitter nodes via shared helpers. |
-| **`.hd`** | The architecture-declaration layer — an authoring tool for *building* the framework, never imposed on adopters. Its parser/IR/validator is FOSS; the visual producer is commercial. |
+| **`.hd`** | The architecture-declaration layer — an authoring tool for *building* the framework, never imposed on adopters. Reading and viewing it is FOSS (the format spec, the reference reader — parser/IR/validator — and the static renderer that draws the 4-column diagram); authoring it visually is commercial (the interactive design surface). See the framework spec, "What is open and what is commercial." |
