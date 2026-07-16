@@ -22,6 +22,14 @@ DEFAULT_REJECTION_POLICY = {
     "null_token": "warn",
 }
 
+# Rejection reason -> fault category (section 11.3 registry). Most rejections are bad
+# input (client), but unbound_type and reserved_word signal a misconfiguration, so at the
+# boundary they surface as server faults, not client ones. A reason not listed is client.
+_REJECTION_CATEGORY = {
+    "unbound_type": "server",
+    "reserved_word": "server",
+}
+
 
 def catch_at_boundary(handler, fault_to_output, success_output, server_default, client_default):
     """Wrap a handler (section 11.4): on ok, render success; on a fault, render via the
@@ -55,11 +63,12 @@ def check_rejections(manifest, policy=None) -> dict:
     blocking = [r for r in rejections if rules.get(r["reason"], "fault") == "fault"]
     clean = {slot: value for slot, value in manifest.items() if slot != "_rejections"}
     if blocking:
+        reason = blocking[0]["reason"]
         return err(
             fault(
-                blocking[0]["reason"],
+                reason,
                 "Input rejected at the boundary",
-                "client",
+                _REJECTION_CATEGORY.get(reason, "client"),
                 {"rejections": blocking},
             )
         )

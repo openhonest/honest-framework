@@ -931,6 +931,36 @@
    "expect_code": "unrecognized"
   },
   {
+   "id": "rejections-server-category-unbound-type",
+   "rejection_manifest": {
+    "_rejections": [
+     {
+      "token": "abc",
+      "reason": "unbound_type",
+      "detail": null
+     }
+    ]
+   },
+   "expect": "err",
+   "expect_code": "unbound_type",
+   "expect_category": "server"
+  },
+  {
+   "id": "rejections-server-category-reserved-word",
+   "rejection_manifest": {
+    "_rejections": [
+     {
+      "token": "lambda",
+      "reason": "reserved_word",
+      "detail": null
+     }
+    ]
+   },
+   "expect": "err",
+   "expect_code": "reserved_word",
+   "expect_category": "server"
+  },
+  {
    "id": "rejections-warn-passes-clean",
    "rejection_manifest": {
     "cc": "USD",
