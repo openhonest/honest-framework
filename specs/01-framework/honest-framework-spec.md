@@ -334,6 +334,18 @@ The modules depend on each other in one direction, with no cycles. Build them in
 parse                                              the shared parser (wraps tree-sitter)
 type                                               the type system
 
+# The .hd architecture-declaration layer (the FOSS read path; authoring tooling, not an adopter runtime)
+design     → parse                                 the .hd language layer: the tree-sitter .hd
+                                                   grammar, the reader (source -> IR), the validator,
+                                                   and the static renderer (IR -> the 4-column
+                                                   diagram). Built right after the parse/check seed —
+                                                   the framework's own modules are declared in .hd,
+                                                   and honest-check's conformance tier reads its IR.
+                                                   The reader and static renderer are FOSS; the
+                                                   interactive design surface that *produces* .hd is
+                                                   commercial (see "What is open and what is
+                                                   commercial"). Never imposed on adopters.
+
 # Code-quality tier
 errors     → type                                  the error-policy leaf: normalizers,
                                                    behavior table, rate-limiter; no I/O
@@ -370,6 +382,7 @@ alerts     → errors, observe, persist, state, auth  server-push notifications
 
 Three rules fix this order:
 
+- **`design` right after the parse seed.** The `.hd` layer needs only the parser (its own tree-sitter `.hd` grammar, alongside the jinja/css grammars), so it comes as soon as `parse` exists — and it comes early because the framework's own modules are *declared* in `.hd` and everything downstream can be checked against those declarations. Its one hard consumer is honest-check's **conformance tier** (the rules that verify an implementation matches its declared architecture — role reachability, orchestrator discipline), which reads `design`'s IR; honest-check's **universal tier** needs only `parse`, so `check` seeds before `design` and its conformance pass lands after. `design` is authoring/dev tooling shipped in the repo, never a runtime dependency of an adopter's app.
 - **Leaves first, then `errors`.** `parse` and `type` depend on nothing. `errors` depends only on `type` (it returns faults as data in the shared `Result` shape) and is otherwise a pure leaf — it normalizes failures into one report, decides behavior as a pure function of the environment, and throttles repeats, all with no I/O. It is *composed* by `observe` (the normalizers) and `alerts` (the behavior table and rate-limiter), so it must precede both.
 - **`gherkin` before `test`.** honest-gherkin is the BDD execution *engine* (parse a feature, match its steps against a registry, fold the scenario, report). honest-test *runs on* it — it generates the step scaffolding and ships the standard step library, and the engine runs them (honest-test §8.1, honest-gherkin §1.3). So the engine must exist before test, not the other way round; the engine itself depends only on `type` (for the `Result`/fault-as-data shape).
 - **`observe` before `persist`.** Every persistence boundary (execute, apply, transactions) emits to the event log: persist instruments *through* observe. (observe's own emit stores via persist, but it receives that writer at the boundary rather than importing persist, so the dependency runs one way: persist → observe.)
