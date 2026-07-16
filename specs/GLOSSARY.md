@@ -24,6 +24,11 @@ plain language in the text itself.
 | **guard** | An ordinary early-return precondition a developer writes in a link before a write — plain code, the same as any other business rule. (In honest-auth, still pending revision, a guard is written as a data expression; see that spec.) |
 | **fault** | A reported problem, carried as plain data `{code, message, who-is-at-fault, detail}` — never thrown as an exception except at the outer edge. |
 | **rejection** | An input that could not be recognized or placed, carried as data in the manifest — not an error that stops the program. |
+| **`.hd`** | A module's architecture written down as data: its types, its functions and the column each belongs to, its chains, its boundaries, and its routes — in a form a machine can check and draw, independent of the language the module is written in. |
+| **column** | Which of the four parts of a module a function belongs to: the input boundary, the orchestrators, the pure functions, or the output boundary. A function's role fixes its column. |
+| **4-column diagram** | The framework's standard picture of a module, drawn left to right: input boundary, orchestrators, pure functions, output boundary. |
+| **intermediate representation (IR)** | The plain-data form the `.hd` reader produces from an `.hd` file — the single value the validator, the diagram renderer, and honest-check all read, so none of them touches the grammar directly. |
+| **static renderer** | The function that draws the 4-column diagram from the IR. It draws a given `.hd`; it does not let anyone draw *into* `.hd` (that is the commercial authoring surface). |
 | **slot** | The name a recognized value is stored under in the manifest. |
 | **binding** | The table that says which recognized kind goes into which slot. |
 | **boundary** | The edge of the program, and the only place a step may touch the outside world (read input, write output, read the clock, use the database). Everything inside is pure. |
