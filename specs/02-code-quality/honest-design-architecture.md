@@ -54,14 +54,14 @@ The reference implementation is `python/honest-design/`, with the tree-sitter `.
 
 `.hd` describes one thing: a module laid out in **four columns**, the framework's canonical picture of an honest module.
 
-| Column | Contains | Framework correspondence |
+| Column | Contains | Declared as |
 |---|---|---|
-| 1. Input boundary | Routes, request intake, classification | the closed input boundary; `classify()` at the edge |
-| 2. Orchestrators | Chains — ordered sequences of links | honest-type chains / `execute_chain` |
-| 3. Pure functions | Links, dispatch tables, pure transforms | `@link` pure functions; dict-dispatch |
-| 4. Output boundary | Templates, persistence writes, event emits | rendered surfaces; persist/observe boundaries |
+| 1. Input boundary | Routes, request intake, the reads from the outside world | `boundary_in fn ... side_effect reads "..."` |
+| 2. Orchestrators | The chains that compose the pure pipeline and dispatch results | `orchestrator fn ... invokes ...` |
+| 3. Pure functions | The grid of pure transforms — recognizers, classifiers, folds | `fn ...` |
+| 4. Output boundary | Writes to the outside world — responses, persistence, event emits | `boundary_out fn ... side_effect writes "..."` |
 
-Every declared function carries a **role** that places it in a column: `boundary` (columns 1 and 4, distinguished by direction of I/O), `orchestrator` (column 2), or `pure` (column 3). The role is not decoration — it is a claim the validator and honest-check enforce: a `pure` function that does I/O is a violation; an `orchestrator` that does I/O off a boundary is a violation; a `boundary` function is the only place a declared side effect may occur.
+Every declared function carries its column in its **role keyword**: `boundary_in` (column 1), `orchestrator` (column 2), `fn` (column 3), `boundary_out` (column 4). The role is not decoration — it is a claim the validator and honest-check enforce: a plain `fn` that does I/O is a violation; an `orchestrator` that reaches the outside world off a boundary is a violation; only a `boundary_in`/`boundary_out` function may name a `side_effect`.
 
 The model is language-agnostic. The same `.hd` describes the module whether it is implemented in Python, JavaScript, Ruby, PHP, Elixir, or Go; the file is byte-identical across targets (framework spec, "Same engine, same grammar, same files"). What differs per language is only the code an adapter emits into each column, never the columns themselves.
 
@@ -69,89 +69,80 @@ The model is language-agnostic. The same `.hd` describes the module whether it i
 
 ## 3. The `.hd` grammar
 
-`.hd` is a declarative, indentation-scoped format. A file declares one module and its parts. The grammar is small by design: each primitive names one architectural concept, and there is exactly one way to say each thing.
+`.hd` is a declarative, indentation-scoped format. A **module file** declares one `module` and its parts, indented beneath it. Two **workspace files** sit above the modules and declare cross-cutting `rule`s and runtime `flow`s (§3.3). `#` begins a line comment. The grammar carries no control flow and no expressions beyond type references: `.hd` states structure, it does not compute.
 
-### 3.1 Example
+### 3.1 A module file
 
 ```hd
-module orders
+module honest-type
 
-  type OrderStatus = { "pending", "paid", "shipped", "cancelled" }
-  type Email       = predicate(is_email)
-  type OrderTokens = composed(Email, quantity: PositiveInt)
+  layer foundation
 
-  boundary intake
-    accepts  request
-    produces OrderTokens
-    reads    http.request
+  # Living-spec examples, each bound to a chain.
+  example classify_email of classify_pipeline = "classify_token('alice@example.com', vocab); recognizer 'email' matches; resolve_bindings maps 'email' to slot 'user_email'; ticket emitted."
 
-  pure validate_order
-    accepts  OrderTokens
-    produces OrderManifest | fault
+  # Dispatch table: key -> handler.
+  dispatch reject_emitters = { "rejection" -> emit_rejection, "fault" -> emit_fault }
 
-  pure price_order
-    accepts  OrderManifest
-    produces PricedOrder
+  # Types: scalar aliases, generics, and records.
+  type Recognizer = Callable<str, bool>
+  type Ticket = {
+    kind: str
+    value: str
+    slot: str
+  }
 
-  boundary write_order
-    accepts  PricedOrder
-    produces OrderRecord
-    emits    persist.query, hf.order.created
+  # Bounded recognizer sets (members optionally carry a description),
+  # and vocabularies composed from them.
+  set format_name = { "currency", "number", "percent", "date", "phone", "duration" }
+  set order_state = { "pending" : "Awaiting payment.", "paid" : "Awaiting fulfilment." }
+  vocabulary format_vocab = { format_name, currency_code, style_name }
 
-  chain create_order
-    intake -> validate_order -> price_order -> write_order
+  # Column 1 — input boundary: reads the outside world.
+  boundary_in fn extract_http_tokens : (request: Request) -> list<str> side_effect reads "HTTP"
 
-  route POST "/orders" -> create_order
+  # Column 2 — orchestrator: runs chains, invokes other declarations, may raise faults.
+  orchestrator fn classify_and_dispatch : (tokens: list<str>, vocab: Vocabulary) -> Manifest invokes classify_pipeline, classify raises unbound_type
 
-  transitions OrderStatus
-    pending -> paid      on payment_received
-    paid    -> shipped   on dispatched
-    pending -> cancelled on cancelled
+  # Column 3 — pure function.
+  fn classify_token : (token: str, vocab: Vocabulary) -> Ticket
 
-  uses persistence.table(OrderRecord)
+  # Column 4 — output boundary: writes the outside world.
+  boundary_out fn emit_manifest : (manifest: Manifest) -> Response side_effect writes "memory"
+
+  # Chain: ordered function composition.
+  chain classify_pipeline = classify_token -> resolve_bindings
 ```
 
-### 3.2 Declarations
+A module may also declare `route "METHOD /path" -> fn` (an input-boundary route binding) and `html_attr "attr" "description"` (a declared client-side attribute, e.g. `hs-event`).
 
-| Keyword | Declares | Notes |
-|---|---|---|
-| `module` | The module name (one per file). | The unit of editing and of the diagram. |
-| `type` | A recognizer vocabulary. | `{ ... }` Set, `predicate(fn)`, `composed(...)`, `maybe(T)`. Mirrors honest-type. |
-| `boundary` | A function in column 1 or 4. | Must declare `reads` and/or `emits`; it is the only role that may. |
-| `pure` | A function in column 3. | May declare `accepts`/`produces` only; declaring `reads`/`emits` is a violation. |
-| `orchestrator` | A chain-runner in column 2. | Rare as an explicit declaration; usually implied by `chain`. |
-| `accepts` / `produces` | A function's input and output manifest types. | `produces T \| fault` marks a fallible function. |
-| `reads` / `emits` | A boundary function's declared side effects. | Named against the closed vocabulary of framework side effects (`http.*`, `persist.*`, `hf.*` events). |
-| `chain` | An ordered orchestration of links. | `a -> b -> c`; each link is a declared function; adjacent types must compose. |
-| `dispatch` | A dict-dispatch table. | `key -> handler` rows; the honest replacement for `if/elif`. |
-| `route` | An input-boundary binding. | `METHOD "path" -> chain`. |
-| `template` | An output-boundary surface. | Names the surface and the references it emits (for HC-REF resolution). |
-| `transitions` | A state machine over a type. | `from -> to on event` rows; mirrors honest-type state machines. |
-| `schedule` | A scheduled entry point. | Names the cadence and the chain it runs. |
-| `uses` | A capability reference into another module. | `uses persistence.table(T)`; resolved to a framework-module surface, never reaching past it. |
+### 3.2 Declaration reference
 
-### 3.3 Grammar summary (EBNF)
+| Form | Declares |
+|---|---|
+| `module <name>` | The module — one per file, the unit of editing and of the diagram. |
+| `layer <name>` | The module's tier: `foundation`, `tooling`, `domain`, ... |
+| `type <Name> = <expr>` | A type. `<expr>` is a scalar (`str`, `int`, `bool`, `void`, `any`), a generic (`list<T>`, `dict<K,V>`, `set<T>`, `Callable<...>`), or a record (`{ field: type ... }`). Types from other modules are referenced by name, not redeclared. |
+| `set <name> = { "a", ... }` | A bounded recognizer set of string literals; each member may be written `"member" : "description"`. |
+| `vocabulary <name> = { set, ... }` | A vocabulary composed of sets (its Cartesian product is the exhaustive test space). |
+| `dispatch <name> = { "k" -> handler, ... }` | A dict-dispatch table — the honest replacement for `if/elif`. |
+| `example <name> of <chain> = "..."` | A living-spec example bound to a chain. |
+| `boundary_in fn <name> : (args) -> ret side_effect reads "<source>"` | Column 1. Input boundary; declares what it reads. |
+| `orchestrator fn <name> : (args) -> ret invokes <list> [raises <faults>]` | Column 2. Runs chains; names what it invokes and the faults it may raise. |
+| `fn <name> : (args) -> ret [raises <faults>]` | Column 3. A pure function. |
+| `boundary_out fn <name> : (args) -> ret side_effect writes "<sink>"` | Column 4. Output boundary; declares what it writes. |
+| `chain <name> = a -> b -> c` | An ordered composition of functions. |
+| `route "METHOD /path" -> fn` | An input-boundary route binding. |
+| `html_attr "attr" "desc"` | A declared client-side attribute. |
 
-```
-file        = module , { declaration } ;
-module      = "module" , name ;
-declaration = type | function | chain | dispatch | route
-            | template | transitions | schedule | uses ;
-type        = "type" , name , "=" , type_expr ;
-type_expr   = set | "predicate(" , name , ")"
-            | "composed(" , field_list , ")" | "maybe(" , name , ")" ;
-function    = ( "boundary" | "pure" | "orchestrator" ) , name , { attribute } ;
-attribute   = ( "accepts" | "produces" ) , type_ref
-            | ( "reads" | "emits" ) , name_list ;
-chain       = "chain" , name , link_seq ;
-link_seq    = name , { "->" , name } ;
-transitions = "transitions" , type_ref , { transition } ;
-transition  = name , "->" , name , "on" , name ;
-route       = "route" , method , string , "->" , name ;
-uses        = "uses" , capability_ref ;
-```
+A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, or another module such as `honest-observe`. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes a function can return. There is exactly one way to say each thing.
 
-Indentation scopes a declaration's attributes to it. A blank line or a dedent ends a declaration. The grammar carries no control flow, no expressions beyond type references, and no imperative statements: `.hd` states structure, it does not compute.
+### 3.3 Workspace files
+
+Two file kinds sit above the modules and describe the workspace as a whole:
+
+- **Rules** (`rules.hd`) — `rule <ID> = "..."` states a structural check honest-check enforces across every module; `rule <ID> on <module> = "..."` scopes it to one. The short statement is the machine-readable index for the diagram; the full rule and rationale live in the honest-check spec.
+- **Flows** (`flows.hd`) — `actor <name>` names a non-module runtime participant (e.g. `browser`, `htmx`, `sse`), rendered as a pill node; `flow <name> in <group> = a -> b -> c` declares a representative module-to-module call order for one runtime scenario, grouped `browser` / `server` / `startup` / `tooling`. A flow is what actually happens at runtime, not a type dependency.
 
 ---
 
@@ -160,16 +151,21 @@ Indentation scopes a declaration's attributes to it. A blank line or a dedent en
 The reader produces a normalized, language-agnostic IR — plain data, the single value every downstream consumer (validator, renderer, honest-check conformance tier) reads. It is not tied to tree-sitter node shapes; the reader folds the parse tree into it so no consumer touches the grammar.
 
 ```
-Module   = { name, types, functions, chains, dispatches,
-             routes, templates, transitions, uses, edges }
-Function = { name, role, accepts, produces, reads, emits, column }
+Module   = { name, layer, types, sets, vocabularies, dispatches,
+             functions, chains, examples, routes, html_attrs }
+Function = { name, role, params, ret, side_effect, invokes, raises, column }
+             # role: "boundary_in" | "orchestrator" | "fn" | "boundary_out"
+             # params: [ { name, type } ] ; ret: type
+             # side_effect: { direction: "reads" | "writes", target } | null
+             # invokes, raises: [ name ]
 Chain    = { name, links }        # links: [function name], in order
-Route    = { method, path, chain }
-Transition = { from, to, event }
-Edge     = { from, to, kind }     # cross-declaration dependency
+Route    = { method, path, fn }
+Example  = { name, chain, text }
 ```
 
-`column` is derived, not authored: `pure → 3`, `orchestrator → 2`, and `boundary → 1` if it only `reads` (intake) or `4` if it `emits` (output). Deriving the column in the reader keeps the diagram and the checks reading the same field, so they cannot disagree about where a function sits. The IR is byte-stable for a given `.hd` file across every language target.
+Two workspace files fold into their own IR: `Rule = { id, module, statement }` (module is null for a global rule) and `Flow = { name, group, steps }` with `Actor = { name }` for the non-module participants.
+
+`column` is derived from the role keyword, not authored: `boundary_in → 1`, `orchestrator → 2`, `fn → 3`, `boundary_out → 4`. Deriving it in the reader keeps the diagram and the checks reading one field, so they cannot disagree about where a function sits. The IR is byte-stable for a given `.hd` file across every language target.
 
 ---
 
@@ -189,20 +185,21 @@ The reader does not resolve cross-module references or check invariants; it prod
 
 The validator is a pure function `Module (IR) → [fault]`. An empty list is a valid architecture. Its checks fall into two groups.
 
-**Well-formedness** — every reference resolves within the file or its declared `uses`:
+**Well-formedness** — every reference resolves (the declaration-level duals of the `rules.hd` structural rules):
 
-- Every chain link names a declared function (else `unknown_link`).
-- Every `accepts`/`produces` names a declared type or a framework-primitive type (else `unknown_type`).
-- Every `transitions` row names states that belong to the referenced type (else `unknown_state`).
-- Every `route` names a declared chain (else `unknown_chain`).
-- No declaration is orphaned — every function is reachable from a route, a schedule, or a chain (else `unreachable_role`, the declaration-level dual of HC-R001).
+- Every chain link names a declared function (else `unknown_link`; dual of HC001).
+- Every type in a signature (`params`/`ret`) or record field names a declared type, a builtin, or a sibling-module type (else `unknown_type`; dual of HC007).
+- Every `invokes` and `raises` name resolves to a declared chain, function, or fault (else `unknown_reference`).
+- Every `route` names a declared function (else `unknown_route_target`).
+- Names are unique within the module — chains, types, functions, sets (else `duplicate_name`; duals of HC004/HC005/HC006).
+- No declaration is orphaned — every function is reachable from a route or a chain (else `unreachable_role`, the declaration-level dual of HC-R001).
 
 **Architectural invariants** — the boundary discipline, checked at the declaration level:
 
-- A `pure` function declares no `reads` and no `emits` (else `impure_pure_function`).
-- An `orchestrator`/`chain` performs no I/O of its own — every side effect in a chain lives in a `boundary` link (else `orchestrator_side_effect`).
-- Adjacent chain links compose: link *n*'s `produces` matches link *n+1*'s `accepts`, up to a fault short-circuit (else `chain_type_mismatch`, the declaration-level dual of HC002).
-- Every `emits`/`reads` names a member of the closed framework side-effect vocabulary (else `unknown_side_effect`).
+- A plain `fn` declares no `side_effect` (else `impure_pure_function`) — only `boundary_in`/`boundary_out` may.
+- An `orchestrator` reaches the outside world only through the boundary functions it `invokes`, never directly (else `orchestrator_side_effect`).
+- Adjacent chain links compose: link *n*'s `ret` matches link *n+1*'s first parameter type, up to a fault short-circuit (else `chain_type_mismatch`; dual of HC002).
+- `side_effect reads`/`writes` names a member of the known source/sink vocabulary (else `unknown_side_effect`).
 
 The validator's faults are the contract honest-check's **conformance tier** consumes: it reads this IR and this fault set to verify that the *code* matches the *declaration* — role reachability, orchestrator discipline, chain type-matching within a module. The universal tier of honest-check needs only `parse` and fires without any `.hd`; the conformance tier is what `.hd` unlocks.
 
@@ -210,7 +207,7 @@ The validator's faults are the contract honest-check's **conformance tier** cons
 
 ## 7. The static renderer (IR → the 4-column diagram)
 
-The renderer is a pure function `Module (IR) → diagram`. Deterministic: the same IR renders the same diagram every time, with no interaction, no layout randomness, and no external state. It places each function in its derived `column`, draws chains as left-to-right edges through the columns, marks boundary functions with their declared side effects, and renders cross-declaration `edges` and `uses` as dependency lines. The output is the framework's canonical 4-column picture — input boundary, orchestrators, pure functions, output boundary — the same view the repository's explorer renders and core contributors reason about (framework spec, "Framework-author view").
+The renderer is a pure function `Module (IR) → diagram`. Deterministic: the same IR renders the same diagram every time, with no interaction, no layout randomness, and no external state. It places each function in its derived `column`, draws chains as left-to-right edges through the columns, marks boundary functions with their declared `side_effect` targets, and (given the workspace `flows.hd`) renders each `flow` as a module-to-module runtime line through the `actor` and module nodes. The output is the framework's canonical 4-column picture — input boundary, orchestrators, pure functions, output boundary — the same view the repository's explorer renders and core contributors reason about (framework spec, "Framework-author view").
 
 The renderer is the *static* half only. It draws a given `.hd`; it does not let anyone draw *into* `.hd`. The interactive surface that produces `.hd` from a drawn diagram is the commercial line (§1.2).
 
@@ -220,7 +217,7 @@ The renderer is the *static* half only. It draws a given `.hd`; it does not let 
 
 - **honest-parse** hosts the `tree-sitter-honest-hd` grammar as one row in its grammar table, alongside the jinja and css grammars it already owns (§9.1). honest-design reads through `parse`; it is the module's only upstream dependency.
 - **honest-check** consumes the reader's IR in its conformance tier to check code-against-declaration. `check` seeds early on `parse` (its universal tier), and its conformance pass lands after `design` exists.
-- **honest-type** is itself declared in `.hd`. Its recognizer/chain/state-machine concepts are the vocabulary `.hd`'s `type`/`chain`/`transitions` primitives name; the correspondence is exact so a type declaration and its `.hd` declaration cannot drift.
+- **honest-type** is itself declared in `.hd`. Its recognizer, vocabulary, and chain concepts are exactly the `set`/`vocabulary`/`type`/`fn`/`chain` primitives; a state machine is expressed as a `type` record plus its transition functions (as honest-state's `.hd` does), not a dedicated primitive. The correspondence is exact, so a module and its `.hd` declaration cannot drift.
 - The **framework's own modules** are declared in `.hd`; those declarations are the design artifacts every downstream check reads. Authoring them is part of designing each module, spec-first.
 
 ---
