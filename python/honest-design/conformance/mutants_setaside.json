@@ -1,0 +1,9 @@
+{
+  "honest-design/src/honest_design/reader.py:0->-1@params_node = _children(signature, \"params\")[0]": "equivalent: a function has exactly one signature and a signature exactly one params node, so [0] and [-1] address the same element.",
+  "honest-design/src/honest_design/reader.py:0->-1@signature = _children(node, \"signature\")[0]": "equivalent: a function_decl has exactly one signature child, so [0] and [-1] address the same element.",
+  "honest-design/src/honest_design/reader.py:0->-1@body = _children(node, \"chain_body\")[0]": "equivalent: a chain_decl has exactly one chain_body child, so [0] and [-1] address the same element.",
+  "honest-design/src/honest_design/reader.py:0->-1@body = _children(node, \"flow_body\")[0]": "equivalent: a flow_decl has exactly one flow_body child, so [0] and [-1] address the same element.",
+  "honest-design/src/honest_design/reader.py:0->-1@\"layer\": (groups.get(\"layer\") or [\"\"])[0],": "equivalent: a module has at most one layer and the fallback list has exactly one element, so [0] and [-1] address the same element.",
+  "honest-design/src/honest_design/reader.py:1->2@parts = _unquote(_field_text(node, \"path\", source)).split(\" \", 1)": "equivalent: a route path is 'METHOD /path' with a single space; split(' ', 1) and split(' ', 2) yield the same parts, so the limit is unobservable on valid input.",
+  "honest-design/src/honest_design/result.py:False->True@class Result(TypedDict, total=False):": "equivalent: total=False on a TypedDict is a static-typing directive with no runtime effect (TypedDict performs no validation at construction), so flipping it to True cannot change any value the suite observes."
+}
