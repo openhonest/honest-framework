@@ -122,7 +122,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 |---|---|
 | `module <name>` | The module — one per file, the unit of editing and of the diagram. |
 | `layer <name>` | The module's tier: `foundation`, `tooling`, `domain`, ... |
-| `type <Name> = <expr>` | A type. `<expr>` is a scalar (`str`, `int`, `bool`, `void`, `any`), a generic (`list<T>`, `dict<K,V>`, `set<T>`, `Callable<...>`), or a record (`{ field: type ... }`). Types from other modules are referenced by name, not redeclared. |
+| `type <Name> = <expr>` | A type. `<expr>` is a scalar (`str`, `int`, `bool`, `void`, `any`), a generic (`list<T>`, `dict<K,V>`, `set<T>`, `Callable<...>`), or a record (`{ field: type ... }`); a return or field type may be a union (`Manifest \| Fault`). Types from other modules are referenced by name, not redeclared. |
 | `set <name> = { "a", ... }` | A bounded recognizer set of string literals; each member may be written `"member" : "description"`. |
 | `vocabulary <name> = { set, ... }` | A vocabulary composed of sets (its Cartesian product is the exhaustive test space). |
 | `dispatch <name> = { "k" -> handler, ... }` | A dict-dispatch table — the honest replacement for `if/elif`. |
@@ -133,9 +133,10 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `boundary_out fn <name> : (args) -> ret side_effect writes "<sink>"` | Column 4. Output boundary; declares what it writes. |
 | `chain <name> = a -> b -> c` | An ordered composition of functions. |
 | `route "METHOD /path" -> fn` | An input-boundary route binding. |
+| `entry "<callsite>" -> fn` | An entry point whose call-site shape is a string — a decorator, a context manager, a middleware registration — dispatching to a function. |
 | `html_attr "attr" "desc"` | A declared client-side attribute. |
 
-A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, or another module such as `honest-observe`. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes a function can return. There is exactly one way to say each thing.
+A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes it can return, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). There is exactly one way to say each thing.
 
 ### 3.3 Workspace files
 
@@ -152,11 +153,11 @@ The reader produces a normalized, language-agnostic IR — plain data, the singl
 
 ```
 Module   = { name, layer, types, sets, vocabularies, dispatches,
-             functions, chains, examples, routes, html_attrs }
-Function = { name, role, params, ret, side_effect, invokes, raises, column }
+             functions, chains, examples, routes, entries, html_attrs }
+Function = { name, role, params, ret, side_effects, invokes, raises, column }
              # role: "boundary_in" | "orchestrator" | "fn" | "boundary_out"
-             # params: [ { name, type } ] ; ret: type
-             # side_effect: { direction: "reads" | "writes", target } | null
+             # params: [ { name, type } ] ; ret: type (possibly a union)
+             # side_effects: [ { direction: "reads"|"writes"|"reads_writes", target } ]
              # invokes, raises: [ name ]
 Chain    = { name, links }        # links: [function name], in order
 Route    = { method, path, fn }

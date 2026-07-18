@@ -27,6 +27,7 @@ from honest_parse import (
     parse_elixir,
     parse_css,
     parse_go,
+    parse_hd,
     parse_html,
     parse_jinja,
     parse_javascript,
@@ -149,6 +150,32 @@ _GRAMMARS = {
             "",
         ],
         "invalid": [".button { color: ", ".a {", "} garbage {", ".x { : ; }"],
+    },
+    # .hd architecture declarations: honest-parse's own grammar, the read path honest-design folds
+    # into the IR. The corpus exercises both file kinds and every primitive — module/layer, records
+    # and union types, sets with descriptions, vocabularies, dispatch, examples, the four function
+    # roles with signatures/side_effects (reads/writes/reads_writes)/invokes/raises (bare and
+    # quoted), chains, routes, entry points, html_attr, and the workspace rule/actor/flow files. The
+    # invalid set is genuinely malformed — a nameless module, a valueless type, an empty chain, an
+    # unterminated string.
+    "hd": {
+        "parse": parse_hd,
+        "corpus": [
+            "module m\n  layer foundation\n  type T = { a: str\n b: dict<str, set<str>> }\n"
+            "  set s = { \"x\" : \"an x\", \"y\" }\n  vocabulary v = { s }\n"
+            "  dispatch d = { \"k\" -> h }\n  example e of c = \"does a thing\"\n"
+            "  boundary_in fn read_it : (r: Request) -> list<str> side_effect reads \"HTTP\"\n"
+            "  orchestrator fn run : (t: list<str>) -> T invokes c, classify raises bad_input\n"
+            "  fn classify : (t: str) -> T | Fault\n"
+            "  boundary_out fn write_it : (t: T) -> Response raises \"io.failed\" side_effect reads_writes \"database\"\n"
+            "  chain c = classify -> write_it\n  route \"POST /x\" -> read_it\n"
+            "  entry \"decorator:@handle\" -> run\n  html_attr \"hx-go\" \"navigate\"\n",
+            "rule HC001 = \"Every chain link references a declared function.\"\n"
+            "rule HC-R001 on m = \"Every role is reachable.\"\n",
+            "actor browser\nflow f in server = browser -> m -> other\n",
+            "",
+        ],
+        "invalid": ["module", "type T =", "chain c =", 'set s = { "a'],
     },
 }
 

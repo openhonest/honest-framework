@@ -12,6 +12,7 @@ import types
 import tree_sitter_css as ts_css
 import tree_sitter_elixir as ts_elixir
 import tree_sitter_go as ts_go
+import tree_sitter_honest_hd as ts_hd
 import tree_sitter_honest_jinja as ts_jinja
 import tree_sitter_html as ts_html
 import tree_sitter_javascript as ts_javascript
@@ -33,7 +34,9 @@ from tree_sitter import Language, Parser
 # grammar cannot supply: tree-sitter-html reads Jinja `{% %}` tags as opaque text, so a second grammar
 # surfaces `{% include %}`/`{% extends %}` targets for honest-check's reference resolution (HC-REF002).
 # The `css` grammar reads component stylesheets so honest-check can resolve a `class` reference against the
-# rules a stylesheet defines (HC-REF003, the honest-components BEM contract).
+# rules a stylesheet defines (HC-REF003, the honest-components BEM contract). The `hd` grammar
+# (honest-parse's own `tree-sitter-honest-hd`) parses the framework's `.hd` architecture-declaration
+# files; honest-design's reader folds the resulting tree into the language-agnostic IR.
 _LANGUAGES = types.MappingProxyType(
     {
         "python": Language(ts_python.language()),
@@ -45,6 +48,7 @@ _LANGUAGES = types.MappingProxyType(
         "html": Language(ts_html.language()),
         "jinja": Language(ts_jinja.language()),
         "css": Language(ts_css.language()),
+        "hd": Language(ts_hd.language()),
     }
 )
 
@@ -97,6 +101,11 @@ def parse_jinja(source: bytes):
 def parse_css(source: bytes):
     """Convenience wrapper for the CSS grammar (surfaces the class selectors a stylesheet defines)."""
     return parse(source, "css")
+
+
+def parse_hd(source: bytes):
+    """Convenience wrapper for the .hd architecture-declaration grammar (honest-design's read path)."""
+    return parse(source, "hd")
 
 
 def node_text(node, source: bytes) -> str:

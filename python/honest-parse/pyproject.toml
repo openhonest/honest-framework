@@ -14,10 +14,12 @@ dependencies = [
     "tree-sitter-html>=0.23",
     "tree-sitter-css>=0.23",
     "tree-sitter-honest-jinja",
+    "tree-sitter-honest-hd",
 ]
 
 [tool.uv.sources]
 tree-sitter-honest-jinja = { workspace = true }
+tree-sitter-honest-hd = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

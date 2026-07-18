@@ -46,3 +46,8 @@ Feature: honest-parse — Python supplement
     Given CSS stylesheet text
     When parse_css reads it
     Then it returns the syntax tree, using the CSS grammar that surfaces the class selectors it defines
+
+  Scenario: parse_hd parses source with the .hd architecture-declaration grammar
+    Given .hd architecture-declaration text
+    When parse_hd reads it
+    Then it returns the syntax tree, using the hd grammar honest-design's reader folds into the IR

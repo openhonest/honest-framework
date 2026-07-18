@@ -21,6 +21,7 @@ members = [
     "honest-test",
     "honest-type",
     "honest-workspace",
+    "tree-sitter-honest-hd",
     "tree-sitter-honest-jinja",
 ]
 
@@ -162,6 +163,7 @@ dependencies = [
     { name = "tree-sitter-css" },
     { name = "tree-sitter-elixir" },
     { name = "tree-sitter-go" },
+    { name = "tree-sitter-honest-hd" },
     { name = "tree-sitter-honest-jinja" },
     { name = "tree-sitter-html" },
     { name = "tree-sitter-javascript" },
@@ -176,6 +178,7 @@ requires-dist = [
     { name = "tree-sitter-css", specifier = ">=0.23" },
     { name = "tree-sitter-elixir", specifier = ">=0.3" },
     { name = "tree-sitter-go", specifier = ">=0.23" },
+    { name = "tree-sitter-honest-hd", editable = "tree-sitter-honest-hd" },
     { name = "tree-sitter-honest-jinja", editable = "tree-sitter-honest-jinja" },
     { name = "tree-sitter-html", specifier = ">=0.23" },
     { name = "tree-sitter-javascript", specifier = ">=0.23" },
@@ -575,6 +578,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6e/b6/d9142583374720e79aca9ccb394b3795149a54c012e1dfd80738df2d984e/tree_sitter_go-0.25.0-cp310-abi3-win_amd64.whl", hash = "sha256:30d4ada57a223dfc2c32d942f44d284d40f3d1215ddcf108f96807fd36d53022", size = 48152, upload-time = "2025-08-29T06:20:23.089Z" },
     { url = "https://files.pythonhosted.org/packages/9e/00/9a2638e7339236f5b01622952a4d71c1474dd3783d1982a89555fc1f03b1/tree_sitter_go-0.25.0-cp310-abi3-win_arm64.whl", hash = "sha256:d5d62362059bf79997340773d47cc7e7e002883b527a05cca829c46e40b70ded", size = 46752, upload-time = "2025-08-29T06:20:24.235Z" },
 ]
+
+[[package]]
+name = "tree-sitter-honest-hd"
+version = "0.1.0"
+source = { editable = "tree-sitter-honest-hd" }
 
 [[package]]
 name = "tree-sitter-honest-jinja"
