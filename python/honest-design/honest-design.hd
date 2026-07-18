@@ -1,0 +1,55 @@
+# honest-design declared in its own .hd — the read path declaring itself, the first dogfood of the
+# .hd layer. Read it with read_hd, check it with validate, draw it with render.
+
+module honest-design
+
+  layer tooling
+
+  # --- The Result shape and the IR the read path produces ------------------
+
+  type Fault = {
+    code: str
+    message: str
+    category: str
+    detail: dict<str, str>
+  }
+
+  type Result = {
+    ok: any
+    err: Fault
+  }
+
+  type Module = {
+    name: str
+    layer: str
+    types: list<any>
+    functions: list<any>
+    chains: list<any>
+  }
+
+  type Document = {
+    modules: list<Module>
+    rules: list<any>
+    actors: list<any>
+    flows: list<any>
+  }
+
+  type Diagram = {
+    module: str
+    columns: list<any>
+    edges: list<any>
+  }
+
+  # --- The read path: pure functions over the parse tree -------------------
+
+  fn read_hd : (source: str) -> Result
+
+  fn validate : (module: Module) -> list<Fault>
+
+  fn render : (module: Module) -> Diagram
+
+  fn ok : (value: any) -> Result
+
+  fn err : (failure: Fault) -> Result
+
+  fn fault : (code: str, message: str, category: str, detail: dict<str, str>) -> Fault
