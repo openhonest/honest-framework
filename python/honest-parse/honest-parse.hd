@@ -1,0 +1,55 @@
+# honest-parse declared in .hd — the shared parsing boundary of the framework. `parse` is where
+# tree-sitter (external) is touched; the node helpers are pure functions over the resulting tree.
+
+module honest-parse
+
+  layer foundation
+
+  type Node = {
+    type: str
+    start_byte: int
+    end_byte: int
+  }
+
+  type Tree = {
+    root_node: Node
+  }
+
+  type Position = {
+    line: int
+    col: int
+  }
+
+  # --- The parsing boundary: bytes + a language -> a tree ------------------
+
+  boundary_in fn parse : (source: bytes, language: str) -> Tree side_effect reads "tree-sitter"
+
+  boundary_in fn parse_python : (source: bytes) -> Tree side_effect reads "tree-sitter"
+
+  boundary_in fn parse_javascript : (source: bytes) -> Tree side_effect reads "tree-sitter"
+
+  boundary_in fn parse_ruby : (source: bytes) -> Tree side_effect reads "tree-sitter"
+
+  boundary_in fn parse_php : (source: bytes) -> Tree side_effect reads "tree-sitter"
+
+  boundary_in fn parse_go : (source: bytes) -> Tree side_effect reads "tree-sitter"
+
+  boundary_in fn parse_elixir : (source: bytes) -> Tree side_effect reads "tree-sitter"
+
+  boundary_in fn parse_html : (source: bytes) -> Tree side_effect reads "tree-sitter"
+
+  boundary_in fn parse_jinja : (source: bytes) -> Tree side_effect reads "tree-sitter"
+
+  boundary_in fn parse_css : (source: bytes) -> Tree side_effect reads "tree-sitter"
+
+  boundary_in fn parse_hd : (source: bytes) -> Tree side_effect reads "tree-sitter"
+
+  # --- Pure helpers over the tree ------------------------------------------
+
+  fn node_text : (node: Node, source: bytes) -> str
+
+  fn line_col : (node: Node) -> Position
+
+  fn walk : (node: Node) -> list<Node>
+
+  fn first_error_node : (root: Node) -> Node
