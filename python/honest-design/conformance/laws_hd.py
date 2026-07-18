@@ -9,7 +9,7 @@ Result constructors, reader determinism, and the public surface. Each probe retu
 failures; run() aggregates.
 """
 
-from honest_design import err, fault, ok, read_hd, validate
+from honest_design import err, fault, ok, read_hd, render, validate
 from honest_design import __all__ as PUBLIC
 
 
@@ -208,8 +208,27 @@ def _probe_validate():
     return bad
 
 
+def _probe_render():
+    """The renderer places each function in its derived column, marks boundary effects, and draws
+    each chain's adjacent links as edges."""
+    diagram = render(_module(_MODULE))
+    expected = {
+        "module": "m",
+        "columns": [
+            {"index": 1, "title": "Input boundary", "nodes": [{"name": "read_it", "role": "boundary_in", "effects": ["HTTP"]}]},
+            {"index": 2, "title": "Orchestrators", "nodes": [{"name": "run", "role": "orchestrator", "effects": []}]},
+            {"index": 3, "title": "Pure functions", "nodes": [{"name": "classify", "role": "fn", "effects": []}]},
+            {"index": 4, "title": "Output boundary", "nodes": [{"name": "write_it", "role": "boundary_out", "effects": ["database", "network"]}]},
+        ],
+        "edges": [{"chain": "c", "src": "classify", "dst": "write_it"}],
+    }
+    if diagram != expected:
+        return [f"render wrong: {diagram}"]
+    return []
+
+
 def _probe_public_surface():
-    if set(PUBLIC) != {"read_hd", "validate", "ok", "err", "fault"}:
+    if set(PUBLIC) != {"read_hd", "validate", "render", "ok", "err", "fault"}:
         return [f"public surface drifted: {PUBLIC}"]
     return []
 
@@ -225,6 +244,7 @@ def run():
         "determinism": _probe_determinism(),
         "result": _probe_result(),
         "validate": _probe_validate(),
+        "render": _probe_render(),
         "public_surface": _probe_public_surface(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]

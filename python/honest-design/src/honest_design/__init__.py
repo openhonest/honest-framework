@@ -7,7 +7,8 @@ and honest-check's conformance tier, consume — none of them touches the tree-s
 """
 
 from honest_design.reader import read_hd
+from honest_design.renderer import render
 from honest_design.validator import validate
 from honest_design.result import err, fault, ok
 
-__all__ = ["read_hd", "validate", "ok", "err", "fault"]
+__all__ = ["read_hd", "validate", "render", "ok", "err", "fault"]

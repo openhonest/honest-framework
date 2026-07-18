@@ -191,3 +191,23 @@ Feature: honest-design — the .hd architecture-declaration read path
     Given a module IR
     When validate runs every check over it
     Then it returns the combined list of faults, empty when the module is valid
+
+  Scenario: _node renders a function as a diagram node
+    Given a function IR
+    When _node renders it
+    Then it returns a node with the name, role, and any boundary side-effect targets
+
+  Scenario: _column gathers a diagram column
+    Given a module IR and a column index
+    When _column gathers it
+    Then it returns the column index, title, and the nodes whose derived column matches
+
+  Scenario: _edges draws chain links as edges
+    Given a module IR with chains
+    When _edges draws them
+    Then it returns a directed edge for each adjacent pair of links in every chain
+
+  Scenario: render renders a module into the 4-column diagram
+    Given a module IR
+    When render places its functions and draws its chains
+    Then it returns the diagram with four columns and the chain edges

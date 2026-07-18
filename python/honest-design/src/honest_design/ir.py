@@ -137,3 +137,30 @@ class Document(TypedDict):
     rules: list  # list[Rule]
     actors: list  # list[Actor]
     flows: list  # list[Flow]
+
+
+# --- the rendered 4-column diagram ---------------------------------------------
+
+
+class Node(TypedDict):
+    name: str
+    role: str
+    effects: list  # list[str]; a boundary's side_effect targets, empty otherwise
+
+
+class Column(TypedDict):
+    index: int  # 1..4
+    title: str
+    nodes: list  # list[Node], in declared order
+
+
+class Edge(TypedDict):
+    chain: str
+    src: str
+    dst: str
+
+
+class Diagram(TypedDict):
+    module: str
+    columns: list  # list[Column], the four columns left to right
+    edges: list  # list[Edge], each adjacent link pair of every chain
