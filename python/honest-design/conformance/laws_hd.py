@@ -9,8 +9,12 @@ Result constructors, reader determinism, and the public surface. Each probe retu
 failures; run() aggregates.
 """
 
-from honest_design import err, fault, ok, read_hd
+from honest_design import err, fault, ok, read_hd, validate
 from honest_design import __all__ as PUBLIC
+
+
+def _module(src):
+    return read_hd(src)["ok"]["modules"][0]
 
 _MODULE = """module m
   layer foundation
@@ -181,8 +185,31 @@ def _probe_result():
     return bad
 
 
+def _probe_validate():
+    """The validator raises nothing on a valid module and pins each fault it does raise."""
+    bad = []
+    if validate(_module(_MODULE)) != []:
+        bad.append(f"the comprehensive (valid) module should validate clean: {validate(_module(_MODULE))}")
+    unknown = validate(_module("module m\n  fn a : (x: str) -> str\n  chain c = a -> ghost\n"))
+    if unknown != [{"code": "unknown_link", "message": "Chain 'c' references undeclared function 'ghost'", "category": "client", "detail": {"chain": "c", "link": "ghost"}}]:
+        bad.append(f"unknown_link wrong: {unknown}")
+    route = validate(_module("module m\n  fn a : (x: str) -> str\n  route \"GET /x\" -> ghost\n"))
+    if route != [{"code": "unknown_target", "message": "Route 'GET /x' targets undeclared function 'ghost'", "category": "client", "detail": {"target": "ghost"}}]:
+        bad.append(f"unknown_target (route) wrong: {route}")
+    entry = validate(_module("module m\n  fn a : (x: str) -> str\n  entry \"deco\" -> ghost\n"))
+    if entry != [{"code": "unknown_target", "message": "Entry 'deco' targets undeclared function 'ghost'", "category": "client", "detail": {"target": "ghost"}}]:
+        bad.append(f"unknown_target (entry) wrong: {entry}")
+    dup = validate(_module("module m\n  fn a : (x: str) -> str\n  fn a : (y: str) -> str\n"))
+    if dup != [{"code": "duplicate_name", "message": "Duplicate function name 'a'", "category": "client", "detail": {"kind": "functions", "name": "a"}}]:
+        bad.append(f"duplicate_name wrong: {dup}")
+    impure = validate(_module("module m\n  fn a : (x: str) -> str side_effect reads \"X\"\n"))
+    if impure != [{"code": "impure_pure_function", "message": "Pure function 'a' declares a side effect", "category": "server", "detail": {"function": "a"}}]:
+        bad.append(f"impure_pure_function wrong: {impure}")
+    return bad
+
+
 def _probe_public_surface():
-    if set(PUBLIC) != {"read_hd", "ok", "err", "fault"}:
+    if set(PUBLIC) != {"read_hd", "validate", "ok", "err", "fault"}:
         return [f"public surface drifted: {PUBLIC}"]
     return []
 
@@ -197,6 +224,7 @@ def run():
         "malformed": _probe_malformed(),
         "determinism": _probe_determinism(),
         "result": _probe_result(),
+        "validate": _probe_validate(),
         "public_surface": _probe_public_surface(),
     }
     violations = [(name, messages) for name, messages in probes.items() if messages]

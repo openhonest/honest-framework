@@ -161,3 +161,33 @@ Feature: honest-design — the .hd architecture-declaration read path
     Given .hd architecture-declaration source text
     When read_hd reads it
     Then it returns a Result carrying the Document IR, or a client fault if the source is malformed
+
+  Scenario: _declared_functions collects a module's declared function names
+    Given a module IR
+    When _declared_functions gathers them
+    Then it returns the set of names of every function the module declares
+
+  Scenario: _unknown_links flags chain links naming no declared function
+    Given a module IR whose chains reference functions
+    When _unknown_links checks them
+    Then it returns an unknown_link fault for each link that names no declared function
+
+  Scenario: _unknown_targets flags routes and entries targeting no declared function
+    Given a module IR with routes and entries
+    When _unknown_targets checks them
+    Then it returns an unknown_target fault for each route or entry whose target is not declared
+
+  Scenario: _duplicate_names flags a name declared twice within a kind
+    Given a module IR with declarations
+    When _duplicate_names checks each kind
+    Then it returns a duplicate_name fault for any name that appears more than once in a kind
+
+  Scenario: _impure_pure_functions flags a pure function that declares a side effect
+    Given a module IR with functions
+    When _impure_pure_functions checks them
+    Then it returns an impure_pure_function fault for each pure fn that declares a side effect
+
+  Scenario: validate returns a module's faults
+    Given a module IR
+    When validate runs every check over it
+    Then it returns the combined list of faults, empty when the module is valid

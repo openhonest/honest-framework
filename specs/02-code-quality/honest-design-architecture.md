@@ -184,25 +184,20 @@ The reader does not resolve cross-module references or check invariants; it prod
 
 ## 6. The validator
 
-The validator is a pure function `Module (IR) → [fault]`. An empty list is a valid architecture. Its checks fall into two groups.
-
-**Well-formedness** — every reference resolves (the declaration-level duals of the `rules.hd` structural rules):
+The validator is a pure function `Module (IR) → [fault]`. An empty list is a valid module. The per-module pass decides everything checkable from one module's IR, and is verified to raise nothing on the real `.hd` corpus — the declaration-level duals of the `rules.hd` structural rules:
 
 - Every chain link names a declared function (else `unknown_link`; dual of HC001).
-- Every type in a signature (`params`/`ret`) or record field names a declared type, a builtin, or a sibling-module type (else `unknown_type`; dual of HC007).
-- Every `invokes` and `raises` name resolves to a declared chain, function, or fault (else `unknown_reference`).
-- Every `route` names a declared function (else `unknown_route_target`).
-- Names are unique within the module — chains, types, functions, sets (else `duplicate_name`; duals of HC004/HC005/HC006).
-- No declaration is orphaned — every function is reachable from a route or a chain (else `unreachable_role`, the declaration-level dual of HC-R001).
-
-**Architectural invariants** — the boundary discipline, checked at the declaration level:
-
+- Every `route` and `entry` targets a declared function (else `unknown_target`; the input-boundary dual of HC001).
+- Names are unique within each declaration kind — functions, types, sets, chains, vocabularies (else `duplicate_name`; duals of HC004/HC005/HC006).
 - A plain `fn` declares no `side_effect` (else `impure_pure_function`) — only `boundary_in`/`boundary_out` may.
-- An `orchestrator` reaches the outside world only through the boundary functions it `invokes`, never directly (else `orchestrator_side_effect`).
-- Adjacent chain links compose: link *n*'s `ret` matches link *n+1*'s first parameter type, up to a fault short-circuit (else `chain_type_mismatch`; dual of HC002).
-- `side_effect reads`/`writes` names a member of the known source/sink vocabulary (else `unknown_side_effect`).
 
-The validator's faults are the contract honest-check's **conformance tier** consumes: it reads this IR and this fault set to verify that the *code* matches the *declaration* — role reachability, orchestrator discipline, chain type-matching within a module. The universal tier of honest-check needs only `parse` and fires without any `.hd`; the conformance tier is what `.hd` unlocks.
+Three further checks are deliberately **not** in the per-module pass, each for a stated reason:
+
+- **`unknown_type` and cross-module references** — a type, an `invokes` target, or a `raises` code may resolve in a *sibling* module, so deciding it needs the whole workspace; it belongs to a document-level pass, not one module's IR.
+- **`unreachable_role`** — reachability spans dispatch handlers, boundary and orchestrator roots, cross-module invokes, and pure-helper call chains the `.hd` does not name; a per-module check produces false positives on the real corpus, so this stays with honest-check's code-level HC-R001.
+- **chain type-flow and the orchestrator/boundary I/O split** — adjacent links routinely change shape (a `list<T>`-producing link feeding a `T`-consuming link is the valid per-element pattern), and the corpus has orchestrators that legitimately declare a `side_effect`; both need semantics beyond a name-level match, so they are left to honest-check's code-level rules rather than asserted here as stated first drafts that the corpus disproves.
+
+The validator's faults are the contract honest-check's **conformance tier** consumes: it reads this IR and this fault set to verify that the *code* matches the *declaration*. The universal tier of honest-check needs only `parse` and fires without any `.hd`; the conformance tier is what `.hd` unlocks.
 
 ---
 
