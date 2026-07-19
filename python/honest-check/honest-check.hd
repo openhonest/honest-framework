@@ -1,0 +1,18 @@
+# honest-check declared in .hd — the static linter, the honesty gate. check_source parses source and
+# returns diagnostics (pure over the parse tree, via honest-parse); startup_check reads a source tree
+# from disk and runs the eligible rules at framework startup.
+
+module honest-check
+
+  layer tooling
+
+  type Diagnostic = {
+    rule_id: str
+    severity: str
+    message: str
+    source_location: str
+  }
+
+  fn check_source : (source: str, path: str, language: str) -> list<Diagnostic>
+
+  boundary_in fn startup_check : (paths: list<str>, on_error: str, severity: str) -> list<Diagnostic> side_effect reads "filesystem"
