@@ -1181,8 +1181,36 @@ def _probe_routes():
     return bad
 
 
+def _probe_hc_st001():
+    """HC-ST001 fires on every persisted-state write executor (bare and honest_persist-qualified)
+    outside an I/O boundary, stays silent inside a boundary, exempts honest-persist's own boundary
+    layer (by path), and skips a module-level call with no enclosing function."""
+    bad = []
+    for name in ("transaction", "apply", "execute", "execute_many"):
+        bare = f"from honest_persist import {name}\ndef save(rows, conn):\n    {name}(rows, conn)\n"
+        if "HC-ST001" not in [d["rule"] for d in check_source(bare, "app/orders.py")]:
+            bad.append(f"HC-ST001 should fire on {name}() outside a boundary")
+        qualified = f"import honest_persist\ndef save(rows, conn):\n    honest_persist.{name}(rows, conn)\n"
+        if "HC-ST001" not in [d["rule"] for d in check_source(qualified, "app/orders.py")]:
+            bad.append(f"HC-ST001 should fire on honest_persist.{name}() outside a boundary")
+    at_boundary = "from honest_persist import transaction\n@boundary\ndef save(rows, conn):\n    transaction(rows, conn)\n"
+    if [d for d in check_source(at_boundary, "app/orders.py") if d["rule"] == "HC-ST001"]:
+        bad.append("HC-ST001 should not fire inside a boundary function")
+    non_write = "def total(rows):\n    return sum(rows)\n"
+    if [d for d in check_source(non_write, "app/orders.py") if d["rule"] == "HC-ST001"]:
+        bad.append("HC-ST001 should not fire on a call that is not a persisted-state write")
+    write = "from honest_persist import transaction\ndef save(rows, conn):\n    transaction(rows, conn)\n"
+    if [d for d in check_source(write, "honest_persist/instrumented.py") if d["rule"] == "HC-ST001"]:
+        bad.append("HC-ST001 must not police honest-persist's own boundary layer")
+    top_level = "from honest_persist import transaction\ntransaction(rows, conn)\n"
+    if [d for d in check_source(top_level, "app/x.py") if d["rule"] == "HC-ST001"]:
+        bad.append("HC-ST001 should skip a module-level call with no enclosing function")
+    return bad
+
+
 def run():
     probes = {
+        "hc_st001": _probe_hc_st001(),
         "exports": _probe_exports(),
         "routes": _probe_routes(),
         "formats": _probe_formats(),

@@ -731,7 +731,7 @@
             "rule": "HC-P001",
             "severity": "error",
             "line": 2,
-            "message": "if/else-if chain dispatches on value — use dict lookup. See honest-code-principles.md §3."
+            "message": "if/else-if chain dispatches on value \u2014 use dict lookup. See honest-code-principles.md \u00a73."
           }
         ]
       }
@@ -836,7 +836,7 @@
             "rule": "HC-P016",
             "severity": "error",
             "line": 3,
-            "message": "Inner function captures ['x'] via closure and mutates it. Closures may not carry mutable state — use pure parameters or move state into persist."
+            "message": "Inner function captures ['x'] via closure and mutates it. Closures may not carry mutable state \u2014 use pure parameters or move state into persist."
           }
         ]
       }
@@ -888,10 +888,81 @@
         ]
       }
     },
-    {"id": "value-check-source-clean", "value_case": {"function": "check_source", "args": ["x = 1\n", "f.py"], "expected": []}},
-    {"id": "value-check-source-class", "value_case": {"function": "check_source", "args": ["class Foo: pass\n", "f.py"], "expected": [{"rule": "HC-P003", "severity": "error", "path": "f.py", "line": 1, "col": 1, "message": "Class 'Foo' has no declared base. Honest Code permits class definitions only as subclasses of TypedDict, Protocol, ABC, or a declared Exception. Use a TypedDict for data shapes or a pure function."}]}}
+    {
+      "id": "value-check-source-clean",
+      "value_case": {
+        "function": "check_source",
+        "args": [
+          "x = 1\n",
+          "f.py"
+        ],
+        "expected": []
+      }
+    },
+    {
+      "id": "value-check-source-class",
+      "value_case": {
+        "function": "check_source",
+        "args": [
+          "class Foo: pass\n",
+          "f.py"
+        ],
+        "expected": [
+          {
+            "rule": "HC-P003",
+            "severity": "error",
+            "path": "f.py",
+            "line": 1,
+            "col": 1,
+            "message": "Class 'Foo' has no declared base. Honest Code permits class definitions only as subclasses of TypedDict, Protocol, ABC, or a declared Exception. Use a TypedDict for data shapes or a pure function."
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-ST001-001",
+      "category": "HC-ST001",
+      "input": {
+        "language": "python",
+        "source": "from honest_persist import transaction\ndef save(rows, conn):\n    transaction(rows, conn)"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-ST001",
+            "severity": "error",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-ST001-clean",
+      "category": "HC-ST001",
+      "input": {
+        "language": "python",
+        "source": "from honest_persist import transaction\n@boundary\ndef save(rows, conn):\n    transaction(rows, conn)"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-ST001-negative",
+      "category": "HC-ST001",
+      "input": {
+        "language": "python",
+        "source": "def total(rows):\n    return sum(rows)"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    }
   ],
   "value_oracle_exempt": [
-    {"function": "startup_check", "reason": "An I/O boundary: reads the given paths and reports through on_error (warn/raise), returning None. Its effect is not a return value; verified by its own conformance."}
+    {
+      "function": "startup_check",
+      "reason": "An I/O boundary: reads the given paths and reports through on_error (warn/raise), returning None. Its effect is not a return value; verified by its own conformance."
+    }
   ]
 }

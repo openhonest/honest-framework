@@ -83,8 +83,8 @@ The single-mutator law is not asserted and hoped for; it is enforced by honest-c
 |---|---|
 | HC-P004 (global-read clause) | module-level mutable state read inside a non-boundary function — hidden process-wide state with no declared mutator |
 | HC-P016 | a closure that mutates a captured variable via `nonlocal` — hidden state carried across calls |
-| boundary-write rule | a write to persisted state anywhere but an I/O-boundary function |
-| DOM-as-single-store | a shadow copy of user state outside the manifest-declared DOM |
+| HC-ST001 (boundary-write) | a write to persisted state anywhere but an I/O-boundary function; honest-persist is itself the boundary layer and is not policed |
+| HC-ST002 (DOM-as-single-store) | a shadow copy of user state outside the manifest-declared DOM |
 
 State machines are honest-type vocabularies, so the HC-SM rules apply to every honest-type `state_machine`:
 

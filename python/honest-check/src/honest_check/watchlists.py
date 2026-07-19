@@ -113,3 +113,15 @@ def matches_watchlist(name: str, watchlist) -> bool:
         if entry.endswith("*") and name.startswith(entry[:-1]):
             return True
     return False
+
+
+# Writes to persisted state (honest-state §3, HC-ST001). Calling these outside an I/O-boundary
+# function scatters the mutator for persisted domain state; the single mutator is an honest-persist
+# boundary write. honest-persist itself is that boundary layer and is not policed by the rule.
+PERSISTED_WRITE_WATCH_LIST = {
+    "python": frozenset({
+        "transaction", "apply", "execute", "execute_many",
+        "honest_persist.transaction", "honest_persist.apply",
+        "honest_persist.execute", "honest_persist.execute_many",
+    }),
+}

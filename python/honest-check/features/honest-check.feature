@@ -889,3 +889,8 @@ Feature: honest-check — Python supplement
     Given a directory
     When _discover_js is asked
     Then it returns the sorted .js files under it, or nothing when the directory is empty or absent
+
+  Scenario: check_hc_st001 flags a persisted-state write outside an I/O boundary
+    Given source that calls an honest-persist write executor
+    When check_hc_st001 examines each call's enclosing function
+    Then it reports HC-ST001 for a call in a non-boundary function, staying silent inside a boundary, at module level, and across honest-persist's own source

@@ -49,6 +49,7 @@ from honest_check.js_rules import check_hc_p001_js, check_hc_p002_js, check_hc_p
 from honest_parse import first_error_node, line_col, node_text, parse, walk
 from honest_check.suppression import build_suppressions, is_suppressed
 from honest_check.watchlists import (
+    PERSISTED_WRITE_WATCH_LIST,
     IO_WATCH_LIST,
     NONDETERMINISTIC_WATCH_LIST,
     matches_watchlist,
@@ -1561,6 +1562,39 @@ def check_hc011(root, source: bytes, path: str) -> list[Diagnostic]:
 
 
 # Registry. Order is report order; each entry is one rule function (section 8).
+def check_hc_st001(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-ST001 — a write to persisted state outside an I/O-boundary function (honest-state section 3,
+    the single-mutator law: persisted domain state is written only by an honest-persist boundary
+    write). honest-persist is itself that boundary layer, so its own source is not policed here."""
+    if "honest_persist" in path or "honest-persist" in path:
+        return []
+    writes = PERSISTED_WRITE_WATCH_LIST["python"]
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "call":
+            continue
+        name = _qualified_call_name(node, source)
+        if not matches_watchlist(name, writes):
+            continue
+        enclosing = _enclosing_function(node)
+        if enclosing is None or _is_boundary_function(enclosing, source):
+            continue
+        line, col = line_col(node)
+        out.append(
+            diagnostic(
+                "HC-ST001",
+                "error",
+                path,
+                line,
+                col,
+                f"Persisted-state write '{name}' outside an I/O-boundary function. The single "
+                "mutator for persisted state is an honest-persist boundary write — move it to a "
+                "boundary (@boundary or @link(boundary=True)). See honest-state section 3.",
+            )
+        )
+    return out
+
+
 _ALL_CHECKS = (
     check_hc001,
     check_hc002,
@@ -1590,6 +1624,7 @@ _ALL_CHECKS = (
     check_hc_p002,
     check_hc_p003,
     check_hc_p004,
+    check_hc_st001,
     check_hc_p005,
     check_hc_p006,
     check_hc_p007,
