@@ -1,0 +1,127 @@
+# honest-type declared in .hd — the pure-function-table type system: recognizers, vocabularies,
+# classify(), links, chains, the boundary, and state machines. All pure; the boundary is a
+# table-driven dispatch, not I/O. The substrate the upper modules build on.
+
+module honest-type
+
+  layer foundation
+
+  type Recognizer = {
+    kind: str
+  }
+
+  type Vocabulary = {
+    base_types: dict<str, any>
+    composed_types: list<ComposedType>
+  }
+
+  type ComposedType = {
+    name: str
+    requires: dict<str, str>
+    captures: str
+  }
+
+  type Binding = {
+    slots: dict<str, str>
+  }
+
+  type Ticket = {
+    kind: str
+    value: str
+    slot: str
+  }
+
+  type Rejection = {
+    value: str
+    reason: str
+    kind: str
+  }
+
+  type Fault = {
+    code: str
+    message: str
+    category: str
+    detail: dict<str, any>
+  }
+
+  type Manifest = {
+    slots: dict<str, any>
+  }
+
+  type Link = {
+    accepts: Vocabulary
+    binds: Binding
+    boundary: bool
+    emits: list<str>
+  }
+
+  type Chain = {
+    links: list<Link>
+  }
+
+  type StateMachine = {
+    states: Vocabulary
+    events: Vocabulary
+    transitions: dict<str, str>
+    initial: str
+    terminal: list<str>
+  }
+
+  type Result = {
+    ok: Manifest
+    err: Fault
+  }
+
+  fn predicate : (fn: Callable) -> Recognizer
+
+  fn insensitive : (members: list<str>) -> Recognizer
+
+  fn recognize : (token: str, recognizer: Recognizer) -> bool
+
+  fn vocabulary : (base_declarations: dict<str, any>, composed_types: list<ComposedType>) -> Vocabulary
+
+  fn merge : (vocab_a: Vocabulary, vocab_b: Vocabulary) -> Vocabulary
+
+  fn composed : (name: str, requires: dict<str, str>, captures: str) -> ComposedType
+
+  fn binding : (table: dict<str, str>) -> Binding
+
+  fn auto_binding : (vocab: Vocabulary) -> Binding
+
+  fn maybe : (slot: str) -> Recognizer
+
+  fn classify : (tokens: list<str>, vocab: Vocabulary, bind: Binding) -> Manifest
+
+  fn link : (accepts: Vocabulary, binds: Binding, boundary: bool, authorizes: bool, emits: list<str>) -> Link
+
+  fn is_link : (fn: Callable) -> bool
+
+  fn link_meta : (fn: Callable) -> Link
+
+  fn chain : (links: list<Link>) -> Chain
+
+  fn execute_chain : (links: list<Link>, initial_manifest: Manifest) -> Result
+
+  fn execute_chain_async : (links: list<Link>, initial_manifest: Manifest) -> Result
+
+  fn validate_all : (links: list<Link>) -> Chain
+
+  fn catch_at_boundary : (handler: Callable, fault_to_output: dict<str, any>, success_output: Callable, server_default: Callable, client_default: Callable) -> Callable
+
+  fn check_rejections : (manifest: Manifest, policy: dict<str, str>) -> Result
+
+  fn state_machine : (states: Vocabulary, events: Vocabulary, transitions: dict<str, str>, initial: str, terminal: list<str>) -> StateMachine
+
+  fn transition : (machine: StateMachine, current_state: str, event: str) -> Result
+
+  fn is_reserved : (token: str) -> bool
+
+  fn ticket : (type_name: str, value: str) -> Ticket
+
+  fn rejection : (token: str, reason: str, detail: dict<str, any>) -> Rejection
+
+  fn fault : (code: str, message: str, category: str, detail: dict<str, any>) -> Fault
+
+  fn ok : (manifest: Manifest) -> Result
+
+  fn err : (fault_data: Fault) -> Result

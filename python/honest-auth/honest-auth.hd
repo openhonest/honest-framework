@@ -1,0 +1,54 @@
+# honest-auth declared in .hd — the authentication interface: the AuthProvider contract, a value
+# registry, and the boundary dispatch. Identity is validated at the boundary and passed inward as
+# data; the dispatch is pure, the provider's recognizer and resolver are the injected I/O.
+
+module honest-auth
+
+  layer domain
+
+  type AuthProvider = {
+    name: str
+    recognizes: Callable
+    resolve: Callable
+    fault_mapping: dict<str, int>
+    token_class: str
+  }
+
+  type Registry = {
+    providers: dict<str, AuthProvider>
+  }
+
+  type Actor = {
+    id: str
+    attributes: dict<str, any>
+  }
+
+  type Fault = {
+    code: str
+    message: str
+    category: str
+    detail: dict<str, any>
+  }
+
+  type Result = {
+    ok: Actor
+    err: Fault
+  }
+
+  fn empty_registry : () -> Registry
+
+  fn validate_provider : (provider: AuthProvider) -> Result
+
+  fn register_auth_provider : (registry: Registry, provider: AuthProvider) -> Result
+
+  fn registered_provider : (registry: Registry) -> AuthProvider
+
+  fn authenticate : (provider: AuthProvider, token: str) -> Result
+
+  fn fault_status : (provider: AuthProvider, auth_fault: Fault) -> int
+
+  fn authentication_honesty : (provider: AuthProvider, context: dict<str, any>) -> bool
+
+  fn resolve_actor_deterministic : (provider: AuthProvider, token: str) -> bool
+
+  fn dev_auth_provider : (users: dict<str, any>) -> AuthProvider

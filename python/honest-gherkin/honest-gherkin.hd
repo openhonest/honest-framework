@@ -1,0 +1,71 @@
+# honest-gherkin declared in .hd — the BDD execution engine. Pure but for the single I/O boundary
+# that reads a feature file; steps match a registry and the scenario folds over an immutable context.
+
+module honest-gherkin
+
+  layer tooling
+
+  type Step = {
+    kind: str
+    text: str
+    resolved_kind: str
+  }
+
+  type Scenario = {
+    name: str
+    steps: list<Step>
+  }
+
+  type Feature = {
+    name: str
+    scenarios: list<Scenario>
+    background_steps: list<Step>
+  }
+
+  type Registry = {
+    steps: dict<str, any>
+  }
+
+  type StepFault = {
+    code: str
+    detail: dict<str, any>
+    scenario_name: str
+    step_text: str
+  }
+
+  type ScenarioReport = {
+    name: str
+    status: str
+    steps: list<any>
+  }
+
+  type FeatureReport = {
+    name: str
+    passed: int
+    failed: int
+  }
+
+  type Result = {
+    ok: any
+    err: StepFault
+  }
+
+  fn parse_feature : (source: str, source_path: str) -> Result
+
+  fn compile_pattern : (pattern: str) -> Result
+
+  fn empty_registry : () -> Registry
+
+  fn register_step : (registry: Registry, kind: str, pattern: str, handler: Callable) -> Registry
+
+  fn match_step : (step: Step, registry: Registry) -> Result
+
+  fn run_step : (step: Step, context: dict<str, any>, registry: Registry, scenario_name: str) -> Result
+
+  fn run_scenario : (scenario: Scenario, background: list<Step>, registry: Registry) -> ScenarioReport
+
+  fn fold_feature_report : (feature: Feature, scenario_reports: list<ScenarioReport>) -> FeatureReport
+
+  fn step_fault : (code: str, detail: dict<str, any>, scenario_name: str, step_text: str) -> StepFault
+
+  boundary_in fn run_feature_file : (path: str, registry: Registry) -> FeatureReport side_effect reads "filesystem"
