@@ -1,0 +1,57 @@
+# honest-alerts declared in .hd — the message-passing layer. The mailbox is a pure projection over
+# the event log and routing/lifecycle are pure; send and delivery reach the world through an
+# injected runtime at the boundary.
+
+module honest-alerts
+
+  layer domain
+
+  type ActorRef = {
+    actor_type: str
+    actor_id: str
+  }
+
+  type Message = {
+    message_type: str
+    recipient: ActorRef
+    payload: dict<str, any>
+  }
+
+  type Route = {
+    pattern: str
+    channel: str
+  }
+
+  type DeliveryPlan = {
+    channels: list<str>
+  }
+
+  fn build_message : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, message_id: str, sent_at: str) -> Message
+
+  fn mailbox : (actor_ref: ActorRef, events: list<any>, at_time: str) -> list<Message>
+
+  fn is_terminated : (event: any, actor_ref: ActorRef, events: list<any>, at_time: str) -> bool
+
+  fn recipient_matches : (recipient: ActorRef, actor_ref: ActorRef) -> bool
+
+  fn validate_message : (message: Message) -> list<any>
+
+  fn matching_routes : (routing_table: list<Route>, message: Message) -> list<Route>
+
+  fn delivery_plan : (message: Message, routes: list<Route>, now: int) -> DeliveryPlan
+
+  fn advance : (current_state: str, event: str) -> str
+
+  fn render_surface : (message: Message) -> str
+
+  fn alert_event : (event_type: str, aggregate_id: str, payload: dict<str, any>) -> any
+
+  fn resolve_config : (raw: dict<str, any>) -> dict<str, any>
+
+  boundary_out fn send : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, runtime: any) -> Message side_effect writes "network"
+
+  boundary_out fn send_and_wait : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, runtime: any) -> Message side_effect writes "network"
+
+  boundary_out fn supervise : (message: Message, routing_table: list<Route>, runtime: any) -> DeliveryPlan side_effect writes "network"
+
+  boundary_out fn handle_reply : (message_id: str, option_id: str, reply_payload: dict<str, any>, actor_id: str, runtime: any) -> any side_effect writes "network"

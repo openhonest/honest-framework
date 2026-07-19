@@ -1,0 +1,57 @@
+# honest-observe declared in .hd — event-sourced observability. emit writes through an injected
+# runtime; projections are pure folds; the rest builds events and metrics as pure data.
+
+module honest-observe
+
+  layer tooling
+
+  type Event = {
+    event_type: str
+    aggregate_id: str
+    payload: dict<str, any>
+    sequence: int
+  }
+
+  type Projection = {
+    id: str
+    event_types: list<str>
+  }
+
+  type Metric = {
+    name: str
+    value: any
+  }
+
+  boundary_out fn emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, runtime: any) -> Event side_effect writes "honest-persist"
+
+  fn build_event : (event_type: str, event_version: int, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, event_id: str, timestamp: str, sequence: int) -> Event
+
+  fn apply_projection : (events: list<Event>, fold: Callable, initial_state: any) -> any
+
+  fn matches : (event: Event, event_types: list<str>) -> bool
+
+  fn declare_projection : (projection_id: str, event_types: list<str>, fold: Callable, initial_state: any) -> Projection
+
+  fn build_snapshot : (projection_id: str, snapshot_at: str, state: any) -> any
+
+  fn resume_from_snapshot : (snapshot: any, events: list<Event>, fold: Callable) -> any
+
+  fn request_canonical : (request_id: str, http_method: str, http_path: str, http_status: int, link_count: int, result: str, duration_ns: int) -> Event
+
+  fn otel_signal : (event: Event) -> any
+
+  fn threshold_projection : (projection_id: str, metric: Metric, condition: any, window: any, cooldown: any, alert: any) -> Projection
+
+  fn evaluate_threshold : (threshold: Projection, metric: Metric, events: list<Event>) -> any
+
+  fn compute_metric : (metric: Metric, events: list<Event>) -> any
+
+  fn hlc_send : (local: dict<str, int>, physical_now: int) -> dict<str, int>
+
+  fn hlc_receive : (local: dict<str, int>, incoming: dict<str, int>, physical_now: int) -> dict<str, int>
+
+  fn fold_identity_claims : (events: list<Event>) -> dict<str, any>
+
+  fn resolve_identity : (external_id: str, source: str, bindings: dict<str, any>) -> str
+
+  fn event_log_schema : () -> any

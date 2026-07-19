@@ -1,0 +1,54 @@
+# honest-test declared in .hd — the auto-generated verification layer. All pure: generators derive
+# test cases from declarations, and the honesty checks run a link and inspect the result.
+
+module honest-test
+
+  layer tooling
+
+  type Coverage = {
+    vocabularies: any
+    chains: any
+    honesty: any
+  }
+
+  type Mutant = {
+    kind: str
+    location: str
+  }
+
+  type Proof = {
+    function: str
+    result: str
+  }
+
+  fn enumerate_sets : (vocab: any, bind: any) -> list<any>
+
+  fn adversarial_neighbours : (value: str) -> list<str>
+
+  fn verify_purity : (link: Callable, manifest: any) -> bool
+
+  fn detect_mutation : (link: Callable, manifest: any) -> bool
+
+  fn verify_idempotency : (links: list<any>, manifest: any) -> bool
+
+  fn verify_determinism : (link: Callable, manifest: any) -> bool
+
+  fn verify_boundary_isolation : (link: Callable, manifest: any) -> bool
+
+  fn enumerate_mutants : (source: str) -> list<Mutant>
+
+  fn mutation_adequacy : (mutants: list<Mutant>, survivors: list<Mutant>, set_aside: list<str>) -> bool
+
+  fn check_oracle : (case: any, result: any) -> bool
+
+  fn run_value_cases : (cases: list<any>, functions: dict<str, any>) -> list<any>
+
+  fn law : (law_id: str, statement: str, check: Callable) -> any
+
+  fn verify_laws : (laws: list<any>, subjects: list<any>) -> bool
+
+  fn test_chain_contracts : (links: list<any>) -> list<any>
+
+  fn build_coverage : (vocabularies: any, chains: any, honesty: any, state_machines: any, timestamp: str) -> Coverage
+
+  fn decide_proof : (honesty_ok: bool, coverage_ok: bool, value_results: list<any>, exempt: bool) -> Proof

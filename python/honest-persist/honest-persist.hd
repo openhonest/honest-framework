@@ -1,0 +1,56 @@
+# honest-persist declared in .hd — schema-first persistence. Schema diff, query builders, and
+# validation are pure; execute/apply/transaction and the pool touch the database at the boundary.
+
+module honest-persist
+
+  layer data
+
+  type Schema = {
+    tables: list<any>
+  }
+
+  type Operation = {
+    op: str
+    table: str
+    details: dict<str, any>
+  }
+
+  type DiffResult = {
+    operations: list<Operation>
+    execution_order: list<int>
+    ambiguities: list<any>
+  }
+
+  type Query = {
+    table: str
+    op: str
+    params: dict<str, any>
+  }
+
+  fn diff : (current: Schema, target: Schema, decisions: dict<str, any>) -> DiffResult
+
+  fn validate_schema : (schema: Schema) -> list<any>
+
+  fn to_sql : (operation: Operation, dialect: str) -> str
+
+  fn select : (table: str, columns: list<str>, where: dict<str, any>) -> Query
+
+  fn insert : (table: str, values: dict<str, any>) -> Query
+
+  fn update : (table: str, values: dict<str, any>, where: dict<str, any>) -> Query
+
+  fn delete : (table: str, where: dict<str, any>) -> Query
+
+  fn checked_select : (schema: Schema, table: str, columns: list<str>, where: dict<str, any>) -> Query
+
+  boundary_in fn execute : (query: Query, conn: any) -> list<any> side_effect reads "database"
+
+  boundary_out fn apply : (diff_result: DiffResult, target: Schema, conn: any, dialect: str) -> any side_effect writes "database"
+
+  boundary_out fn transaction : (writes: list<Query>, conn: any) -> any side_effect writes "database"
+
+  boundary_out fn migrate : (schema: Schema, conn: any, dialect: str) -> any side_effect writes "database"
+
+  boundary_in fn inspect : (conn: any, dialect: str) -> Schema side_effect reads "database"
+
+  boundary_in fn open_pool : (db_id: str, connect: Callable, classify: Callable, close: Callable, size: int) -> any side_effect reads "database"
