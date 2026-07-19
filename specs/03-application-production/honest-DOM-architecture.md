@@ -299,13 +299,15 @@ function emitBrowserEvent(event_type, payload) {
 
 ### 5.2 request_id Threading
 
-domx reads `X-Request-ID` from every HTMX response header and stores it as `currentRequestId`. This value is attached to all browser events until the next HTMX response arrives.
+domx reads `X-Request-ID` from every HTMX response header and stores it **in the DOM** — a `data-request-id` attribute on `documentElement`. Every browser event reads it fresh from there, so the request_id is attached to all browser events until the next HTMX response overwrites it. It is never held in a module variable: a module-level mutable would be a second, hidden mutator of shared state — rejected by honest-check (HC-P004/HC-P016) and a contradiction of the module's own law that the DOM is the store. The store is the DOM; the single mutator is the response handler.
+
+The read and write route through the domx HTMX extension's `onEvent`, not `document.addEventListener` (a lifecycle hook honest-check flags as HC-P011):
 
 ```javascript
-document.addEventListener('htmx:afterRequest', (e) => {
-    const id = e.detail.xhr.getResponseHeader('X-Request-ID')
-    if (id) currentRequestId = id
-})
+// on htmx:afterRequest, inside the domx extension's onEvent:
+storeRequestId(document.documentElement, readRequestId((name) => xhr.getResponseHeader(name)))
+// and every emit reads it fresh:
+currentRequestId(document.documentElement)
 ```
 
 This means every browser event that follows a server response is traceable back to the server request that caused it: the DOM state change, the new element classifications, the next request triggered by the updated DOM. All linked.

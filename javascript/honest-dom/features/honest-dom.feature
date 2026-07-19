@@ -103,3 +103,18 @@ Feature: honest-DOM (domx) — the client-side DATAOS primitives
     Given an event and the injected browser runtime
     When emitBrowserEvent builds and sends the envelope
     Then it beacons a redacted envelope with a freshly read request_id to the ingest endpoint
+
+  Scenario: currentRequestId reads the request_id held in the DOM
+    Given the documentElement carrying a data-request-id attribute
+    When currentRequestId reads it
+    Then it returns the stored request_id, or null when the attribute is absent
+
+  Scenario: storeRequestId writes a response's request_id into the DOM
+    Given a response's request_id and the DOM root
+    When storeRequestId writes it
+    Then it sets data-request-id, leaving the previous value in place on a null id
+
+  Scenario: onHtmxEvent emits the browser event for one HTMX lifecycle event
+    Given a normalized HTMX lifecycle detail and the injected runtime
+    When onHtmxEvent dispatches it
+    Then it emits browser.request or browser.response with the DOM's request_id, ignoring an unmapped event

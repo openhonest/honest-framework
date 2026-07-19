@@ -7,3 +7,4 @@ export { send, replay, clearCache } from "./send.js";
 export { observe, on } from "./observe.js";
 export { nearestManifest, configureRequest, registerExtension } from "./htmx.js";
 export { browserEvent, browserClassify, browserRequest, browserResponse, domChanged, redact, readRequestId, emitBrowserEvent } from "./browser.js";
+export { currentRequestId, storeRequestId, onHtmxEvent } from "./instrument.js";
