@@ -112,7 +112,7 @@ enforcement rules layered on that core — is built.
 | honest-observe | Pure core substantially complete; the runnable CLI (`tail`/`inspect`/`query`), the config loader, and the default threshold-projection records are unbuilt. |
 | honest-test | Generation engine, honesty checks, state-machine and mutation adequacy complete; the orchestrating runner and the persist/component contract-test kinds are unbuilt. |
 | honest-alerts | Pure schema and decision core complete; the active runtime drivers (escalation, TTL-expiry, the SSE live surface, channel handlers) are unbuilt. |
-| honest-state | Taxonomy and the single-mutator law predicates complete; two of the four enforcement rules the module exists to provide are not yet in honest-check. |
+| honest-state | Taxonomy and the single-mutator law predicates complete; three of the four enforcement rules are in honest-check (HC-P004, HC-P016, HC-ST001 boundary-write). The fourth, HC-ST002 DOM-as-single-store, awaits honest-DOM's DATAOS manifest to read user-state declarations from the templates. |
 
 Two build-order modules are specified but unbuilt: **honest-design** (the `.hd` read path — the architecture spec has landed, no code yet) and **honest-rca** (no spec yet). The application-production tier (`page`, `DOM`, `format`, `components`) is JavaScript, of which `honest-format` is gate-complete and the rest are in progress. The per-package detail lives in each spec under [`../specs/`](../specs/).
 
