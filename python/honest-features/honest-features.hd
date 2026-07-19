@@ -1,0 +1,50 @@
+# honest-features declared in .hd — the feature-flag subsystem: a static flag vocabulary, flag state
+# threaded as a value, and an HMAC-signed toggle. All pure; the HTTP route is the application's
+# integration boundary, not part of this module.
+
+module honest-features
+
+  layer domain
+
+  type FlagVocabulary = {
+    flags: dict<str, any>
+  }
+
+  type FlagState = {
+    states: dict<str, str>
+  }
+
+  type Fault = {
+    code: str
+    message: str
+    category: str
+    detail: dict<str, any>
+  }
+
+  type Result = {
+    ok: any
+    err: Fault
+  }
+
+  type Event = {
+    event_type: str
+    payload: dict<str, any>
+  }
+
+  fn validate_vocabulary : (features: FlagVocabulary) -> list<Fault>
+
+  fn initial_state : (features: FlagVocabulary) -> FlagState
+
+  fn feature_state : (state: FlagState, flag: str) -> str
+
+  fn validate_toggle : (features: FlagVocabulary, flag: str, state: str) -> Result
+
+  fn apply_toggle : (current: FlagState, flag: str, new: str) -> FlagState
+
+  fn build_signature : (secret: bytes, flag: str, state: str, timestamp: int) -> str
+
+  fn verify_signature : (secret: bytes, flag: str, state: str, timestamp: int, signature: str, now: int, window: int) -> bool
+
+  fn changed_event : (flag: str, previous: str, state: str, timestamp: int, requesting_ip: str) -> Event
+
+  fn evaluated_event : (flag: str, state: str, request_id: str) -> Event

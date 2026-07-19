@@ -1,0 +1,20 @@
+# honest-state declared in .hd — the single-mutator law and the taxonomy of state kinds, as data.
+# It ships no primitives: it states the law and names each kind's store and mutator. All pure.
+
+module honest-state
+
+  layer domain
+
+  type StateKind = {
+    kind: str
+    store: str
+    mutator: str
+  }
+
+  fn state_kinds : () -> list<StateKind>
+
+  fn mutator_of : (kind: str) -> str
+
+  fn second_mutator_legitimate : (honest: bool, disjoint: bool) -> bool
+
+  fn dom_region_kind : (declared: bool, server_driven: bool) -> str

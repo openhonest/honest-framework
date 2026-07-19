@@ -1,0 +1,79 @@
+# honest-errors declared in .hd — the error-policy leaf. All pure: two raw payloads normalized to
+# one report, behaviour as a pure function of the environment, a state-threaded throttle. No I/O
+# (logging and sending belong to honest-observe and honest-alerts, which compose this leaf).
+
+module honest-errors
+
+  layer tooling
+
+  set SEVERITIES = { "critical", "error", "warning", "info" }
+  set ENVIRONMENTS = { "development", "production", "test" }
+  set BEHAVIOR_NAMES = { "log", "email", "reraise" }
+  set SUPPRESS_REASONS = { "rate_limit_hourly", "rate_limit_dedup" }
+
+  type JSErrorPayload = {
+    message: str
+    source: str
+    lineno: int
+    colno: int
+  }
+
+  type PythonExceptionPayload = {
+    exception_type: str
+    message: str
+    tb_file: str
+    tb_line: int
+    tb_function: str
+  }
+
+  type ExceptionReport = {
+    exception_type: str
+    message: str
+    severity: str
+    environment: str
+    file: str
+    line: int
+    function: str
+    traceback: str
+    context: dict<str, any>
+    timestamp: str
+  }
+
+  type HandlerBehavior = {
+    name: str
+    order: int
+  }
+
+  type DedupKey = {
+    exception_type: str
+    file: str
+    line: int
+  }
+
+  type Fault = {
+    code: str
+    message: str
+    category: str
+    detail: dict<str, any>
+  }
+
+  type Result = {
+    ok: ExceptionReport
+    err: Fault
+  }
+
+  fn classify_js_payload : (payload: JSErrorPayload, environment: str, timestamp: str) -> Result
+
+  fn classify_py_payload : (payload: PythonExceptionPayload, environment: str, timestamp: str) -> Result
+
+  fn should_bypass_dedup : (severity: str) -> bool
+
+  fn behaviors_for : (environment: str) -> list<HandlerBehavior>
+
+  fn dedup_key : (report: ExceptionReport) -> DedupKey
+
+  fn new_state : () -> dict<str, any>
+
+  fn check_rate_limit : (key: DedupKey, config: dict<str, any>, state: dict<str, any>, now: int) -> dict<str, any>
+
+  fn format_email_body : (report: ExceptionReport) -> str
