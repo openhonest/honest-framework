@@ -63,3 +63,43 @@ Feature: honest-DOM (domx) — the client-side DATAOS primitives
     Given an injected htmx and deps
     When registerExtension runs
     Then it defines a domx extension whose handler configures the request only on the configRequest event
+
+  Scenario: browserEvent assembles a browser event envelope
+    Given an event type, timestamp, session id, payload, event id, and optional request id
+    When browserEvent assembles the envelope
+    Then it carries source "browser" and attaches request_id only when supplied
+
+  Scenario: browserClassify builds the attribute-classification payload
+    Given one attribute classification by the bootloader
+    When browserClassify builds its payload
+    Then it names the hf.browser.classify event and attaches request_id only within a request
+
+  Scenario: browserRequest builds the HTMX-request payload
+    Given an HTMX request domx is about to send
+    When browserRequest builds its payload
+    Then it names the hf.browser.request event carrying the request_id it sent
+
+  Scenario: browserResponse builds the HTMX-response payload
+    Given an HTMX response arriving
+    When browserResponse builds its payload
+    Then it names the hf.browser.response event joined to its request by request_id
+
+  Scenario: domChanged builds the manifest-state-change payload
+    Given a manifest state change seen by the observer
+    When domChanged builds its payload
+    Then it names the hf.dom.changed event with the changed keys and their previous and new values
+
+  Scenario: redact drops value-bearing fields outside development mode
+    Given a payload and the observability mode
+    When redact is applied
+    Then it keeps values in development mode and drops from and to otherwise
+
+  Scenario: readRequestId reads the X-Request-ID response header
+    Given a response header getter
+    When readRequestId reads X-Request-ID
+    Then it returns the header value, or null when absent or empty
+
+  Scenario: emitBrowserEvent beacons a redacted envelope to the ingest endpoint
+    Given an event and the injected browser runtime
+    When emitBrowserEvent builds and sends the envelope
+    Then it beacons a redacted envelope with a freshly read request_id to the ingest endpoint
