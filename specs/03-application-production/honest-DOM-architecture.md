@@ -62,6 +62,8 @@ collect(manifest) → { [key]: value | [value] | null }
 - Returns a plain object; never modifies the DOM
 - Every call extracts fresh from the current DOM; no caching
 
+The manifest is the **static declaration of user state**: its keys are the user-state fields, and each entry's `selector` says which template elements hold that field. Because the templates are source the shared parser reads, and code generation from them is deterministic, the full set of user-state fields is knowable before the app runs. This is why honest-check can enforce the DOM-as-single-store rule (no second copy of user state outside the page) statically, from the templates — it is never a runtime question (honest-state §3).
+
 **Manifest entry format:**
 ```javascript
 {

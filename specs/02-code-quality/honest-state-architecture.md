@@ -98,6 +98,8 @@ State machines are honest-type vocabularies, so the HC-SM rules apply to every h
 
 Because states and events are honest-type vocabularies, these checks reuse the Set-intersection and reachability algorithms in `honest-check-architecture.md`. No new machinery is required.
 
+**The DOM-as-single-store rule is a static check, not a runtime one — do not conclude otherwise.** It is natural to think "a tool can't know which data is *user state* without running the app." That is wrong. User state is declared in the templates: the DATAOS manifest and the elements its selectors point at say exactly which parts of the page hold user state and how each is read. Code generation from the templates is deterministic, so nothing about user state is discovered at runtime — it is fixed by the templates and knowable before the code runs. honest-check reads the templates through the shared parser (the same one it uses for Python and JavaScript), takes the declared user-state keys from the manifest, and flags any second copy kept elsewhere. If you find yourself deferring this rule as "runtime-only," re-read this paragraph: **it is in the templates, and generation is deterministic.**
+
 ---
 
 ## 4. honest-test Integration
