@@ -1,0 +1,367 @@
+{
+  "cases": [
+    {
+      "id": "vc-causal-edge-grounded",
+      "value_case": {
+        "function": "causal_edge",
+        "expected": {
+          "cause": "a",
+          "effect": "b",
+          "signal": "dataflow",
+          "marked": false
+        },
+        "args": [
+          "a",
+          "b",
+          "dataflow"
+        ]
+      }
+    },
+    {
+      "id": "vc-causal-edge-judgment",
+      "value_case": {
+        "function": "causal_edge",
+        "expected": {
+          "cause": "a",
+          "effect": "b",
+          "signal": "judgment",
+          "marked": true
+        },
+        "args": [
+          "a",
+          "b",
+          "judgment"
+        ]
+      }
+    },
+    {
+      "id": "vc-dataflow-edges",
+      "value_case": {
+        "function": "dataflow_edges",
+        "expected": [
+          {
+            "cause": "a",
+            "effect": "b",
+            "signal": "dataflow",
+            "marked": false
+          }
+        ],
+        "input": [
+          {
+            "id": "a",
+            "kind": "code",
+            "ref": "",
+            "flows_to": [
+              "b"
+            ],
+            "controls": [],
+            "changed_with": [],
+            "precedes": [],
+            "category": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "vc-controlflow-edges",
+      "value_case": {
+        "function": "controlflow_edges",
+        "expected": [
+          {
+            "cause": "a",
+            "effect": "b",
+            "signal": "controlflow",
+            "marked": false
+          }
+        ],
+        "input": [
+          {
+            "id": "a",
+            "kind": "code",
+            "ref": "",
+            "flows_to": [],
+            "controls": [
+              "b"
+            ],
+            "changed_with": [],
+            "precedes": [],
+            "category": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "vc-change-correlation-edges",
+      "value_case": {
+        "function": "change_correlation_edges",
+        "expected": [
+          {
+            "cause": "a",
+            "effect": "b",
+            "signal": "change_correlation",
+            "marked": false
+          }
+        ],
+        "input": [
+          {
+            "id": "a",
+            "kind": "code",
+            "ref": "",
+            "flows_to": [],
+            "controls": [],
+            "changed_with": [
+              "b"
+            ],
+            "precedes": [],
+            "category": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "vc-temporal-edges",
+      "value_case": {
+        "function": "temporal_edges",
+        "expected": [
+          {
+            "cause": "a",
+            "effect": "b",
+            "signal": "temporal",
+            "marked": false
+          }
+        ],
+        "input": [
+          {
+            "id": "a",
+            "kind": "code",
+            "ref": "",
+            "flows_to": [],
+            "controls": [],
+            "changed_with": [],
+            "precedes": [
+              "b"
+            ],
+            "category": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "vc-terminus",
+      "value_case": {
+        "function": "terminus",
+        "expected": "c",
+        "input": [
+          "a",
+          "b",
+          "c"
+        ]
+      }
+    },
+    {
+      "id": "vc-terminus-empty",
+      "value_case": {
+        "function": "terminus",
+        "expected": "",
+        "input": []
+      }
+    },
+    {
+      "id": "vc-design-root-true",
+      "value_case": {
+        "function": "terminus_is_design_root",
+        "expected": true,
+        "input": {
+          "id": "a",
+          "kind": "code",
+          "ref": "",
+          "flows_to": [],
+          "controls": [],
+          "changed_with": [],
+          "precedes": [],
+          "category": "unbounded-input"
+        }
+      }
+    },
+    {
+      "id": "vc-design-root-false",
+      "value_case": {
+        "function": "terminus_is_design_root",
+        "expected": false,
+        "input": {
+          "id": "a",
+          "kind": "code",
+          "ref": "",
+          "flows_to": [],
+          "controls": [],
+          "changed_with": [],
+          "precedes": [],
+          "category": ""
+        }
+      }
+    },
+    {
+      "id": "vc-causal-graph",
+      "value_case": {
+        "function": "causal_graph",
+        "expected": {
+          "nodes": [
+            "a",
+            "b"
+          ],
+          "edges": [
+            {
+              "cause": "a",
+              "effect": "b",
+              "signal": "dataflow",
+              "marked": false
+            }
+          ]
+        },
+        "args": [
+          {
+            "items": [
+              {
+                "id": "a",
+                "kind": "code",
+                "ref": "",
+                "flows_to": [
+                  "b"
+                ],
+                "controls": [],
+                "changed_with": [],
+                "precedes": [],
+                "category": ""
+              },
+              {
+                "id": "b",
+                "kind": "code",
+                "ref": "",
+                "flows_to": [],
+                "controls": [],
+                "changed_with": [],
+                "precedes": [],
+                "category": ""
+              }
+            ]
+          },
+          {
+            "version": "m1",
+            "signals": [
+              "dataflow"
+            ],
+            "traversal": "upstream-fixpoint"
+          },
+          []
+        ]
+      }
+    },
+    {
+      "id": "vc-trace",
+      "value_case": {
+        "function": "trace",
+        "expected": [
+          "a",
+          "b"
+        ],
+        "args": [
+          {
+            "nodes": [
+              "a",
+              "b"
+            ],
+            "edges": [
+              {
+                "cause": "b",
+                "effect": "a",
+                "signal": "dataflow",
+                "marked": false
+              }
+            ]
+          },
+          {
+            "id": "s",
+            "description": "boom",
+            "site": "a"
+          }
+        ]
+      }
+    },
+    {
+      "id": "vc-bound-empty-stated",
+      "value_case": {
+        "function": "bound",
+        "expected": {
+          "outside_evidence": [],
+          "invisible_to_method": []
+        },
+        "args": [
+          {
+            "items": [
+              {
+                "id": "a",
+                "kind": "code",
+                "ref": "",
+                "flows_to": [
+                  "b"
+                ],
+                "controls": [],
+                "changed_with": [],
+                "precedes": [],
+                "category": ""
+              },
+              {
+                "id": "b",
+                "kind": "code",
+                "ref": "",
+                "flows_to": [],
+                "controls": [],
+                "changed_with": [],
+                "precedes": [],
+                "category": ""
+              }
+            ]
+          },
+          {
+            "nodes": [
+              "a",
+              "b"
+            ],
+            "edges": [
+              {
+                "cause": "a",
+                "effect": "b",
+                "signal": "dataflow",
+                "marked": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "vc-validate-well-formed",
+      "value_case": {
+        "function": "validate_attestation",
+        "expected": [],
+        "input": {
+          "symptom": "s",
+          "evidence_hash": "h",
+          "method_version": "m1",
+          "terminus": "x",
+          "chain": [
+            "a",
+            "x"
+          ],
+          "marked_edges": [],
+          "bound": {
+            "outside_evidence": [],
+            "invisible_to_method": []
+          },
+          "category": "",
+          "poka_yoke": ""
+        }
+      }
+    }
+  ]
+}

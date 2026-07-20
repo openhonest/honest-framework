@@ -47,7 +47,7 @@ PY = Path(__file__).resolve().parent
 ROOT = PY.parent
 FEATURES = ROOT / "specs" / "features"
 LOG = PY / "honest_event_log.jsonl"
-BUILT = ["parse", "design", "type", "errors", "features", "gherkin", "observe", "persist", "test", "check", "auth", "state", "alerts"]
+BUILT = ["parse", "design", "type", "errors", "features", "gherkin", "observe", "rca", "persist", "test", "check", "auth", "state", "alerts"]
 
 _DEF = re.compile(r"^(?:async )?def ([a-z_][a-z0-9_]*)", re.M)
 _SCEN = re.compile(r"^  Scenario: ([A-Za-z_][A-Za-z0-9_]*)(.*)$", re.M)

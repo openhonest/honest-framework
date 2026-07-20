@@ -106,7 +106,7 @@ enforcement rules layered on that core — is built.
 
 | Package | Spec surface |
 |---|---|
-| honest-parse, honest-errors, honest-type, honest-check, honest-features | Spec-complete — no significant in-scope gaps. |
+| honest-parse, honest-errors, honest-type, honest-check, honest-features, honest-design, honest-rca | Spec-complete — no significant in-scope gaps. |
 | honest-gherkin | Spec-complete for its current milestone; later Gherkin features (Scenario Outline, Background execution, data tables, `Rule:`) are deferred by the spec itself. |
 | honest-persist, honest-auth | Substantially complete, one bounded gap each — persist: the Turso migrate-remote DDL path; auth: the no-domain-mutation conformance probe and the end-to-end conformance suite. |
 | honest-observe | Pure core substantially complete; the runnable CLI (`tail`/`inspect`/`query`), the config loader, and the default threshold-projection records are unbuilt. |
@@ -114,7 +114,7 @@ enforcement rules layered on that core — is built.
 | honest-alerts | Pure schema and decision core complete; the active runtime drivers (escalation, TTL-expiry, the SSE live surface, channel handlers) are unbuilt. |
 | honest-state | Taxonomy and the single-mutator law predicates complete; three of the four enforcement rules are in honest-check (HC-P004, HC-P016, HC-ST001 boundary-write). The fourth, HC-ST002 DOM-as-single-store, awaits honest-DOM's DATAOS manifest to read user-state declarations from the templates. |
 
-Two build-order modules are specified but unbuilt: **honest-design** (the `.hd` read path — the architecture spec has landed, no code yet) and **honest-rca** (no spec yet). The application-production tier (`page`, `DOM`, `format`, `components`) is JavaScript, of which `honest-format` is gate-complete and the rest are in progress. The per-package detail lives in each spec under [`../specs/`](../specs/).
+Every code-quality module in the build order is now built, honest-rca included (the apophatic root-cause solver — the last code-quality module placed in the order). The application-production tier (`page`, `DOM`, `format`, `components`) is JavaScript, of which `honest-format` and the `domx` core of `honest-DOM` are gate-complete — honest-DOM is at the `Full` conformance level plus the §5 browser-observability primitives — and the rest is in progress. The per-package detail lives in each spec under [`../specs/`](../specs/).
 
 ## Running things
 

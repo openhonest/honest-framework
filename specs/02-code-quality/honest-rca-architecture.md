@@ -51,7 +51,7 @@ honest-rca composes three already-built modules and owns none of their concerns:
 Every value honest-rca handles is a plain record — data, no behaviour. The records are language-agnostic patterns; a language implementation realizes them as its idiomatic immutable record.
 
 - **`Symptom`** — the observed failure, stated precisely and kept separate from any guess at its cause: `{id, description, site}` where `site` is the evidence-item id where the failure was observed. A `Symptom` names *what happened*, never *why*.
-- **`EvidenceItem`** — one piece of the bounded evidence: `{id, kind, ref, precedes, flows_to, changed_with}`. `kind` is an evidence kind (§2.1). `ref` locates the item (a code site, an event id, a commit, a config key, a deploy-timeline entry). The three relation fields carry the *recorded* relations honest-rca grounds edges on, each a list of other item ids: `precedes` (temporal happens-before, from observe), `flows_to` (data/control-flow dependency, from parse), `changed_with` (co-change, from history). An item that carries no relation to a given node cannot be linked to it by a deterministic signal.
+- **`EvidenceItem`** — one piece of the bounded evidence: `{id, kind, ref, flows_to, controls, changed_with, precedes, category}`. `kind` is an evidence kind (§2.1). `ref` locates the item (a code site, an event id, a commit, a config key, a deploy-timeline entry). The four relation fields carry the *recorded* relations honest-rca grounds edges on, one per deterministic signal, each a list of downstream item ids (the effects this item causes): `flows_to` (data dependency, from parse), `controls` (control-flow gating, from parse), `changed_with` (co-change, from history), `precedes` (temporal happens-before, from observe). An item that carries no relation to a given node cannot be linked to it by a deterministic signal. `category`, when non-empty, marks the item as a **design root** (§8) and names the bug category it represents; an ordinary evidence item leaves it empty.
 - **`EvidenceSet`** (`E`) — `{items, hash}`. `hash` is derived by `evidence_hash` (§3) and is the reproducibility key: the same items yield the same hash, and an attestation is re-verifiable only against the `E` its hash names.
 - **`CausalEdge`** — a directed cause→effect link: `{cause, effect, signal, marked}`. `signal` is a signal kind (§2.1). `marked` is `true` exactly when `signal` is `judgment` — the "pseudo" in a pseudo-proof, reproducible only up to the judge's version. A grounded edge (`marked = false`) is a recorded fact; a marked edge is a reserved judgment.
 - **`Method`** (`M`) — `{version, signals, traversal}`. `version` makes the method reproducible. `signals` is the set of enabled signal kinds (which grounds `M` will accept). `traversal` is the upstream-traversal rule (§6). More enabled deterministic signals means fewer marked edges means closer to a proof.
@@ -79,16 +79,16 @@ Assembling the items from the world — reading observe's log, running blame, lo
 
 ## 4. The Method
 
-`method(version, signals, traversal) -> Method` fixes a reproducible causal method. `M` is versioned because a marked (judgment) edge is reproducible only up to the judge's version; the attestation records `method_version` so a re-run is compared against the same method. `signals` is the enabled subset of the deterministic signal kinds plus, optionally, `judgment`; an edge whose signal is not enabled is not built. The more deterministic signals `M` enables, the more of the chain is grounded fact and the fewer edges are marked.
+A `Method` is the record `{version, signals, traversal}`, reproducible by construction. `M` is versioned because a marked (judgment) edge is reproducible only up to the judge's version; the attestation records `method_version` so a re-run is compared against the same method. `signals` is the enabled subset of the deterministic signal kinds plus, optionally, `judgment`; an edge whose signal is not enabled is not built. `traversal` names the upstream-traversal rule (§6). The more deterministic signals `M` enables, the more of the chain is grounded fact and the fewer edges are marked.
 
 ---
 
 ## 5. Edge Construction
 
-`causal_graph(evidence, method) -> CausalGraph` builds the graph by applying each enabled signal's detector to `E`. The detectors are pure and dispatched by signal kind through a table, never an if/elif chain:
+`causal_graph(evidence, method, judgments) -> CausalGraph` builds the graph by applying each enabled signal's detector to `E`, then adds the supplied `judgments` (marked edges) only when `judgment` is enabled in `M`. The detectors are pure and dispatched by signal kind through a table, never an if/elif chain:
 
 - **`dataflow_edges(evidence) -> [CausalEdge]`** — a grounded edge for each recorded `flows_to` relation whose direction is a data dependency: the cause's value reaches the effect. Read from parse.
-- **`controlflow_edges(evidence) -> [CausalEdge]`** — a grounded edge where the cause's branch determines whether the effect executes. Read from parse.
+- **`controlflow_edges(evidence) -> [CausalEdge]`** — a grounded edge for each recorded `controls` relation: the cause's branch determines whether the effect executes. Read from parse.
 - **`change_correlation_edges(evidence) -> [CausalEdge]`** — a grounded edge for each `changed_with` relation: the cause changed together with the failure. Read from history.
 - **`temporal_edges(evidence) -> [CausalEdge]`** — a grounded edge for each `precedes` relation: strict happens-before in the event log. Read from observe.
 
@@ -98,7 +98,7 @@ Each detector emits only edges its signal can ground from the recorded relations
 
 ## 6. Fixpoint Traversal
 
-`trace(graph, symptom, method) -> [id]` follows the graph upstream from the symptom's site, cause by cause, until it reaches a **fixpoint**: a node with no upstream cause that satisfies `M`. That node is the terminus `X` — not "the root," but the node past which this bounded search finds nothing. The traversal is deterministic and terminating: it never revisits a node (a cycle terminates at its entry, recorded as such), so it always reaches a fixpoint. The returned chain is the ordered path from the symptom to the terminus.
+`trace(graph, symptom) -> [id]` follows the graph upstream from the symptom's site, cause by cause, until it reaches a **fixpoint**: a node with no upstream cause. Because `causal_graph` already scoped the graph to the edges `M` grounds or enables, "no upstream cause" is exactly "no upstream cause that satisfies `M`". That node is the terminus `X` — not "the root," but the node past which this bounded search finds nothing. The traversal is deterministic and terminating: it never revisits a node (a cycle terminates at its entry, recorded as such), so it always reaches a fixpoint. The returned chain is the ordered path from the symptom to the terminus.
 
 `terminus(chain) -> id` is the last node of a non-empty chain. When the symptom's site has no upstream edge at all, the chain is the symptom's site alone and the terminus is the symptom's site — a bounded search that found nothing upstream is itself an honest, if shallow, result.
 
@@ -106,7 +106,7 @@ Each detector emits only edges its signal can ground from the recorded relations
 
 ## 7. The Attestation and Its Validation
 
-`attest(symptom, evidence, method, chain) -> Attestation` assembles the negative claim: the terminus, the chain, the marked edges the chain relied on, and the bound (§7.1). It reads `evidence_hash` and `method_version` into the record so the claim carries its own reproducibility keys.
+`attest(symptom, evidence, method, graph, chain, poka_yoke) -> Attestation` assembles the negative claim: the terminus, the chain, the marked edges the chain relied on (read from `graph`), and the bound (§7.1). It reads `evidence_hash` and `method_version` into the record so the claim carries its own reproducibility keys, and it copies the terminus item's `category` (empty for an ordinary terminus) and the supplied `poka_yoke` reference.
 
 `validate_attestation(attestation) -> [fault]` is the poka-yoke guard. It returns a fault for each missing element of a well-formed bounded-completeness statement:
 
@@ -114,7 +114,7 @@ Each detector emits only edges its signal can ground from the recorded relations
 - a `missing_method_version` fault when the method version is empty,
 - a `missing_terminus` fault when there is no terminus,
 - a `missing_bound` fault when the bound is absent (an *empty* bound is present and valid; an *absent* bound is not),
-- a `missing_category` and/or `missing_poka_yoke` fault when the terminus is a design root but the category or poka-yoke is unnamed (§8).
+- a `missing_poka_yoke` fault when the terminus is a design root — the attestation carries a `category` — but no poka-yoke is named (§8).
 
 An attestation for which `validate_attestation` returns no faults is a real RCA. One that omits its bound, its evidence, or its method is fake RCA, and it cannot pass. There is no positive-claim shape to validate — the fake claim is simply unrepresentable as a valid `Attestation`.
 
@@ -126,7 +126,7 @@ An attestation for which `validate_attestation` returns no faults is a real RCA.
 
 ## 8. The Design Root and the Poka-Yoke
 
-`terminus_is_design_root(item) -> bool` holds when the terminus is a design decision rather than an instance — a missing invariant, an unowned mutation, an unbounded input: a bug *category*. When it holds, the honest fix is the poka-yoke that makes the category unrepresentable, and the attestation must name both the category it eliminates and the poka-yoke that closes it. `validate_attestation` enforces this: a design-root attestation with no `category` or no `poka_yoke` fails. This is the methodology's rule made structural — a fix that cannot name the category it eliminates has not reached a design root, and honest-rca will not attest that it has.
+`terminus_is_design_root(item) -> bool` holds when the terminus item carries a non-empty `category` — that is, when it is a design decision rather than an instance: a missing invariant, an unowned mutation, an unbounded input, a bug *category*. When it holds, the honest fix is the poka-yoke that makes the category unrepresentable, and the attestation must name both the category it eliminates and the poka-yoke that closes it. The `category` is carried on the attestation, copied from the terminus item; `validate_attestation` enforces the other half: a design-root attestation — one carrying a `category` — with no `poka_yoke` fails. This is the methodology's rule made structural — a fix that cannot name the category it eliminates has not reached a design root, and honest-rca will not attest that it has.
 
 ---
 

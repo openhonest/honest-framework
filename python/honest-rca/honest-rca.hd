@@ -1,0 +1,105 @@
+# honest-rca declared in .hd — the apophatic root-cause solver. All pure: a bounded, hashable
+# evidence set and a versioned method yield a causal graph, traced to a fixpoint, attested as the
+# negative (terminates at X; no upstream factor found), with the bound stated. No I/O — evidence is
+# assembled at the boundary and arrives as data; the solver never reads the world.
+
+module honest-rca
+
+  layer tooling
+
+  set EVIDENCE_KINDS = { "code", "event", "history", "config", "deploy" }
+  set SIGNAL_KINDS = { "dataflow", "controlflow", "change_correlation", "temporal", "judgment" }
+  set DETERMINISTIC_SIGNALS = { "dataflow", "controlflow", "change_correlation", "temporal" }
+  set BOUND_KINDS = { "outside_evidence", "invisible_to_method" }
+
+  type Symptom = {
+    id: str
+    description: str
+    site: str
+  }
+
+  type EvidenceItem = {
+    id: str
+    kind: str
+    ref: str
+    flows_to: list<str>
+    controls: list<str>
+    changed_with: list<str>
+    precedes: list<str>
+    category: str
+  }
+
+  type EvidenceSet = {
+    items: list<EvidenceItem>
+    hash: str
+  }
+
+  type CausalEdge = {
+    cause: str
+    effect: str
+    signal: str
+    marked: bool
+  }
+
+  type Method = {
+    version: str
+    signals: list<str>
+    traversal: str
+  }
+
+  type CausalGraph = {
+    nodes: list<str>
+    edges: list<CausalEdge>
+  }
+
+  type Bound = {
+    outside_evidence: list<str>
+    invisible_to_method: list<dict<str, str>>
+  }
+
+  type Attestation = {
+    symptom: str
+    evidence_hash: str
+    method_version: str
+    terminus: str
+    chain: list<str>
+    marked_edges: list<CausalEdge>
+    bound: Bound
+    category: str
+    poka_yoke: str
+  }
+
+  type Fault = {
+    code: str
+    message: str
+    category: str
+    detail: dict<str, any>
+  }
+
+  fn evidence_hash : (items: list<EvidenceItem>) -> str
+
+  fn evidence_set : (items: list<EvidenceItem>) -> EvidenceSet
+
+  fn causal_edge : (cause: str, effect: str, signal: str) -> CausalEdge
+
+  fn dataflow_edges : (items: list<EvidenceItem>) -> list<CausalEdge>
+
+  fn controlflow_edges : (items: list<EvidenceItem>) -> list<CausalEdge>
+
+  fn change_correlation_edges : (items: list<EvidenceItem>) -> list<CausalEdge>
+
+  fn temporal_edges : (items: list<EvidenceItem>) -> list<CausalEdge>
+
+  fn causal_graph : (evidence: EvidenceSet, method: Method, judgments: list<CausalEdge>) -> CausalGraph
+
+  fn trace : (graph: CausalGraph, symptom: Symptom) -> list<str>
+
+  fn terminus : (chain: list<str>) -> str
+
+  fn bound : (evidence: EvidenceSet, graph: CausalGraph) -> Bound
+
+  fn terminus_is_design_root : (item: EvidenceItem) -> bool
+
+  fn attest : (symptom: Symptom, evidence: EvidenceSet, method: Method, graph: CausalGraph, chain: list<str>, poka_yoke: str) -> Attestation
+
+  fn validate_attestation : (attestation: Attestation) -> list<Fault>
