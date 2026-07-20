@@ -13,15 +13,13 @@ honest-DOM is the client-side DATAOS implementation layer of the Honest Framewor
 
 honest-DOM is not a framework. It is not a component library. It is a small, pure-function library that implements the DATAOS pattern — DOM As The Authority On State — defined in `honest-state-architecture.md`.
 
-### 1.1 Reference Implementations
+### 1.1 Reference Implementation
 
-honest-DOM has two reference implementations, both production-ready:
+honest-DOM has one reference implementation, deliberately dependency-free:
 
 **domx** — the canonical vanilla JavaScript implementation. Under 1KB gzipped. No dependencies. Works with HTMX, vanilla fetch, or any other transport. Available at [domx.software](https://domx.software).
 
-**stateless** — the React wrapper. Re-exports `domx` primitives as React hooks (`useDomState`, `useDomValue`, `useDomArray`, `useDomMap`) for applications that use React. Available at [stateless.software](https://stateless.software).
-
-Both implementations pass the honest-DOM conformance suite. The `domx` implementation is the normative reference for the API contract.
+The zero-dependency rule is not incidental: it keeps the framework's test suite a closed system. Nothing external enters the gate, so every branch is reachable and provable from the framework's own code. A reference implementation that pulled in a UI framework (React, Vue, Svelte) would test against unverified third-party code and destroy that closure. Those framework adapters are therefore community contributions (§4), not reference implementations — the Foundation neither ships nor gates them and makes no conformance claim about them. `domx` is the normative reference for the API contract.
 
 ### 1.2 What honest-DOM Owns
 
@@ -229,41 +227,17 @@ The nearest ancestor's `dx-manifest` wins. This allows scoped manifests for comp
 
 ---
 
-## 4. React Hooks (stateless)
+## 4. Framework Adapters (community)
 
-The `stateless` package wraps `domx` primitives as React hooks for applications that use React. It re-exports `collect`, `apply`, and `observe` from `domx` directly.
+Adapters that bind `domx` to a UI framework — React, Vue, Svelte — are community contributions, not reference implementations. Each carries its framework as a runtime dependency, so the Foundation ships none of them, gates none of them, and makes no conformance claim about any of them (§1.1). They are listed in §7.
 
-### 4.1 useDomState(manifest) → state
+Every adapter obeys one contract, so DATAOS is preserved across frameworks:
 
-```typescript
-const state = useDomState(manifest)
-```
+- **Re-export, do not reimplement.** Re-export `collect`, `apply`, and `observe` from `domx`; the read/write/observe semantics are `domx`'s, not the adapter's.
+- **Read the DOM through the framework's external-store primitive, never a duplicate store.** The DOM stays the single source of truth. A React adapter reads through `useSyncExternalStore` (subscribing via `observe`, snapshotting via `collect`) and never mirrors state into `useState`; an equivalent primitive is used elsewhere (Vue's `shallowRef` + `watchEffect`, Svelte stores). Any adapter that keeps a second copy of user state in framework state violates DATAOS and HC-ST002.
+- **No lifecycle hooks.** `useEffect`, `componentDidMount`, `ngOnInit`, and their kin are forbidden (§6, HC-P011). Subscription and teardown go through the external-store primitive's own subscribe/unsubscribe, which returns `observe`'s unsubscribe.
 
-Reads state from the DOM and automatically updates when the DOM changes. Internally calls `collect(manifest)` on mount and re-collects via `observe()` on every DOM change.
-
-### 4.2 useDomValue(selector, read) → value
-
-```typescript
-const value = useDomValue('#search-input', 'value')
-```
-
-Single-element shortcut for `useDomState`. Returns the scalar value for a single selector.
-
-### 4.3 useDomArray(selector, read) → value[]
-
-```typescript
-const tags = useDomArray('#filter-zone .tag', 'data:tag')
-```
-
-Returns an array of values from all matching elements. Re-renders when the matched set or any element's value changes.
-
-### 4.4 useDomMap(selector, keyRead, valueRead) → Map
-
-```typescript
-const prefs = useDomMap('[data-pref]', 'data:pref', 'data:value')
-```
-
-Returns a Map from key to value, one entry per matching element.
+A conventional React adapter surfaces `useDomState(manifest)`, `useDomValue(selector, read)`, `useDomArray(selector, read)`, and `useDomMap(selector, keyRead, valueRead)`, each a thin wrapper over `collect` on the matching manifest. These names are a convention for community adapters, not a framework-gated surface.
 
 ---
 
@@ -348,7 +322,7 @@ These patterns violate DATAOS and are forbidden in honest-framework applications
 
 **Not using a manifest.** Scattered inline `querySelector` calls through business logic are not honest-DOM. The manifest is the declaration of what constitutes state. Use it.
 
-**Using lifecycle hooks.** `useEffect`, `componentDidMount`, `addEventListener`, `ngOnInit` — these signal imperative DOM manipulation. The honest-DOM hooks and HTMX handle all state synchronization declaratively.
+**Using lifecycle hooks.** `useEffect`, `componentDidMount`, `addEventListener`, `ngOnInit` — these signal imperative DOM manipulation. HTMX attributes and `observe` handle all state synchronization declaratively; a framework adapter (§4) routes through its external-store primitive, never a lifecycle hook.
 
 ---
 
@@ -358,12 +332,12 @@ honest-DOM is a client-side library. It runs in the browser. The implementation 
 
 | Environment | Implementation | Status |
 |---|---|---|
-| Vanilla JS / HTMX | `domx` | ✅ production |
-| React | `stateless` | ✅ production |
-| Vue | not started | ❌ |
-| Svelte | not started | ❌ |
+| Vanilla JS / HTMX | `domx` | reference implementation |
+| React | community adapter | not started |
+| Vue | community adapter | not started |
+| Svelte | community adapter | not started |
 
-Vue and Svelte implementations are community contributions. They must conform to the honest-DOM conformance suite and re-export `collect`, `apply`, and `observe` from `domx` rather than reimplementing them.
+`domx` is the sole reference implementation (§1.1). React, Vue, and Svelte adapters are community contributions, held to the adapter contract in §4: conform to the honest-DOM conformance suite, re-export `collect`, `apply`, and `observe` from `domx` rather than reimplementing them, and read the DOM through the framework's external-store primitive rather than a duplicate store. The Foundation ships and gates none of them.
 
 ---
 
@@ -376,7 +350,8 @@ Vue and Svelte implementations are community contributions. They must conform to
 | **Core** | `collect()`, `apply()`, `observe()` pass the conformance suite with all read/write shortcuts |
 | **Full** | Core + `on()` + `send()` + `replay()` + HTMX extension |
 | **Observable** | Full + `sendBeacon` event emission + `request_id` threading + all four automatic event types |
-| **Complete** | Observable + React hooks (`useDomState`, `useDomValue`, `useDomArray`, `useDomMap`) |
+
+`Observable` is the top level: it is the whole DATAOS surface the Foundation ships and gates. Framework adapters (§4) add no conformance level of their own — an adapter conforms by re-exporting a conformant `domx`.
 
 ### 8.2 Conformance Suite
 
@@ -392,9 +367,8 @@ The conformance suite lives in the hub repo at `honest/honest-dom-conformance/su
 
 ### 8.3 Reference Implementation Status
 
-Both reference implementations are conformant at the `Full` level:
+The reference implementation is `domx`. It is at the `Full` level — Core plus `on`, `send`, `replay`, and the HTMX extension — with `Observable` (browser-event emission, `request_id` threading, all four automatic events) in progress.
 
-| Implementation | Core | Full | Complete |
+| Implementation | Core | Full | Observable |
 |---|---|---|---|
-| `domx` | ✅ | ✅ | N/A (vanilla JS) |
-| `stateless` | ✅ (via domx) | ✅ (via domx) | ✅ |
+| `domx` | ✅ | ✅ | in progress |

@@ -464,7 +464,7 @@ Coverage proves every line ran, but a line can run inside a test that checks not
                   │  h*- attributes → classify
                   │  HTMX       → request
                   │  domx       → observe
-                  │  stateless  → React │
+                  │  adapter    → React │
                   └─────────────────────┘
 ```
 
@@ -1021,7 +1021,7 @@ honest-js **sits on top of HTMX**, not instead of it. HTMX handles the HTTP-over
 
 honest-js handles everything else: formatting, accessibility, drag-and-drop, data binding, tables, loading states, DOM state observation. Its `h*-` prefixed attributes complement HTMX's `hx-` attributes. They work together on the same elements.
 
-**honest.react is different.** The React bridge does NOT sit on top of HTMX. React owns the rendering pipeline. honest.react wraps domx's DOM observation into React hooks (`useDomState`, `useDomValue`), letting React components read state from the DOM instead of maintaining a separate state copy. It's the DATAOS principle applied inside React's world.
+**A React adapter is community, not core.** React owns its own rendering pipeline, so a React adapter cannot sit on HTMX the way the `h*-` modules do; it wraps domx's DOM observation into React hooks (`useDomState`, `useDomValue`) so components read state from the DOM instead of a separate copy — the DATAOS principle inside React's world. But it carries React as a runtime dependency, which would pull unverified third-party code into the framework's dependency-free test closure. So a React adapter is a community contribution, not a shipped or gated framework component (honest-DOM §1.1, §4).
 
 ### Component Map
 
@@ -1036,7 +1036,7 @@ honest-js handles everything else: formatting, accessibility, drag-and-drop, dat
 | Data binding | **honest.bind** | genX bindX | `hb-*` | Reactive two-way data binding. |
 | Smart detect | **honest.smart** | genX smartX | `hs-*` | Auto-detection formatting. |
 | UI enhance | **honest.ui** | genX uiX | `hu-*` | UI enhancements. |
-| React bridge | **honest.react** | stateless | (none) | `useDomState`, `useDomValue`, `useDomArray`, `useDomMap` hooks. |
+| React adapter (community) | honest.react | stateless | (none) | Community contribution, not shipped or gated: it carries React as a dependency, outside the framework's test closure. `useDomState`, `useDomValue`, `useDomArray`, `useDomMap` hooks over domx. |
 | Bootloader | **honest.boot** | genX bootloader | (none) | Scans DOM for `h*-` attributes, lazy-loads modules on demand. |
 | DOM bridge | **honest.bridge** | genX domx-bridge | (none) | Centralized MutationObserver shared by all modules. |
 
