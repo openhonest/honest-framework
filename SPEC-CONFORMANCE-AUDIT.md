@@ -112,9 +112,10 @@ built. These are future honest-check work,
 tracked in the HC-REF note and `PLAN-STATIC-REFERENCE-CHECK.md`, not part of any
 module reported complete.
 
-(Tier 3 honest-components and honest-page have specs but are not yet built in
-this tree, so they are outside this audit's scope; they were never reported
-complete.)
+(Tier 3 honest-page has a spec but is not yet built in this tree, so it is
+outside this audit's scope. honest-components is in progress: the shared
+enhancement runtime plus the switch and accordion behaviours are built and pass
+the JS gate; further components follow the same pattern.)
 
 ---
 
