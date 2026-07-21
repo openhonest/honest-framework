@@ -118,3 +118,18 @@ Feature: honest-DOM (domx) — the client-side DATAOS primitives
     Given a normalized HTMX lifecycle detail and the injected runtime
     When onHtmxEvent dispatches it
     Then it emits browser.request or browser.response with the DOM's request_id, ignoring an unmapped event
+
+  Scenario: describeElement gives a stable descriptor for an element in a browser event
+    Given an element or none
+    When describeElement is asked
+    Then it returns the element's #id, else its tag name, and empty for an absent element
+
+  Scenario: manifestKeysOf reads the manifest keys a request carries
+    Given an HTMX request's parameters
+    When manifestKeysOf reads them
+    Then it returns the collected state's keys, or the raw parameter names when no state was collected
+
+  Scenario: registerInstrumentation wires the domx observability extension through the injected htmx
+    Given an injected htmx and the browser runtime
+    When registerInstrumentation registers the extension and htmx delivers a lifecycle event
+    Then a request beacons browser.request, a response stores its request_id and beacons browser.response with the measured duration, and an uninstrumented event is ignored

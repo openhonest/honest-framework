@@ -3,7 +3,7 @@
 // are injected, so the dispatch is tested with plain fakes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { currentRequestId, storeRequestId, onHtmxEvent } from "../src/index.js";
+import { currentRequestId, storeRequestId, onHtmxEvent, describeElement, manifestKeysOf, registerInstrumentation } from "../src/index.js";
 
 const fakeRoot = () => {
   const attrs = {};
@@ -79,5 +79,73 @@ test("onHtmxEvent ignores a lifecycle event with no browser-event mapping", () =
   const root = fakeRoot();
   const deps = emitDeps(root);
   assert.equal(onHtmxEvent("htmx:oobBeforeSwap", {}, deps), undefined);
+  assert.equal(deps.beacons.length, 0);
+});
+
+test("describeElement gives an element's #id, else its tag name, and empty for none", () => {
+  assert.equal(describeElement({ id: "results", tagName: "DIV" }), "#results");
+  assert.equal(describeElement({ id: "", tagName: "BUTTON" }), "button");
+  assert.equal(describeElement(null), "");
+  assert.equal(describeElement(undefined), "");
+});
+
+test("manifestKeysOf reads the collected state's keys, or the raw parameter names", () => {
+  assert.deepEqual(manifestKeysOf({ _state: JSON.stringify({ q: "hi", page: 2 }) }), ["q", "page"]);
+  assert.deepEqual(manifestKeysOf({ q: "hi", page: "2" }), ["q", "page"]);
+});
+
+// A fake htmx that captures the extension the module registers, plus a fake lifecycle event.
+const fakeHtmx = () => {
+  const registered = {};
+  return { registered, defineExtension: (name, ext) => { registered.name = name; registered.ext = ext; }, deliver: (name, evt) => registered.ext.onEvent(name, evt) };
+};
+
+test("registerInstrumentation beacons a browser.request on beforeRequest, carrying the current request_id", () => {
+  const root = fakeRoot();
+  root.setAttribute("data-request-id", "r0");
+  const deps = { ...emitDeps(root), now: () => 1000 };
+  const htmx = fakeHtmx();
+  registerInstrumentation(htmx, deps);
+  assert.equal(htmx.registered.name, "domx-observe"); // registered under the domx observability extension name
+  const xhr = { getResponseHeader: () => null, status: 200 };
+  htmx.deliver("htmx:beforeRequest", { detail: { xhr, requestConfig: { verb: "post", path: "/api/search", parameters: { _state: JSON.stringify({ q: "hi" }) } }, elt: { id: "btn", tagName: "BUTTON" }, target: { id: "results", tagName: "DIV" } } });
+  assert.equal(xhr._domxStart, 1000); // start stamped on the request's own xhr
+  const sent = JSON.parse(deps.beacons[0].body);
+  assert.equal(sent.event_type, "hf.browser.request");
+  assert.deepEqual(sent.payload, { method: "post", url: "/api/search", trigger: "#btn", target: "#results", manifest_keys: ["q"], request_id: "r0" });
+});
+
+test("registerInstrumentation beacons a browser.response on afterRequest, with the measured duration", () => {
+  const root = fakeRoot();
+  let clock = 1000;
+  const deps = { ...emitDeps(root), now: () => clock };
+  const htmx = fakeHtmx();
+  registerInstrumentation(htmx, deps);
+  const xhr = { getResponseHeader: (name) => (name === "X-Request-ID" ? "r9" : null), status: 200 };
+  htmx.deliver("htmx:beforeRequest", { detail: { xhr, requestConfig: { verb: "get", path: "/x", parameters: {} }, elt: null, target: { id: "results", tagName: "DIV" } } });
+  clock = 1012;
+  htmx.deliver("htmx:afterRequest", { detail: { xhr, target: { id: "results", tagName: "DIV" } } });
+  assert.equal(root.attrs["data-request-id"], "r9"); // response's request_id stored in the DOM
+  const response = JSON.parse(deps.beacons[1].body);
+  assert.equal(response.event_type, "hf.browser.response");
+  assert.deepEqual(response.payload, { request_id: "r9", status: 200, swap_target: "#results", duration_ms: 12 });
+});
+
+test("registerInstrumentation reports a zero duration when no start was stamped", () => {
+  const root = fakeRoot();
+  const deps = { ...emitDeps(root), now: () => 5000 };
+  const htmx = fakeHtmx();
+  registerInstrumentation(htmx, deps);
+  const xhr = { getResponseHeader: () => null, status: 204 }; // afterRequest with no preceding beforeRequest
+  htmx.deliver("htmx:afterRequest", { detail: { xhr, target: null } });
+  assert.equal(JSON.parse(deps.beacons[0].body).payload.duration_ms, 0);
+});
+
+test("registerInstrumentation ignores an htmx event it does not instrument", () => {
+  const root = fakeRoot();
+  const deps = emitDeps(root);
+  const htmx = fakeHtmx();
+  registerInstrumentation(htmx, deps);
+  htmx.deliver("htmx:load", { detail: {} });
   assert.equal(deps.beacons.length, 0);
 });
