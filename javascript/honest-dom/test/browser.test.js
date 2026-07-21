@@ -59,19 +59,19 @@ test("browserResponse joins the response to its request by request_id", () => {
   });
 });
 
-test("domChanged carries changed keys with previous and new values", () => {
-  assert.deepEqual(domChanged(["q"], { q: "a" }, { q: "b" }, "r5"), {
+test("domChanged carries the changed keys and their new values, never the previous", () => {
+  assert.deepEqual(domChanged(["q"], { q: "b" }, "r5"), {
     event_type: "hf.dom.changed",
-    payload: { changed_keys: ["q"], from: { q: "a" }, to: { q: "b" }, request_id: "r5" },
+    payload: { changed_keys: ["q"], to: { q: "b" }, request_id: "r5" },
   });
-  assert.deepEqual(domChanged(["q"], { q: "a" }, { q: "b" }, null), {
+  assert.deepEqual(domChanged(["q"], { q: "b" }, null), {
     event_type: "hf.dom.changed",
-    payload: { changed_keys: ["q"], from: { q: "a" }, to: { q: "b" } },
+    payload: { changed_keys: ["q"], to: { q: "b" } },
   });
 });
 
-test("redact keeps values in development mode and drops from/to otherwise (§5.4)", () => {
-  const payload = { changed_keys: ["q"], from: { q: "a" }, to: { q: "b" } };
+test("redact keeps values in development mode and drops the new values otherwise (§5.4)", () => {
+  const payload = { changed_keys: ["q"], to: { q: "b" } };
   assert.deepEqual(redact(payload, "development"), payload);
   assert.deepEqual(redact(payload, "production"), { changed_keys: ["q"] });
 });
@@ -92,14 +92,14 @@ test("emitBrowserEvent builds a redacted envelope and beacons it to the ingest e
     mode: () => "production",
     sendBeacon: (endpoint, body) => beacons.push({ endpoint, body }),
   };
-  emitBrowserEvent(domChanged(["q"], { q: "a" }, { q: "b" }, "r1"), deps);
+  emitBrowserEvent(domChanged(["q"], { q: "b" }, "r1"), deps);
   assert.equal(beacons.length, 1);
   assert.equal(beacons[0].endpoint, "/api/observe/ingest");
   const sent = JSON.parse(beacons[0].body);
   assert.equal(sent.source, "browser");
   assert.equal(sent.request_id, "r1");
   assert.deepEqual(sent.payload, { changed_keys: ["q"], request_id: "r1" });
-  assert.equal("from" in sent.payload, false);
+  assert.equal("to" in sent.payload, false);
 });
 
 test("emitBrowserEvent honours a custom endpoint and keeps values in development mode", () => {
@@ -113,9 +113,9 @@ test("emitBrowserEvent honours a custom endpoint and keeps values in development
     endpoint: "/custom/ingest",
     sendBeacon: (endpoint, body) => beacons.push({ endpoint, body }),
   };
-  emitBrowserEvent(domChanged(["q"], { q: "a" }, { q: "b" }, null), deps);
+  emitBrowserEvent(domChanged(["q"], { q: "b" }, null), deps);
   assert.equal(beacons[0].endpoint, "/custom/ingest");
   const sent = JSON.parse(beacons[0].body);
   assert.equal("request_id" in sent, false);
-  assert.deepEqual(sent.payload.from, { q: "a" });
+  assert.deepEqual(sent.payload.to, { q: "b" });
 });

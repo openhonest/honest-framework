@@ -297,6 +297,8 @@ domx emits four event types automatically. See `honest-observe-architecture.md �
 | `hf.browser.response` | HTMX response arrives (`htmx:afterRequest`) |
 | `hf.dom.changed` | `observe()` detects a manifest state change |
 
+**`hf.dom.changed` carries the changed slots and their new values only — never the previous value.** The browser keeps no copy of prior state: the DOM is the current state, and the *previous* value of any slot is already in the event log (event sourcing). honest-observe reconstructs it as a projection — the last recorded value for that slot — when the event lands. So the browser sends `{changed_keys, to}`; the `from` in the projected record is honest-observe's, derived from the log, kept by no one as a second copy. Asking the browser to send `from` would force exactly the hidden shadow copy DATAOS forbids.
+
 ### 5.4 Privacy
 
 In production, browser events carry manifest keys but not values. The event records which slots changed, not what they changed to. Full values are included only in development mode (controlled by server config, communicated to domx via a meta tag).
@@ -307,6 +309,10 @@ In production, browser events carry manifest keys but not values. The event reco
 ```
 
 domx reads this tag at boot. If absent or not `"development"`, values are omitted from all browser event payloads.
+
+### 5.5 Reload Recovery
+
+A full page reload re-renders the page from the server and discards whatever user state lived only in the DOM — a half-filled form, a set of active filters. domx guards against that loss the same way `send`/`replay` cache a request (§2.5-2.7), but on *every* state change, not only on a server round-trip: each time `observe` detects a manifest change, domx writes the current manifest state to `localStorage` (a `cookie` where the value must survive a storage-cleared reload). This is the cache pattern (`honest-state-architecture.md §1.2`), not a shadow copy: it is written from the DOM on every change and read only after a reload, when the DOM it mirrors no longer exists, so it can never drift into a competing source of truth during normal operation. On load, domx restores from the cache — applying it over the freshly rendered page — so a change that never reached the server survives the reload. The cache is keyed and time-bounded exactly as `replay`'s is.
 
 ---
 

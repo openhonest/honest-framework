@@ -10,7 +10,7 @@ const EVENT_VERSION = "1.0";
 const INGEST_ENDPOINT = "/api/observe/ingest";
 // Payload fields that carry user-state values. Dropped outside development mode (§5.4): a browser event
 // records which slots changed, never what they changed to.
-const VALUE_BEARING = ["from", "to"];
+const VALUE_BEARING = ["to"];
 
 // Assemble a browser event envelope (§5.1). Pure. source is always "browser"; request_id is attached
 // only when supplied (null before the first response), since it joins to the server events triggered.
@@ -51,8 +51,11 @@ export function browserResponse(requestId, status, swapTarget, durationMs) {
   };
 }
 
-export function domChanged(changedKeys, fromValues, toValues, requestId) {
-  const payload = { changed_keys: [...changedKeys], from: fromValues, to: toValues };
+export function domChanged(changedKeys, toValues, requestId) {
+  // The browser records which slots changed and their new values only. The previous value is not kept
+  // or sent — honest-observe reconstructs it as the last recorded value for the slot, a projection over
+  // the event log (event sourcing). The DOM is the current state; the log is the history.
+  const payload = { changed_keys: [...changedKeys], to: toValues };
   return requestId === null
     ? { event_type: "hf.dom.changed", payload }
     : { event_type: "hf.dom.changed", payload: { ...payload, request_id: requestId } };
