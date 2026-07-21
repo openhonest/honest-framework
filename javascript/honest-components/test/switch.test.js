@@ -1,11 +1,11 @@
 // Conformance for the switch behaviour (honest-components §2.4). The switch owns only its specifics —
 // toggled reads its aria-checked state, handle computes the change an event produces — and composes the
-// shared enhancement runtime (exercised in enhance.test.js). Pure over plain element mocks; no real DOM.
+// shared enhancement runtime (exercised in enhance.test.js). Pure over plain element objects; no real DOM.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SWITCH_EVENTS, handle, toggled } from "../src/index.js";
 
-// A DOM-like element mock: attributes over a store.
+// A DOM-like element: attributes over a store.
 const el = (attrs = {}) => {
   const store = { ...attrs };
   return {

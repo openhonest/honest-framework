@@ -1,12 +1,12 @@
 // Conformance for the shared enhancement runtime (honest-components §2.4). applyChanges, enhance, and
-// scan are the capability every interactive component composes, exercised here over plain element mocks,
-// a fake bus, and a minimal sample component (its events and a pure handle) — no real DOM, no
+// scan are the capability every interactive component composes, exercised here over plain element objects,
+// an injected event bus, and a minimal sample component (its events and a pure handle) — no real DOM, no
 // addEventListener.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyChanges, enhance, scan } from "../src/index.js";
 
-// A DOM-like element mock: attributes over a store.
+// A DOM-like element: attributes over a store.
 const el = (attrs = {}) => {
   const store = { ...attrs };
   return {
@@ -16,7 +16,7 @@ const el = (attrs = {}) => {
   };
 };
 
-// A fake bus: onEvent records the subscription and returns an unsubscribe; fire delivers an event.
+// An injected event bus: onEvent records the subscription and returns an unsubscribe; fire delivers an event.
 const makeBus = () => {
   const subs = [];
   return {

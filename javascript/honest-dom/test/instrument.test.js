@@ -1,11 +1,11 @@
 // Conformance for the HTMX instrumentation wiring (honest-DOM §5.2-5.3): request_id lives in the DOM
 // and is read fresh; each HTMX lifecycle event emits its browser event. The DOM and the browser runtime
-// are injected, so the dispatch is tested with plain fakes.
+// are injected, so the dispatch is tested with injected inputs and injected boundaries.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { currentRequestId, storeRequestId, onHtmxEvent, describeElement, manifestKeysOf, registerInstrumentation, stateDiff, instrumentChanges, restoreState } from "../src/index.js";
 
-const fakeRoot = () => {
+const rootElement = () => {
   const attrs = {};
   return {
     attrs,
@@ -29,14 +29,14 @@ const emitDeps = (root, over = {}) => {
 };
 
 test("currentRequestId reads the request_id from the DOM, or null when absent", () => {
-  const root = fakeRoot();
+  const root = rootElement();
   assert.equal(currentRequestId(root), null);
   root.setAttribute("data-request-id", "r1");
   assert.equal(currentRequestId(root), "r1");
 });
 
 test("storeRequestId writes a request_id to the DOM but leaves the previous value on a null id", () => {
-  const root = fakeRoot();
+  const root = rootElement();
   storeRequestId(root, "r1");
   assert.equal(root.attrs["data-request-id"], "r1");
   storeRequestId(root, null);
@@ -44,7 +44,7 @@ test("storeRequestId writes a request_id to the DOM but leaves the previous valu
 });
 
 test("onHtmxEvent on beforeRequest emits browser.request carrying the current request_id", () => {
-  const root = fakeRoot();
+  const root = rootElement();
   root.setAttribute("data-request-id", "r0");
   const deps = emitDeps(root);
   onHtmxEvent(
@@ -61,7 +61,7 @@ test("onHtmxEvent on beforeRequest emits browser.request carrying the current re
 });
 
 test("onHtmxEvent on afterRequest stores the response's request_id then emits browser.response with it", () => {
-  const root = fakeRoot();
+  const root = rootElement();
   const deps = emitDeps(root);
   onHtmxEvent(
     "htmx:afterRequest",
@@ -76,7 +76,7 @@ test("onHtmxEvent on afterRequest stores the response's request_id then emits br
 });
 
 test("onHtmxEvent ignores a lifecycle event with no browser-event mapping", () => {
-  const root = fakeRoot();
+  const root = rootElement();
   const deps = emitDeps(root);
   assert.equal(onHtmxEvent("htmx:oobBeforeSwap", {}, deps), undefined);
   assert.equal(deps.beacons.length, 0);
@@ -94,17 +94,17 @@ test("manifestKeysOf reads the collected state's keys, or the raw parameter name
   assert.deepEqual(manifestKeysOf({ q: "hi", page: "2" }), ["q", "page"]);
 });
 
-// A fake htmx that captures the extension the module registers, plus a fake lifecycle event.
-const fakeHtmx = () => {
+// An injected htmx that captures the extension the module registers, plus a lifecycle event object.
+const injectedHtmx = () => {
   const registered = {};
   return { registered, defineExtension: (name, ext) => { registered.name = name; registered.ext = ext; }, deliver: (name, evt) => registered.ext.onEvent(name, evt) };
 };
 
 test("registerInstrumentation beacons a browser.request on beforeRequest, carrying the current request_id", () => {
-  const root = fakeRoot();
+  const root = rootElement();
   root.setAttribute("data-request-id", "r0");
   const deps = { ...emitDeps(root), now: () => 1000 };
-  const htmx = fakeHtmx();
+  const htmx = injectedHtmx();
   registerInstrumentation(htmx, deps);
   assert.equal(htmx.registered.name, "domx-observe"); // registered under the domx observability extension name
   const xhr = { getResponseHeader: () => null, status: 200 };
@@ -116,10 +116,10 @@ test("registerInstrumentation beacons a browser.request on beforeRequest, carryi
 });
 
 test("registerInstrumentation beacons a browser.response on afterRequest, with the measured duration", () => {
-  const root = fakeRoot();
+  const root = rootElement();
   let clock = 1000;
   const deps = { ...emitDeps(root), now: () => clock };
-  const htmx = fakeHtmx();
+  const htmx = injectedHtmx();
   registerInstrumentation(htmx, deps);
   const xhr = { getResponseHeader: (name) => (name === "X-Request-ID" ? "r9" : null), status: 200 };
   htmx.deliver("htmx:beforeRequest", { detail: { xhr, requestConfig: { verb: "get", path: "/x", parameters: {} }, elt: null, target: { id: "results", tagName: "DIV" } } });
@@ -132,9 +132,9 @@ test("registerInstrumentation beacons a browser.response on afterRequest, with t
 });
 
 test("registerInstrumentation reports a zero duration when no start was stamped", () => {
-  const root = fakeRoot();
+  const root = rootElement();
   const deps = { ...emitDeps(root), now: () => 5000 };
-  const htmx = fakeHtmx();
+  const htmx = injectedHtmx();
   registerInstrumentation(htmx, deps);
   const xhr = { getResponseHeader: () => null, status: 204 }; // afterRequest with no preceding beforeRequest
   htmx.deliver("htmx:afterRequest", { detail: { xhr, target: null } });
@@ -142,9 +142,9 @@ test("registerInstrumentation reports a zero duration when no start was stamped"
 });
 
 test("registerInstrumentation ignores an htmx event it does not instrument", () => {
-  const root = fakeRoot();
+  const root = rootElement();
   const deps = emitDeps(root);
-  const htmx = fakeHtmx();
+  const htmx = injectedHtmx();
   registerInstrumentation(htmx, deps);
   htmx.deliver("htmx:load", { detail: {} });
   assert.equal(deps.beacons.length, 0);
@@ -156,7 +156,7 @@ test("stateDiff reports the keys whose value changed, with their new values", ()
   assert.deepEqual(stateDiff({ q: "a" }, { q: "a" }), { changed_keys: [], to: {} }); // nothing changed
 });
 
-// A fake change bus and a fake store, plus emit deps and a query for collect.
+// An injected change source and an in-memory store, plus emit deps and a query for collect.
 const changeDeps = (over = {}) => {
   const store = {};
   let onChange = null;

@@ -1,12 +1,12 @@
 // Conformance for the accordion behaviour (honest-components §2.4). The accordion owns only its
 // specifics — accordionExpanded reads its aria-expanded state, accordionHandle computes the change an
 // event produces — and composes the shared enhancement runtime (exercised in enhance.test.js). Pure over
-// plain element mocks; no real DOM.
+// plain element objects; no real DOM.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ACCORDION_EVENTS, accordionExpanded, accordionHandle } from "../src/index.js";
 
-// A DOM-like element mock: attributes over a store.
+// A DOM-like element: attributes over a store.
 const el = (attrs = {}) => {
   const store = { ...attrs };
   return {
