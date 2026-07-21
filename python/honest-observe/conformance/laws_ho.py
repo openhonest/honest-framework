@@ -498,10 +498,10 @@ def _probe_browser():
     if response != {"event_type": "hf.browser.response", "payload": {"request_id": "req_abc", "status": 200, "swap_target": "#content-area", "duration_ms": 163}}:
         bad.append(f"browser_response wrong: {response}")
 
-    changed = dom_changed(["filters"], {"filters": []}, {"filters": ["active"]}, request_id="req_abc")
-    if changed != {"event_type": "hf.dom.changed", "payload": {"changed_keys": ["filters"], "from": {"filters": []}, "to": {"filters": ["active"]}, "request_id": "req_abc"}}:
+    changed = dom_changed(["filters"], {"filters": ["active"]}, request_id="req_abc")
+    if changed != {"event_type": "hf.dom.changed", "payload": {"changed_keys": ["filters"], "to": {"filters": ["active"]}, "request_id": "req_abc"}}:
         bad.append(f"dom_changed wrong: {changed}")
-    if "request_id" in dom_changed(["x"], {"x": 1}, {"x": 2})["payload"]:
+    if "request_id" in dom_changed(["x"], {"x": 2})["payload"]:
         bad.append("dom_changed should omit request_id outside a request context")
     return bad
 

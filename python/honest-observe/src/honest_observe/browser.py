@@ -62,11 +62,13 @@ def browser_response(request_id, status, swap_target, duration_ms):
     return {"event_type": "hf.browser.response", "payload": {"request_id": request_id, "status": status, "swap_target": swap_target, "duration_ms": duration_ms}}
 
 
-def dom_changed(changed_keys, from_values, to_values, request_id=None):
+def dom_changed(changed_keys, to_values, request_id=None):
     """The hf.dom.changed event payload (section 8.4): a manifest state change seen by domx's mutation
-    observer, with the previous and new values for the changed slots. `request_id` appears only when the
-    change happens within a request context. Pure."""
-    payload = {"changed_keys": list(changed_keys), "from": from_values, "to": to_values}
+    observer, carrying the changed slots and their new values only. The previous value is not sent — the
+    browser keeps no copy of prior state (that would be the shadow copy DATAOS forbids); honest-observe
+    reconstructs `from` as a projection over the event log, the last recorded value for the slot.
+    `request_id` appears only when the change happens within a request context. Pure."""
+    payload = {"changed_keys": list(changed_keys), "to": to_values}
     if request_id is not None:
         payload["request_id"] = request_id
     return {"event_type": "hf.dom.changed", "payload": payload}

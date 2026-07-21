@@ -200,9 +200,9 @@ Feature: honest-observe — event envelope, recording, and projection
     Then it returns the hf.browser.response event joined to its request by request id
 
   Scenario: dom_changed builds the manifest-state-change event payload
-    Given the changed keys with their previous and new values
+    Given the changed keys with their new values only
     When dom_changed builds the payload
-    Then it returns the hf.dom.changed event with the request id only within a request context
+    Then it returns the hf.dom.changed event carrying the new values, with the request id only within a request context
 
   Scenario: format_tail_line renders one event as a structured tail line
     Given a logged event

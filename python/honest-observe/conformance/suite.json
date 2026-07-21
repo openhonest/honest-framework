@@ -890,8 +890,8 @@
    "id": "value-dom-changed",
    "value_case": {
     "function": "dom_changed",
-    "args": [["filters"], {"filters": []}, {"filters": ["active"]}, "req_abc"],
-    "expected": {"event_type": "hf.dom.changed", "payload": {"changed_keys": ["filters"], "from": {"filters": []}, "to": {"filters": ["active"]}, "request_id": "req_abc"}}
+    "args": [["filters"], {"filters": ["active"]}, "req_abc"],
+    "expected": {"event_type": "hf.dom.changed", "payload": {"changed_keys": ["filters"], "to": {"filters": ["active"]}, "request_id": "req_abc"}}
    }
   },
   {
