@@ -1,0 +1,5 @@
+{
+  "note": "honest-components' declared behaviour vocabulary (spec section 2.4), read by honest-check to resolve every authored hc-* attribute (HC-REF004): a behaviour name naming no module, or an option value naming no member, is a dead reference the gate stops. Declared as data, never scraped from the component modules. Point honest-check.toml's component_manifest at this file.",
+  "behaviors": ["switch", "accordion"],
+  "options": {}
+}

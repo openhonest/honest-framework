@@ -109,8 +109,8 @@ from honest_check.declgraph import (
 from honest_parse import parse_python, parse_javascript, parse_html, node_text, walk as _w
 from honest_check.rules import language_for_path
 from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_enclosing_function, _js_equality_target, _js_else_if, _js_impure_name, _js_mutable_decl_names, _js_qualified_name, _js_reassigned_names, _js_scope_lets, _js_type_check
-from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _member_property, _object_keys, _open_tag, _tag_name, hf_references, js_class_references, manifest_keys, request_sites, scan_template, stylesheet_classes, template_class_references, template_includes
-from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_class_references, check_hf_references, check_references, check_template_references, hf_vocabulary, route_boundary
+from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _member_property, _object_keys, _open_tag, _tag_name, hc_references, hf_references, js_class_references, manifest_keys, request_sites, scan_template, stylesheet_classes, template_class_references, template_includes
+from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_class_references, check_hc_references, check_hf_references, check_references, check_template_references, hc_vocabulary, hf_vocabulary, route_boundary
 
 
 def _rules(source: str) -> list[str]:
@@ -2917,6 +2917,45 @@ def _probe_hf_references() -> list:
     return bad
 
 
+def _probe_hc_references() -> list:
+    """HC-REF004 for components (section 2.4): every authored hc-* attribute resolves against
+    honest-components' declared vocabulary. hc_references collects the hc-* attributes (a marker's value is
+    None, an interpolated value is left None), hc_vocabulary builds the behaviour set and the option map,
+    and check_hc_references flags a name naming no behaviour and an option value naming no member, at the
+    element, leaving a valid marker and a valid option unjudged."""
+    bad = []
+    refs = hc_references(
+        b"<button hc-switch>1</button>"
+        b'<div hc-accordion-mode="single">2</div>'
+        b'<div hc-accordion-mode="{{ x }}">3</div>'
+        b'<span class="y">4</span>'
+    )
+    got = [(r["attr"], r["value"]) for r in refs]
+    if got != [("hc-switch", None), ("hc-accordion-mode", "single"), ("hc-accordion-mode", None)]:
+        bad.append(f"hc_references should collect a marker (None), a resolvable value, and an interpolated value (None), skipping non-hc: {got}")
+    manifest = {"behaviors": ["switch", "accordion"], "options": {"hc-accordion-mode": ["single", "multi"]}}
+    vocab = hc_vocabulary(manifest)
+    if vocab["behaviours"] != frozenset({"hc-switch", "hc-accordion"}) or vocab["options"].get("hc-accordion-mode") != frozenset({"single", "multi"}):
+        bad.append(f"hc_vocabulary should build the behaviour set and the option map: {vocab}")
+    tpl = {"path": "page.html", "hc_refs": [
+        {"attr": "hc-switch", "value": None, "location": (1, 1)},
+        {"attr": "hc-swich", "value": None, "location": (2, 3)},
+        {"attr": "hc-accordion-mode", "value": "single", "location": (3, 1)},
+        {"attr": "hc-accordion-mode", "value": "triple", "location": (4, 2)},
+    ]}
+    diags = check_hc_references(vocab, [tpl])
+    kinds = [(d["rule"], d["severity"], d["line"], d["col"]) for d in diags]
+    if kinds != [("HC-REF004", "error", 2, 3), ("HC-REF004", "error", 4, 2)]:
+        bad.append(f"HC-REF004 should flag only the unknown behaviour name and the unknown option value, at their elements: {kinds}")
+    if diags and ("hc-swich" not in diags[0]["message"] or "no honest-components behaviour" not in diags[0]["message"] or "Fix the name" not in diags[0]["message"]):
+        bad.append(f"HC-REF004 behaviour message should name the bad attribute and the remedy: {diags[0].get('message')}")
+    if len(diags) > 1 and ('hc-accordion-mode="triple"' not in diags[1]["message"] or "no member" not in diags[1]["message"] or "Fix the value" not in diags[1]["message"]):
+        bad.append(f"HC-REF004 option message should name the bad value and the remedy: {diags[1].get('message')}")
+    if diags and diags[0]["path"] != "page.html":
+        bad.append(f"HC-REF004 should carry the template path: {diags[0]}")
+    return bad
+
+
 def run() -> int:
     failed = 0
     passed = 0
@@ -3006,6 +3045,14 @@ def run() -> int:
     if hf_references_bad:
         failed += 1
         print(f"FAIL HC-rule [hf_references]: {hf_references_bad}")
+    else:
+        passed += 1
+
+    total += 1
+    hc_references_bad = _probe_hc_references()
+    if hc_references_bad:
+        failed += 1
+        print(f"FAIL HC-rule [hc_references]: {hc_references_bad}")
     else:
         passed += 1
 

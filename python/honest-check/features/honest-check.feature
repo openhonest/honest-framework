@@ -870,6 +870,21 @@ Feature: honest-check — Python supplement
     When check_hf_references resolves each authored hf-* value against it
     Then it reports HC-REF004 at the element for a value naming no member, leaving a free-value attribute unjudged
 
+  Scenario: hc_references collects the hc-* attributes an element carries
+    Given a scanned template
+    When hc_references reads its hc-* attributes
+    Then it yields each attribute's name and value, a marker or interpolated value as none, skipping a non-hc attribute
+
+  Scenario: hc_vocabulary builds the declared component-behaviour vocabulary
+    Given honest-components' declared manifest
+    When hc_vocabulary is built
+    Then it maps to the set of behaviour attribute names and each option attribute's allowed values
+
+  Scenario: check_hc_references flags an hc-* attribute that names no behaviour or option member
+    Given the declared component vocabulary and the scanned templates
+    When check_hc_references resolves each authored hc-* attribute against it
+    Then it reports HC-REF004 at the element for a name naming no behaviour and an option value naming no member
+
   Scenario: _discover_css lists the stylesheets under a directory
     Given a directory
     When _discover_css is asked

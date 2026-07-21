@@ -469,6 +469,28 @@ def _probe_cli():
         if code != 2:
             bad.append(f"a malformed manifest should exit 2, got {code}")
 
+    # HC-REF004 for components wired through the CLI: an authored hc-* attribute must resolve to
+    # honest-components' declared behaviour vocabulary, read from the configured component manifest.
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "app.py").write_text("x = 1\n", encoding="utf-8")
+        tdir = Path(tmp, "templates")
+        tdir.mkdir()
+        components = Path(tmp, "components.json")
+        components.write_text('{"behaviors": ["switch", "accordion"], "options": {"hc-accordion-mode": ["single", "multi"]}}', encoding="utf-8")
+        cfg = Path(tmp, "honest-check.toml")
+        cfg.write_text(f'[check]\ntemplates = "{tdir}"\ncomponent_manifest = "{components}"\n', encoding="utf-8")
+        page = Path(tdir, "page.html")
+        # a typo'd behaviour name names no module and fires.
+        page.write_text("<button hc-swich>x</button>", encoding="utf-8")
+        code, out, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg), "--format", "json"])
+        if code != 1 or "HC-REF004" not in out or "hc-swich" not in out:
+            bad.append(f"a typo'd hc-* behaviour should fire HC-REF004: {code} {out[:120]}")
+        # Fix the name and use a valid option: the run is clean.
+        page.write_text('<button hc-switch>x</button><div hc-accordion hc-accordion-mode="single">y</div>', encoding="utf-8")
+        code, _, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg)])
+        if code != 0:
+            bad.append(f"a resolvable hc-* attribute should be clean, got {code}")
+
     # The watch loop re-runs once per trigger line and returns the last code at EOF.
     runs = {"n": 0}
 

@@ -172,6 +172,47 @@ def check_hf_references(vocabulary: dict, scanned_templates: list) -> list:
     return out
 
 
+def hc_vocabulary(manifest: dict) -> dict:
+    """The declared component-behaviour vocabulary HC-REF004 resolves hc-* attributes against, built from
+    honest-components' manifest (spec section 2.4): the set of behaviour attribute names (hc-<behaviour>)
+    and the enumerated option values each option attribute allows. Declared as data, never scraped from
+    the component modules. Pure over the manifest."""
+    behaviours = frozenset(f"hc-{name}" for name in manifest["behaviors"])
+    options = {attr: frozenset(values) for attr, values in manifest.get("options", {}).items()}
+    return {"behaviours": behaviours, "options": options}
+
+
+def check_hc_references(vocabulary: dict, scanned_templates: list) -> list:
+    """HC-REF004 for components: every authored `hc-*` attribute resolves against honest-components'
+    declared vocabulary (spec section 2.4; framework spec, "Every reference resolves, or the gate stops").
+    An option attribute's value must be an enumerated member; any other hc-* attribute's name must be a
+    declared behaviour. A typo'd hc-swich names no module and an option value naming no member — either
+    would be silently inert in the browser — is a dead reference, flagged at the element. Pure over the
+    already-parsed hc-* references."""
+    out = []
+    behaviours = vocabulary["behaviours"]
+    options = vocabulary["options"]
+    for scanned in scanned_templates:
+        for ref in scanned["hc_refs"]:
+            attr = ref["attr"]
+            if attr in options:
+                if ref["value"] is not None and ref["value"] not in options[attr]:
+                    line, col = ref["location"]
+                    out.append(diagnostic(
+                        "HC-REF004", "error", scanned["path"], line, col,
+                        f'Attribute {attr}="{ref["value"]}" names no member of honest-components\' declared '
+                        "option vocabulary. Fix the value, or extend the vocabulary.",
+                    ))
+            elif attr not in behaviours:
+                line, col = ref["location"]
+                out.append(diagnostic(
+                    "HC-REF004", "error", scanned["path"], line, col,
+                    f"Attribute {attr} names no honest-components behaviour in the declared vocabulary. Fix "
+                    "the name, or extend the vocabulary.",
+                ))
+    return out
+
+
 def boundary_diagnostics(root, source: bytes, path: str, scanned_templates: list) -> list:
     """Run the first-link boundary check on one parsed source file given the scanned templates: read its
     route map, chains, and links, then check_boundary against the templates. A file that declares no

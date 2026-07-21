@@ -26,7 +26,7 @@ from honest_check.config import (
     resolve_paths,
     resolve_severity,
 )
-from honest_check.boundary import boundary_diagnostics, check_class_references, check_hf_references, check_references, check_template_references, hf_vocabulary
+from honest_check.boundary import boundary_diagnostics, check_class_references, check_hc_references, check_hf_references, check_references, check_template_references, hc_vocabulary, hf_vocabulary
 from honest_check.declgraph import extract_routes
 from honest_check.diagnostics import Diagnostic
 from honest_check.formats import (
@@ -133,7 +133,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str, templates_dir: str, format_manifest: str) -> int:
+def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str, templates_dir: str, format_manifest: str, component_manifest: str) -> int:
     """Check the paths once and print the rendered report; return the exit code (1 on errors, 2 on a
     read failure, else 0). The single-pass core that both a plain run and --watch repeat. When a
     template directory is configured, its templates are scanned once and every checked file also runs
@@ -172,6 +172,11 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
         manifest = _load_manifest(format_manifest)
         if manifest is not None:
             diagnostics.extend(check_hf_references(hf_vocabulary(manifest), scanned))
+        # HC-REF004 for components resolves every authored hc-* attribute against honest-components'
+        # declared behaviour vocabulary. With no manifest configured it does not run.
+        components = _load_manifest(component_manifest)
+        if components is not None:
+            diagnostics.extend(check_hc_references(hc_vocabulary(components), scanned))
     except (OSError, json.JSONDecodeError) as exc:
         print(f"honest-check: cannot read source: {exc}", file=sys.stderr)
         return 2
@@ -221,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     def run() -> int:
-        return _run_once(paths, config["exclude"], severity, suppress, only, args.format, config["templates"], config["format_manifest"])
+        return _run_once(paths, config["exclude"], severity, suppress, only, args.format, config["templates"], config["format_manifest"], config["component_manifest"])
 
     if args.watch:
         return watch(run)

@@ -203,6 +203,30 @@ def hf_references(source: bytes) -> tuple:
     return tuple(out)
 
 
+def hc_references(source: bytes) -> tuple:
+    """Every `hc-*` attribute an element carries (the component-behaviour vocabulary, HC-REF004): its
+    `attr` name, its `value` (or None for a marker attribute like hc-switch, or for an interpolated
+    value), and the element `location`. Unlike hf-*, where the value is the reference, here the reference
+    to resolve is the attribute *name* — hc-switch names a behaviour module — so a valueless marker is
+    collected, and an interpolated value leaves the name to resolve with the value unjudged. Pure over the
+    parsed template."""
+    out = []
+    for node in walk(parse_html(source).root_node):
+        tag = _open_tag(node)
+        if tag is None:
+            continue
+        for attribute in tag.children:
+            if attribute.type != "attribute":
+                continue
+            name = next((node_text(c, source) for c in walk(attribute) if c.type == "attribute_name"), None)
+            if name is None or not name.startswith("hc-"):
+                continue
+            value = next((node_text(c, source) for c in walk(attribute) if c.type == "attribute_value"), None)
+            resolvable = value if (value is not None and _is_resolvable(value)) else None
+            out.append({"attr": name, "value": resolvable, "location": line_col(node)})
+    return tuple(out)
+
+
 def _member_property(member_node, source: bytes):
     """The property name of a JS member expression (`a.b` -> "b"). A member expression always carries a
     property field, so this never returns None for parsed source."""
@@ -255,4 +279,4 @@ def scan_template(source: bytes, path: str = "") -> dict:
             if child.type == "raw_text":
                 script = node_text(child, source).encode("utf-8")
                 keys = keys | manifest_keys(parse_javascript(script).root_node, script)
-    return {"path": path, "sites": request_sites(root, source), "manifest_keys": frozenset(keys), "includes": template_includes(source), "class_refs": template_class_references(source), "hf_refs": hf_references(source)}
+    return {"path": path, "sites": request_sites(root, source), "manifest_keys": frozenset(keys), "includes": template_includes(source), "class_refs": template_class_references(source), "hf_refs": hf_references(source), "hc_refs": hc_references(source)}
