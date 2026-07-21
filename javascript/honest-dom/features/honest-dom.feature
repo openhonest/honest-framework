@@ -133,3 +133,18 @@ Feature: honest-DOM (domx) — the client-side DATAOS primitives
     Given an injected htmx and the browser runtime
     When registerInstrumentation registers the extension and htmx delivers a lifecycle event
     Then a request beacons browser.request, a response stores its request_id and beacons browser.response with the measured duration, and an uninstrumented event is ignored
+
+  Scenario: stateDiff reports the manifest keys whose value changed
+    Given a previous state snapshot and the current state
+    When stateDiff compares them
+    Then it returns the changed keys and their new values, treating an absent-before key as changed
+
+  Scenario: instrumentChanges beacons dom.changed and caches the state on every change
+    Given a manifest and the injected observer, store, and browser runtime
+    When instrumentChanges wires the observer and a change fires
+    Then it beacons hf.dom.changed with the changed slots and new values, caches the current state for reload recovery, and does nothing when nothing changed
+
+  Scenario: restoreState applies the reload-recovery cache after a reload
+    Given a manifest and the recovery cache
+    When restoreState reads it after a reload
+    Then it applies the cached state over the page when present and within its time bound, and does nothing when absent or expired

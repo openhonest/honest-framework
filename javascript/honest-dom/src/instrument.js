@@ -8,9 +8,15 @@
 // onHtmxEvent takes a normalized lifecycle detail; adapting a real htmx event's detail to that shape,
 // and wiring the observer's old-values for dom.changed and the bootloader's classify events, is the
 // real-browser binding verified by the browser conformance suite (§8.2), not this mock-level gate.
-import { emitBrowserEvent, browserRequest, browserResponse, readRequestId } from "./browser.js";
+import { emitBrowserEvent, browserRequest, browserResponse, domChanged, readRequestId } from "./browser.js";
+import { collect } from "./collect.js";
+import { apply } from "./apply.js";
 
 export const REQUEST_ID_ATTR = "data-request-id";
+// Where the reload-recovery snapshot of manifest state lives (§5.5), and how long it stays valid — the
+// same time bound send/replay use (§2.6).
+const STATE_KEY = "domx:state";
+const STATE_TTL_MS = 300000;
 
 // Read the current request_id from the DOM (§5.2). Pure given the root element; an absent attribute
 // (before the first response) is null.
@@ -96,4 +102,46 @@ export function registerInstrumentation(htmx, deps) {
       }
     },
   });
+}
+
+// The manifest keys whose value changed against a previous snapshot, with their new values. Pure: a deep
+// compare through canonical JSON, so a key absent from the previous snapshot reads as changed.
+export function stateDiff(previous, current) {
+  const changedKeys = [];
+  const to = {};
+  for (const key of Object.keys(current)) {
+    if (JSON.stringify(current[key]) !== JSON.stringify(previous[key])) {
+      changedKeys.push(key);
+      to[key] = current[key];
+    }
+  }
+  return { changed_keys: changedKeys, to };
+}
+
+// Instrument manifest state changes (§5.3, §5.5): on every change the injected observer detects, beacon
+// hf.dom.changed with the changed slots and their new values, and cache the current state to localStorage
+// so a reload can restore it. The previous snapshot for the diff is that same cache — written from the
+// DOM on every change and read only here and on restore, never a live second source. Returns the
+// observer's unsubscribe.
+export function instrumentChanges(manifest, deps) {
+  return deps.bus.onMutation(() =>
+    deps.bus.schedule(() => {
+      const current = collect(manifest, deps.query);
+      const cached = deps.getItem(STATE_KEY);
+      const { changed_keys, to } = stateDiff(cached === null ? {} : cached.state, current);
+      if (changed_keys.length > 0) {
+        emitBrowserEvent(domChanged(changed_keys, to, deps.requestId()), deps);
+        deps.setItem(STATE_KEY, { state: current, timestamp: deps.now() });
+      }
+    }),
+  );
+}
+
+// Restore manifest state from the reload-recovery cache (§5.5): a reload discards the DOM state, so apply
+// the cached state over the freshly rendered page — unless the cache is absent or past its time bound.
+export function restoreState(manifest, deps) {
+  const cached = deps.getItem(STATE_KEY);
+  if (cached !== null && deps.now() - cached.timestamp <= STATE_TTL_MS) {
+    apply(manifest, cached.state, deps.query);
+  }
 }

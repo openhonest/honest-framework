@@ -3,7 +3,7 @@
 // are injected, so the dispatch is tested with plain fakes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { currentRequestId, storeRequestId, onHtmxEvent, describeElement, manifestKeysOf, registerInstrumentation } from "../src/index.js";
+import { currentRequestId, storeRequestId, onHtmxEvent, describeElement, manifestKeysOf, registerInstrumentation, stateDiff, instrumentChanges, restoreState } from "../src/index.js";
 
 const fakeRoot = () => {
   const attrs = {};
@@ -148,4 +148,87 @@ test("registerInstrumentation ignores an htmx event it does not instrument", () 
   registerInstrumentation(htmx, deps);
   htmx.deliver("htmx:load", { detail: {} });
   assert.equal(deps.beacons.length, 0);
+});
+
+test("stateDiff reports the keys whose value changed, with their new values", () => {
+  assert.deepEqual(stateDiff({ q: "a", page: 1 }, { q: "b", page: 1 }), { changed_keys: ["q"], to: { q: "b" } });
+  assert.deepEqual(stateDiff({}, { tags: ["x"] }), { changed_keys: ["tags"], to: { tags: ["x"] } }); // absent-before reads as changed
+  assert.deepEqual(stateDiff({ q: "a" }, { q: "a" }), { changed_keys: [], to: {} }); // nothing changed
+});
+
+// A fake change bus and a fake store, plus emit deps and a query for collect.
+const changeDeps = (over = {}) => {
+  const store = {};
+  let onChange = null;
+  const beacons = [];
+  return {
+    beacons,
+    store,
+    fireChange: () => onChange(),
+    bus: { onMutation: (cb) => { onChange = cb; return () => { onChange = null; }; }, schedule: (fn) => fn() },
+    query: (sel) => over.matches?.[sel] ?? [],
+    getItem: (key) => (key in store ? store[key] : null),
+    setItem: (key, obj) => (store[key] = obj),
+    now: () => over.now ?? 1000,
+    timestamp: () => "T",
+    sessionId: () => "s1",
+    uuid: () => "e1",
+    mode: () => "development",
+    requestId: () => null,
+    sendBeacon: (endpoint, body) => beacons.push({ endpoint, body }),
+  };
+};
+
+test("instrumentChanges beacons dom.changed and caches the new state on a change", () => {
+  const deps = changeDeps({ matches: { "#q": [{ value: "hi" }] }, now: 5000 });
+  const manifest = { q: { selector: "#q", read: "value" } };
+  instrumentChanges(manifest, deps);
+  deps.fireChange();
+  const sent = JSON.parse(deps.beacons[0].body);
+  assert.equal(sent.event_type, "hf.dom.changed");
+  assert.deepEqual(sent.payload, { changed_keys: ["q"], to: { q: "hi" } });
+  assert.deepEqual(deps.store["domx:state"], { state: { q: "hi" }, timestamp: 5000 }); // cached for reload recovery
+});
+
+test("instrumentChanges emits nothing and caches nothing when the state is unchanged", () => {
+  const deps = changeDeps({ matches: { "#q": [{ value: "hi" }] } });
+  deps.store["domx:state"] = { state: { q: "hi" }, timestamp: 1 };
+  instrumentChanges({ q: { selector: "#q", read: "value" } }, deps);
+  deps.fireChange();
+  assert.equal(deps.beacons.length, 0);
+  assert.equal(deps.store["domx:state"].timestamp, 1); // unchanged, cache untouched
+});
+
+test("restoreState applies the cached state after a reload, unless absent or expired", () => {
+  const manifest = { q: { selector: "#q", write: "attr:value" } };
+  // Each case gets its own written target and its own store, so getItem reads the case's own cache.
+  const mk = (now) => {
+    const written = {};
+    const deps = changeDeps({ matches: { "#q": [{ setAttribute: (n, v) => (written[n] = v) }] }, now });
+    return { written, deps };
+  };
+
+  const none = mk(1000);
+  restoreState(manifest, none.deps); // no cache -> nothing applied
+  assert.deepEqual(none.written, {});
+
+  const fresh = mk(1000);
+  fresh.deps.store["domx:state"] = { state: { q: "hi" }, timestamp: 900 };
+  restoreState(manifest, fresh.deps); // within the 5-minute bound -> applied
+  assert.equal(fresh.written.value, "hi");
+
+  const expired = mk(500000);
+  expired.deps.store["domx:state"] = { state: { q: "old" }, timestamp: 100 }; // 500000 - 100 > the bound
+  restoreState(manifest, expired.deps); // past the bound -> not applied
+  assert.deepEqual(expired.written, {});
+
+  const atBound = mk(300100);
+  atBound.deps.store["domx:state"] = { state: { q: "edge" }, timestamp: 100 }; // exactly at the 300000 bound -> applied
+  restoreState(manifest, atBound.deps);
+  assert.equal(atBound.written.value, "edge");
+
+  const pastBound = mk(300101);
+  pastBound.deps.store["domx:state"] = { state: { q: "old" }, timestamp: 100 }; // one tick past the bound -> not applied
+  restoreState(manifest, pastBound.deps);
+  assert.deepEqual(pastBound.written, {});
 });
