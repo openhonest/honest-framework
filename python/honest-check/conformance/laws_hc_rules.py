@@ -328,6 +328,25 @@ _case(
     "from typing import Protocol\nclass P(Protocol):\n    pass\ndef f():\n    return make_row(1)\n",
     must_not_fire=("HC-P010", "HC-P003"),
 )
+# Import style cannot decide whether the rule applies: an attribute-form constructor is the same
+# construction as a bare one, so it is flagged the same way.
+_case(
+    "p010_returns_attribute_class_instance",
+    "from fastapi import responses\ndef f():\n    return responses.Response(1)\n",
+    must_fire=("HC-P010",),
+)
+# A declared I/O boundary may return the outside world's own type — converting to it is what a
+# boundary is for. The rule governs the pure interior.
+_case(
+    "p010_boundary_returns_class_clean",
+    "@boundary\ndef f():\n    return Widget(1)\n",
+    must_not_fire=("HC-P010",),
+)
+_case(
+    "p010_link_boundary_returns_class_clean",
+    "from honest_type import link\n@link(boundary=True)\ndef f():\n    return responses.Response(1)\n",
+    must_not_fire=("HC-P010",),
+)
 
 
 # ----------------------------------------------------------------- HC-P001 dispatch shapes
@@ -2404,7 +2423,7 @@ _RULE_MESSAGES = [
     ('HC-P005', 'def f(x):\n    return isinstance(x, int)\n', 'isinstance() check in business logic. Consider a vocabulary declaration instead.'),
     ('HC-P006', 'from functools import lru_cache\n@lru_cache\ndef f(x):\n    return x\n', "Cache detected without profiling evidence. Add a @profiled annotation or a '# honest: profiled' comment."),
     ('HC-P007', 'class C:\n    def __init__(self):\n        self._x = 1\n', "Instance state '_x'. Pass as parameter or use context manager."),
-    ('HC-P010', 'def f():\n    return Widget(1)\n', "Return value constructs 'Widget', a non-serializable object. A pure function returns a dict or TypedDict, not a class instance."),
+    ('HC-P010', 'def f():\n    return Widget(1)\n', "Return value constructs 'Widget', a non-serializable object. The pure interior returns a dict or TypedDict, not a class instance; if this is an I/O boundary, declare it (@boundary or @link(boundary=True))."),
     ('HC-P011', "def setup():\n    addEventListener('click', h)\n", "Lifecycle hook 'addEventListener'. Use HTMX attributes or server-rendered HTML."),
     ('HC-P013', "from honest_type import vocabulary, binding, link, predicate\nV = vocabulary({'db': predicate(p)})\nB = binding({'db': 'db_id'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n", "Routing key 'db_id' is bound to predicate recognizer 'db'. A database routing key must be a bounded Set recognizer: the vocabulary is the whitelist, and a predicate lets an arbitrary database identifier reach the pool layer."),
     ('HC-P014', "from honest_type import vocabulary, binding, link\nV = vocabulary({'a': {'x'}, 'b': {'x'}, 'c': {'q'}})\nB = binding({'a': 'slot1', 'b': 'slot2', 'ghost': 'slotg'})\n@link(accepts=V, binds=B)\ndef f(x):\n    return x\n@link(accepts=V, binds=B)\ndef g(x):\n    return x\n", "One recognizer is shared by types ['a', 'b'] bound to distinct slots ['slot1', 'slot2']. Give each slot a semantically distinct recognizer, or the chain contract cannot catch a swap between them."),

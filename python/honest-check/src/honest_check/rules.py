@@ -150,7 +150,11 @@ def _typeddict_names(root, source: bytes) -> set:
 def check_hc_p010(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC-P010 — a function returns a non-serializable class instance (section 4.2). A return whose
     value constructs a class (a PascalCase constructor call) that is not a TypedDict declared in this
-    file is flagged: pure functions return serializable data — a dict or TypedDict — not an object."""
+    file is flagged: the pure interior returns serializable data — a dict or TypedDict — not an object.
+    The constructor is recognised however it is written: `Response(...)` and `responses.Response(...)`
+    are the same construction, so import style cannot decide whether the rule applies. A declared I/O
+    boundary is exempt — converting a value into the outside world's own type is precisely what a
+    boundary is for, and the rule governs the pure interior."""
     typeddicts = _typeddict_names(root, source)
     out: list[Diagnostic] = []
     for node in walk(root):
@@ -159,16 +163,20 @@ def check_hc_p010(root, source: bytes, path: str) -> list[Diagnostic]:
         values = node.named_children
         if not values or values[0].type != "call":
             continue
-        function = values[0].child_by_field_name("function")
-        if function is None or function.type != "identifier":
+        qualified = _qualified_call_name(values[0], source)
+        if not qualified:
             continue
-        name = node_text(function, source)
+        name = qualified.rsplit(".", 1)[-1]
         if not name[:1].isupper() or name in typeddicts:
+            continue
+        enclosing = _enclosing_function(node)
+        if enclosing is not None and _is_boundary_function(enclosing, source):
             continue
         line, col = line_col(node)
         out.append(diagnostic("HC-P010", "error", path, line, col,
-            f"Return value constructs '{name}', a non-serializable object. A pure function returns "
-            "a dict or TypedDict, not a class instance."))
+            f"Return value constructs '{name}', a non-serializable object. The pure interior returns "
+            "a dict or TypedDict, not a class instance; if this is an I/O boundary, declare it "
+            "(@boundary or @link(boundary=True))."))
     return out
 
 
