@@ -15,7 +15,9 @@ handler that constructs raw HTTP responses — the alert stream — is a declare
 emits, so its output is checkable rather than assumed.
 """
 
+import json
 from pathlib import Path
+from urllib.parse import parse_qsl
 
 from fastapi import FastAPI, Request
 from fastapi import responses
@@ -57,6 +59,34 @@ def search_chain(manifest):
 ROUTES = {
     ("GET", "/search"): search_chain,
 }
+
+
+@link()
+def extract_tokens(path_params, query_params, state):
+    """The three token sources one request carries, merged into one manifest input (§10.3): path
+    parameters, query parameters, and the `_state` domx collected from the DOM.
+
+    Precedence is declared, not incidental: `_state` wins over query parameters, which win over path
+    parameters. That order follows the specificity of user intent — state the user established in the
+    page is more specific about what they meant than anything encoded in the URL. Pure over the three
+    already-extracted mappings; reading them off the request is the middleware's job below."""
+    return {**path_params, **query_params, **state}
+
+
+@app.middleware("http")
+@link(boundary=True)
+async def intake(request: Request, call_next):
+    """The intake boundary (§10.3): classify what the request carries once, and hand the interior one
+    manifest. Registered before any handler, so every route sees `request.state.manifest` already
+    resolved and no handler re-reads the request for its inputs."""
+    body = await request.body()
+    state = json.loads(dict(parse_qsl(body.decode("utf-8"))).get("_state", "{}")) if body else {}
+    request.state.manifest = extract_tokens(dict(request.path_params), dict(request.query_params), state)
+    response = await call_next(request)
+    request_id = request.headers.get("X-Request-ID")
+    if request_id is not None:
+        response.headers["X-Request-ID"] = request_id
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)
