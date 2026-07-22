@@ -15,7 +15,11 @@ if [ -z "$staged" ]; then
     exit 0
 fi
 
+# A module may carry conformance without a src/ of its own — honest-page's implementation is the
+# reference app and templates, not a package — so only lint the source directories that exist.
 srcdirs=$(printf '%s\n' "$staged" | sed -E 's#^python/(honest-[^/]+)/.*#\1/src#' | sort -u)
+srcdirs=$(for d in $srcdirs; do [ -d "$d" ] && printf '%s ' "$d"; done)
+[ -z "$srcdirs" ] && { echo "lint-affected: no honest-* source staged; nothing to check."; exit 0; }
 echo "lint-affected: $(printf '%s ' $srcdirs)"
 # shellcheck disable=SC2086  -- intentional word-split; module paths contain no spaces
 uv run --package honest-check python -m honest_check.cli $srcdirs
