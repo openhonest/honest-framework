@@ -83,7 +83,7 @@ def _check_overlap(base_types: dict) -> None:
             )
 
 
-# honest: disable HC-P002
+# honest: disable HC-P002: vocabulary construction reports a malformed vocabulary as a fault value rather than raising
 def _accepts(recognizer: dict, token: str) -> bool:
     """Whether a recognizer accepts a token during catch-all sampling (section 13.3). A predicate
     that raises on a sample string counts as not accepting it — the same tolerance classification

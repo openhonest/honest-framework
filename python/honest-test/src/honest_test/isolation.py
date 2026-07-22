@@ -16,7 +16,7 @@ boundary — this file mutates module attributes and runs the link under instrum
 linter forbids in business logic, so HC-P004/HC-P011/HC-P002 are disabled here.
 """
 
-# honest: disable HC-P004, HC-P011, HC-P002
+# honest: disable HC-P002: the isolation runner turns a raised exception into a reported outcome, which is what a boundary is for
 
 import contextlib
 import importlib

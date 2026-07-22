@@ -7,7 +7,7 @@ makes. Everything it routes with is a table lookup, never a branch: `fault_to_ou
 maps fault codes to output functions, and category picks the default.
 """
 
-# honest: disable HC-P002
+# honest: disable HC-P002: the boundary turns a rejected input into a fault value, which is what a boundary is for
 
 from honest_type.types import err, fault, ok
 

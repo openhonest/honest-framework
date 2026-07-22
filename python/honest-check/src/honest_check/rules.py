@@ -47,7 +47,13 @@ from honest_check.declgraph import (
 from honest_check.diagnostics import Diagnostic, diagnostic
 from honest_check.js_rules import check_hc_p001_js, check_hc_p002_js, check_hc_p003_js, check_hc_p004_js, check_hc_p005_js, check_hc_p006_js, check_hc_p011_js, check_hc_p016_js
 from honest_parse import first_error_node, line_col, node_text, parse, walk
-from honest_check.suppression import build_suppressions, is_suppressed
+from honest_check.suppression import (
+    build_suppressions,
+    collect_directives,
+    dead_directives,
+    is_suppressed,
+    unexplained_directives,
+)
 from honest_check.watchlists import (
     PERSISTED_WRITE_WATCH_LIST,
     IO_WATCH_LIST,
@@ -1691,8 +1697,10 @@ def check_source(source: str, path: str) -> list[Diagnostic]:
     max_line = root.end_point[0] + 1
     inline, ranges = build_suppressions(root, src_bytes, max_line)
     out: list[Diagnostic] = []
+    hits: set[tuple[str, int]] = set()
     for d in raw:
         if is_suppressed(d["rule"], d["line"], inline, ranges):
+            hits.add((d["rule"], d["line"]))
             out.append(
                 diagnostic(
                     d["rule"],
@@ -1705,4 +1713,29 @@ def check_source(source: str, path: str) -> list[Diagnostic]:
             )
         else:
             out.append(d)
+    directives = collect_directives(root, src_bytes)
+    for line, col, rule in dead_directives(directives, ranges, frozenset(hits)):
+        out.append(
+            diagnostic(
+                "HC-SUP001",
+                "error",
+                path,
+                line,
+                col,
+                f"Suppression of {rule} matched no diagnostic. A dead directive silently "
+                "covers whatever this file grows next — delete it. See honest-check-architecture.md §7.4.",
+            )
+        )
+    for line, col in unexplained_directives(directives):
+        out.append(
+            diagnostic(
+                "HC-SUP002",
+                "error",
+                path,
+                line,
+                col,
+                "Suppression carries no reason. Write '# honest: disable RULE: why' so the "
+                "next reader can judge it. See honest-check-architecture.md §7.4.",
+            )
+        )
     return out

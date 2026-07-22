@@ -15,7 +15,7 @@ alone; everywhere else faults flow as data. The clock is not read here — the b
 purely from the attempt number and the wait is the injected `sleep` — so no I/O directive is needed.
 """
 
-# honest: disable HC-P002
+# honest: disable HC-P002: the connection boundary reports a failed connect as a fault value rather than raising
 
 from honest_type import err, ok
 

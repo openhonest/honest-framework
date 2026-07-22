@@ -5,7 +5,7 @@ Pure and dependency-free — neither Pydantic nor Django is imported, so the pur
 even though it never holds the loaders themselves. Mapping a value to its type is the one
 introspective step, so HC-P005 is disabled here as in the loaders.
 """
-# honest: disable HC-P005
+# honest: disable HC-P005: the checks here are primitive shape guards on host configuration, not domain dispatch
 
 
 def _quoted(value):

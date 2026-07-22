@@ -10,7 +10,7 @@ get_origin, and type() to map Python types to abstract SQL types — so HC-P005 
 file alone. This is the one boundary where the framework inspects Python types rather than its own
 data; everywhere else the schema is a dict and no type introspection is needed.
 """
-# honest: disable HC-P005
+# honest: disable HC-P005: the checks here are primitive shape guards on loaded schema data, not domain dispatch
 
 from typing import Literal, get_args, get_origin, get_type_hints
 

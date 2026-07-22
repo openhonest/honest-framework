@@ -1096,24 +1096,34 @@ def _probe_suppression_internals():
     from honest_parse import parse_python
 
     from honest_check.suppression import (
-        _collect_directives,
         _parse_directive,
         build_suppressions,
+        collect_directives,
+        dead_directives,
         is_suppressed,
+        unexplained_directives,
     )
 
     bad = []
 
-    # Valid directives return (verb, frozenset(rules)). Multi-rule works comma-separated, comma+space,
-    # space-separated, and comma-without-space — the comma becomes a space (not deleted) and the
-    # line tail is kept whole (split maxsplit keeps every rule).
+    # Valid directives return (verb, frozenset(rules), reason). Multi-rule works comma-separated,
+    # comma+space, space-separated, and comma-without-space — the comma becomes a space (not deleted)
+    # and the line tail is kept whole (split maxsplit keeps every rule). The reason is everything
+    # after the first colon, stripped; absent means the empty string.
     valid = {
-        "# honest: ignore HC-P003": ("ignore", frozenset({"HC-P003"})),
-        "# honest: disable HC-P003": ("disable", frozenset({"HC-P003"})),
-        "# honest: enable HC-P003": ("enable", frozenset({"HC-P003"})),
-        "# honest: disable HC-P003, HC-P001": ("disable", frozenset({"HC-P003", "HC-P001"})),
-        "# honest: disable HC-P003,HC-P001": ("disable", frozenset({"HC-P003", "HC-P001"})),
-        "# honest: disable HC-P003 HC-P001": ("disable", frozenset({"HC-P003", "HC-P001"})),
+        "# honest: ignore HC-P003": ("ignore", frozenset({"HC-P003"}), ""),
+        "# honest: disable HC-P003": ("disable", frozenset({"HC-P003"}), ""),
+        "# honest: enable HC-P003": ("enable", frozenset({"HC-P003"}), ""),
+        "# honest: disable HC-P003, HC-P001": ("disable", frozenset({"HC-P003", "HC-P001"}), ""),
+        "# honest: disable HC-P003,HC-P001": ("disable", frozenset({"HC-P003", "HC-P001"}), ""),
+        "# honest: disable HC-P003 HC-P001": ("disable", frozenset({"HC-P003", "HC-P001"}), ""),
+        "# honest: disable HC-P003: the reason": ("disable", frozenset({"HC-P003"}), "the reason"),
+        "# honest: ignore HC-P003:   spaced   ": ("ignore", frozenset({"HC-P003"}), "spaced"),
+        "# honest: disable HC-P003, HC-P001: two rules, one reason": (
+            "disable",
+            frozenset({"HC-P003", "HC-P001"}),
+            "two rules, one reason",
+        ),
     }
     for text, expected in valid.items():
         got = _parse_directive(text)
@@ -1132,12 +1142,12 @@ def _probe_suppression_internals():
         if got is not None:
             bad.append(f"_parse_directive({text!r}) -> {got!r}, want None")
 
-    # _collect_directives keeps only real comment nodes: a directive inside a string literal is ignored,
-    # a plain comment does not crash collection, and the kept directive carries its 1-based line.
-    src = b'x = "# honest: disable HC-P003"\n# honest: ignore HC-P001\n# plain comment\n'
-    collected = _collect_directives(parse_python(src).root_node, src)
-    if collected != [(2, "ignore", frozenset({"HC-P001"}))]:
-        bad.append(f"_collect_directives (string-literal ignored, plain kept safe): {collected}")
+    # collect_directives keeps only real comment nodes: a directive inside a string literal is ignored,
+    # a plain comment does not crash collection, and the kept directive carries its 1-based line and column.
+    src = b'x = "# honest: disable HC-P003"\n# honest: ignore HC-P001: why\n# plain comment\n'
+    collected = collect_directives(parse_python(src).root_node, src)
+    if collected != [(2, 1, "ignore", frozenset({"HC-P001"}), "why")]:
+        bad.append(f"collect_directives (string-literal ignored, plain kept safe): {collected}")
 
     # Order is load-bearing: a disable then a later enable forms a closed range; an enable *before*
     # a disable is a no-op and the disable runs to EOF. The two orderings give different ranges, so
@@ -1150,6 +1160,14 @@ def _probe_suppression_internals():
     inline2, ranges2 = build_suppressions(parse_python(ed).root_node, ed, 4)
     if inline2 != {} or ranges2 != {"HC-P003": [(4, 4)]}:
         bad.append(f"build_suppressions enable(noop)->disable-to-EOF: {inline2} {ranges2}")
+
+    # Directives are ordered by line, never by column. Here the no-op enable sits at a high column
+    # on line 1 and the disable at column 1 on line 2: ordering by column would process the disable
+    # first and pair it with the earlier enable, closing a backwards range.
+    cols = b"x = 1  # honest: enable HC-P003\n# honest: disable HC-P003: reason\nclass A:\n    pass\n"
+    inline_c, ranges_c = build_suppressions(parse_python(cols).root_node, cols, 4)
+    if inline_c != {} or ranges_c != {"HC-P003": [(2, 4)]}:
+        bad.append(f"build_suppressions must order directives by line, not column: {ranges_c}")
 
     # An inline ignore records the comment's own line and opens no range.
     ign = b"class A:  # honest: ignore HC-P003\n    pass\n"
@@ -1167,6 +1185,59 @@ def _probe_suppression_internals():
         bad.append("is_suppressed should honour an inline ignore on the line")
     if is_suppressed("HC-P999", 7, {}, rng):
         bad.append("is_suppressed should be False for a rule with no suppressions")
+
+    # dead_directives (HC-SUP001). An inline ignore is live only when the rule fired on its own
+    # line; a disable only when the rule fired inside the range that this very directive opened.
+    ignore_dir = [(3, 5, "ignore", frozenset({"HC-P003"}), "why")]
+    if dead_directives(ignore_dir, {}, frozenset({("HC-P003", 3)})) != []:
+        bad.append("dead_directives: a live inline ignore must not be reported")
+    if dead_directives(ignore_dir, {}, frozenset({("HC-P003", 4)})) != [(3, 5, "HC-P003")]:
+        bad.append("dead_directives: an ignore whose rule fired on another line is dead")
+    disable_dir = [(1, 1, "disable", frozenset({"HC-P003"}), "why")]
+    open_range = {"HC-P003": [(1, 9)]}
+    if dead_directives(disable_dir, open_range, frozenset({("HC-P003", 4)})) != []:
+        bad.append("dead_directives: a live disable must not be reported")
+    if dead_directives(disable_dir, open_range, frozenset({("HC-P001", 4)})) != [(1, 1, "HC-P003")]:
+        bad.append("dead_directives: a disable whose rule never fired is dead")
+    if dead_directives(disable_dir, open_range, frozenset({("HC-P003", 40)})) != [(1, 1, "HC-P003")]:
+        bad.append("dead_directives: a hit outside the opened range does not revive the disable")
+    # Liveness is inclusive at both ends of the opened range, and excluded one line outside either end.
+    for hit_line, want_dead in {0: True, 1: False, 5: False, 9: False, 10: True}.items():
+        got = dead_directives(disable_dir, open_range, frozenset({("HC-P003", hit_line)}))
+        if bool(got) != want_dead:
+            bad.append(f"dead_directives: hit at line {hit_line} of range (1, 9) -> dead={bool(got)}")
+    # A redundant second disable opens no range of its own, so it is dead even though the rule fired.
+    if dead_directives(
+        [(2, 1, "disable", frozenset({"HC-P003"}), "why")], open_range, frozenset({("HC-P003", 4)})
+    ) != [(2, 1, "HC-P003")]:
+        bad.append("dead_directives: a redundant second disable is dead")
+    # enable only closes a block; it suppresses nothing and is never dead.
+    if dead_directives([(9, 1, "enable", frozenset({"HC-P003"}), "")], open_range, frozenset()) != []:
+        bad.append("dead_directives: enable is never dead")
+    # Several rules on one directive are judged one by one, in rule order.
+    two = [(1, 1, "disable", frozenset({"HC-P001", "HC-P003"}), "why")]
+    if dead_directives(two, {"HC-P003": [(1, 9)]}, frozenset({("HC-P003", 4)})) != [(1, 1, "HC-P001")]:
+        bad.append("dead_directives: each rule on a multi-rule directive is judged separately")
+
+    # unexplained_directives (HC-SUP002): ignore and disable need a reason, enable does not.
+    mixed = [
+        (1, 1, "disable", frozenset({"HC-P003"}), ""),
+        (2, 7, "ignore", frozenset({"HC-P001"}), ""),
+        (3, 1, "disable", frozenset({"HC-P003"}), "explained"),
+        (4, 1, "enable", frozenset({"HC-P003"}), ""),
+    ]
+    if unexplained_directives(mixed) != [(1, 1), (2, 7)]:
+        bad.append(f"unexplained_directives: {unexplained_directives(mixed)}")
+
+    # The suppression rules cannot be suppressed: naming one opens no range and records no ignore.
+    uns = b"# honest: disable HC-SUP001, HC-P003: attempt\nclass A:\n    pass\n"
+    inline4, ranges4 = build_suppressions(parse_python(uns).root_node, uns, 3)
+    if inline4 != {} or ranges4 != {"HC-P003": [(1, 3)]}:
+        bad.append(f"build_suppressions must drop unsuppressable rules: {inline4} {ranges4}")
+    uns_ignore = b"class A:  # honest: ignore HC-SUP002: attempt\n    pass\n"
+    inline5, _ = build_suppressions(parse_python(uns_ignore).root_node, uns_ignore, 2)
+    if inline5 != {1: set()}:
+        bad.append(f"an inline ignore of an unsuppressable rule records nothing: {inline5}")
     return bad
 
 

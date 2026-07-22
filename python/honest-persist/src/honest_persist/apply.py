@@ -16,7 +16,7 @@ is rendered in the PostgreSQL form; dialects without in-place column alteration 
 a table rebuild, emitted as one `reconstruct_table` migration event.
 """
 
-# honest: disable HC-P002, HC-P004, HC-P005
+# honest: disable HC-P002, HC-P004, HC-P005: this module is the database boundary: it executes migrations and reports driver errors as fault values
 
 import sys
 import time

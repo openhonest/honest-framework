@@ -10,7 +10,7 @@ This module IS the boundary: it performs I/O by design, so HC-P004 (non-boundary
 @boundary decorator these functions will carry it instead.
 """
 
-# honest: disable HC-P004, HC-P002
+# honest: disable HC-P004: this module is the CLI boundary: it reads feature files and reports results to the terminal
 
 import argparse
 import importlib

@@ -6,7 +6,7 @@ dishonest declarations before serving traffic. It runs the startup-eligible rule
 halts per `on_error`. Boundary module: it reads files, writes stderr, and may halt.
 """
 
-# honest: disable HC-P004
+# honest: disable HC-P004: this module is the framework's startup boundary: it reads the source tree
 
 import sys
 from pathlib import Path

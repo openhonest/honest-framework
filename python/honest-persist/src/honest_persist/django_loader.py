@@ -7,7 +7,6 @@ no I/O, no database — and an optional adapter installed via honest-persist[dja
 never imports Django, and a hand-written Schema dict is equally valid (section 2.2). Reading Django's
 field objects is introspective, so HC-P005 is disabled for this file alone, as in the Pydantic loader.
 """
-# honest: disable HC-P005
 
 from honest_persist.host_defaults import default_sql
 

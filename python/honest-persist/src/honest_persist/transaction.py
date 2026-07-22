@@ -13,7 +13,7 @@ data. The boundary also reads the clock to time the transaction and logs a swall
 failure to stderr (req 14), so HC-P004 is disabled here too — both are boundary behaviours.
 """
 
-# honest: disable HC-P004, HC-P002
+# honest: disable HC-P004, HC-P002: this module is the database boundary: it opens transactions and turns driver errors into fault values
 
 import sys
 import time

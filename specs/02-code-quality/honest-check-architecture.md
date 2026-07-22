@@ -1326,16 +1326,22 @@ For CI systems that consume JUnit format:
 
 ## 7. Rule Suppression
 
+A directive names a verb, one or more rules, and — for `ignore` and `disable` — a reason after a colon. Everything after the first colon is the reason; the rules before it are separated by commas or spaces. `enable` only closes a block, so it carries no reason.
+
+```
+# honest: VERB RULE[, RULE...][: reason]
+```
+
 ### 7.1 Inline suppression
 
 A single line:
 ```python
-if role == "admin":  # honest: ignore HC-P001
+if role == "admin":  # honest: ignore HC-P001: dispatch retained pending table conversion
 ```
 
 A block:
 ```python
-# honest: disable HC-P001
+# honest: disable HC-P001: dispatch retained pending table conversion
 if role == "admin":
     return admin_view(manifest)
 elif role == "editor":
@@ -1346,10 +1352,10 @@ elif role == "editor":
 ### 7.2 File-level suppression
 
 ```python
-# honest: disable HC-P001, HC-P003
+# honest: disable HC-P001, HC-P003: this module is the CLI boundary
 ```
 
-At the top of a file, applies to the entire file.
+At the top of a file, applies to the entire file. This is the widest and therefore the most dangerous form: it also covers every violation the file acquires later.
 
 ### 7.3 Configuration suppression
 
@@ -1361,14 +1367,20 @@ disable = ["HC-P006"]
 
 ### 7.4 Suppression policy
 
-Suppression is always recorded in the output with an `info` diagnostic:
+A suppression is a claim about the codebase — this violation is known, and here is why it stands. Three requirements keep that claim true. Together they make "passes honest-check" mean the same thing in every codebase that says it.
+
+**Suppressed diagnostics stay visible.** A suppressed diagnostic is downgraded to `info`, never dropped:
 
 ```
 src/pipelines/user.py:42: info
-  HC-P001 suppressed by inline comment.
+  HC-P001 suppressed by directive.
 ```
 
-This ensures suppressions are visible in CI and do not silently accumulate.
+**A suppression that suppresses nothing is an error (HC-SUP001).** A directive whose rule never fires is dead, and a dead directive is indistinguishable from a live one — it sits in the file silently covering whatever violation the file grows next. This is the bug category the rule eliminates: a disable written for one problem swallowing a different problem added later. An inline `ignore` is live only when the rule fired on its own line; a `disable` only when the rule fired inside the range that this directive opened. A redundant second `disable` of an already-open rule opens no range of its own, so it is dead. `enable` suppresses nothing by definition and is never reported.
+
+**A suppression without a reason is an error (HC-SUP002).** The reason is what lets the next reader judge whether the suppression still holds. Without one, the directive records that someone silenced a rule and nothing about whether they were right.
+
+**Neither rule can itself be suppressed.** `HC-SUP001` and `HC-SUP002` are excluded from every suppression form. A directive naming one suppresses nothing, so it is reported as dead by HC-SUP001 — the attempt to hide the rule is what surfaces it.
 
 ---
 
@@ -1412,7 +1424,9 @@ This ensures suppressions are visible in CI and do not silently accumulate.
 | HC-OR003 | Warning | Static | — | Suspected duplication between orchestrators |
 | HC-A001 | Warning | Static | — | No AuthProvider registered |
 | HC-A002 | Error | Static | — | Actor trusted from request input instead of the boundary |
-| HC-P012 | Warning | Test | — | Excessive mocks in test (honest-test) |
+| HC-P012 | Warning | Test | — | Excessive test doubles in test (honest-test) |
+| HC-SUP001 | Error | Static | — | Suppression matched no diagnostic (dead directive) |
+| HC-SUP002 | Error | Static | — | Suppression carries no reason |
 
 **Withdrawn:** *HC-SM06 ("transition writes to undeclared state field")* has been removed. It assumed a state-machine model where a state is a record of fields and transitions are field-writing functions. The canonical model (`honest-state-architecture.md`) defines a state as an atomic name and `transition()` as a pure `(state, event) → next_state` lookup that writes nothing — the caller persists the next state. There are no transition-written fields to police, so the rule described a model the framework does not have. honest-state §4 correctly lists only HC-SM01/02/03/04/05.
 

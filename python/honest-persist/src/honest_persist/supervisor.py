@@ -10,7 +10,7 @@ attempts, until it drains or raises. Reading and writing the file, catching at t
 logging a swallowed emit are boundary behaviours, so HC-P004/P002 are disabled file-wide here.
 """
 
-# honest: disable HC-P004, HC-P002
+# honest: disable HC-P004, HC-P002: the supervisor is a process boundary: it starts workers and turns their failures into fault values
 
 import sys
 from pathlib import Path

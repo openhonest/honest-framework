@@ -25,14 +25,14 @@ _EXCEPTION_TABLE = ((AssertionError, "failed", "assertion_failed"),)
 def _now_ms():
     """Read the wall clock in milliseconds (section 6.2): the one impure seam in the run model.
     A spoke may stub it to return 0 for fully repeatable runs."""
-    return time.perf_counter() * 1000.0  # honest: ignore HC-P004  (the one sanctioned clock read, section 6.2)
+    return time.perf_counter() * 1000.0  # honest: ignore HC-P004: the one sanctioned clock read, section 6.2
 
 
 def _classify_exception(exc):
     """Classify a caught handler exception into (step_status, fault_code) via the section 7.1 table,
     most-specific first; any unlisted exception hits the catch-all errored / step_errored."""
     for exc_type, status, code in _EXCEPTION_TABLE:
-        if isinstance(exc, exc_type):  # honest: ignore HC-P005  (primitive type guard at the exception boundary, not domain dispatch)
+        if isinstance(exc, exc_type):  # honest: ignore HC-P005: primitive type guard at the exception boundary, not domain dispatch
             return status, code
     return "errored", "step_errored"
 
@@ -48,12 +48,12 @@ def run_step(step, context, registry, scenario_name):
         return {"result": {"step": step, "status": _MATCH_FAULT_STATUS[code], "fault": fault}, "context": context}
     handler = matched["ok"]["pattern"]["handler"]
     captures = matched["ok"]["captures"]
-    # honest: disable HC-P002
+    # honest: disable HC-P002: the step runner turns a raised exception into a reported fault value, which is what a boundary is for
     try:
         returned = handler(context, **captures)
     except Exception as exc:  # the single exception boundary (section 7.1); converted to data at once
         status, code = _classify_exception(exc)
-        detail = str(exc) or type(exc).__name__  # honest: ignore HC-P005  (the class name is the fault detail when the exception has no message, not dispatch)
+        detail = str(exc) or type(exc).__name__  # honest: ignore HC-P005: the class name is the fault detail when the exception has no message, not dispatch
         fault = step_fault(code, detail, scenario_name=scenario_name, step_text=step["text"])
         return {"result": {"step": step, "status": status, "fault": fault}, "context": context}
     # honest: enable HC-P002

@@ -29,7 +29,6 @@ def supplied_for(config, predicate_name):
     }
 
 
-# honest: disable HC-P004
 def load_config(path):
     """Read and parse honest-test.toml (the boundary I/O). Returns {} when the file is absent.
     Uses the stdlib tomllib - no dependency, no YAML type inference."""

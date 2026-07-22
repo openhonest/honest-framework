@@ -11,7 +11,7 @@ Boundary). Once honest-type ships the @boundary decorator these functions will c
 it; until then the boundary is declared here (section 7.2).
 """
 
-# honest: disable HC-P004, HC-P002, HC-P010
+# honest: disable HC-P004, HC-P002, HC-P010: this module is the CLI boundary: it reads files, writes to the terminal, and returns the process exit code
 
 import argparse
 import json

@@ -19,7 +19,7 @@ from honest_type.vocabulary import auto_binding, is_maybe, unwrap_maybe
 # untrusted code. A throw becomes a predicate_error fault (data), never an exception in
 # the pure core. This is the one place catching is legitimate (Typed Exceptions at the
 # Boundary), hence the block disable.
-# honest: disable HC-P002
+# honest: disable HC-P002: classification reports an unclassifiable token as a fault value rather than raising
 def _safe_recognize(token, recognizer):
     """Run a recognizer; return (matched, error_message). error_message is set only when a
     predicate threw."""
@@ -136,7 +136,7 @@ def classify(tokens, vocab, bind=None):
         if token is None:
             rejections.append(rejection(None, "null_token"))
             continue
-        if not isinstance(token, str):  # honest: ignore HC-P005  (primitive input-contract guard, not domain dispatch)
+        if not isinstance(token, str):  # honest: ignore HC-P005: primitive input-contract guard, not domain dispatch
             return {"err": fault("non_string_token", f"classify() requires string tokens. Got: {token!r}", "server", {"token": token})}
         if token == "":
             rejections.append(rejection("", "empty_token"))

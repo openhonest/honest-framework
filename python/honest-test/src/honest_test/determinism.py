@@ -19,7 +19,6 @@ mutates module attributes and executes the link under instrumentation, exactly t
 forbids in business logic, so HC-P004/HC-P011 are disabled here.
 """
 
-# honest: disable HC-P004, HC-P011
 
 import asyncio
 import contextlib

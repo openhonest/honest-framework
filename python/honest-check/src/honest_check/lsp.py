@@ -11,7 +11,7 @@ Split: the method handlers are PURE — (store, msg_id, params) -> (store, outgo
 messages) — calling the pure `check_source` and parse helpers. The only I/O is the
 read/write framing loop, which is the boundary. Method dispatch is a table, not a branch.
 
-# honest: disable HC-P004
+# honest: disable HC-P004: this module is the editor boundary: it reads and writes the language-server stream
 """
 
 import json

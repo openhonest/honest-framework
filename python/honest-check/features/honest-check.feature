@@ -342,18 +342,43 @@ Feature: honest-check — Python supplement
   Scenario: _parse_directive parses an honest directive comment
     Given the text of a comment
     When _parse_directive reads it
-    Then it returns the verb and the named rules for a well-formed honest directive, otherwise nothing
+    Then it returns the verb, the named rules, and the reason for a well-formed honest directive, otherwise nothing
+    And the reason is everything after the first colon, or the empty string when there is none
 
-  Scenario: _collect_directives collects every honest directive in source order
+  Scenario: collect_directives collects every honest directive in source order
     Given a syntax tree and its source
-    When _collect_directives walks the comments
-    Then it returns each directive's line, verb, and rules, in source order
+    When collect_directives walks the comments
+    Then it returns each directive's line, column, verb, rules, and reason, in source order
 
   Scenario: build_suppressions computes the inline and block suppressions
     Given a syntax tree, its source, and the last line number
     When build_suppressions reads the directives
     Then it returns the per-line inline ignores and the per-rule disable ranges
     And a disable that is never re-enabled runs to the end of the file
+    And the rules that cannot be suppressed are dropped, so naming one suppresses nothing
+
+  Scenario: _ignore_is_live reports whether an inline ignore suppressed anything
+    Given a rule, the line its directive sits on, and the diagnostics that were suppressed
+    When _ignore_is_live judges it
+    Then it is live only when that rule fired on that same line
+
+  Scenario: _disable_is_live reports whether a disable suppressed anything
+    Given a rule, the line its directive sits on, the disable ranges, and the diagnostics that were suppressed
+    When _disable_is_live judges it
+    Then it is live only when that rule fired inside the range this directive opened
+    And a directive that opened no range — a redundant second disable, or one naming a rule that cannot be suppressed — is not live
+
+  Scenario: dead_directives reports the suppressions that suppressed nothing
+    Given the collected directives, the disable ranges, and the diagnostics that were suppressed
+    When dead_directives judges each rule on each directive
+    Then it returns the line, column, and rule of every suppression that matched no diagnostic
+    And an enable is never reported, because it suppresses nothing by definition
+
+  Scenario: unexplained_directives reports the suppressions carrying no reason
+    Given the collected directives
+    When unexplained_directives reads their reasons
+    Then it returns the line and column of every ignore or disable with an empty reason
+    And an enable is never reported, because it needs no reason
 
   # cli.py — the command-line boundary
 

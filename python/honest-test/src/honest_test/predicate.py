@@ -132,7 +132,7 @@ def classify_source(source, codebase_names=None):
     return "unknown"
 
 
-# honest: disable HC-P002
+# honest: disable HC-P002: a predicate that raises is reported as a failed predicate, not propagated
 def classify_predicate(predicate_or_fn, codebase_names=None):
     """Classify a live predicate recognizer or callable (section 2). Reads the function's
     source - the one impure step - and delegates to classify_source. A function whose source

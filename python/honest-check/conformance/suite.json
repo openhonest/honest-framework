@@ -731,7 +731,7 @@
             "rule": "HC-P001",
             "severity": "error",
             "line": 2,
-            "message": "if/else-if chain dispatches on value \u2014 use dict lookup. See honest-code-principles.md \u00a73."
+            "message": "if/else-if chain dispatches on value — use dict lookup. See honest-code-principles.md §3."
           }
         ]
       }
@@ -836,7 +836,7 @@
             "rule": "HC-P016",
             "severity": "error",
             "line": 3,
-            "message": "Inner function captures ['x'] via closure and mutates it. Closures may not carry mutable state \u2014 use pure parameters or move state into persist."
+            "message": "Inner function captures ['x'] via closure and mutates it. Closures may not carry mutable state — use pure parameters or move state into persist."
           }
         ]
       }
@@ -956,6 +956,140 @@
       },
       "expected": {
         "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-SUP-001",
+      "description": "A file-level disable that suppresses nothing is dead and must be removed",
+      "category": "HC-SUP001",
+      "input": {
+        "language": "python",
+        "source": "# honest: disable HC-P001: kept for a chain that no longer exists\ndef f(x):\n    return x"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-SUP001",
+            "severity": "error",
+            "line": 1,
+            "message": "Suppression of HC-P001 matched no diagnostic. A dead directive silently covers whatever this file grows next — delete it. See honest-check-architecture.md §7.4."
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-SUP-002",
+      "description": "An inline ignore on a line with no violation is dead",
+      "category": "HC-SUP001",
+      "input": {
+        "language": "python",
+        "source": "def f(x):\n    return x  # honest: ignore HC-P001: no chain here"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-SUP001",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-SUP-003",
+      "description": "A live disable carrying a reason produces the section 7.4 info and nothing else",
+      "category": "HC-SUP001",
+      "input": {
+        "language": "python",
+        "source": "# honest: disable HC-P001: dispatch retained pending table conversion\ndef handle(role):\n    if role == 'admin':\n        return 1\n    elif role == 'editor':\n        return 2\n    elif role == 'viewer':\n        return 3"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-SUP-004",
+      "description": "The suppressed diagnostic still appears, downgraded to info (section 7.4)",
+      "category": "HC-SUP001",
+      "input": {
+        "language": "python",
+        "source": "# honest: disable HC-P001: dispatch retained pending table conversion\ndef handle(role):\n    if role == 'admin':\n        return 1\n    elif role == 'editor':\n        return 2\n    elif role == 'viewer':\n        return 3"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P001",
+            "severity": "info",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-SUP-005",
+      "description": "A suppression without a reason is an error, even when it is live",
+      "category": "HC-SUP002",
+      "input": {
+        "language": "python",
+        "source": "# honest: disable HC-P001\ndef handle(role):\n    if role == 'admin':\n        return 1\n    elif role == 'editor':\n        return 2\n    elif role == 'viewer':\n        return 3"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-SUP002",
+            "severity": "error",
+            "line": 1,
+            "message": "Suppression carries no reason. Write '# honest: disable RULE: why' so the next reader can judge it. See honest-check-architecture.md §7.4."
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-SUP-006",
+      "description": "An enable directive closes a block and needs no reason",
+      "category": "HC-SUP002",
+      "input": {
+        "language": "python",
+        "source": "# honest: disable HC-P001: dispatch retained pending table conversion\ndef handle(role):\n    if role == 'admin':\n        return 1\n    elif role == 'editor':\n        return 2\n    elif role == 'viewer':\n        return 3\n# honest: enable HC-P001"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-SUP-007",
+      "description": "The suppression rules cannot themselves be suppressed",
+      "category": "HC-SUP001",
+      "input": {
+        "language": "python",
+        "source": "# honest: disable HC-SUP001, HC-SUP002: trying to hide the dead directive below\n# honest: disable HC-P001: kept for a chain that no longer exists\ndef f(x):\n    return x"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-SUP001",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-SUP-008",
+      "description": "A second disable of an already-open rule suppresses nothing of its own",
+      "category": "HC-SUP001",
+      "input": {
+        "language": "python",
+        "source": "# honest: disable HC-P001: dispatch retained pending table conversion\n# honest: disable HC-P001: redundant\ndef handle(role):\n    if role == 'admin':\n        return 1\n    elif role == 'editor':\n        return 2\n    elif role == 'viewer':\n        return 3"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-SUP001",
+            "severity": "error",
+            "line": 2
+          }
+        ]
       }
     }
   ],
