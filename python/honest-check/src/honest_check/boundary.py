@@ -213,6 +213,37 @@ def check_hc_references(vocabulary: dict, scanned_templates: list) -> list:
     return out
 
 
+def check_hc_st002(manifest_keys, js_modules: list) -> list:
+    """HC-ST002 — a shadow copy of user state outside the manifest-declared DOM (honest-state section 3).
+
+    The DOM is the store for user state and the user is its single mutator; a JS binding that also holds
+    that state is a second source of truth, and the two drift. This is decidable statically and was never
+    a runtime question: the templates *declare* which slots are user state (the DATAOS manifest), and
+    generation from them is deterministic, so the full set of slots is known before the app runs.
+
+    Two shapes are a copy. A module-level binding named for a declared slot holds that slot beside the
+    DOM. A module-level binding initialised from `collect()` caches extracted state — honest-DOM's own
+    anti-pattern: extract fresh before every use, never store and reuse. A binding inside a function is
+    local to one call and is not reported. Pure over the already-parsed bindings."""
+    out = []
+    for module in js_modules:
+        for binding in module["bindings"]:
+            line, col = binding["location"]
+            if binding["name"] in manifest_keys:
+                out.append(diagnostic(
+                    "HC-ST002", "error", module["path"], line, col,
+                    f"Module-level '{binding['name']}' holds user state the manifest already declares. The "
+                    "DOM is the single store for that slot; read it fresh instead of keeping a copy.",
+                ))
+            elif binding["from_collect"]:
+                out.append(diagnostic(
+                    "HC-ST002", "error", module["path"], line, col,
+                    f"Module-level '{binding['name']}' caches the result of collect(). Extract fresh at "
+                    "each use; a stored copy of what the DOM says is a second source of truth.",
+                ))
+    return out
+
+
 def boundary_diagnostics(root, source: bytes, path: str, scanned_templates: list) -> list:
     """Run the first-link boundary check on one parsed source file given the scanned templates: read its
     route map, chains, and links, then check_boundary against the templates. A file that declares no

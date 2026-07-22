@@ -227,6 +227,33 @@ def hc_references(source: bytes) -> tuple:
     return tuple(out)
 
 
+def js_module_bindings(source: bytes) -> tuple:
+    """Every module-level binding a JS module declares (HC-ST002): its `name`, whether its initialiser
+    calls `collect` (`from_collect`), and its `location`. Only a top-level binding is reported — one
+    inside a function is local to a call and cannot become a second source of truth, while a module-level
+    one outlives every call and can. Pure over the parsed JS."""
+    out = []
+    for node in parse_javascript(source).root_node.children:
+        if node.type not in ("lexical_declaration", "variable_declaration"):
+            continue
+        for declarator in [child for child in node.named_children if child.type == "variable_declarator"]:
+            name = declarator.child_by_field_name("name")
+            value = declarator.child_by_field_name("value")
+            calls = [] if value is None else [
+                child for child in walk(value)
+                if child.type == "call_expression" and _js_callee_name(child, source) == "collect"
+            ]
+            out.append({"name": node_text(name, source), "from_collect": calls != [], "location": line_col(declarator)})
+    return tuple(out)
+
+
+def _js_callee_name(call_node, source: bytes) -> str:
+    """The plain name a JS call invokes (`collect(...)` -> "collect"); empty for a member or computed
+    callee, which names no bare function."""
+    function = call_node.child_by_field_name("function")
+    return "" if function is None or function.type != "identifier" else node_text(function, source)
+
+
 def _member_property(member_node, source: bytes):
     """The property name of a JS member expression (`a.b` -> "b"). A member expression always carries a
     property field, so this never returns None for parsed source."""

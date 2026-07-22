@@ -109,8 +109,8 @@ from honest_check.declgraph import (
 from honest_parse import parse_python, parse_javascript, parse_html, node_text, walk as _w
 from honest_check.rules import language_for_path
 from honest_check.js_rules import _class_base, _class_name, _is_class_node, _js_call_name, _js_enclosing_function, _js_equality_target, _js_else_if, _js_impure_name, _js_mutable_decl_names, _js_qualified_name, _js_reassigned_names, _js_scope_lets, _js_type_check
-from honest_check.templates import _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _member_property, _object_keys, _open_tag, _tag_name, hc_references, hf_references, js_class_references, manifest_keys, request_sites, scan_template, stylesheet_classes, template_class_references, template_includes
-from honest_check.boundary import _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_class_references, check_hc_references, check_hf_references, check_references, check_template_references, hc_vocabulary, hf_vocabulary, route_boundary
+from honest_check.templates import js_module_bindings, _js_callee_name, _attr, _form_field_names, _hx_vals_keys, _is_resolvable, _member_property, _object_keys, _open_tag, _tag_name, hc_references, hf_references, js_class_references, manifest_keys, request_sites, scan_template, stylesheet_classes, template_class_references, template_includes
+from honest_check.boundary import check_hc_st002, _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_class_references, check_hc_references, check_hf_references, check_references, check_template_references, hc_vocabulary, hf_vocabulary, route_boundary
 
 
 def _rules(source: str) -> list[str]:
@@ -3068,6 +3068,14 @@ def run() -> int:
         passed += 1
 
     total += 1
+    st002_bad = _probe_hc_st002()
+    if st002_bad:
+        failed += 1
+        print(f"FAIL HC-rule [hc_st002]: {st002_bad}")
+    else:
+        passed += 1
+
+    total += 1
     hc_references_bad = _probe_hc_references()
     if hc_references_bad:
         failed += 1
@@ -3137,3 +3145,45 @@ def run() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run())
+
+
+def _probe_hc_st002() -> list:
+    """HC-ST002 (honest-state section 3): a shadow copy of user state outside the manifest-declared DOM.
+    The templates declare which slots are user state, so this is decidable statically — it was never a
+    runtime question. js_module_bindings collects a JS module's top-level bindings and whether each is
+    initialised from collect(); check_hc_st002 flags a binding that names a declared slot or caches
+    collect()'s result, and leaves a local or an unrelated module binding alone."""
+    bad = []
+    bindings = js_module_bindings(
+        b"const search = 'x'\n"
+        b"let cached = collect(manifest, query)\n"
+        b"const unrelated = 1\n"
+        b"var legacy = 2\n"
+        b"let pending\n"
+        b"const viaMember = obj.collect(x)\n"
+        b"function f() {\n  const search = 2\n  return search\n}\n"
+    )
+    got = [(b["name"], b["from_collect"]) for b in bindings]
+    if got != [("search", False), ("cached", True), ("unrelated", False), ("legacy", False), ("pending", False), ("viaMember", False)]:
+        bad.append(f"js_module_bindings should collect module-level bindings only, marking collect(): {got}")
+    modules = [{"path": "app.js", "bindings": bindings}]
+    diags = check_hc_st002(frozenset({"search"}), modules)
+    kinds = [(d["rule"], d["severity"]) for d in diags]
+    if kinds != [("HC-ST002", "error"), ("HC-ST002", "error")]:
+        bad.append(f"HC-ST002 should flag the slot-named binding and the collect() cache, and nothing else: {kinds}")
+    if diags and ("search" not in diags[0]["message"] or "user state" not in diags[0]["message"]):
+        bad.append(f"the slot message should name the slot: {diags[0].get('message')}")
+    if len(diags) > 1 and ("collect" not in diags[1]["message"] or "second source of truth" not in diags[1]["message"]):
+        bad.append(f"the cache message should name collect and the remedy: {diags[1].get('message')}")
+    if diags and "read it fresh" not in diags[0]["message"]:
+        bad.append(f"the slot message should give the remedy: {diags[0].get('message')}")
+    # The callee reader is exact: a bare name resolves, a member or computed callee names no bare function.
+    calls = [n for n in _w(parse_javascript(b"collect(a)\nobj.collect(a)\n").root_node) if n.type == "call_expression"]
+    named = [_js_callee_name(c, b"collect(a)\nobj.collect(a)\n") for c in calls]
+    if named != ["collect", ""]:
+        bad.append(f"_js_callee_name returns the bare name, and empty for a member callee: {named}")
+    if diags and diags[0]["path"] != "app.js":
+        bad.append("HC-ST002 should carry the module path")
+    if check_hc_st002(frozenset(), [{"path": "app.js", "bindings": js_module_bindings(b"const unrelated = 1\n")}]) != []:
+        bad.append("HC-ST002 must stay silent on a module that copies no user state")
+    return bad

@@ -491,6 +491,28 @@ def _probe_cli():
         if code != 0:
             bad.append(f"a resolvable hc-* attribute should be clean, got {code}")
 
+    # HC-ST002 wired through the CLI: a client module that keeps a copy of a slot the templates declare
+    # as user state is a second source of truth, and the run fails.
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "app.py").write_text("x = 1\n", encoding="utf-8")
+        tdir = Path(tmp, "templates")
+        tdir.mkdir()
+        Path(tdir, "page.html").write_text(
+            "<body><script>const appManifest = { search: { selector: '#q', read: 'value' } }</script></body>",
+            encoding="utf-8")
+        shadow = Path(tdir, "app.js")
+        shadow.write_text("const search = 'copy'\n", encoding="utf-8")
+        cfg = Path(tmp, "honest-check.toml")
+        cfg.write_text(f'[check]\ntemplates = "{tdir}"\n', encoding="utf-8")
+        code, out, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg), "--format", "json"])
+        if code != 1 or "HC-ST002" not in out or "search" not in out:
+            bad.append(f"a module-level copy of a declared user-state slot should fire HC-ST002: {code} {out[:140]}")
+        # Read it fresh instead of keeping it, and the run is clean.
+        shadow.write_text("const unrelated = 1\n", encoding="utf-8")
+        code, _, _ = _run_cli([str(Path(tmp, "app.py")), "--config", str(cfg)])
+        if code != 0:
+            bad.append(f"a module that keeps no copy of user state should be clean, got {code}")
+
     # The watch loop re-runs once per trigger line and returns the last code at EOF.
     runs = {"n": 0}
 

@@ -909,3 +909,18 @@ Feature: honest-check — Python supplement
     Given source that calls an honest-persist write executor
     When check_hc_st001 examines each call's enclosing function
     Then it reports HC-ST001 for a call in a non-boundary function, staying silent inside a boundary, at module level, and across honest-persist's own source
+
+  Scenario: js_module_bindings collects a client module's module-level bindings
+    Given a JavaScript module
+    When js_module_bindings reads its top-level declarations
+    Then it yields each binding's name and whether its initialiser calls collect, skipping bindings inside a function
+
+  Scenario: _js_callee_name reads the plain name a JS call invokes
+    Given a call expression
+    When _js_callee_name is asked
+    Then it returns the bare function name, or empty for a member or computed callee
+
+  Scenario: check_hc_st002 flags a shadow copy of user state outside the declared DOM
+    Given the user-state slots the templates declare and the scanned client modules
+    When check_hc_st002 resolves each module-level binding against them
+    Then it reports HC-ST002 for a binding named after a declared slot and for one caching collect, staying silent otherwise

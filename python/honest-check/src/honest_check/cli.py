@@ -26,7 +26,7 @@ from honest_check.config import (
     resolve_paths,
     resolve_severity,
 )
-from honest_check.boundary import boundary_diagnostics, check_class_references, check_hc_references, check_hf_references, check_references, check_template_references, hc_vocabulary, hf_vocabulary
+from honest_check.boundary import boundary_diagnostics, check_class_references, check_hc_references, check_hc_st002, check_hf_references, check_references, check_template_references, hc_vocabulary, hf_vocabulary
 from honest_check.declgraph import extract_routes
 from honest_check.diagnostics import Diagnostic
 from honest_check.formats import (
@@ -38,7 +38,7 @@ from honest_check.formats import (
 )
 from honest_check.lsp import serve
 from honest_check.rules import check_source, language_for_path
-from honest_check.templates import js_class_references, scan_template, stylesheet_classes
+from honest_check.templates import js_class_references, js_module_bindings, scan_template, stylesheet_classes
 from honest_parse import parse
 
 
@@ -150,7 +150,7 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
         # under the search roots defines. The class references come from templates (scanned above) and from
         # the .js modules under the roots (the classes they emit via classList/className).
         defined_classes = frozenset(cls for troot in _template_roots(templates_dir) for f in _discover_css(str(troot)) for cls in stylesheet_classes(f.read_bytes()))
-        js_scanned = [{"path": str(f), "class_refs": js_class_references(f.read_bytes())} for troot in _template_roots(templates_dir) for f in _discover_js(str(troot))]
+        js_scanned = [{"path": str(f), "class_refs": js_class_references(f.read_bytes()), "bindings": js_module_bindings(f.read_bytes())} for troot in _template_roots(templates_dir) for f in _discover_js(str(troot))]
         all_routes: list = []
         for file in _discover_files(paths, exclude):
             source = file.read_text(encoding="utf-8")
@@ -177,6 +177,10 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
         components = _load_manifest(component_manifest)
         if components is not None:
             diagnostics.extend(check_hc_references(hc_vocabulary(components), scanned))
+        # HC-ST002 resolves every client module's module-level bindings against the user-state slots the
+        # templates declare. The manifest is the static declaration of user state, so a second copy of a
+        # slot is knowable before the app runs (honest-state section 3).
+        diagnostics.extend(check_hc_st002(frozenset(key for s in scanned for key in s["manifest_keys"]), js_scanned))
     except (OSError, json.JSONDecodeError) as exc:
         print(f"honest-check: cannot read source: {exc}", file=sys.stderr)
         return 2
