@@ -85,6 +85,69 @@ def _probe_edges():
         bad.append("change_correlation_edges must ground one edge per changed_with")
     if temporal_edges([_item("a", precedes=["b"])]) != [{"cause": "a", "effect": "b", "signal": "temporal", "marked": False}]:
         bad.append("temporal_edges must ground one edge per precedes")
+    # Every detector is exercised with and without its recorded relation (§10), not just dataflow: a
+    # detector that grounded an edge from an absent relation would invent causation.
+    for name, detector in (("controlflow", controlflow_edges), ("change_correlation", change_correlation_edges), ("temporal", temporal_edges)):
+        if detector([_item("a")]) != []:
+            bad.append(f"{name}_edges must be empty without its recorded relation")
+    return bad
+
+
+def _probe_evidence_kinds():
+    """Every evidence kind can stand at a terminus (§10). The solver treats kind as data — nothing in the
+    traversal may quietly privilege code over an event, a config entry, or a deploy."""
+    bad = []
+    for kind in EVIDENCE_KINDS:
+        evidence = evidence_set([_item("root", kind=kind, flows_to=["a"]), _item("a")])
+        graph = causal_graph(evidence, _method(["dataflow"]), [])
+        chain = trace(graph, _symptom("a"))
+        att = attest(_symptom("a"), evidence, _method(["dataflow"]), graph, chain, "")
+        if att["terminus"] != "root":
+            bad.append(f"an evidence item of kind {kind} must be able to stand at a terminus: {att['terminus']}")
+        if validate_attestation(att) != []:
+            bad.append(f"an attestation terminating at a {kind} item must be well-formed")
+    return bad
+
+
+def _probe_reproducibility():
+    """The bounded-completeness invariant (§12): a fixed evidence set and method reproduce an identical
+    attestation. This is what makes the claim verifiable by re-run rather than taken on trust — if the
+    same E and M could yield two different attestations, the attestation would attest nothing."""
+    bad = []
+    items = [_item("c", flows_to=["b"]), _item("b", flows_to=["a"], changed_with=["a"]), _item("a")]
+    method = _method(["dataflow", "change_correlation"])
+
+    def analyse():
+        evidence = evidence_set(items)
+        graph = causal_graph(evidence, method, [])
+        return attest(_symptom("a"), evidence, method, graph, trace(graph, _symptom("a")), "")
+
+    first, second = analyse(), analyse()
+    if first != second:
+        bad.append(f"a fixed E and M must reproduce an identical attestation: {first} vs {second}")
+    # Re-derived from the same items in a different order, the evidence hash — and so the attestation's
+    # reproducibility key — is unchanged.
+    if evidence_set(list(reversed(items)))["hash"] != evidence_set(items)["hash"]:
+        bad.append("the evidence hash must not depend on the order the items were assembled in")
+    return bad
+
+
+def _probe_no_positive_claim():
+    """The apophatic discipline made structural (§1.2, §12): the attestation record carries exactly the
+    fields of a bounded-completeness statement and no field that asserts X *is* the root. There is no
+    positive-claim shape to fill in, so the unfalsifiable claim cannot be expressed."""
+    bad = []
+    evidence = evidence_set([_item("b", flows_to=["a"]), _item("a")])
+    graph = causal_graph(evidence, _method(["dataflow"]), [])
+    att = attest(_symptom("a"), evidence, _method(["dataflow"]), graph, trace(graph, _symptom("a")), "")
+    expected = ["bound", "category", "chain", "evidence_hash", "marked_edges", "method_version", "poka_yoke", "symptom", "terminus"]
+    if sorted(att) != expected:
+        bad.append(f"the attestation carries exactly the bounded-completeness fields: {sorted(att)}")
+    if any(word in field for field in att for word in ("root", "cause", "because")):
+        bad.append(f"no field may assert a positive cause: {sorted(att)}")
+    # The bound is always present, so the claim always wears its limit on its face.
+    if sorted(att["bound"]) != ["invisible_to_method", "outside_evidence"]:
+        bad.append(f"the bound states both ways the search can be incomplete: {sorted(att['bound'])}")
     return bad
 
 
@@ -291,6 +354,9 @@ def run():
         "design_root": _probe_design_root(),
         "attest": _probe_attest(),
         "validate": _probe_validate(),
+        "evidence_kinds": _probe_evidence_kinds(),
+        "reproducibility": _probe_reproducibility(),
+        "no_positive_claim": _probe_no_positive_claim(),
         "vocabularies": _probe_vocabularies(),
         "public_surface": _probe_public_surface(),
     }
