@@ -33,13 +33,7 @@ implements the spec.** Two reasons, both verified:
    implementation.**" A spec requirement that never became a function never
    became a scenario, so the bijection is blind to it.
 
-3. **Even the function→gherkin half is not mechanically enforced right now.**
-   honest-check correctly defers HC-P008/009/012 to honest-test (spec §4.3), but
-   honest-test never implemented HC-P009 detection — it exists only in a
-   docstring (`honest-test/src/honest_test/coverage_data.py:1`). So *nothing*
-   currently fails a build when a roled function has no gherkin. The "one gherkin
-   per function point" invariant I kept citing is maintained by hand, not by a
-   check.
+3. **The function→gherkin half is now mechanically enforced** (it was not when this audit was first written). `python/feature-gate.sh` runs in `.githooks/pre-commit` and fails the commit when the set of function points in a module's source does not equal the set of scenario subjects in its feature files, in both directions. The JavaScript side has the same gate. What remains unenforced is the edge below.
 
 The durable fix is a third traceability edge — **spec-requirement →
 feature-scenario**, enforced so a numbered spec requirement with no scenario
@@ -76,7 +70,7 @@ Verdicts use three honest categories:
 | honest-parse | **SPEC-COMPLETE for its grammar set** | 9 grammars (6 source + HTML + Jinja + CSS) | complete; the Jinja grammar (own `tree-sitter-honest-jinja`, `eba702c`) and the official CSS grammar (`a6437a1`) were added for HC-REF Tiers B/C |
 | honest-persist | **SPEC-COMPLETE** | Native matviews; full inspector round-trip (columns, PK, defaults, FKs, indexes, check constraints); reconstruction restores everything attached to a rebuilt table; create/alter/drop all tested on a real PostgreSQL, a real SQLite, and a real Turso | §6.6 matviews native on PostgreSQL / backfilled on SQLite-Turso; §9.1 inspectors round-trip a full combined schema with zero churn. A SQL-validity gate runs every generated construction — create, alter, drop — against a real PostgreSQL, a real SQLite, and a real Turso (real DB, no mocks — spec §8.6; Turso via pyturso, verified not-1:1-with-SQLite — its adapter handles tuple rows and the missing `foreign_key_check`); it caught a seven-bug cluster (inline-FK create/drop order, matview drop order, PK nullability, FK/index/check-constraint round-trip, reconstruction under a view), all fixed, plus reconstruction silently dropping check constraints and user triggers. Reconstruction now restores columns, check constraints, indexes, dependent plain views, matview refresh triggers, and user triggers. Mutation and the real DB are decoupled: integration probes run in the normal/coverage pass, the mutation loop stays pure. RETURNING/upsert remain by-design out-of-scope |
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
-| honest-DOM | **Observable logic complete** | Full + §5 | vanilla domx: Core + Full + all of §5's own logic — the browser-event primitives, request_id-in-DOM, the htmx request/response instrumentation binding, the dom.changed watcher, and reload-recovery caching — built and gated with injected fakes, no jsdom. dom.changed sends new values only; the previous value is honest-observe's projection over the log (event sourcing), never a client copy. Remaining: the thin composition root binding the injected plugs to real browser globals, verified by a real-browser (Playwright) conformance suite — not jsdom, which is a fake browser that would pollute the test closure without giving real-browser truth. classify's emit primitive is built; its trigger is the bootloader module. §4 React hooks are a community adapter, out of scope (no React in the test closure). |
+| honest-DOM | **Observable logic complete** | Full + §5 | vanilla domx: Core + Full + all of §5's own logic — the browser-event primitives, request_id-in-DOM, the htmx request/response instrumentation binding, the dom.changed watcher, and reload-recovery caching — built and gated over injected inputs and injected boundaries, no jsdom. dom.changed sends new values only; the previous value is honest-observe's projection over the log (event sourcing), never a client copy. Remaining: the thin composition root binding the injected plugs to real browser globals, verified by a real-browser (Playwright) conformance suite — not jsdom, which is a fake browser that would pollute the test closure without giving real-browser truth. classify's emit primitive is built; its trigger is the bootloader module. §4 React hooks are a community adapter, out of scope (no React in the test closure). |
 
 Score: of 15 modules, **10 spec-complete, 3 complete-at-mandate, 1 genuine subset (honest-alerts: its runtime drivers are unbuilt), and honest-DOM complete for its own Observable logic** with the real-browser binding left to a browser conformance suite.
 
@@ -116,10 +110,7 @@ built. These are future honest-check work,
 tracked in the HC-REF note and `PLAN-STATIC-REFERENCE-CHECK.md`, not part of any
 module reported complete.
 
-(Tier 3 honest-page has a spec but is not yet built in this tree, so it is
-outside this audit's scope. honest-components is in progress: the shared
-enhancement runtime plus the switch and accordion behaviours are built and pass
-the JS gate; further components follow the same pattern.)
+(Tier 3 honest-page's reference is now built in this tree — the base and page templates, the fragment, the `--ht-` token sheet, and the route-map server — and honest-check verifies it against the templates with zero errors. honest-components is in progress: the shared enhancement runtime plus the switch and accordion behaviours are built and pass the JS gate; further components follow the same pattern.)
 
 ---
 
