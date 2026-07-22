@@ -134,7 +134,7 @@ def enumerate_js_mutants(source):
     mutants = []
     for operator in _OPERATORS:
         mutants.extend(operator(tree, source_bytes))
-    return _stabilize_labels(mutants, source)
+    return _stabilize_labels(mutants, source, tree, source_bytes)
 
 
 def _suite_passes(pkg):

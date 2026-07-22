@@ -63,6 +63,8 @@ Verdicts use three honest categories:
 | Module | Category | Fraction (by requirement) | Worst verified gap |
 |---|---|---|---|
 | honest-type | **SPEC-COMPLETE** | 60/60 | none |
+| honest-design | **SPEC-COMPLETE for the read path** | grammar + reader + validator + renderer, all five gates | The `.hd` read path is built to spec against the real 22-file corpus. Three validator checks named in an early draft (unreachable-role, orchestrator-side-effect, unknown-type) were dropped because the corpus disproved them — orchestrators legitimately carry side effects — and the spec was corrected to match. Write-back and the WYSIWYG surface are commercial, not FOSS. |
+| honest-rca | **SPEC-COMPLETE** | 14/14 functions, all five gates | The causal IR, evidence hashing, the four deterministic signal detectors plus marked judgment edges, fixpoint traversal, the computed bound, and `validate_attestation` — the poka-yoke that makes fake RCA unrepresentable — are all built. The conformance suite named for the hub repo is not yet written there. |
 | honest-errors | **SPEC-COMPLETE** | 27/27 | none |
 | honest-gherkin | **SPEC-COMPLETE** | 13/13 | none |
 | honest-features | **COMPLETE AT MANDATE** | 10/10 lib functions; validate_vocabulary now full §2.1/§10.2 | Full/Complete need app-layer routes/CLI (spec §11 defers) |
@@ -76,7 +78,9 @@ Verdicts use three honest categories:
 | honest-alerts | **SUBSET** | schema/pure 100%; runtime 0% | no expiry/escalation pollers, no channel handlers, no SSE, no threshold sends — schema+validator layer only |
 | honest-DOM | **Observable logic complete** | Full + §5 | vanilla domx: Core + Full + all of §5's own logic — the browser-event primitives, request_id-in-DOM, the htmx request/response instrumentation binding, the dom.changed watcher, and reload-recovery caching — built and gated with injected fakes, no jsdom. dom.changed sends new values only; the previous value is honest-observe's projection over the log (event sourcing), never a client copy. Remaining: the thin composition root binding the injected plugs to real browser globals, verified by a real-browser (Playwright) conformance suite — not jsdom, which is a fake browser that would pollute the test closure without giving real-browser truth. classify's emit primitive is built; its trigger is the bootloader module. §4 React hooks are a community adapter, out of scope (no React in the test closure). |
 
-Score: of 13 modules, **7 spec-complete, 2 complete-at-mandate, 4 genuine subsets.**
+Score: of 15 modules, **10 spec-complete, 3 complete-at-mandate, 1 genuine subset (honest-alerts: its runtime drivers are unbuilt), and honest-DOM complete for its own Observable logic** with the real-browser binding left to a browser conformance suite.
+
+On the JavaScript side: `honest-format` and `honest-components` (the shared enhancement runtime plus the switch and accordion behaviours) pass their gates; `honest-page`'s reference — base and page templates, the fragment, the token sheet, and the route-map server — is built and verified by honest-check against the templates. `javascript/honest-state` is an empty placeholder with no source.
 
 Remediation is proceeding in the spec's bootstrap/dependency order
 (`specs/01-framework/honest-framework-spec.md` §299): parse → check → test →

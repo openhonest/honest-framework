@@ -35,6 +35,7 @@ from honest_test import (
 )
 from honest_test.length import _bound_from_pair, enumerate_lengths, extract_length_bounds
 from honest_test.predicate import _collect_facts, _fact_call
+from honest_test.mutation import _enclosing_function_name
 from honest_parse import parse_python, walk
 
 # --------------------------------------------------------------------------- HTest laws
@@ -744,6 +745,23 @@ def _probe_mutation():
     outside = sorted(m["label"] for m in enumerate_mutants(after_def) if m["label"].startswith("1->2@"))
     if outside != ["1->2@x = 1@<module>", "1->2@x = 1@<module>#1"]:
         bad.append(f"a site at a function's end byte belongs to the enclosing scope: {outside}")
+    # The JavaScript runner shares this stabiliser, so the qualifier must name a JS function too. An
+    # anonymous form is transparent: its sites take the nearest named function holding them.
+    from honest_parse import parse_javascript
+
+    js = b"function outer() {\n  const go = () => {\n    let x = 1\n  }\n}\n"
+    js_tree = parse_javascript(js)
+    if _enclosing_function_name(js_tree, js, js.index(b"let x")) != "outer":
+        bad.append("a JavaScript site must be qualified by the named function holding it")
+    if _enclosing_function_name(js_tree, js, js.index(b"function")) != "outer":
+        bad.append("a JavaScript site on the function keyword belongs to that function")
+    # The other named JavaScript forms the runner meets: a class method and a generator.
+    shapes = b"class C {\n  m() {\n    let y = 2\n  }\n}\nfunction* g() {\n  let z = 3\n}\n"
+    shapes_tree = parse_javascript(shapes)
+    if _enclosing_function_name(shapes_tree, shapes, shapes.index(b"let y")) != "m":
+        bad.append("a class method qualifies the sites inside it")
+    if _enclosing_function_name(shapes_tree, shapes, shapes.index(b"let z")) != "g":
+        bad.append("a generator function qualifies the sites inside it")
 
     source = "def f(x):\n    return x < 0 and x == y\n"
     swaps = sorted(m["source"] for m in enumerate_mutants(source) if m["operator"] == "comparison_swap")

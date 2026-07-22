@@ -256,12 +256,23 @@ def _branch_arm_removals(tree, source: bytes) -> list:
 _OPERATORS = (_comparison_swaps, _number_shifts, _condition_flips, _constant_replaces, _result_swaps, _membership_changes, _dict_key_swaps, _line_removals, _branch_arm_removals)
 
 
+# The named-function nodes of the languages this stabiliser labels for — Python and JavaScript, since
+# the JavaScript mutation runner shares it. Anonymous forms (a function expression, an arrow function)
+# carry no name and are transparent: their sites take the nearest named function that holds them.
+_NAMED_FUNCTIONS = frozenset({
+    "function_definition",
+    "function_declaration",
+    "generator_function_declaration",
+    "method_definition",
+})
+
+
 def _enclosing_function_name(tree, source_bytes: bytes, offset: int) -> str:
-    """The innermost function containing a byte offset, or "" at module level. walk yields a parent
+    """The innermost named function containing a byte offset, or "" outside any. walk yields a parent
     before its children, so the last containing function seen is the innermost one. Pure."""
     name = ""
     for node in walk(tree.root_node):
-        if node.type == "function_definition" and node.start_byte <= offset < node.end_byte:
+        if node.type in _NAMED_FUNCTIONS and node.start_byte <= offset < node.end_byte:
             name = node_text(node.child_by_field_name("name"), source_bytes)
     return name
 
