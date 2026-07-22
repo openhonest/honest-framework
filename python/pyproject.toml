@@ -25,5 +25,9 @@ show_missing = true
 # The Pydantic and Django schema loaders (section 2) are optional, Python-specific adapters — not part
 # of the pure core. They live in the dev group so the loaders' conformance runs under the gate; an
 # adopter opts in via the honest-persist[pydantic] or [django] extra. The pure core never imports them.
+#
+# FastAPI and Jinja2 are the honest-page reference server's stack (app.py, templates/). The framework
+# implementation is opinionated: this is the stack the reference is written in, so the reference runs
+# rather than only parsing. The pure modules never import them.
 [dependency-groups]
-dev = ["pydantic>=2", "django>=4", "psycopg[binary]>=3", "pyturso>=0.1"]
+dev = ["pydantic>=2", "django>=4", "psycopg[binary]>=3", "pyturso>=0.1", "fastapi>=0.110", "jinja2>=3"]
