@@ -15,8 +15,10 @@ is caught (the suite did not pass). This is the mutation boundary, so it is not 
 """
 
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from honest_parse import node_text, parse_javascript, walk
@@ -164,13 +166,20 @@ def run(src_file):
 
     mutants = enumerate_js_mutants(original)
     survivors = []
-    try:
+    # Mutate a copy of the package, never the working tree. Writing the mutant into the real source and
+    # restoring it in a `finally` looks safe and is not: a timeout kills the run with SIGTERM, which skips
+    # `finally` entirely and leaves a mutant sitting in the source. That silently corrupts the repo — a
+    # deleted export, a swapped dict key — and the damage outlives the run that caused it. The Python
+    # runner avoids this by serving mutated source from memory through an import hook; node imports from
+    # disk, so the equivalent is to give it a disposable disk to import from.
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / pkg.name
+        shutil.copytree(pkg, work)
+        work_src = work / "src" / relpath
         for mutant in mutants:
-            src_path.write_text(mutant["source"], encoding="utf-8")
-            if _suite_passes(pkg):
+            work_src.write_text(mutant["source"], encoding="utf-8")
+            if _suite_passes(work):
                 survivors.append(mutant)
-    finally:
-        src_path.write_text(original, encoding="utf-8")
 
     report = mutation_adequacy(mutants, survivors, _set_aside(pkg, relpath))
     print(f"js-mutate: {relpath} — {report['caught']} caught, {report['set_aside']} set aside, {len(report['undeclared'])} undeclared of {report['total']} mutants")
