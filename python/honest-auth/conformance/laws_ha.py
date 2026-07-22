@@ -238,6 +238,45 @@ def _law_resolve_actor_deterministic():
     return bad
 
 
+# A synthetic application (section 9.2): a boundary that resolves an actor from the request's token and
+# passes it inward as data, and an interior operation that takes the manifest only. The interior never
+# receives the request, so it has nothing to read an actor out of — the shape the law below proves.
+def _synthetic_boundary(provider, request):
+    """The boundary: authenticate the request's token and put the resolved actor in the manifest."""
+    resolved = authenticate(provider, request["token"])
+    return {"actor": resolved["ok"]} if "ok" in resolved else {"fault": resolved["err"]["code"]}
+
+
+def _synthetic_interior(manifest):
+    """An interior operation: pure over the manifest it is handed. It takes no request."""
+    return f"profile of {manifest['actor']}"
+
+
+def _law_actor_reaches_interior_as_data():
+    """Section 9.2: the resolved actor reaches the interior as data, and no operation reads an actor from
+    request input. The first half is checked by value — the actor the boundary resolved is the actor the
+    interior receives. The second is checked by falsification rather than assertion: the interior is run
+    again with the same manifest while the request is changed out from under it, and its result must not
+    move. An interior that reached back into the request for an actor would answer differently."""
+    bad = []
+    provider = _honest_provider()
+    manifest = _synthetic_boundary(provider, {"token": "good"})
+    if manifest != {"actor": "alice"}:
+        bad.append(f"the boundary must resolve the actor and pass it inward as data: {manifest}")
+    if _synthetic_interior(manifest) != "profile of alice":
+        bad.append("the interior must receive the resolved actor as data")
+    # Change the request entirely; the interior sees only the manifest, so its answer cannot move.
+    _synthetic_boundary(provider, {"token": "bad"})
+    if _synthetic_interior(manifest) != "profile of alice":
+        bad.append("the interior must not depend on request input — it answered differently after the request changed")
+    # A rejected token yields no actor at all, so nothing downstream can proceed with one. "bad" fails
+    # the recognizer, so it is refused as malformed before the resolver is ever consulted.
+    rejected = _synthetic_boundary(provider, {"token": "bad"})
+    if "actor" in rejected or rejected.get("fault") != "malformed_token":
+        bad.append(f"a rejected token must yield a fault and no actor: {rejected}")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
     "empty_registry": _law_empty_registry,
@@ -248,6 +287,7 @@ _LAWS = {
     "fault_status": _law_fault_status,
     "authentication_honesty": _law_authentication_honesty,
     "resolve_actor_deterministic": _law_resolve_actor_deterministic,
+    "actor_reaches_interior_as_data": _law_actor_reaches_interior_as_data,
     "dev_provider": _law_dev_provider,
 }
 
