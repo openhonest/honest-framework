@@ -2337,25 +2337,22 @@ honest-test writes a `coverage.json` file that honest-check can read for HC-P009
 
 The conformance suite is the executable proof that two honest-type implementations are semantically identical. It is a language-agnostic JSON collection of input/output pairs. Any implementation that passes all cases is conformant — no human review required.
 
-It lives in the hub repo (`honest/`), not in any language implementation. Language implementations pull it as a CI dependency and declare which version they conform to.
+It lives in this repository at `python/honest-type/conformance/suite.json`, beside the reference implementation and run by its gate on every commit — keeping the suite and the implementation it measures in step. A second-language implementation proves conformance by running the same file; the cases are input/output data with no Python in them.
 
 ### 14.2 Repository Structure
 
 ```
-honest/                               ← hub repo (this repo)
-  honest-type-architecture.md         ← this document
-  honest-framework-spec.md            ← vision spec
-  honest-type-conformance/
-    suite.json                        ← all test cases
-    suite-schema.json                 ← JSON schema for test case format
-    runner/
-      run.py                          ← Python runner
-      run.js                          ← JavaScript runner
-      run.rb                          ← Ruby runner
-      run.go                          ← Go runner
-      README.md                       ← how to write a runner for a new language
-    VERSIONS.md                       ← changelog, version history
+specs/02-code-quality/honest-type-architecture.md   ← this document
+specs/01-framework/honest-framework-spec.md         ← vision spec
+python/honest-type/
+  src/honest_type/                                  ← the reference implementation
+  conformance/
+    suite.json                                      ← all test cases, language-agnostic data
+    run_conformance.py                              ← the Python runner
+    laws_ht.py                                      ← the generative proof
 ```
+
+A runner for another language reads the same `suite.json`. The JSON schema for the case format, a version history, and runners for Ruby and Go are not yet written; a second-language implementation today reads the case shape from `suite.json` itself and from the Python runner.
 
 Spoke repos reference the suite version in CI:
 
@@ -2640,7 +2637,7 @@ A runner may skip test cases for features not yet implemented — partial confor
 | **Full** | All categories pass including `chain-*` and `state-machine` |
 | **Verified** | Full + honest-test suite runs clean against the implementation |
 
-Implementations declare their conformance level in their README and package metadata. The hub repo maintains a registry of conformant implementations.
+Implementations declare their conformance level in their README and package metadata. No registry of conformant implementations is published yet; the Python reference is currently the only implementation.
 
 ---
 

@@ -684,7 +684,7 @@ default_ttl_seconds = 3600     # 1 hour default for reply waits
 
 ### 12.2 Conformance Suite
 
-The conformance suite lives at `honest/honest-alerts-conformance/suite.json`. Test cases cover:
+The conformance suite is `python/honest-alerts/conformance/suite.json`, beside the module and run by its gate. Test cases cover:
 
 - `send()` produces a valid `alert.sent` event with correct envelope
 - Mailbox projection returns correct pending messages at a given timestamp

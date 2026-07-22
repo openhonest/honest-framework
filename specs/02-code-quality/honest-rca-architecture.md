@@ -164,4 +164,4 @@ honest-rca's conformance is the apophatic discipline made checkable:
 - `validate_attestation` returns no faults for a well-formed attestation and the precise fault for each omission, including the design-root category and poka-yoke obligations.
 - the bounded-completeness invariant: a fixed `E` and `M` reproduce an identical attestation.
 
-The conformance suite lives in the hub repo at `honest/honest-rca-conformance/suite.json`; its cases assert each contract above on planted evidence sets, and that no attestation asserts a positive "X is the root."
+The conformance suite is `python/honest-rca/conformance/suite.json`, beside the module and proved by the value oracle on every run; its cases assert each contract above on planted evidence sets, and that no attestation asserts a positive "X is the root."

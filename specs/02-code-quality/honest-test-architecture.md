@@ -320,7 +320,7 @@ FUNCTION encoding_variants(value):
     RETURN results
 ```
 
-**Conformance.** The reference vocabulary for each class is published in the hub repository at `honest/honest-test-conformance/adversarial/{class}.json`. A conformant implementation must exercise every entry in the reference vocabulary; failing to reject any listed neighbor is a recognizer bug and a conformance failure.
+**Conformance.** The reference vocabulary for each class is not yet published as a separate data file; it is the vocabulary the reference implementation exercises, in `python/honest-test/`. A conformant implementation must exercise every entry in the reference vocabulary; failing to reject any listed neighbor is a recognizer bug and a conformance failure.
 
 ### 3.6 Programmer-Supplied Test Values
 
@@ -978,6 +978,6 @@ Total: 3,024 permutations tested, 0 failures
 
 ### 12.2 Conformance Suite
 
-The conformance suite lives in the hub repo at `honest/honest-test-conformance/suite.json`. Each test case provides a vocabulary or chain definition and the expected test generation output or pass/fail result.
+The conformance suite is `python/honest-test/conformance/suite.json`, beside the module and run by its gate. Its cases are language-agnostic data, so a second-language implementation proves conformance by running the same file. Each test case provides a vocabulary or chain definition and the expected test generation output or pass/fail result.
 
 Implementations declare their conformance level in their README and package metadata.

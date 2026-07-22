@@ -361,7 +361,7 @@ honest-DOM is a client-side library. It runs in the browser. The implementation 
 
 ### 8.2 Conformance Suite
 
-The conformance suite lives in the hub repo at `honest/honest-dom-conformance/suite.json`. Test cases run in a browser environment (jsdom or real browser) and cover:
+The conformance suite is `javascript/honest-dom/conformance/suite.json`, beside the module and run by its gate. Its cases are language-agnostic data, so a Vue or Svelte adapter proves conformance by running the same file. Test cases run in a browser environment (jsdom or real browser) and cover:
 
 - `collect()`: all read shortcuts, multi-element selectors, missing selectors returning null
 - `apply()`: all write shortcuts, partial state application, missing write keys skipped

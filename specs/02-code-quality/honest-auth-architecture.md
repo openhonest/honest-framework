@@ -282,7 +282,7 @@ See `honest-test-architecture.md` for the full test definition.
 
 ### 9.2 Conformance Suite
 
-The conformance suite lives at `honest/honest-auth-conformance/`. It contains:
+The conformance suite is `python/honest-auth/conformance/`, beside the module and run by its gate. It contains:
 
 - A synthetic application whose boundary resolves an actor and passes it inward
 - The token classes generated against a scripted backing state

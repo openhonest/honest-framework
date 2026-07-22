@@ -1626,7 +1626,7 @@ storage_table     = "honest_projection_snapshots"
 
 ### 12.2 Conformance Suite
 
-The conformance suite lives at `honest/honest-observe-conformance/suite.json`. Test cases cover:
+The conformance suite is `python/honest-observe/conformance/suite.json`, beside the module and run by its gate. Test cases cover:
 
 - `emit()` produces a valid event envelope with all required fields
 - `emit()` returns `ok` with `event_id` on success

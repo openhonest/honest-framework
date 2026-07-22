@@ -687,7 +687,7 @@ FUNCTION check_HC008(link):
 "Symbol()", "Symbol.for" (when the key is computed non-deterministically),
 ```
 
-**Other languages (Ruby, Go):** conformance watch lists are published in the hub repository at `honest/honest-check-conformance/watch-lists/{language}.json`. Implementations must cover every entry in the published list for their declared language.
+**Other languages (Ruby, Go):** no watch list is published for them yet. The Python and JavaScript lists are the declared data in `python/honest-check/src/honest_check/watchlists.py`; an implementation for another language would publish its list the same way, and must cover every entry for its declared language.
 
 **What is NOT in the watch list:** pure computation, data-structure construction and access on immutable types, module-level constants bound to immutable values, function definitions. These do not trigger HC008.
 
@@ -1430,7 +1430,7 @@ This ensures suppressions are visible in CI and do not silently accumulate.
 
 ### 9.2 Conformance Suite
 
-The conformance suite lives in the hub repo at `honest/honest-check-conformance/suite.json`. Each test case provides source code (as a string) and the expected diagnostics.
+The conformance suite is `python/honest-check/conformance/suite.json`, beside the module and run by its gate. Each test case provides source code (as a string) and the expected diagnostics.
 
 ```json
 {
