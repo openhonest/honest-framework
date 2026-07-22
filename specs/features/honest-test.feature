@@ -432,10 +432,15 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When _branch_arm_removals mutates it
     Then it returns a mutant with each droppable arm removed
 
+  Scenario: _enclosing_function_name names the function holding a byte offset
+    Given a parsed source and a byte offset
+    When _enclosing_function_name is asked
+    Then it returns the innermost function containing the offset, and empty at module level
+
   Scenario: _stabilize_labels rewrites byte-offset labels to stable line-based ones
     Given mutants labelled by byte offset and the source
     When _stabilize_labels rewrites each label
-    Then each becomes the change and the stripped source line it sits on, with an index for an identical pair
+    Then a label unique in the file becomes the change and its stripped source line, and a repeated one is qualified by the function holding it and counted within that function
 
   Scenario: enumerate_mutants produces every mutant of the source
     Given module source

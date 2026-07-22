@@ -720,8 +720,30 @@ def _probe_mutation():
     if {m["label"] for m in enumerate_mutants("a == b\n")} != {"==->!=@a == b", "remove@a == b"}:
         bad.append(f"a label identifies the change and the line, not a byte offset: {sorted(m['label'] for m in enumerate_mutants('a == b\n'))}")
     chained = sorted(m["label"] for m in enumerate_mutants("a < b < c\n") if m["operator"] == "comparison_swap")
-    if chained != ["<-><=@a < b < c", "<-><=@a < b < c#1"]:
+    if chained != ["<-><=@a < b < c@<module>", "<-><=@a < b < c@<module>#1"]:
         bad.append(f"identical (change, line) pairs are disambiguated by index: {chained}")
+    # The property a set-aside depends on: a repeated label is qualified by the function holding it, so an
+    # identical mutation appearing in another function cannot slide a declaration onto a different mutant.
+    two = "def a():\n    for x in y:\n        continue\ndef b():\n    for x in y:\n        continue\n"
+    added = "def z():\n    for x in y:\n        continue\n" + two
+    kept = sorted(m["label"] for m in enumerate_mutants(two) if m["label"].startswith("sole-pass@continue"))
+    after = sorted(m["label"] for m in enumerate_mutants(added) if m["label"].startswith("sole-pass@continue"))
+    if kept != ["sole-pass@continue@a", "sole-pass@continue@b"]:
+        bad.append(f"a repeated label is qualified by the function that holds it: {kept}")
+    if not set(kept) <= set(after):
+        bad.append(f"a label must not move when an identical mutation is added in another function: {kept} then {after}")
+    # A site can sit on the def line itself — exactly the function's first byte. It belongs to that
+    # function, not to the scope around it.
+    twice = "def f():\n    pass\ndef f():\n    pass\n"
+    on_def = sorted(m["label"] for m in enumerate_mutants(twice) if m["label"].startswith("remove@def f():"))
+    if on_def != ["remove@def f():@f", "remove@def f():@f#1"]:
+        bad.append(f"a site on the def line belongs to the function it opens: {on_def}")
+    # The other edge: a site immediately after a function sits exactly at its end byte, and belongs to
+    # the scope around it — not to the function that just closed.
+    after_def = "def a():\n    pass\nx = 1\ndef b():\n    pass\nx = 1\n"
+    outside = sorted(m["label"] for m in enumerate_mutants(after_def) if m["label"].startswith("1->2@"))
+    if outside != ["1->2@x = 1@<module>", "1->2@x = 1@<module>#1"]:
+        bad.append(f"a site at a function's end byte belongs to the enclosing scope: {outside}")
 
     source = "def f(x):\n    return x < 0 and x == y\n"
     swaps = sorted(m["source"] for m in enumerate_mutants(source) if m["operator"] == "comparison_swap")

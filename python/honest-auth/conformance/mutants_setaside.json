@@ -1,3 +1,3 @@
 {
- "honest-auth/src/honest_auth/authenticate.py:string->empty@_DEFAULT_STATUS = {\"unauthenticated\": 401, \"forbidden\": 403, \"conflict\": 409, \"client\": 400, \"server\": 500}#4": "Emptying the \"server\" key. fault_status resolves an unmapped category via _DEFAULT_STATUS.get(category, 500); the server category already maps to the same 500 as that fallback default, so dropping the server key leaves fault_status('server') == 500 unchanged. Verified equivalent."
+  "honest-auth/src/honest_auth/authenticate.py:string->empty@_DEFAULT_STATUS = {\"unauthenticated\": 401, \"forbidden\": 403, \"conflict\": 409, \"client\": 400, \"server\": 500}@<module>#4": "Emptying the \"server\" key. fault_status resolves an unmapped category via _DEFAULT_STATUS.get(category, 500); the server category already maps to the same 500 as that fallback default, so dropping the server key leaves fault_status('server') == 500 unchanged. Verified equivalent."
 }

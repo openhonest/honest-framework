@@ -256,23 +256,43 @@ def _branch_arm_removals(tree, source: bytes) -> list:
 _OPERATORS = (_comparison_swaps, _number_shifts, _condition_flips, _constant_replaces, _result_swaps, _membership_changes, _dict_key_swaps, _line_removals, _branch_arm_removals)
 
 
-def _stabilize_labels(mutants, source: str) -> list:
+def _enclosing_function_name(tree, source_bytes: bytes, offset: int) -> str:
+    """The innermost function containing a byte offset, or "" at module level. walk yields a parent
+    before its children, so the last containing function seen is the innermost one. Pure."""
+    name = ""
+    for node in walk(tree.root_node):
+        if node.type == "function_definition" and node.start_byte <= offset < node.end_byte:
+            name = node_text(node.child_by_field_name("name"), source_bytes)
+    return name
+
+
+def _stabilize_labels(mutants, source: str, tree, source_bytes: bytes) -> list:
     """Rewrite each mutant's byte-offset label to a stable one (section 9.6): the change plus the
-    stripped source line it sits on, with `#n` for the nth identical (change, line) pair. A set-aside
-    keyed this way survives edits elsewhere in the file — only changing that line, or adding an
-    identical mutation, moves it; a byte offset moved on every edit before the site. Pure."""
+    stripped source line it sits on. A label that is already unique in the file is exactly that, so a
+    set-aside keyed to it survives every edit elsewhere.
+
+    A repeated label is qualified by the function that holds it, then counted within that function. This
+    is what keeps a set-aside honest: some lines are identical everywhere — every `continue` reads
+    `continue` — so counting them file-wide made the nth such mutant shift whenever any earlier one was
+    added or removed, silently sliding a declaration onto a *different* mutant and excusing a survivor
+    nobody examined. Qualified by its function, a site only moves when its own function changes. Pure."""
     newline = b"\n"
-    source_bytes = source.encode("utf-8")
     lines = source.splitlines()
-    counts = {}
-    stabilized = []
+    bases = []
     for mutant in mutants:
         change, _, offset = mutant["label"].rpartition("@")
-        line_index = source_bytes[: int(offset)].count(newline)
-        base = f"{change}@{lines[line_index].strip()}"
-        index = counts.get(base, 0)
-        counts[base] = index + 1
-        stabilized.append({**mutant, "label": base if index == 0 else f"{base}#{index}"})
+        position = int(offset)
+        bases.append((f"{change}@{lines[source_bytes[:position].count(newline)].strip()}", position))
+    totals = {}
+    for base, _position in bases:
+        totals[base] = totals.get(base, 0) + 1
+    counts = {}
+    stabilized = []
+    for mutant, (base, position) in zip(mutants, bases):
+        key = base if totals[base] == 1 else f"{base}@{_enclosing_function_name(tree, source_bytes, position) or '<module>'}"
+        index = counts.get(key, 0)
+        counts[key] = index + 1
+        stabilized.append({**mutant, "label": key if index == 0 else f"{key}#{index}"})
     return stabilized
 
 
@@ -285,7 +305,7 @@ def enumerate_mutants(source: str) -> list:
     mutants = []
     for operator in _OPERATORS:
         mutants.extend(operator(tree, source_bytes))
-    return _stabilize_labels(mutants, source)
+    return _stabilize_labels(mutants, source, tree, source_bytes)
 
 
 def run_mutants(mutants, run_suite) -> list:
