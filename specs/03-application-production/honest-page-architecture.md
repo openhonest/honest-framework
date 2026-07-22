@@ -280,7 +280,9 @@ All honest-page tokens use the `--ht-` prefix. Tokens are organized by category.
 
 ### 7.2 Token Value Contract
 
-Every token must use `light-dark()` to provide both light and dark values. This is the only mechanism honest-page uses for dark mode. No JavaScript dark mode logic is permitted in the base page layer.
+Every **colour** token must use `light-dark()` to provide both light and dark values. This is the only mechanism honest-page uses for dark mode. No JavaScript dark mode logic is permitted in the base page layer.
+
+`light-dark()` is a colour function: it resolves to a `<color>`, so it applies to the colour tokens only. The spacing, typography, and radius tokens are plain values and do not vary by colour scheme; wrapping a length in `light-dark()` is invalid CSS and will not resolve.
 
 ```css
 :root {
@@ -474,7 +476,7 @@ A conformant implementation passes these checks:
 
 **CSS:**
 - All required `--ht-*` tokens declared on `:root`
-- Every token uses `light-dark()`
+- Every colour token uses `light-dark()`; the spacing, typography, and radius tokens are plain values
 - `color-scheme: light dark` declared on `:root`
 - `[data-theme="dark"]` and `[data-theme="light"]` rules present
 
