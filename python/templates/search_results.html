@@ -1,0 +1,6 @@
+{# honest-page reference fragment (honest-page-architecture.md §10.2): a fragment route returns minimal
+   HTML for HTMX to swap in. A fragment template does not extend base.html — it carries no surfaces, no
+   scripts, no manifest. It is only the piece that changed. #}
+<ul id="search-results">
+  {% for row in rows %}<li>{{ row }}</li>{% endfor %}
+</ul>

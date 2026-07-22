@@ -1,0 +1,36 @@
+{# honest-page reference child template (honest-page-architecture.md §8): extends base.html and
+   overrides only the blocks it needs. `content` is the one block a child must override.
+
+   The search box is declared user state: the manifest below names it, so domx collects it into every
+   HTMX request as _state (§5.1) — the page never reads it by hand. The hx-get target names a path the
+   route map resolves to a chain (§9), so honest-check can follow template -> path -> chain and check
+   the first link against exactly the fields this page sends. #}
+{% extends "base.html" %}
+
+{% block nav %}
+  <a href="/">Home</a>
+{% endblock %}
+
+{% block content %}
+  <h1>{{ page_title | default('Page') }}</h1>
+
+  <form>
+    <label for="search-input">Search</label>
+    <input id="search-input"
+           name="q"
+           type="search"
+           hx-get="/search"
+           hx-target="#search-results"
+           hx-trigger="input changed delay:300ms">
+  </form>
+
+  <section id="search-results"></section>
+{% endblock %}
+
+{% block footer %}
+  <p>Built with the Honest Framework.</p>
+{% endblock %}
+
+{% block manifest %}const appManifest = {
+      search: { selector: '#search-input', read: 'value' },
+    }{% endblock %}

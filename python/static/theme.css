@@ -1,0 +1,88 @@
+/* honest-page reference tokens and base layout (honest-page-architecture.md §7).
+ *
+ * Every colour token resolves through light-dark(), so dark mode is a CSS concern only — there is no
+ * JavaScript dark-mode logic in the base page layer (§7.2). light-dark() is a colour function, so the
+ * spacing, type, and radius tokens are plain values; they do not vary by scheme.
+ *
+ * Selectors here are element- and id-based (the six surfaces are identified by id, §2.1), so the base
+ * page introduces no class references for honest-check to resolve. */
+
+:root {
+  /* Required by §7.2: without it light-dark() does not resolve in all browsers. */
+  color-scheme: light dark;
+
+  /* Colour (§7.1) */
+  --ht-color-bg-primary: light-dark(#ffffff, #0a0a0c);
+  --ht-color-bg-secondary: light-dark(#f6f7f9, #141418);
+  --ht-color-bg-surface: light-dark(#ffffff, #1b1b21);
+
+  --ht-color-text-primary: light-dark(#14161a, #f2f3f5);
+  --ht-color-text-secondary: light-dark(#4a4f57, #b9bec7);
+  --ht-color-text-muted: light-dark(#7a818c, #7f8590);
+
+  --ht-color-border: light-dark(#e3e5e9, #2a2b32);
+  --ht-color-border-strong: light-dark(#c6cad1, #3d3f48);
+
+  --ht-color-accent: light-dark(#1f6feb, #4c8dff);
+  --ht-color-accent-text: light-dark(#ffffff, #08080a);
+
+  --ht-color-success: light-dark(#177245, #3fb27f);
+  --ht-color-warning: light-dark(#8a5a00, #e0a33a);
+  --ht-color-danger: light-dark(#b3261e, #ff6b61);
+  --ht-color-info: light-dark(#1f6feb, #4c8dff);
+
+  /* Spacing (§7.1) */
+  --ht-space-xs: 0.25rem;
+  --ht-space-sm: 0.5rem;
+  --ht-space-md: 1rem;
+  --ht-space-lg: 1.5rem;
+  --ht-space-xl: 2rem;
+  --ht-space-2xl: 3rem;
+
+  /* Typography (§7.1) */
+  --ht-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --ht-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --ht-font-size-sm: 0.875rem;
+  --ht-font-size-md: 1rem;
+  --ht-font-size-lg: 1.125rem;
+  --ht-font-size-xl: 1.25rem;
+  --ht-font-size-2xl: 1.5rem;
+
+  /* Radius (§7.1) */
+  --ht-radius-sm: 0.25rem;
+  --ht-radius-md: 0.5rem;
+  --ht-radius-lg: 0.75rem;
+  --ht-radius-pill: 999px;
+}
+
+/* Theme switching (§7.3): absent follows the OS; these two force a scheme. */
+[data-theme="dark"] { color-scheme: dark; }
+[data-theme="light"] { color-scheme: light; }
+
+/* Page layout (§7.4): three named grid areas. */
+body {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "header"
+    "main"
+    "footer";
+  min-height: 100vh;
+  margin: 0;
+  background: var(--ht-color-bg-primary);
+  color: var(--ht-color-text-primary);
+  font-family: var(--ht-font-sans);
+  font-size: var(--ht-font-size-md);
+}
+
+#honest-header { grid-area: header; border-bottom: 1px solid var(--ht-color-border); padding: var(--ht-space-md) var(--ht-space-lg); }
+#honest-main { grid-area: main; padding: var(--ht-space-lg); }
+#honest-footer { grid-area: footer; border-top: 1px solid var(--ht-color-border); padding: var(--ht-space-md) var(--ht-space-lg); color: var(--ht-color-text-secondary); font-size: var(--ht-font-size-sm); }
+
+/* The notification surfaces sit outside the grid flow (§7.4). */
+#honest-alerts-banners { position: sticky; top: 0; z-index: 10; }
+#honest-alerts-toasts { position: fixed; bottom: var(--ht-space-lg); right: var(--ht-space-lg); z-index: 20; display: grid; gap: var(--ht-space-sm); }
+#honest-alerts-modal { position: fixed; inset: 0; z-index: 30; }
+/* An empty modal surface must not cover the page; honest-alerts fills it at runtime (§2.3). */
+#honest-alerts-modal:empty { display: none; }

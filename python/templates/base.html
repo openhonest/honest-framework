@@ -1,0 +1,93 @@
+{# honest-page reference base template (honest-page-architecture.md §2, §3, §4, §8).
+
+   The six required surfaces appear in the declared document order (§2.2); the notification surfaces
+   carry the honest-alerts SSE wiring and start empty (§2.3, §4). Scripts load in the required bootstrap
+   order — htmx, the SSE extension, domx, then the manifest (§3). Every context variable has a default
+   (§6), so a handler may pass none of them. #}
+<!DOCTYPE html>
+<html lang="{{ lang | default('en') }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ page_title | default('Page') }} · {{ app_name | default('Honest App') }}{% endblock %}</title>
+
+  {# Theme preference restored before first render, so there is no flash of the wrong theme (§7.3).
+     This is the only use of localStorage in the base page layer. #}
+  <script>
+    const saved = localStorage.getItem('honest-theme')
+    if (saved && saved !== 'auto') {
+      document.documentElement.setAttribute('data-theme', saved)
+    } else if ({{ (theme | default('auto')) | tojson }} !== 'auto') {
+      document.documentElement.setAttribute('data-theme', {{ (theme | default('auto')) | tojson }})
+    }
+  </script>
+
+  {# 1. CSS first (§3): tokens, then application styles. #}
+  <link rel="stylesheet" href="/static/theme.css">
+  {% block styles %}{% endblock %}
+</head>
+
+{# domx is activated by hx-ext, and dx-manifest names the manifest variable it collects (§3.2). Both
+   are required: either alone collects no state. #}
+<body hx-ext="domx" dx-manifest="appManifest">
+
+  {# 1. Banners — immediately after <body>, before the header (§2.2). #}
+  <div id="honest-alerts-banners"
+       hx-ext="sse"
+       sse-connect="/api/alerts/stream"
+       sse-swap="alert:banner"
+       hx-swap="afterbegin"></div>
+
+  {# 2. Header. #}
+  <header id="honest-header">
+    {% block header %}
+    <nav>
+      <a href="/">{{ app_name | default('Honest App') }}</a>
+      {% block nav %}{% endblock %}
+    </nav>
+    {% endblock %}
+  </header>
+
+  {# 3. Toasts — immediately after the header, so they never occlude navigation (§2.2). #}
+  <div id="honest-alerts-toasts"
+       hx-ext="sse"
+       sse-connect="/api/alerts/stream"
+       sse-swap="alert:toast"
+       hx-swap="afterbegin"
+       aria-live="polite"
+       aria-atomic="false"></div>
+
+  {# 4. Main — the HTMX fragment target. #}
+  <main id="honest-main">
+    {% block content %}{% endblock %}
+  </main>
+
+  {# 5. Footer. #}
+  <footer id="honest-footer">
+    {% block footer %}{% endblock %}
+  </footer>
+
+  {# 6. Modal — last, so it renders above all other content (§2.2). #}
+  <div id="honest-alerts-modal"
+       hx-ext="sse"
+       sse-connect="/api/alerts/stream"
+       sse-swap="alert:modal"
+       hx-swap="innerHTML"
+       role="dialog"
+       aria-modal="true"></div>
+
+  {# 3. Scripts, in the required order (§3). Pin these versions in production; the CDN URLs are a
+     development convenience. #}
+  <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
+  <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+  <script src="/static/domx.js"></script>
+
+  {# The manifest declares which elements are user state; domx collects it into every request as _state
+     (§5.1). An empty manifest is valid and required — a missing one is an error. #}
+  <script>
+    {% block manifest %}const appManifest = {}{% endblock %}
+  </script>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>
