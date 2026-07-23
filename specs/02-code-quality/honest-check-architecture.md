@@ -82,14 +82,31 @@ honest-check [options] [paths...]
 | `--watch` | Re-run on file change |
 | `--rule` | Run only the specified rule(s): `--rule HC001 --rule HC-P002` |
 | `--no-rule` | Suppress specific rule(s) |
+| `--report` | Count every rule's findings across the tree and exit 0 (section 2.1.1) |
 
 **Exit codes:**
 
 | Code | Meaning |
 |---|---|
 | 0 | No errors (warnings may be present) |
-| 1 | One or more errors |
+| 1 | One or more errors at or below the declared adoption level |
 | 2 | Configuration error or honest-check internal failure |
+
+#### 2.1.1 `--report`
+
+An adopter choosing a level (section 9.4) needs one number per rule: how much would this cost me? `--report` answers it. It runs every rule across the tree and prints the count for each, marking which are enforced at the declared level and which the next level up would add.
+
+```
+honest-check: adoption level Boundary — 17 of 45 rules enforced.
+
+  rule        severity  findings  enforced
+  HC-P001     error            0  yes
+  HC-P004     error            3  yes
+  HC001       error          412  no (Typed)
+  HC-SM03     warning         18  no (Typed)
+```
+
+**`--report` always exits 0.** It reports; it does not judge. That is what keeps it from being confused with the gate, and it is why the flag can afford to show rules the codebase does not yet hold. A reporting mode that could fail would be a second, quieter gate with different rules — exactly the ambiguity section 9.4 exists to remove.
 
 **Pre-commit hook example (Python):**
 
@@ -187,6 +204,7 @@ honest-check reads `honest-check.toml` from the nearest ancestor directory, or f
 paths = ["src/pipelines/", "src/vocab/", "src/state/"]
 exclude = ["src/migrations/", "**/__pycache__/"]
 severity = "warning"
+adoption = "Boundary"   # section 9.4; absent means "Declared", the strictest level
 
 [rules]
 # Suppress specific rules globally
@@ -1467,7 +1485,7 @@ The conformance suite is `python/honest-check/conformance/suite.json`, beside th
 }
 ```
 
-### 9.3 Implementation Declaration
+### 9.3 Implementation Declaration (of the checker)
 
 Implementations declare their conformance level in their README and package metadata:
 
@@ -1477,3 +1495,41 @@ Implementations declare their conformance level in their README and package meta
 conformance = "Full"
 conformance-suite-version = "1.0"
 ```
+
+Sections 9.1 to 9.3 grade the checker: which rules an implementation of honest-check is able to enforce. Section 9.4 grades the codebase being checked: which rules it currently holds.
+
+### 9.4 Adoption Levels (of the codebase being checked)
+
+There are two ways to adopt a strict checker: turn every rule on at once, or never turn it on at all. Adopters need a third, and the usual answer is a per-rule dial. A dial is the wrong instrument. A codebase that has left an arbitrary subset of rules off forever cannot say what it holds, and neither can anyone reading it: "passes honest-check" stops being a claim and becomes a configuration detail. The bug category that eliminates is a false guarantee — a project that reports clean while the rule protecting the reader's actual concern was never switched on.
+
+An adoption level is a named, closed set of rules. A codebase declares one; the level says exactly which rules it holds. Then "clean at level Boundary" means the same thing everywhere, moving up a level is a real event, and the on-ramp is still gradual.
+
+**The levels.** Each is cumulative: a level enforces its own rules and every rule of the levels below it.
+
+| Level | What the codebase holds | Rules added at this level |
+|---|---|---|
+| **Structural** | The shape of the code: no classes, no dispatch chains, no hidden state in closures or constructors, no lifecycle hooks | HC-P001, HC-P003, HC-P007, HC-P011, HC-P016 |
+| **Boundary** | I/O, faults, persistence, and identity cross only at declared boundaries; the interior is pure | HC-P002, HC-P004, HC-P005, HC-P006, HC-P010, HC-P013, HC-ST001, HC-A001, HC-A002 |
+| **Typed** | The vocabulary, chain, and state-machine type system holds | HC001–HC011, HC-SM01–HC-SM05, HC-P014, HC-P017 |
+| **Declared** | Everything is declared rather than inferred: roles, orchestration, static references, and user state | HC-R001, HC-OR001, HC-OR003, HC-REF001–HC-REF004, HC-ST002, HC-HF001, HC-HF002 |
+
+**Three rules hold at every level: HC-SYN, HC-SUP001, and HC-SUP002.** A codebase that does not parse has no level, and the suppression guarantee of section 7.4 cannot be level-dependent — if it were, a low level would silently buy the right to hide things, which is the dial problem again.
+
+**Declaring a level.** In `honest-check.toml`:
+
+```toml
+[check]
+adoption = "Boundary"
+```
+
+**An absent declaration means `Declared`**, the strictest level. Silence never buys leniency; a project that has said nothing is held to everything. This is the same rule as section 7.4's: the mechanism must not reward saying less.
+
+**Rules above the declared level still run, and still report, downgraded to `info`.** They never fail the run and they are never dropped — the same treatment a suppressed diagnostic gets, for the same reason. A level is a statement about what a codebase holds today, not permission to stop looking.
+
+**Every run states its level.** Human output opens with it, and the JSON `summary` carries `adoption` and `enforced_rules`. A passing run therefore always says what it proved:
+
+```
+honest-check: adoption level Boundary — 17 of 45 rules enforced.
+```
+
+**Ordering.** Suppression is resolved first (section 7.4), then the level is applied. A suppressed diagnostic keeps its directive alive whether or not its rule is enforced at the current level, so raising or lowering a level never makes a live directive look dead.

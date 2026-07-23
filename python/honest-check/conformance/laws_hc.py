@@ -86,6 +86,7 @@ def _probe_formats():
 
     # Exact human output: a location+rule line plus an indented message line per diagnostic, then a summary.
     human_expected = (
+        "honest-check: adoption level Declared — 45 of 45 rules enforced.\n"
         "f.py:1:1: error HC003\n"
         '  a class & <tag> "q"\n'
         "f.py:2:1: warning HC-P001\n"
@@ -94,8 +95,8 @@ def _probe_formats():
         "  note\n"
         "Found 1 error(s), 1 warning(s), 1 info(s)."
     )
-    if render(diags, "human") != human_expected:
-        bad.append(f"render human mismatch: {render(diags, 'human')!r}")
+    if render(diags, "human", "Declared") != human_expected:
+        bad.append(f"render human mismatch: {render(diags, 'human', 'Declared')!r}")
 
     # Exact GitHub-annotation output: one ::level line per diagnostic; info maps to notice.
     github_expected = (
@@ -103,8 +104,8 @@ def _probe_formats():
         "::warning file=f.py,line=2,col=1,title=HC-P001::branch\n"
         "::notice file=f.py,line=3,col=1,title=HC-P006::note"
     )
-    if render(diags, "github") != github_expected:
-        bad.append(f"render github mismatch: {render(diags, 'github')!r}")
+    if render(diags, "github", "Declared") != github_expected:
+        bad.append(f"render github mismatch: {render(diags, 'github', 'Declared')!r}")
 
     # Exact JUnit XML: escaped message attribute and body; failures = errors + warnings.
     junit_expected = (
@@ -122,14 +123,14 @@ def _probe_formats():
         "  </testsuite>\n"
         "</testsuites>"
     )
-    if render(diags, "junit") != junit_expected:
-        bad.append(f"render junit mismatch: {render(diags, 'junit')!r}")
+    if render(diags, "junit", "Declared") != junit_expected:
+        bad.append(f"render junit mismatch: {render(diags, 'junit', 'Declared')!r}")
 
     # JSON: structure + values via parse, and 4-space indentation via the raw text.
-    json_text = render(diags, "json")
+    json_text = render(diags, "json", "Declared")
     expected_payload = {
         "version": "0.1",
-        "summary": {"errors": 1, "warnings": 1, "infos": 1},
+        "summary": {"errors": 1, "warnings": 1, "infos": 1, "adoption": "Declared", "enforced_rules": 45},
         "diagnostics": [
             {"rule": "HC003", "severity": "error", "file": "f.py", "line": 1, "col": 1, "message": 'a class & <tag> "q"', "fixable": False},
             {"rule": "HC-P001", "severity": "warning", "file": "f.py", "line": 2, "col": 1, "message": "branch", "fixable": False},
@@ -155,17 +156,24 @@ def _probe_formats():
         bad.append("an unranked severity (default rank 0) sits below the warning floor")
     if filter_by_severity([weird], "info") != [weird]:
         bad.append("an unranked severity (default rank 0) meets the info floor")
-    if render([weird], "github") != "::notice file=f.py,line=9,col=9,title=HCX::w":
-        bad.append(f"an unmapped severity renders as the notice default: {render([weird], 'github')!r}")
+    if render([weird], "github", "Declared") != "::notice file=f.py,line=9,col=9,title=HCX::w":
+        bad.append(f"an unmapped severity renders as the notice default: {render([weird], 'github', 'Declared')!r}")
 
     # GitHub flattens newlines in a message to single spaces.
     nl = diagnostic("HCN", "error", "f.py", 5, 5, "two\nlines")
-    if render([nl], "github") != "::error file=f.py,line=5,col=5,title=HCN::two lines":
-        bad.append(f"github should flatten newlines to spaces: {render([nl], 'github')!r}")
+    if render([nl], "github", "Declared") != "::error file=f.py,line=5,col=5,title=HCN::two lines":
+        bad.append(f"github should flatten newlines to spaces: {render([nl], 'github', 'Declared')!r}")
 
-    # The empty report still summarises, and the pure predicates/filters hold.
-    if render([], "human") != "Found 0 error(s), 0 warning(s), 0 info(s).":
-        bad.append(f"empty human render should be just the summary: {render([], 'human')!r}")
+    # The empty report still states its level and summarises — a passing run always says what it proved.
+    empty_expected = (
+        "honest-check: adoption level Declared — 45 of 45 rules enforced.\n"
+        "Found 0 error(s), 0 warning(s), 0 info(s)."
+    )
+    if render([], "human", "Declared") != empty_expected:
+        bad.append(f"empty human render should be the header and the summary: {render([], 'human', 'Declared')!r}")
+    # A weaker level changes the header, and only the header, on an empty report.
+    if not render([], "human", "Structural").startswith("honest-check: adoption level Structural — 8 of 45"):
+        bad.append(f"the header must state the declared level: {render([], 'human', 'Structural')!r}")
     total = counts(diags)
     if (total["error"], total["warning"], total["info"]) != (1, 1, 1):
         bad.append(f"counts wrong: {total}")
@@ -255,6 +263,38 @@ def _probe_cli():
         code, out, _ = _run_cli([str(dirty), "--format", "json"])
         if code != 1 or "HC" not in out:
             bad.append(f"violation should exit 1 with output, got {code} {out[:60]}")
+
+        # --report counts every rule and always exits 0: it reports, it does not judge (section 2.1.1).
+        code, out, _ = _run_cli([str(dirty), "--report"])
+        if code != 0:
+            bad.append(f"--report must exit 0 even on a file with violations, got {code}")
+        if "adoption level" not in out or "enforced" not in out:
+            bad.append(f"--report must print the header and the table: {out[:80]!r}")
+        if "HC-P003" not in out:
+            bad.append("--report must give every rule a row, including ones with no findings")
+
+        # A declared level below a rule's own level downgrades that rule's findings to info, so the
+        # run passes — and the finding is still printed, never dropped (section 9.4).
+        # In a separate temp tree: _discover_files recurses, and the later probe expects `tmp` to
+        # hold exactly the two files written above.
+        adopt_ctx = tempfile.TemporaryDirectory()
+        adopt = Path(adopt_ctx.name)
+        conf = adopt / "honest-check.toml"
+        conf.write_text('[check]\nadoption = "Structural"\n', encoding="utf-8")
+        io_only = adopt / "io_only.py"
+        io_only.write_text("import subprocess\ndef run():\n    subprocess.run(['ls'])\n", encoding="utf-8")
+        code, out, _ = _run_cli([str(io_only), "--config", str(conf), "--severity", "info"])
+        if code != 0:
+            bad.append(f"a finding above the declared level must not fail the run, got {code}")
+        if "info HC-P004" not in out or "introduced at Boundary" not in out:
+            bad.append(f"the downgraded finding must still be printed: {out[:200]!r}")
+        if "adoption level Structural" not in out:
+            bad.append("the run must state the level it was held to")
+        # The same file at the strictest level fails, so the level is what changed the verdict.
+        code, _, _ = _run_cli([str(io_only)])
+        if code != 1:
+            bad.append(f"the same file must fail at the default (strictest) level, got {code}")
+        adopt_ctx.cleanup()
         # A clean file in a format that emits nothing produces no output line.
         _run_cli([str(clean), "--format", "github"])
         # --no-rule suppresses a rule: dirty's only finding (HC-P003) drops, so the run passes.
@@ -611,6 +651,7 @@ def _probe_cli():
         "suppress this rule (repeatable)",
         "apply auto-fixable corrections",
         "re-run on each trigger line from stdin",
+        "count every rule's findings and exit 0",
     ):
         if phrase not in help_text:
             bad.append(f"--help should include {phrase!r}")
@@ -1241,6 +1282,173 @@ def _probe_suppression_internals():
     return bad
 
 
+def _probe_adoption():
+    """Adoption levels (section 9.4): the codebase's declared level, not the checker's. Pins the
+    cumulation order, the always-enforced three, the strict default, the downgrade of above-level
+    findings, and the --report row shape."""
+    from honest_check.adoption import (
+        ALWAYS_ENFORCED,
+        DEFAULT_LEVEL,
+        LEVEL_ORDER,
+        adoption_header,
+        all_rules,
+        apply_adoption,
+        enforced_rules,
+        introducing_level,
+        resolve_level,
+        rule_report,
+    )
+    from honest_check.formats import render_report
+
+    bad = []
+
+    # The exact membership of every level, written out from the section 9.4 table. This is the
+    # substance of the amendment: a level is a *named, closed set*, so what is in it must be pinned
+    # rule by rule, not merely characterised by shape.
+    expected_membership = {
+        "Structural": {"HC-P001", "HC-P003", "HC-P007", "HC-P011", "HC-P016"},
+        "Boundary": {"HC-P002", "HC-P004", "HC-P005", "HC-P006", "HC-P010", "HC-P013", "HC-ST001", "HC-A001", "HC-A002"},
+        "Typed": {
+            "HC001", "HC002", "HC003", "HC004", "HC005", "HC006", "HC007", "HC008", "HC009", "HC010",
+            "HC011", "HC-SM01", "HC-SM02", "HC-SM03", "HC-SM04", "HC-SM05", "HC-P014", "HC-P017",
+        },
+        "Declared": {
+            "HC-R001", "HC-OR001", "HC-OR003", "HC-REF001", "HC-REF002", "HC-REF003", "HC-REF004",
+            "HC-ST002", "HC-HF001", "HC-HF002",
+        },
+    }
+    cumulative_expected = set(ALWAYS_ENFORCED)
+    for name in LEVEL_ORDER:
+        cumulative_expected |= expected_membership[name]
+        if enforced_rules(name) != cumulative_expected:
+            missing = cumulative_expected - enforced_rules(name)
+            extra = enforced_rules(name) - cumulative_expected
+            bad.append(f"adoption: level {name} membership — missing {sorted(missing)}, extra {sorted(extra)}")
+    if ALWAYS_ENFORCED != {"HC-SYN", "HC-SUP001", "HC-SUP002"}:
+        bad.append(f"adoption: the always-enforced three are {sorted(ALWAYS_ENFORCED)}")
+
+    # Levels are cumulative in LEVEL_ORDER: each enforces strictly more than the one below it, and
+    # the strictest enforces every rule the table places.
+    sets = [enforced_rules(name) for name in LEVEL_ORDER]
+    for lower, higher, lname, hname in zip(sets, sets[1:], LEVEL_ORDER, LEVEL_ORDER[1:]):
+        if not lower < higher:
+            bad.append(f"adoption: {hname} must strictly contain {lname}")
+    if sets[-1] != all_rules():
+        bad.append("adoption: the strictest level must enforce every placed rule")
+
+    # The three that hold everywhere hold at the weakest level too — a low level never buys the
+    # right to hide things (section 7.4 cannot be level-dependent).
+    if not ALWAYS_ENFORCED <= sets[0]:
+        bad.append(f"adoption: {sorted(ALWAYS_ENFORCED)} must be enforced at every level")
+    for rule in ALWAYS_ENFORCED:
+        if introducing_level(rule) != "every":
+            bad.append(f"adoption: introducing_level({rule}) should be 'every'")
+
+    # Silence never buys leniency: absent, empty, or unrecognised all resolve to the strictest level.
+    for configured in (None, "", "boundary", "Nonsense", 0):
+        if resolve_level(configured) != DEFAULT_LEVEL:
+            bad.append(f"adoption: resolve_level({configured!r}) must be {DEFAULT_LEVEL}")
+    # Fail-closed at both doors: resolve_level maps an unknown name to the strictest level, and
+    # enforced_rules called with one directly enforces everything rather than nothing.
+    if enforced_rules("Nonsense") != all_rules():
+        bad.append("adoption: an unknown level must enforce every rule, not none")
+    if DEFAULT_LEVEL != LEVEL_ORDER[-1]:
+        bad.append("adoption: the default must be the strictest level")
+    for name in LEVEL_ORDER:
+        if resolve_level(name) != name:
+            bad.append(f"adoption: resolve_level({name!r}) must be honoured")
+
+    # A rule is introduced by exactly one level, and that is the weakest level enforcing it.
+    for rule in all_rules() - ALWAYS_ENFORCED:
+        introduced = introducing_level(rule)
+        if rule not in enforced_rules(introduced):
+            bad.append(f"adoption: {rule} is introduced at {introduced} but not enforced there")
+        below = LEVEL_ORDER[: LEVEL_ORDER.index(introduced)]
+        if any(rule in enforced_rules(name) for name in below):
+            bad.append(f"adoption: {rule} is enforced below its introducing level {introduced}")
+    # A rule the table does not place is enforced, never silently excused.
+    if introducing_level("HC-NOT-A-RULE") != "every":
+        bad.append("adoption: an unplaced rule must report as enforced at every level")
+
+    # apply_adoption downgrades above-level findings to info, keeps at-level ones untouched, and
+    # drops nothing.
+    at_level = {"rule": "HC-P003", "severity": "error", "path": "p", "line": 1, "col": 1, "message": "m"}
+    above = {"rule": "HC001", "severity": "error", "path": "p", "line": 2, "col": 1, "message": "m"}
+    got = apply_adoption([at_level, above], "Structural")
+    if len(got) != 2:
+        bad.append(f"apply_adoption must drop nothing: {len(got)} of 2 kept")
+    if got[0] != at_level:
+        bad.append(f"apply_adoption must leave an enforced diagnostic untouched: {got[0]}")
+    if got[1]["severity"] != "info":
+        bad.append(f"apply_adoption must downgrade an above-level diagnostic: {got[1]['severity']}")
+    if got[1]["line"] != 2 or got[1]["rule"] != "HC001":
+        bad.append(f"apply_adoption must preserve the rest of the diagnostic: {got[1]}")
+    if "Typed" not in got[1]["message"] or "Structural" not in got[1]["message"]:
+        bad.append(f"the downgraded message must name both levels: {got[1]['message']}")
+    # At the strictest level nothing is downgraded.
+    if apply_adoption([at_level, above], "Declared") != [at_level, above]:
+        bad.append("apply_adoption at the strictest level must change nothing")
+
+    # rule_report: one row per rule, ordered by findings descending then rule name; a rule with no
+    # findings still gets a row, so choosing a level shows the zeroes as well as the costs.
+    rows = rule_report([above, above, at_level], "Structural")
+    if len(rows) != len(all_rules()):
+        bad.append(f"rule_report must cover every rule: {len(rows)} of {len(all_rules())}")
+    if [(r["rule"], r["findings"]) for r in rows[:2]] != [("HC001", 2), ("HC-P003", 1)]:
+        bad.append(f"rule_report ordering: {[(r['rule'], r['findings']) for r in rows[:3]]}")
+    if rows[0]["enforced"] or rows[0]["introduced"] != "Typed":
+        bad.append(f"rule_report must mark an above-level rule: {rows[0]}")
+    if not rows[1]["enforced"]:
+        bad.append(f"rule_report must mark an enforced rule: {rows[1]}")
+    zeroes = [r for r in rows if r["findings"] == 0]
+    if not zeroes or zeroes[0]["severity"] != "—":
+        bad.append("rule_report must give a rule with no findings a row and a placeholder severity")
+    if rows[0]["severity"] != "error" or rows[1]["severity"] != "error":
+        bad.append(f"rule_report must carry each found rule's own severity: {rows[0]}")
+    warned = {"rule": "HC-P005", "severity": "warning", "path": "p", "line": 3, "col": 1, "message": "m"}
+    warn_rows = {r["rule"]: r for r in rule_report([warned], "Structural")}
+    if warn_rows["HC-P005"]["severity"] != "warning":
+        bad.append(f"rule_report must not flatten severities: {warn_rows['HC-P005']}")
+
+    # A rule the level table does not place still gets counted — the report describes what the
+    # checker actually emitted, so a rule added ahead of the table is visible rather than dropped.
+    unplaced = {"rule": "HC-P012", "severity": "warning", "path": "p", "line": 4, "col": 1, "message": "m"}
+    unplaced_rows = {r["rule"]: r for r in rule_report([unplaced, unplaced], "Structural")}
+    if "HC-P012" not in unplaced_rows:
+        bad.append("rule_report must count a rule the level table does not place")
+    elif unplaced_rows["HC-P012"] != {
+        "rule": "HC-P012", "severity": "warning", "findings": 2, "enforced": False, "introduced": "every"
+    }:
+        bad.append(f"rule_report row for an unplaced rule: {unplaced_rows['HC-P012']}")
+    tail = [r["rule"] for r in rows if r["findings"] == 0]
+    if tail != sorted(tail):
+        bad.append("rule_report must break count ties by rule name")
+
+    # The header states the level and the count, and --report opens with it.
+    header = adoption_header("Structural")
+    if f"{len(sets[0])} of {len(all_rules())}" not in header or "Structural" not in header:
+        bad.append(f"adoption_header: {header}")
+    # Exact --report layout: the header, a blank line, the column titles, then one aligned row per
+    # rule, each marked enforced or carrying the level that would introduce it.
+    two_rows = [
+        {"rule": "HC001", "severity": "error", "findings": 2, "enforced": False, "introduced": "Typed"},
+        {"rule": "HC-P003", "severity": "error", "findings": 1, "enforced": True, "introduced": "Structural"},
+    ]
+    report_expected = (
+        "honest-check: adoption level Structural — 8 of 45 rules enforced.\n"
+        "\n"
+        "  rule        severity   findings  enforced\n"
+        "  HC001       error             2  no (Typed)\n"
+        "  HC-P003     error             1  yes"
+    )
+    if render_report(two_rows, "Structural") != report_expected:
+        bad.append(f"render_report layout: {render_report(two_rows, 'Structural')!r}")
+    report = render_report(rows, "Structural")
+    if not report.startswith(header):
+        bad.append("render_report must open with the adoption header")
+    return bad
+
+
 def _probe_determinism():
     """HC-2: the same source yields the same diagnostics on every run."""
     sources = [_CLEAN, _VIOLATION, "if x == 1:\n    y = 1\nelif x == 2:\n    y = 2\nelse:\n    y = 3\n"]
@@ -1336,6 +1544,7 @@ def run():
         "startup": _probe_startup(),
         "suppression": _probe_suppression(),
         "suppression_internals": _probe_suppression_internals(),
+        "adoption": _probe_adoption(),
         "watchlist": _probe_watchlist(),
         "determinism": _probe_determinism(),
     }

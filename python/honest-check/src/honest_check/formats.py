@@ -8,6 +8,7 @@ testable as `assert render(filter(...), fmt) == expected`.
 
 import json
 
+from honest_check.adoption import adoption_header, all_rules, enforced_rules
 from honest_check.diagnostics import Diagnostic
 from honest_check.rules import is_fixable
 
@@ -46,8 +47,8 @@ def has_errors(diagnostics: list[Diagnostic]) -> bool:
     return any(d["severity"] == "error" for d in diagnostics)
 
 
-def render_human(diagnostics: list[Diagnostic]) -> str:
-    lines = []
+def render_human(diagnostics: list[Diagnostic], level: str) -> str:
+    lines = [adoption_header(level)]
     for d in diagnostics:
         lines.append(f"{d['path']}:{d['line']}:{d['col']}: {d['severity']} {d['rule']}")
         lines.append(f"  {d['message']}")
@@ -56,11 +57,17 @@ def render_human(diagnostics: list[Diagnostic]) -> str:
     return "\n".join(lines)
 
 
-def render_json(diagnostics: list[Diagnostic]) -> str:
+def render_json(diagnostics: list[Diagnostic], level: str) -> str:
     c = counts(diagnostics)
     payload = {
         "version": "0.1",
-        "summary": {"errors": c["error"], "warnings": c["warning"], "infos": c["info"]},
+        "summary": {
+            "errors": c["error"],
+            "warnings": c["warning"],
+            "infos": c["info"],
+            "adoption": level,
+            "enforced_rules": len(enforced_rules(level)),
+        },
         "diagnostics": [
             {
                 "rule": d["rule"],
@@ -81,7 +88,7 @@ def render_json(diagnostics: list[Diagnostic]) -> str:
 _GITHUB_LEVEL = {"error": "error", "warning": "warning", "info": "notice"}
 
 
-def render_github(diagnostics: list[Diagnostic]) -> str:
+def render_github(diagnostics: list[Diagnostic], level: str) -> str:
     lines = []
     for d in diagnostics:
         level = _GITHUB_LEVEL.get(d["severity"], "notice")
@@ -101,7 +108,7 @@ def _xml_escape(text: str) -> str:
     )
 
 
-def render_junit(diagnostics: list[Diagnostic]) -> str:
+def render_junit(diagnostics: list[Diagnostic], level: str) -> str:
     c = counts(diagnostics)
     failures = c["error"] + c["warning"]
     rows = [f'<testsuites name="honest-check" failures="{failures}" tests="{len(diagnostics)}">']
@@ -128,10 +135,22 @@ _RENDERERS = {
 }
 
 
-def render(diagnostics: list[Diagnostic], fmt: str) -> str:
-    """Render diagnostics in the named format (dict-dispatch; section 6)."""
-    return _RENDERERS[fmt](diagnostics)
+def render(diagnostics: list[Diagnostic], fmt: str, level: str) -> str:
+    """Render diagnostics in the named format (dict-dispatch; section 6). Every renderer takes the
+    adoption level so the table can dispatch on one uniform signature; the machine-consumed formats
+    (github, junit) carry the level in their diagnostics rather than a header, so they ignore it."""
+    return _RENDERERS[fmt](diagnostics, level)
 
 
 def supported_formats() -> list[str]:
     return sorted(_RENDERERS)
+
+
+def render_report(rows: list[dict], level: str) -> str:
+    """The --report table (section 2.1.1): every rule with its finding count, and whether the
+    declared level enforces it. It reports, it does not judge — the caller always exits 0."""
+    lines = [adoption_header(level), "", f"  {'rule':<12}{'severity':<10}{'findings':>9}  enforced"]
+    for row in rows:
+        mark = "yes" if row["enforced"] else f"no ({row['introduced']})"
+        lines.append(f"  {row['rule']:<12}{row['severity']:<10}{row['findings']:>9}  {mark}")
+    return "\n".join(lines)

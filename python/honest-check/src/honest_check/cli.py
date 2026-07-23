@@ -19,6 +19,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+from honest_check.adoption import apply_adoption, resolve_level, rule_report
 from honest_check.config import (
     empty_config,
     is_excluded,
@@ -32,6 +33,7 @@ from honest_check.diagnostics import Diagnostic
 from honest_check.formats import (
     filter_by_rule,
     filter_by_severity,
+    render_report,
     has_errors,
     render,
     supported_formats,
@@ -130,10 +132,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no-rule", action="append", default=[], dest="no_rule", help="suppress this rule (repeatable)")
     parser.add_argument("--fix", action="store_true", help="apply auto-fixable corrections (conservative subset only)")
     parser.add_argument("--watch", action="store_true", help="re-run on each trigger line from stdin")
+    parser.add_argument("--report", action="store_true", help="count every rule's findings and exit 0 (section 2.1.1)")
     return parser.parse_args(argv)
 
 
-def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str, templates_dir: str, format_manifest: str, component_manifest: str) -> int:
+def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str, templates_dir: str, format_manifest: str, component_manifest: str, level: str, report: bool) -> int:
     """Check the paths once and print the rendered report; return the exit code (1 on errors, 2 on a
     read failure, else 0). The single-pass core that both a plain run and --watch repeat. When a
     template directory is configured, its templates are scanned once and every checked file also runs
@@ -185,8 +188,12 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
         print(f"honest-check: cannot read source: {exc}", file=sys.stderr)
         return 2
     diagnostics = filter_by_rule(diagnostics, only, suppress)
+    if report:
+        print(render_report(rule_report(diagnostics, level), level))
+        return 0
+    diagnostics = apply_adoption(diagnostics, level)
     blocking = has_errors(diagnostics)
-    rendered = render(filter_by_severity(diagnostics, severity), fmt)
+    rendered = render(filter_by_severity(diagnostics, severity), fmt, level)
     if rendered:
         print(rendered)
     return 1 if blocking else 0
@@ -221,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     severity = resolve_severity(args.severity, config["severity"])
     suppress = frozenset(args.no_rule) | frozenset(config["disable"])
     only = frozenset(args.rule)
+    level = resolve_level(config["adoption"])
 
     if args.fix:
         print(
@@ -230,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     def run() -> int:
-        return _run_once(paths, config["exclude"], severity, suppress, only, args.format, config["templates"], config["format_manifest"], config["component_manifest"])
+        return _run_once(paths, config["exclude"], severity, suppress, only, args.format, config["templates"], config["format_manifest"], config["component_manifest"], level, args.report)
 
     if args.watch:
         return watch(run)

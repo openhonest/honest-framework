@@ -330,6 +330,55 @@ Feature: honest-check — Python supplement
     When _xml_escape escapes it
     Then it replaces the ampersand, angle brackets, and double quote with their XML entities
 
+  Scenario: render_report prints the per-rule finding counts
+    Given the report rows and the declared adoption level
+    When render_report lays them out
+    Then it opens with the adoption header and gives each rule a row
+    And each row says whether the level enforces the rule, or which level would introduce it
+
+  # adoption.py — which rules the codebase being checked currently holds
+
+  Scenario: resolve_level decides which adoption level to enforce
+    Given whatever the configuration declared, if anything
+    When resolve_level reads it
+    Then it honours a recognised level name
+    And anything absent, empty, or unrecognised resolves to the strictest level, so silence never buys leniency
+
+  Scenario: enforced_rules lists the rules a level holds
+    Given an adoption level
+    When enforced_rules gathers them
+    Then it returns that level's rules, every weaker level's rules, and the three that hold at every level
+
+  Scenario: introducing_level names the level at which a rule starts being enforced
+    Given a rule
+    When introducing_level looks it up
+    Then it returns the weakest level that enforces the rule
+    And a rule the table does not place is enforced at every level, never silently excused
+
+  Scenario: apply_adoption downgrades the findings above the declared level
+    Given the diagnostics and the declared adoption level
+    When apply_adoption sorts them by level
+    Then a finding the level enforces is left untouched
+    And a finding above the level is downgraded to info, keeping everything else, and never dropped
+    And its message names both the declared level and the level that would introduce it
+
+  Scenario: all_rules lists every rule an adoption level can place
+    Given the level table
+    When all_rules gathers them
+    Then it returns the rules of every level plus the three that hold at every level
+
+  Scenario: rule_report counts each rule's findings for the report
+    Given the diagnostics and the declared adoption level
+    When rule_report tallies them
+    Then it returns one row per rule, ordered by findings descending and then by rule name
+    And a rule with no findings still gets a row, so choosing a level shows the zeroes as well as the costs
+    And each row carries whether the level enforces the rule and which level introduces it
+
+  Scenario: adoption_header states the level every run is held to
+    Given an adoption level
+    When adoption_header writes the line
+    Then it names the level and how many of all the rules it enforces
+
   # watchlists.py — the Python impurity watch lists
 
   Scenario: matches_watchlist matches a qualified call name against a watch list

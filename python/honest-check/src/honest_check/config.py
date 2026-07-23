@@ -8,6 +8,7 @@ touches the filesystem, so it stays exhaustively testable.
     paths     = ["src/"]
     exclude   = ["**/migrations/**", "**/__pycache__/**"]
     severity  = "warning"
+    adoption  = "Boundary"   # section 9.4; absent means the strictest level
     templates = "templates/"
 
     [rules]
@@ -30,6 +31,7 @@ def normalize_config(raw: dict) -> dict:
         "paths": list(check.get("paths", [])),
         "exclude": list(check.get("exclude", [])),
         "severity": check.get("severity", _DEFAULT_SEVERITY),
+        "adoption": check.get("adoption"),
         "templates": check.get("templates", ""),
         "format_manifest": check.get("format_manifest", ""),
         "component_manifest": check.get("component_manifest", ""),
