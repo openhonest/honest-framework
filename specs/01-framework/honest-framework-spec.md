@@ -8,6 +8,14 @@
 
 ---
 
+## Definition
+
+The Honest Framework is an architectural standard for code that is **correct by construction**: it eliminates named categories of defect at their source, making them structurally impossible to express rather than detecting them after the fact. Each construct that manufactures a defect class — classes carrying mutable state, inheritance, value-dispatch branching, hidden state, unbounded I/O in business logic — is replaced by one that cannot represent it: pure-function dispatch tables over closed, declared vocabularies, with I/O confined to the boundary. The test for every rule is the same: *which category of defect does this make impossible?*
+
+The discipline is mechanically enforced, not advisory. A static linter (`honest-check`) rejects any code that can represent an eliminated defect class; exhaustive verification (`honest-test`) runs the full bounded input space rather than sampling it. The specification is language-agnostic, and the guarantees are available in ordinary imperative languages — Python, TypeScript, Java, C#, Ruby — without a new language or reskilling: the adoption cost is subtractive, a few habits to stop, not a body of knowledge to acquire.
+
+---
+
 ## Origin: One Observation
 
 Honest framework exists because of one initial observation: the browser already has a state store. It is called the DOM. Everything built on top of that observation is honest framework. Anything else is dishonest. Once I started looking, I saw dishonesty everywhere.
