@@ -1,5 +1,9 @@
 # Honest Framework — Python reference implementation
 
+**Honest Framework isn't a framework you switch to. It's a discipline you switch on, inside the one you already use.**
+
+Keep the framework you build on — Rails, Django, Spring. Move your business logic out of your models and into plain functions, drop the callbacks and signals that bite you at 3am, and let a linter keep you honest. Whole classes of bug stop happening, and your tests stop needing a database. Nothing new to learn — a few habits to unlearn.
+
 This is the active reference implementation of the Honest Framework. It is a uv
 workspace: one shared virtual environment and lockfile, with each `honest-<name>/`
 an independently publishable package implementing exactly one spec module.
