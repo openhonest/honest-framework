@@ -1,0 +1,39 @@
+# honest-estimate declared in .hd — deductive size from the .hd contract boundary. Breadth (the count
+# of elementary processes) and depth (bits of specified case-distinction over closed vocabularies) are
+# read off the declaration, before code exists. Pure over the IR; read_hd is the one (pure) boundary.
+
+module honest-estimate
+
+  layer tooling
+
+  type Breadth = {
+    total: int
+    ifpug_countable: int
+    beyond_ifpug_internal: int
+    internal_share_ratio: float
+  }
+
+  type OpenFlag = {
+    process: str
+    param: str
+    type: str
+  }
+
+  type Depth = {
+    bits: float
+    open_flags: list<OpenFlag>
+  }
+
+  type SizeReport = {
+    processes: Breadth
+    bits_of_case_distinction: float
+    open_vocabulary_flags: list<OpenFlag>
+  }
+
+  fn elementary_processes : (module: dict<str, any>) -> list<str>
+
+  fn breadth : (module: dict<str, any>) -> Breadth
+
+  fn depth : (module: dict<str, any>) -> Depth
+
+  fn size : (source: str) -> SizeReport

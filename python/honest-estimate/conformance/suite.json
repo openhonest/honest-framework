@@ -1,0 +1,63 @@
+{
+  "module": "honest-estimate",
+  "cases": [
+    {
+      "id": "vc-size-two-processes-closed",
+      "value_case": {
+        "function": "size",
+        "expected": {
+          "ok": {
+            "processes": {
+              "total": 2,
+              "ifpug_countable": 0,
+              "beyond_ifpug_internal": 2,
+              "internal_share_ratio": 1.0
+            },
+            "bits_of_case_distinction": 3.0,
+            "open_vocabulary_flags": []
+          }
+        },
+        "args": [
+          "module m\n  layer tooling\n  set PAIR = { \"a\", \"b\" }\n  set QUAD = { \"w\", \"x\", \"y\", \"z\" }\n  boundary_in fn recognise : (raw: PAIR) -> str\n  fn transform : (v: QUAD) -> str"
+        ]
+      }
+    },
+    {
+      "id": "vc-size-open-param-flagged",
+      "value_case": {
+        "function": "size",
+        "expected": {
+          "ok": {
+            "processes": {
+              "total": 1,
+              "ifpug_countable": 0,
+              "beyond_ifpug_internal": 1,
+              "internal_share_ratio": 1.0
+            },
+            "bits_of_case_distinction": 1.0,
+            "open_vocabulary_flags": [
+              { "process": "act", "param": "note", "type": "str" }
+            ]
+          }
+        },
+        "args": [
+          "module m\n  layer tooling\n  set MODE = { \"on\", \"off\" }\n  boundary_in fn act : (mode: MODE, note: str) -> str"
+        ]
+      }
+    }
+  ],
+  "value_oracle_exempt": [
+    {
+      "function": "elementary_processes",
+      "reason": "Takes the module IR (a large dict), not a portable literal; its every branch is proved directly in laws_he, and its result is composed into the size value cases."
+    },
+    {
+      "function": "breadth",
+      "reason": "Takes the module IR; the IFPUG split and the zero-process ratio branch are proved in laws_he, and the whole is composed into the size value cases."
+    },
+    {
+      "function": "depth",
+      "reason": "Takes the module IR; the closed-vocabulary bits and the open-parameter flagging are proved in laws_he and composed into the size value cases."
+    }
+  ]
+}

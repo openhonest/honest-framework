@@ -1,0 +1,20 @@
+[project]
+name = "honest-estimate"
+version = "0.1.0"
+description = "Deductive software size from the .hd contract boundary: breadth (elementary processes) and depth (bits of case-distinction over closed vocabularies), read off the declaration before code exists. No I/O."
+requires-python = ">=3.11"
+dependencies = ["honest-design"]
+
+[tool.uv.sources]
+honest-design = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honest_estimate"]
+
+[tool.honest-check]
+conformance = "python"
+conformance-suite-version = "0"
