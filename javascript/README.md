@@ -5,11 +5,15 @@ This is the JavaScript track of the Honest Framework. The normative specificatio
 
 ## Status
 
-- **`honest-state/`** — implemented. The DATAOS client primitives (`collect` / `apply` /
-  `observe`, the HTMX extension, cache-and-replay refresh recovery). These are JavaScript-only
-  by spec (§6.1: the DOM is the only copy of user state), with a `node --test` suite.
-- **`parse`, `type`, `check`, `test`, `persist`** — not yet built. The bootstrapping path below
-  is how they come in.
+The client (application-production) tier is built and gated. The JavaScript-native bootstrapping seeds (`parse`/`type`/`check`/`test`) are not yet built, so the client modules are gated through the shared toolchain instead: honest-check's JavaScript rules run from `../python/honest-check`, coverage via `node --test`, and the function-point, feature, and mutation gates through the `javascript/*.py` harness against the Python workspace. Each module below passes the full `javascript/gate.sh` — honest-check clean, 100% line/branch/function coverage, portable conformance, one gherkin per function, and mutation adequacy.
+
+- **`honest-dom/`** — built. The client DOM-as-state contract: `collect`/`apply`/`observe`, the HTMX extension, browser observability (instrumentation, beacon send, shortcuts), and the reload-recovery state cache. The DATAOS primitives — the DOM is the only copy of user state (honest-state §6.1) — live here. 29 function points, 3 portable conformance cases, and a Playwright real-browser suite (`e2e/`) that runs when Chromium is available.
+- **`honest-boot/`** — built. The client bootloader: the full pipeline (scan → read → load → init → observe → emit) and every attribute notation, including the unordered Type Magic form. 15 function points and a Playwright `e2e/` suite; one open item (spec §10) is the exact path of the declared attribute-vocabulary file.
+- **`honest-format/`** — built. Client-side value formatting: the format vocabulary, the formatter contract, smart auto-detection, and the DOM binding. 13 function points, 75 portable conformance cases.
+- **`honest-components/`** — partially built. The client behaviour contract (§2.4 — the shared enhancement runtime with the switch and accordion) and the §6 CSS namespace contract (selector scoping, the `style.json` ↔ CSS token bijection, and the token-contract merge) are built and gated. Not yet built: organism packaging and discovery (§5.1), the mount-time application of the namespace scan, honest-type marshalling at the organism boundary (§7), and the multi-target organism structure (§8).
+- **`honest-state/`** — not a JavaScript package. Its client half is DATAOS, implemented in `honest-dom` above.
+
+The bootstrapping path below is how the JavaScript-native seeds (`parse`/`type`/`check`/`test`) arrive; until then the client tier rides the shared toolchain described above.
 
 ## Bootstrapping (read the spec first)
 
@@ -49,13 +53,8 @@ Python reference. Nothing else touches the parser directly.
 
 ### Two conformance artefacts per module
 
-- **The portable contract** — the same `suite.json` files the Python modules carry
-  (`../python/honest-*/conformance/suite.json`) are language-agnostic input/output cases. The
-  JavaScript modules must pass the *same* data. Do not fork or reformat them.
-- **The generative proof** — a JavaScript harness (`laws_*.mjs`) that drives each module's
-  declarations through the JS generators and asserts its laws across the generated space —
-  predicates, functions, composed types, fake boundaries, malformed input: everything the JSON
-  cannot express.
+- **The portable contract** — a `conformance/suite.json` of language-agnostic input/output cases, run by `conformance/run.js`. For a module that also exists in Python (the bootstrapping seeds), it is the *same* data the Python module carries (`../python/honest-*/conformance/suite.json`) — do not fork or reformat it. The client-tier modules are JavaScript-only, so each carries its own native suite.
+- **The adversarial proof** — for the client tier already built, the `node --test` unit suite (100% line/branch/function coverage), the feature-gate bijection (one gherkin per function), and `js_mutate` mutation adequacy together drive each module across predicates, boundaries, and malformed input. A dedicated generative harness in the style of Python's `laws_*.py` is the planned form for the bootstrapping seeds; it is not yet written.
 
 ### Completeness is measured
 
