@@ -392,6 +392,17 @@ format     → type, DOM, observe                      declarative value formatt
                                                     it reads (hf-format), no imperative call
 components → type, page, observe, format             atoms / molecules / organisms
 alerts     → errors, observe, persist, state, auth  server-push notifications
+boot       → DOM, format, components                the client bootloader and composition root: on
+                                                    load it scans the declared h*- attributes, loads
+                                                    and inits the owning module (DATAOS), rescans via
+                                                    the shared observer (honest.bridge) on HTMX swaps,
+                                                    and emits hf.browser.classify. Last in the order —
+                                                    it wires together the modules it loads. It parses
+                                                    and dispatches the declared attribute tokens against
+                                                    the vocabulary (data) — what the "Attribute parsing
+                                                    and dispatch" section below loosely calls "classify"
+                                                    — which is NOT honest-type's input recognition, so
+                                                    boot does not depend on honest-type.
 ```
 
 Three rules fix this order:
@@ -400,7 +411,7 @@ Three rules fix this order:
 - **Leaves first, then `errors`.** `parse` and `type` depend on nothing. `errors` depends only on `type` (it returns faults as data in the shared `Result` shape) and is otherwise a pure leaf — it normalizes failures into one report, decides behavior as a pure function of the environment, and throttles repeats, all with no I/O. It is *composed* by `observe` (the normalizers) and `alerts` (the behavior table and rate-limiter), so it must precede both.
 - **`gherkin` before `test`.** honest-gherkin is the BDD execution *engine* (parse a feature, match its steps against a registry, fold the scenario, report). honest-test *runs on* it — it generates the step scaffolding and ships the standard step library, and the engine runs them (honest-test §8.1, honest-gherkin §1.3). So the engine must exist before test, not the other way round; the engine itself depends only on `type` (for the `Result`/fault-as-data shape).
 - **`observe` before `persist`.** Every persistence boundary (execute, apply, transactions) emits to the event log: persist instruments *through* observe. (observe's own emit stores via persist, but it receives that writer at the boundary rather than importing persist, so the dependency runs one way: persist → observe.)
-- **Application tier last.** `page`, `DOM`, `format`, `components`, and `alerts` build on the code-quality tier; `components` and `alerts` mount into `page`. `format` sits between `DOM` and `components`: it binds through the DOM's shared observer and `components` render values through its formatters.
+- **Application tier last, and `boot` last of all.** `page`, `DOM`, `format`, `components`, and `alerts` build on the code-quality tier; `components` and `alerts` mount into `page`. `format` sits between `DOM` and `components`: it binds through the DOM's shared observer and `components` render values through its formatters. `boot` — the client bootloader and composition root — comes after them all: it scans the declared `h*-` attributes and loads, inits, and rescans the modules, so it depends on the modules it loads (`DOM`, `format`, `components`). It parses and dispatches the declared attribute tokens against the vocabulary — what the "Attribute parsing and dispatch" section below calls the client's "classify" — matching tokens against the closed vocabularies `honest-type` *declares* (used as data), which is not `honest-type`'s recognition of untrusted input (that runs at the server request boundary). So `boot` does not depend on `honest-type`. Its architecture is in `../03-application-production/honest-boot-architecture.md`.
 
 **`parse` is the real starting point, not `check`.** The gate depends on the parser, so the parser is built and checked by hand first. A language whose grammar tree-sitter does not yet cover must add that grammar to the parser before anything else; the rest of the framework only ever reaches the parser through this one module, never tree-sitter directly. And `parse` covers more than the programming languages: the checker resolves references *across* the rendered surface — a template's `hx-get` to a mounted route, and in time a `class` to a stylesheet rule or a `{% include %}` to a template — so the template grammar, and later the style grammar, are part of what `parse` must supply before the checker can close those references ("Every reference resolves, or the gate stops," above). A reference kind cannot be checked before its grammar is in `parse`.
 
@@ -1054,9 +1065,9 @@ honest-ui is the name for the `h*-` attribute system as a whole. It is not a sep
 
 This is the deepest expression of the honest principle: code that says what it does, where it does it.
 
-### Attribute Classification via honest-type
+### Attribute parsing and dispatch (the client's "classify")
 
-honest-ui attribute values are untyped strings. honest-type classifies them.
+An `h*-` attribute value is a declared string the developer wrote. The bootloader parses it — including the unordered "Type Magic" form below, where it works out which token is the format, which the currency, which the decimals — and dispatches each to its owning module, matching tokens against the closed vocabularies `honest-type` *declares* (used as data). This parse-and-dispatch of already-declared values is the client's "classify"; it is NOT `honest-type`'s `classify()` of untrusted input, which recognizes an open input space and runs at the server request boundary. The two share only the word — see the glossary entry for **classify**.
 
 ```html
 <!-- The attribute value "currency USD 2" is three tokens -->

@@ -78,14 +78,15 @@ pure; `load`/`init`/`observe` at the boundary).
    attribute. The selector is built from the declared vocabulary — a closed set, not an `h*` wildcard —
    so HTMX's `hx-` and any non-declared attribute are ignored.
 2. **resolve(element, vocabulary) → prefix.** Which module owns the element's honest attribute.
-3. **read(element, vocabulary) → config.** Read the honest attribute's declared value and produce the
-   config to hand the module. This is a lookup, not a classification: the attribute value is something
-   the developer wrote from the closed declared vocabulary (`hf-format="currency"`), not untrusted input,
-   so honest-boot resolves it against the declared list — it does not type unknown input. (Type
-   classification of *untrusted* input is a server concern, honest-type at the request boundary; it has
-   no place on the front end, whose whole job is presentation of already-declared values.) The surface
-   may be written in more than one notation (verbose, colon, JSON options, class form); each notation is
-   a way of writing the same declaration and all resolve to the same config.
+3. **read(element, vocabulary) → config.** Parse the honest attribute's declared tokens and produce the
+   config to hand the module. This is the client's parse-and-dispatch — what the framework spec calls the
+   bootloader's "classify" (glossary: **classify**, sense 2) — matching the declared tokens against the
+   vocabulary (data). The value is something the developer wrote from the closed vocabulary, not
+   untrusted input, so this is NOT honest-type's recognition of an open input space (that is a server
+   concern, honest-type at the request boundary, and needs no honest-type engine on the client). The
+   surface may be written in more than one notation (verbose `hf-format="currency"`, colon, JSON options,
+   and the unordered "Type Magic" form `hf="currency USD 2"`); parsing each into the same config is the
+   notation set (§10).
 
 **Boundary (I/O — the only steps that touch the network, the DOM, or the event log):**
 
