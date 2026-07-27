@@ -24,3 +24,18 @@ Feature: honest-boot — the client bootloader's pure scan/read core
     Given an element and the declared vocabulary
     When readConfig reads the declared attribute
     Then it returns the owning module, the attribute, and the declared value, or nothing when there is no honest attribute
+
+  Scenario: loadModules imports the needed modules that are not already loaded
+    Given the needed module names, an injected importer, and the already-loaded names
+    When loadModules imports the fresh ones
+    Then it imports each not-yet-loaded module once and returns the updated loaded set and the fresh modules
+
+  Scenario: initModule brings a loaded module to life against the root
+    Given a loaded module and the root element
+    When initModule initialises it
+    Then it prefers the DATAOS autoInit over a plain init, and returns nothing when the module exposes neither
+
+  Scenario: activate runs one pass over a root, loading, initialising, and emitting
+    Given a root and the injected query, importer, and emit
+    When activate scans, loads, inits, and emits
+    Then it loads and inits only the fresh modules and emits one classify event per resolved element, returning the updated loaded set
