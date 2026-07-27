@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>honest-DOM e2e fixture</title>
+  </head>
+  <body>
+    <input id="name" value="Ada" />
+    <span id="tag">alpha</span>
+    <script type="module">
+      // The composition root honest-DOM's src deliberately does not contain: the real bus (a shared
+      // MutationObserver, delegated event listeners, rAF batching) and the real query. honest-DOM's
+      // pure functions have only ever run against injected stubs; here they run against a real browser.
+      import { collect, apply, observe } from "../../src/index.js";
+
+      const query = (selector) => Array.from(document.querySelectorAll(selector));
+
+      const mutationHandlers = new Set();
+      let observer;
+      const bus = {
+        onMutation(handler) {
+          mutationHandlers.add(handler);
+          if (!observer) {
+            observer = new MutationObserver((mutations) => mutationHandlers.forEach((h) => h(mutations)));
+            observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+          }
+          return () => mutationHandlers.delete(handler);
+        },
+        onEvent(type, handler) {
+          const listener = () => handler();
+          document.body.addEventListener(type, listener, { passive: true });
+          return () => document.body.removeEventListener(type, listener);
+        },
+        schedule(fn) {
+          requestAnimationFrame(fn);
+        },
+      };
+
+      // Expose the pure API for the runner to call against the real DOM.
+      window.__api = { collect, apply, query };
+
+      // observe through the real bus: record the latest state each callback sees.
+      window.__observedName = null;
+      observe({ name: { selector: "#name", read: "value" } }, (state) => { window.__observedName = state.name; }, bus, query);
+      window.__observedTag = null;
+      observe({ tag: { selector: "#tag", read: "text" } }, (state) => { window.__observedTag = state.tag; }, bus, query);
+
+      window.__ready = true;
+    </script>
+  </body>
+</html>
