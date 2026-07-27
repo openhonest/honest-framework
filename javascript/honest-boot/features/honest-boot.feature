@@ -20,10 +20,20 @@ Feature: honest-boot — the client bootloader's pure scan/read core
     When scan queries the built selector
     Then it returns the matched elements and the modules they need
 
-  Scenario: readConfig resolves a declared attribute into its module config
+  Scenario: parseVerbose collects the prefix attributes into a config
+    Given an element and a prefix
+    When parseVerbose reads the prefix attributes
+    Then it returns each prefix- attribute as a config key, skipping the -opts and -raw attributes and non-prefix attributes
+
+  Scenario: parseJson reads the prefix-opts attribute as a config object
+    Given an element and a prefix
+    When parseJson reads the prefix-opts attribute
+    Then it returns the parsed JSON object, or an empty object when there is no such attribute
+
+  Scenario: readConfig merges the notations into one module config
     Given an element and the declared vocabulary
-    When readConfig reads the declared attribute
-    Then it returns the owning module, the attribute, and the declared value, or nothing when there is no honest attribute
+    When readConfig parses the element's notations
+    Then it returns the owning module and the merged config, with JSON overriding verbose, or nothing when there is no honest attribute or nothing to parse
 
   Scenario: loadModules imports the needed modules that are not already loaded
     Given the needed module names, an injected importer, and the already-loaded names

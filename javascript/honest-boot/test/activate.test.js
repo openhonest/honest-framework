@@ -40,10 +40,10 @@ test("activate scans, loads fresh modules, inits them, and emits per resolved el
   assert.deepEqual(loaded, ["honest-drag", "honest-format"]);
   // needed is sorted, so fresh imports (and inits) run drag then format.
   assert.deepEqual(inits, [["honest-drag", root], ["honest-format", root]]);
-  // one emit per element that resolves to a value; the class-only element carries none, so it is skipped.
+  // one emit per element that parses to a config; the class-only element parses to nothing, so it is skipped.
   assert.deepEqual(emitted, [
-    [fmtEl, { module: "honest-format", attribute: "hf-format", value: "currency" }],
-    [dragEl, { module: "honest-drag", attribute: "hd-draggable", value: "" }],
+    [fmtEl, { module: "honest-format", config: { format: "currency" } }],
+    [dragEl, { module: "honest-drag", config: { draggable: "" } }],
   ]);
 });
 

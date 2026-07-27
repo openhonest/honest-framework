@@ -28,7 +28,7 @@ test("boot activates once on start and re-activates on each observer event", asy
     vocabulary: VOCAB,
     importer: async () => ({ autoInit: () => {} }),
     loaded: [],
-    emit: (_element, config) => emitted.push(config.value),
+    emit: (_element, config) => emitted.push(config.config.format),
     subscribe: (cb) => {
       observerCb = cb;
     },

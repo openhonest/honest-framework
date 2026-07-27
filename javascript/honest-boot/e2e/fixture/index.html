@@ -25,7 +25,7 @@
         query: (root, selector) => Array.from(root.querySelectorAll(selector)),
         vocabulary,
         importer: (name) => import(registry[name]),
-        emit: (element, config) => window.__classified.push(config.value),
+        emit: (element, config) => window.__classified.push(config.config.format),
         loaded: [],
         // The shared observer stand-in: on any inserted content, re-activate the whole body. Watches
         // childList only, so the module's data-attribute mark does not re-trigger it.
