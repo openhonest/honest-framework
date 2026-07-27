@@ -45,6 +45,11 @@ Feature: honest-boot — the client bootloader's pure scan/read core
     When parseClass splits the mapped class token after its prefix on the hyphen
     Then it zips the tokens onto the slots, or returns nothing when there are no slots, no mapping class prefix, or no matching class
 
+  Scenario: parseMagic places unordered tokens by their slot recognizers
+    Given an element with a bare-prefix attribute and the vocabulary's slot recognizers
+    When parseMagic reads the unordered tokens
+    Then it places each token in the first slot whose recognizer accepts it, fills each slot once, and drops a token no recognizer accepts
+
   Scenario: readConfig merges the notations into one module config
     Given an element and the declared vocabulary
     When readConfig parses the element's notations

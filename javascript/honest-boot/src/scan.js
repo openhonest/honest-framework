@@ -5,14 +5,16 @@
 
 export function buildSelector(vocabulary) {
   const attrs = Object.values(vocabulary.attributes).flat().map((name) => `[${name}]`);
+  const bare = Object.keys(vocabulary.prefixes).map((prefix) => `[${prefix}]`);
   const classes = Object.keys(vocabulary.classPrefixes).map((prefix) => `[class*="${prefix}-"]`);
-  return [...attrs, ...classes].join(",");
+  return [...attrs, ...bare, ...classes].join(",");
 }
 
 export function resolvePrefix(element, vocabulary) {
   for (const attr of element.attributes) {
     for (const prefix of Object.keys(vocabulary.prefixes)) {
-      if (attr.name.startsWith(`${prefix}-`)) return prefix;
+      // A dashed attribute (hf-format) or the bare Type-Magic attribute (hf="currency USD 2").
+      if (attr.name === prefix || attr.name.startsWith(`${prefix}-`)) return prefix;
     }
   }
   for (const cls of element.classList) {

@@ -49,3 +49,28 @@ export function parseClass(element, prefix, vocabulary) {
   if (cls === undefined) return {};
   return zipSlots(cls.slice(classPrefix.length + 1).split("-"), slots);
 }
+
+// Type Magic (spec §10): the bare-prefix attribute (hf="currency USD 2") carries unordered tokens. Each
+// token goes to the first slot whose declared recognizer accepts it. Recognizers are each module's
+// declared surface — a closed value-set, or a coercion kind (integer) — dispatched by kind, no if-chain.
+// A slot with no declared recognizer (an open string, e.g. currency by Intl) is unplaceable by design.
+const TOKEN_RECOGNIZERS = {
+  set: (token, recognizer) => recognizer.set.includes(token),
+  integer: (token) => /^-?\d+$/.test(token),
+};
+
+export function parseMagic(element, prefix, vocabulary) {
+  const value = element.getAttribute(prefix);
+  if (value === null) return {};
+  const slots = (vocabulary.slots || {})[prefix] || [];
+  const recognizers = (vocabulary.recognizers || {})[prefix] || {};
+  const config = {};
+  for (const token of value.trim().split(/\s+/)) {
+    const slot = slots.find((name) => {
+      const recognizer = recognizers[name];
+      return recognizer !== undefined && !(name in config) && TOKEN_RECOGNIZERS[recognizer.kind](token, recognizer);
+    });
+    if (slot !== undefined) config[slot] = token;
+  }
+  return config;
+}

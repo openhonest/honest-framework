@@ -20,12 +20,16 @@ const el = (attrs = {}, classes = []) => ({
   getAttribute: (name) => (name in attrs ? attrs[name] : null),
 });
 
-test("buildSelector covers every declared attribute and class prefix", () => {
-  assert.equal(buildSelector(VOCAB), '[hf-format],[hd-draggable],[class*="fmt-"]');
+test("buildSelector covers every declared attribute, bare prefix, and class prefix", () => {
+  assert.equal(buildSelector(VOCAB), '[hf-format],[hd-draggable],[hf],[hd],[class*="fmt-"]');
 });
 
 test("resolvePrefix reads a declared honest attribute", () => {
   assert.equal(resolvePrefix(el({ "hf-format": "currency" }), VOCAB), "hf");
+});
+
+test("resolvePrefix reads the bare Type-Magic attribute", () => {
+  assert.equal(resolvePrefix(el({ hf: "currency USD 2" }), VOCAB), "hf");
 });
 
 test("resolvePrefix reads a declared class notation", () => {

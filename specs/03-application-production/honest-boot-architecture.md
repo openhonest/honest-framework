@@ -181,11 +181,13 @@ module (it comes after the unit gate is green), not a substitute for the pure/bo
   type attribute's value on `:`, **class** splits the mapped class token after its prefix on `-`; both zip
   tokens to slots in order. Merge precedence: verbose, then colon, then class, then JSON (most explicit
   wins). A resolved element that parses to nothing yields no config, so no empty classify is emitted.
-- **Type Magic (bounded).** The unordered single-attribute form (`hf="currency USD 2"`) places each token
-  into the slot whose declared vocabulary recognizes it. It is therefore available only for slots backed
-  by a **declared closed value-set** (honest-format's format-type set, its enumerated option sets) plus
-  simple kind recognizers (an integer for `decimals`); a slot drawing from an open set (currency codes,
-  which honest-format leaves to `Intl`) cannot be Type-Magic-placed without a recognizer that does not yet
-  exist. Type Magic is thus specified but built only over closed-vocabulary slots; the open-set case is an
-  upstream dependency (a per-slot recognizer), not a honest-boot gap. genX ships no Type-Magic parser, so
-  there is no reference to port — only the declared vocabularies to match against.
+- **Type Magic (built, bounded by recognizers).** The unordered single-attribute form (`hf="currency USD 2"`)
+  places each token into the first slot whose declared recognizer accepts it, filling each slot once. A
+  recognizer is each module's declared surface — a **closed value-set** (honest-format's format-type set,
+  its enumerated option sets) or a **coercion kind** (an integer for `decimals`), dispatched by kind. A
+  slot with no declared recognizer — an open string such as `currency`, which honest-format leaves to
+  `Intl` — is unplaceable by design: its token is dropped, never guessed. So Type Magic is built over
+  recognizer-backed slots; extending it to an open-string slot needs that slot to declare a recognizer
+  (a closed set or pattern), which is the module's call, not honest-boot's to invent. genX ships no
+  Type-Magic parser, so there is no reference to port — only the declared recognizers to match against.
+  The scanner also matches the bare-prefix attribute (`[hf]`), distinct from the dashed `hf-*` attributes.
