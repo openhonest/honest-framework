@@ -12,7 +12,13 @@ const VOCAB = {
   attributes: { hf: ["hf-format"] },
   classPrefixes: { fmt: "hf" },
   slots: { hf: ["format", "currency", "decimals"] },
-  recognizers: { hf: { format: { kind: "set", set: ["currency", "date", "number", "percent"] }, decimals: { kind: "integer" } } },
+  recognizers: {
+    hf: {
+      format: { kind: "set", set: ["currency", "date", "number", "percent"] },
+      currency: { kind: "currency" },
+      decimals: { kind: "integer" },
+    },
+  },
   values: {},
 };
 const el = (attrs = {}, classes = []) => ({
@@ -25,10 +31,14 @@ test("parseMagic places each token in the slot whose recognizer accepts it, rega
   assert.deepEqual(parseMagic(el({ hf: "2 currency" }), "hf", VOCAB), { decimals: "2", format: "currency" });
 });
 
-test("parseMagic drops a token no slot recognizer accepts (an open-set slot like currency)", () => {
-  // "USD" belongs to the currency slot, which has no declared recognizer (open Intl string), so it is
-  // not placed; "currency" and "2" are recognized and placed.
-  assert.deepEqual(parseMagic(el({ hf: "currency USD 2" }), "hf", VOCAB), { format: "currency", decimals: "2" });
+test("parseMagic places a currency token via the Intl currency recognizer", () => {
+  // With the currency slot declaring the currency recognizer, "USD" (an ISO-4217 code) is placed.
+  assert.deepEqual(parseMagic(el({ hf: "currency USD 2" }), "hf", VOCAB), { format: "currency", currency: "USD", decimals: "2" });
+});
+
+test("parseMagic drops a token no recognizer accepts (not a currency, not an integer, not in the set)", () => {
+  // "zzz" is none of: a format name, an ISO-4217 currency, or an integer — so it is dropped, not guessed.
+  assert.deepEqual(parseMagic(el({ hf: "currency zzz 2" }), "hf", VOCAB), { format: "currency", decimals: "2" });
 });
 
 test("parseMagic fills each slot at most once", () => {
@@ -44,9 +54,9 @@ test("parseMagic returns {} when the prefix declares no slots or recognizers", (
   assert.deepEqual(parseMagic(el({ hf: "currency 2" }), "hf", { prefixes: { hf: "honest-format" } }), {});
 });
 
-test("readConfig composes Type Magic into the module config", () => {
-  assert.deepEqual(readConfig(el({ hf: "currency 2" }), VOCAB), {
+test("readConfig composes Type Magic — including the currency slot — into the module config", () => {
+  assert.deepEqual(readConfig(el({ hf: "currency USD 2" }), VOCAB), {
     module: "honest-format",
-    config: { format: "currency", decimals: "2" },
+    config: { format: "currency", currency: "USD", decimals: "2" },
   });
 });

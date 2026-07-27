@@ -54,9 +54,15 @@ export function parseClass(element, prefix, vocabulary) {
 // token goes to the first slot whose declared recognizer accepts it. Recognizers are each module's
 // declared surface — a closed value-set, or a coercion kind (integer) — dispatched by kind, no if-chain.
 // A slot with no declared recognizer (an open string, e.g. currency by Intl) is unplaceable by design.
+// The currency recognizer draws on the platform's ICU currency table (ISO-4217) via Intl — an
+// authoritative, non-fabricated closed set — so honest-format's Intl-backed currency slot becomes
+// Type-Magic-placeable without hand-listing codes. Built once at load.
+const CURRENCY_CODES = new Set(Intl.supportedValuesOf("currency"));
+
 const TOKEN_RECOGNIZERS = {
   set: (token, recognizer) => recognizer.set.includes(token),
   integer: (token) => /^-?\d+$/.test(token),
+  currency: (token) => CURRENCY_CODES.has(token),
 };
 
 export function parseMagic(element, prefix, vocabulary) {

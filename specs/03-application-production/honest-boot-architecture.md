@@ -184,10 +184,11 @@ module (it comes after the unit gate is green), not a substitute for the pure/bo
 - **Type Magic (built, bounded by recognizers).** The unordered single-attribute form (`hf="currency USD 2"`)
   places each token into the first slot whose declared recognizer accepts it, filling each slot once. A
   recognizer is each module's declared surface — a **closed value-set** (honest-format's format-type set,
-  its enumerated option sets) or a **coercion kind** (an integer for `decimals`), dispatched by kind. A
-  slot with no declared recognizer — an open string such as `currency`, which honest-format leaves to
-  `Intl` — is unplaceable by design: its token is dropped, never guessed. So Type Magic is built over
-  recognizer-backed slots; extending it to an open-string slot needs that slot to declare a recognizer
-  (a closed set or pattern), which is the module's call, not honest-boot's to invent. genX ships no
-  Type-Magic parser, so there is no reference to port — only the declared recognizers to match against.
+  its enumerated option sets), a **coercion kind** (an integer for `decimals`), or **currency** (ISO-4217
+  membership via the platform's `Intl` currency table), dispatched by kind. So `hf="currency USD 2"`
+  places all three tokens: `currency` by the format set, `USD` by the currency recognizer, `2` by the
+  integer kind. A slot with no declared recognizer is still unplaceable by design — its token is dropped,
+  never guessed — so a future open-string slot needs its module to declare a recognizer, not honest-boot
+  to invent one. genX ships no Type-Magic parser, so there is no reference to port — only the declared
+  recognizers to match against.
   The scanner also matches the bare-prefix attribute (`[hf]`), distinct from the dashed `hf-*` attributes.
