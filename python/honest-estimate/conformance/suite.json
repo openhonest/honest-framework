@@ -2,23 +2,26 @@
   "module": "honest-estimate",
   "cases": [
     {
-      "id": "vc-size-two-processes-closed",
+      "id": "vc-size-roles-closed-sets",
       "value_case": {
         "function": "size",
         "expected": {
           "ok": {
-            "processes": {
+            "cosmic_cfp": 4,
+            "vfp": {
               "total": 2,
               "ifpug_countable": 0,
               "beyond_ifpug_internal": 2,
-              "internal_share_ratio": 1.0
+              "internal_share_ratio": 1.0,
+              "under_declared": false
             },
             "bits_of_case_distinction": 3.0,
-            "open_vocabulary_flags": []
+            "open_vocab_flags": [],
+            "cfp_certified": false
           }
         },
         "args": [
-          "module m\n  layer tooling\n  set PAIR = { \"a\", \"b\" }\n  set QUAD = { \"w\", \"x\", \"y\", \"z\" }\n  boundary_in fn recognise : (raw: PAIR) -> str\n  fn transform : (v: QUAD) -> str"
+          "module m\n  layer tooling\n  set PAIR = { \"a\", \"b\" }\n  set QUAD = { \"w\", \"x\", \"y\", \"z\" }\n  boundary_in fn recognise : (raw: PAIR) -> str side_effect reads \"store\"\n  boundary_out fn emit : (v: QUAD) -> str side_effect writes \"store\""
         ]
       }
     },
@@ -28,16 +31,19 @@
         "function": "size",
         "expected": {
           "ok": {
-            "processes": {
+            "cosmic_cfp": 2,
+            "vfp": {
               "total": 1,
               "ifpug_countable": 0,
               "beyond_ifpug_internal": 1,
-              "internal_share_ratio": 1.0
+              "internal_share_ratio": 1.0,
+              "under_declared": false
             },
             "bits_of_case_distinction": 1.0,
-            "open_vocabulary_flags": [
+            "open_vocab_flags": [
               { "process": "act", "param": "note", "type": "str" }
-            ]
+            ],
+            "cfp_certified": false
           }
         },
         "args": [
@@ -49,15 +55,19 @@
   "value_oracle_exempt": [
     {
       "function": "elementary_processes",
-      "reason": "Takes the module IR (a large dict), not a portable literal; its every branch is proved directly in laws_he, and its result is composed into the size value cases."
+      "reason": "Takes the module IR (a large dict), not a portable literal; its role-authority and fallback branches are proved directly in laws_he, and its result is composed into the size value cases."
     },
     {
-      "function": "breadth",
-      "reason": "Takes the module IR; the IFPUG split and the zero-process ratio branch are proved in laws_he, and the whole is composed into the size value cases."
+      "function": "vfp",
+      "reason": "Takes the module IR; the IFPUG split, the zero-process ratio, and the under_declared flag are proved in laws_he and composed into the size value cases."
+    },
+    {
+      "function": "cfp",
+      "reason": "Takes the module IR; the boundary-role and side-effect data movements and the two-movement floor are proved in laws_he and composed into the size value cases."
     },
     {
       "function": "depth",
-      "reason": "Takes the module IR; the closed-vocabulary bits and the open-parameter flagging are proved in laws_he and composed into the size value cases."
+      "reason": "Takes the module IR; closed-set, vocabulary, and composed-type recursion plus open-parameter flagging are proved in laws_he and composed into the size value cases."
     }
   ]
 }

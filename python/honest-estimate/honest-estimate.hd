@@ -1,16 +1,17 @@
-# honest-estimate declared in .hd — deductive size from the .hd contract boundary. Breadth (the count
-# of elementary processes) and depth (bits of specified case-distinction over closed vocabularies) are
-# read off the declaration, before code exists. Pure over the IR; read_hd is the one (pure) boundary.
+# honest-estimate declared in .hd — deductive SIZE from the .hd contract boundary. The three size
+# readings of §6.1 (COSMIC CFP, VFP breadth, and bits of case-distinction) are read off the declaration,
+# before code exists. Pure over the IR; read_hd is the one (pure) boundary.
 
 module honest-estimate
 
   layer tooling
 
-  type Breadth = {
+  type Vfp = {
     total: int
     ifpug_countable: int
     beyond_ifpug_internal: int
     internal_share_ratio: float
+    under_declared: bool
   }
 
   type OpenFlag = {
@@ -25,14 +26,18 @@ module honest-estimate
   }
 
   type SizeReport = {
-    processes: Breadth
+    cosmic_cfp: int
+    vfp: Vfp
     bits_of_case_distinction: float
-    open_vocabulary_flags: list<OpenFlag>
+    open_vocab_flags: list<OpenFlag>
+    cfp_certified: bool
   }
 
   fn elementary_processes : (module: dict<str, any>) -> list<str>
 
-  fn breadth : (module: dict<str, any>) -> Breadth
+  fn vfp : (module: dict<str, any>) -> Vfp
+
+  fn cfp : (module: dict<str, any>) -> int
 
   fn depth : (module: dict<str, any>) -> Depth
 

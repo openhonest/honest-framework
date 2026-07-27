@@ -1,16 +1,18 @@
-"""honest-estimate — deductive size from the .hd contract boundary.
+"""honest-estimate — deductive SIZE from the .hd contract boundary.
 
-Breadth (§6.1) and depth (§6.2) are read off the declaration, before code exists. The public surface:
+The three size readings of §6.1, read off the declaration before code exists, none fused. The public
+surface:
 
-  - size(source)                 -> the SizeReport Result for one .hd module
-  - elementary_processes(module) -> the process names (§7.1)
-  - breadth(module)              -> the process count and its IFPUG split
+  - size(source)                 -> the SIZE Result for one .hd module (CFP, VFP, bits, flags)
+  - elementary_processes(module) -> the process names (§7.1, boundary-role authority)
+  - vfp(module)                  -> the process count and its IFPUG split, with under_declared
+  - cfp(module)                  -> COSMIC data movements (§7.2, Honest mapping, uncertified)
   - depth(module)                -> bits of case-distinction and the open-vocabulary flags
 
-The inductive numbers (effort, defects, mutation density) are not here; this leaf is the deductive,
-declaration-time half.
+Cost, duration, and quality (the measured and inductive dimensions) are not here; this leaf is the
+deductive, declaration-time half.
 """
 
-from honest_estimate.estimate import breadth, depth, elementary_processes, size
+from honest_estimate.estimate import cfp, depth, elementary_processes, size, vfp
 
-__all__ = ["breadth", "depth", "elementary_processes", "size"]
+__all__ = ["cfp", "depth", "elementary_processes", "size", "vfp"]
