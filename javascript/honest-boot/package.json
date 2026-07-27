@@ -1,0 +1,10 @@
+{
+  "name": "honest-boot",
+  "version": "0.0.0",
+  "description": "honest-boot: the client bootloader. Reads declared h*- attributes, resolves them against the declared vocabulary, and loads and initialises the owning module. Pure core; the DOM and module loading are injected boundaries.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test --experimental-test-coverage --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 --test-coverage-include='src/**' 'test/*.test.js'"
+  }
+}

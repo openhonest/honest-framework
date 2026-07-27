@@ -62,6 +62,7 @@ plain language in the text itself.
 | **monotonic** | Only ever increases, never goes back down. |
 | **heuristic** | Best-effort, a rule of thumb — catches the common cases but is not guaranteed to catch every one. |
 | **bounded / unbounded** | Bounded = limited to a known, finite set of values, so every value can be listed and tested; unbounded (open-ended) = not. |
+| **closed** | Knowable and checkable in full before the code runs: every possible value can be listed and verified ahead of time, because its source is inspectable — the templates and serve code that generate the HTML, and, for `h*-` attributes, the CDN the checker is free to read. Closed is about knowability, not isolation: a closed system may still load its parts or reach the network at runtime; what makes it closed is that nothing about its inputs is hidden from a pre-commit check. (Distinct from the *closed test gate*: the reference implementation pulls in no unverified third-party code, so every branch in the gate is provable from the framework's own code.) |
 | **enumerate** | List out every case, one by one (used when a set of values is finite, so the full list is possible). |
 | **exhaustive** | Covering every case, not a sample. |
 | **adversarial neighbours** | The near-miss inputs around a valid value (one character changed, a look-alike letter, an added control character) that a correct recognizer must reject. |
