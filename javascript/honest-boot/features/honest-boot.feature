@@ -30,6 +30,21 @@ Feature: honest-boot — the client bootloader's pure scan/read core
     When parseJson reads the prefix-opts attribute
     Then it returns the parsed JSON object, or an empty object when there is no such attribute
 
+  Scenario: zipSlots pairs positional tokens with the ordered slots
+    Given a list of tokens and the ordered slots
+    When zipSlots pairs them
+    Then it maps each token to the slot in the same position, dropping any token past the last slot
+
+  Scenario: parseColon maps the colon-separated type value onto the slots
+    Given an element, a prefix, and the vocabulary's slot order
+    When parseColon splits the type attribute's value on the colon
+    Then it zips the tokens onto the slots, or returns nothing when there are no slots, no attribute, or no colon
+
+  Scenario: parseClass maps the hyphen-separated class token onto the slots
+    Given an element, a prefix, and the vocabulary's slot order
+    When parseClass splits the mapped class token after its prefix on the hyphen
+    Then it zips the tokens onto the slots, or returns nothing when there are no slots, no mapping class prefix, or no matching class
+
   Scenario: readConfig merges the notations into one module config
     Given an element and the declared vocabulary
     When readConfig parses the element's notations

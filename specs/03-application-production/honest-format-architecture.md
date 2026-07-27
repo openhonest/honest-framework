@@ -63,9 +63,11 @@ An element opts in by carrying `hf-format`. Its value is the format name; siblin
 <!-- renders: $1,299.99 -->
 ```
 
-### 4.1 The single canonical notation
+### 4.1 The canonical notation, and the notations the bootloader also accepts
 
-The format and its options are sibling attributes: `hf-format` names the type, and each option is its own `hf-<option>` attribute (`hf-decimals`, `hf-currency`, `hf-phone-format`). This is genX's `fx-format` grammar, rebranded `fx-` → `hf-`. It is **type-in-value** (`hf-format="currency"`), the mature genX design — not the type-in-name form (`hf-money`, `hf-percent`) sketched in the framework spec §116, which is superseded here (§116 is corrected to match). One notation only: honest-format does not carry genX's alternative colon / JSON / CSS-class notations. A single grammar is what HC-REF004 resolves and what a reader reads.
+The canonical form is sibling attributes: `hf-format` names the type, and each option is its own `hf-<option>` attribute (`hf-decimals`, `hf-currency`, `hf-phone-format`). This is genX's `fx-format` grammar, rebranded `fx-` → `hf-`. It is **type-in-value** (`hf-format="currency"`), the mature genX design — not the type-in-name form (`hf-money`, `hf-percent`) sketched in the framework spec §116, which is superseded here (§116 is corrected to match).
+
+honest-format itself defines and consumes one config shape; it does not parse alternative notations. The **bootloader** (honest-boot §4 step 3, §10) additionally accepts genX's colon and CSS-class notations and JSON options, parsing each into the same config honest-format consumes, against a per-prefix ordered slot list honest-format declares (its options in a fixed order). Type Magic (unordered tokens) is accepted only for slots whose values are a declared closed vocabulary. HC-REF004 resolves the tokens of every accepted notation, so the checkability guarantee holds across all of them — the trade the framework makes for carrying more than one authoring form.
 
 ### 4.2 The source value
 

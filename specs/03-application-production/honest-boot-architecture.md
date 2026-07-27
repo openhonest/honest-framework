@@ -172,6 +172,20 @@ module (it comes after the unit gate is green), not a substitute for the pure/bo
   genX-successor client tier, read by both honest-boot and honest-check. Only the exact path is left, and
   it is fixed when the honest-check template-scan (§5) is implemented, so the file sits where the checker
   reads it.
-- **Notation set.** All genX notations (verbose, colon, JSON, class) are carried; each resolves through
-  the declared-vocabulary lookup. The notation grammars belong to the genX-successor front end,
-  referenced not redefined here.
+- **Notation set and the slot structure.** honest-boot carries genX's notations, each parsing into the
+  same module config, matched against the declared vocabulary (HC-REF004 resolves every notation's
+  tokens). Two are self-describing and need only the prefix: **verbose** (each `prefix-<name>` attribute
+  is a key, skipping `-opts`/`-raw`) and **JSON** (`prefix-opts` is a config object). Two are positional
+  and need a per-prefix **ordered slot list** declared in the vocabulary (the cardinality order — genX's
+  `CARDINALITY_ORDERS`, declared as data, sourced from each module's option order): **colon** splits the
+  type attribute's value on `:`, **class** splits the mapped class token after its prefix on `-`; both zip
+  tokens to slots in order. Merge precedence: verbose, then colon, then class, then JSON (most explicit
+  wins). A resolved element that parses to nothing yields no config, so no empty classify is emitted.
+- **Type Magic (bounded).** The unordered single-attribute form (`hf="currency USD 2"`) places each token
+  into the slot whose declared vocabulary recognizes it. It is therefore available only for slots backed
+  by a **declared closed value-set** (honest-format's format-type set, its enumerated option sets) plus
+  simple kind recognizers (an integer for `decimals`); a slot drawing from an open set (currency codes,
+  which honest-format leaves to `Intl`) cannot be Type-Magic-placed without a recognizer that does not yet
+  exist. Type Magic is thus specified but built only over closed-vocabulary slots; the open-set case is an
+  upstream dependency (a per-slot recognizer), not a honest-boot gap. genX ships no Type-Magic parser, so
+  there is no reference to port — only the declared vocabularies to match against.
