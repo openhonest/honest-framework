@@ -18,3 +18,13 @@ packages = ["src/honest_auth"]
 [tool.honest-check]
 conformance = "python"
 conformance-suite-version = "0"
+
+# The reference provider honest-auth ships (dev_auth_provider). It declares its conformance level in
+# package metadata per honest-auth-architecture.md §9.2. Full, not Complete: its resolve_actor is
+# verifiably deterministic and mutates no domain (confirmed by the conformance probes
+# resolve_actor_deterministic and the no-mutation law), but it is a code reference, not a black-box
+# deployed endpoint (Complete's requirement).
+[honest-auth-provider]
+name = "dev-plaintext"
+conformance = "Full"
+conformance-suite-version = "1.0"
