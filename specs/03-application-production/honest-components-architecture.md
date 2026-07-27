@@ -88,15 +88,15 @@ This is the same principle that made Neonto extraordinary: a single component sp
 - The client behaviour contract (§2.4): how an `h*-` module makes a component interactive as a pure enhancement over the DOM and honest-DOM's injected event bus — no lifecycle hooks, no module state, no runtime-constructed structure or styling
 - The honest-type marshalling requirement: what must happen at the organism boundary
 - The multi-target implementation structure for organisms: one implementation directory per target language
-- The component runtime: discovery, organism mount and `register()` lifecycle, CSS-namespace enforcement, grid assembly, and the startup merge of component token defaults into `:root` (§6.4). The runtime is part of this module's reference implementation, not a separate package.
+- The component runtime: discovery, organism mount and `register()` lifecycle, CSS-namespace enforcement, grid assembly, and the startup merge of every component's declared tokens into one override contract (§6.4). The runtime is part of this module's reference implementation, not a separate package.
 
 ### 1.2 What honest-components Does Not Define
 
 - The templating syntax for any specific language (Jinja2, ERB, Blade, Go templates — all are valid implementations)
 - The HTTP routing mechanism for any specific framework (FastAPI, Rails, Laravel, Gin — all are valid implementations)
 - Visual assembly, certification, or a visual design mode — out of scope for this standard
-- Dynamic theme management and visual theme editing — out of scope for this standard. FOSS theming is the component runtime's startup merge of component token defaults (§6.4) plus honest-page's `--ht-` base tokens and `light-dark()`
-- CSS custom property values — declared as defaults in each component's `style.json`, merged at startup and overridable by the host
+- Dynamic theme management and visual theme editing — out of scope for this standard. FOSS theming is the components' own `var()` fallback defaults with the runtime's merged token contract (§6.4), plus honest-page's `--ht-` base tokens and `light-dark()`
+- CSS custom property values — a component's default is its own `var()` fallback; `style.json` declares each token as an override point, and the host overrides it through the cascade (§6.4)
 
 ---
 
@@ -363,7 +363,7 @@ Every organism ships a `style.json` file declaring every CSS custom property its
 
 `style.json` serves two normative (FOSS) roles:
 
-1. **Source for the startup token block.** The component runtime reads every installed component's `style.json` to assemble the single `:root {}` default-merge block (§6.4). The installed set determines the token set.
+1. **Source for the startup token contract.** The component runtime reads every installed component's `style.json` to assemble the merged token contract — the override surface, checked for duplicate keys (§6.4). The installed set determines the token set.
 2. **Override documentation for the host.** A host application reads `style.json` to know exactly what it can override. Every key is a supported customization point.
 
 `style.json` is fully meaningful on its own; the standard requires no additional tooling to read it.
