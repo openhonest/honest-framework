@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>honest-boot e2e fixture</title>
+  </head>
+  <body>
+    <span id="first" hf-format="currency">1299.99</span>
+    <script type="module">
+      // The composition root: the real browser wiring the unit tests could not exercise. It builds the
+      // real deps — a DOM query, dynamic import from the registry, an emit sink, and a MutationObserver
+      // subscription (standing in for honest.bridge) — and calls boot. The Playwright suite drives this.
+      import { boot } from "../../src/index.js";
+
+      const vocabulary = {
+        prefixes: { hf: "honest-format" },
+        attributes: { hf: ["hf-format"] },
+        classPrefixes: {},
+        values: {},
+      };
+      const registry = { "honest-format": "./honest-format.stub.js" };
+
+      window.__classified = [];
+      const deps = {
+        query: (root, selector) => Array.from(root.querySelectorAll(selector)),
+        vocabulary,
+        importer: (name) => import(registry[name]),
+        emit: (element, config) => window.__classified.push(config.value),
+        loaded: [],
+        // The shared observer stand-in: on any inserted content, re-activate the whole body. Watches
+        // childList only, so the module's data-attribute mark does not re-trigger it.
+        subscribe: (cb) =>
+          new MutationObserver(() => cb(document.body)).observe(document.body, { childList: true, subtree: true }),
+      };
+
+      boot(document.body, deps).then(() => {
+        window.__booted = true;
+      });
+    </script>
+  </body>
+</html>

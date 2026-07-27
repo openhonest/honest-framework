@@ -30,4 +30,9 @@ for f in "$pkg"/src/*.js; do
   (cd "$root/python" && uv run python "$root/javascript/js_mutate.py" "$f")
 done
 
+if [ -f "$pkg/e2e/run.mjs" ]; then
+  echo "end-to-end (real browser)…"
+  (cd "$pkg" && node e2e/run.mjs)  # skips with a notice if no Chromium is installed
+fi
+
 echo "$name gate: passed."
