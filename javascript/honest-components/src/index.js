@@ -7,3 +7,5 @@
 export { ACTIVATION_KEYS, applyChanges, enhance, scan } from "./enhance.js";
 export { SWITCH_EVENTS, toggled, handle } from "./switch.js";
 export { ACCORDION_EVENTS, accordionExpanded, accordionHandle } from "./accordion.js";
+export { splitRules } from "./rules.js";
+export { scopeCss, tokenContractViolations, mergeTokenContracts } from "./style.js";

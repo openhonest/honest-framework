@@ -4,7 +4,8 @@ Feature: honest-components — interactive component behaviours
   pure enhancement over the DOM and honest-DOM's injected event bus (§2.4). Spec-captured from genX's uix
   (the reference of record). The shared enhancement runtime (applyChanges, enhance, scan) is the
   capability common to every component, kept as its own composed module; each component owns only its
-  events and its pure handle. This increment carries the switch and the accordion.
+  events and its pure handle. This increment carries the switch and the accordion, plus the CSS namespace
+  contract (spec section 6): the pure transforms that scope an organism's styles and check its token API.
 
   Scenario: applyChanges writes an element's changed attributes
     Given an element and a change set
@@ -40,3 +41,23 @@ Feature: honest-components — interactive component behaviours
     Given an accordion header element and a DOM event
     When accordionHandle reads them
     Then it returns the toggled aria-expanded change for a click or an activation key, and nothing for another key
+
+  Scenario: splitRules splits CSS into its top-level rules, brace-aware
+    Given CSS text with comments, strings, and a nested at-rule
+    When splitRules walks it
+    Then it returns each top-level rule's prelude and body verbatim, counting a brace only outside comments and strings
+
+  Scenario: scopeCss scopes an organism's selectors under its BEM block
+    Given an organism's CSS file and its block name
+    When scopeCss rewrites it
+    Then it prefixes every selector the organism owns with the block, leaving already-namespaced, global, and group at-rule preludes alone
+
+  Scenario: tokenContractViolations checks the style.json to CSS token bijection
+    Given an organism's style.json manifest and its CSS file
+    When tokenContractViolations compares them
+    Then it reports a non-namespaced token, a declared-but-unused token, and a used-but-undeclared token, exempting shared tokens
+
+  Scenario: mergeTokenContracts merges every component's tokens and fails loudly on a duplicate
+    Given the style.json manifests of the installed components
+    When mergeTokenContracts collects their tokens
+    Then it returns one key-to-description contract, throwing and naming both owners when two components declare the same token

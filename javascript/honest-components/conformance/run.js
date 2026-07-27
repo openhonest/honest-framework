@@ -14,8 +14,11 @@ const suite = JSON.parse(readFileSync(join(here, "suite.json"), "utf8"));
 // A case's first arg is an element's attributes; wrap it so the pure functions can read it.
 const element = (attrs) => ({ getAttribute: (name) => (name in attrs ? attrs[name] : null) });
 
+// A case is either element-shaped (an `element` of attributes, plus any `rest` args) for the per-component
+// behaviours, or `args`-shaped (literal positional arguments) for the text/value transforms of the CSS
+// namespace contract, whose inputs are CSS text and manifests rather than a DOM element.
 const results = suite.cases.map((testCase) => {
-  const args = [element(testCase.element), ...(testCase.rest ?? [])];
+  const args = testCase.args !== undefined ? testCase.args : [element(testCase.element), ...(testCase.rest ?? [])];
   const actual = components[testCase.function](...args);
   const ok = JSON.stringify(actual) === JSON.stringify(testCase.expected);
   if (!ok) {
