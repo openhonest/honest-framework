@@ -411,10 +411,11 @@ Links not declared `boundary=True` must not access non-deterministic sources. Th
 
 ```
 FUNCTION verify_determinism(link, test_manifest):
-    // Reference the published list from honest-check HC008.
-    // Implementations MUST load this list from the hub at
-    //   honest/honest-check-conformance/watch-lists/{language}.json
-    // and trap every entry at runtime.
+    // The published list is honest-check's NONDETERMINISTIC_WATCH_LIST (its
+    // watchlists module, HC008). honest-test builds before honest-check, so it
+    // carries the call-form subset it traps rather than importing that module;
+    // its conformance suite verifies the subset against the published list, so
+    // the two cannot drift.
 
     WITH call_monitor(NONDETERMINISTIC_WATCH_LIST):
         result ← link(test_manifest)
@@ -503,7 +504,7 @@ FUNCTION test_auth_honesty():
 
 **Rationale.** A provider's correctness claim is only as strong as the behaviours its contract covers. This class set is the smallest that exercises the boundary validator. A provider change that, say, starts accepting expired tokens fails this test even though nothing downstream changed. Whether a *resolved* actor is authorized for a particular target is ordinary business logic — a link's early-return guard or role vocabulary over the resolved actor — and is verified by that link's ordinary tests, not by the provider's token classes.
 
-**Conformance requirement.** Every honest-test implementation must run the authentication-honesty test against the registered provider's `resolve_actor`. An implementation that reports no failures on a provider whose validation is broken (verified against the conformance probe suite in `honest/honest-auth-conformance/`) fails honest-test conformance.
+**Conformance requirement.** Every honest-test implementation must run the authentication-honesty test against the registered provider's `resolve_actor`. An implementation that reports no failures on a provider whose validation is broken (verified against the broken-provider probe in honest-test's own conformance suite, `honest-test/conformance/`) fails honest-test conformance.
 
 ---
 
