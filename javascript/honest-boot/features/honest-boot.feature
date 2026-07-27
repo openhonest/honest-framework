@@ -39,3 +39,8 @@ Feature: honest-boot — the client bootloader's pure scan/read core
     Given a root and the injected query, importer, and emit
     When activate scans, loads, inits, and emits
     Then it loads and inits only the fresh modules and emits one classify event per resolved element, returning the updated loaded set
+
+  Scenario: boot activates on start and re-activates on each observer event
+    Given a root and the injected observer subscription
+    When boot starts and the shared observer later reports a change
+    Then it activates once on the root and re-activates on each changed subtree

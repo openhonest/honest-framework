@@ -5,3 +5,4 @@ export { buildSelector, resolvePrefix, neededModules, scan } from "./scan.js";
 export { readConfig } from "./read.js";
 export { loadModules, initModule } from "./load.js";
 export { activate } from "./activate.js";
+export { boot } from "./boot.js";
