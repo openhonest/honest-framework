@@ -155,3 +155,81 @@ def size(source):
             "cfp_certified": False,
         }
     )
+
+
+def quality(mutants_total, mutants_equivalent, escaped_defects, process_count):
+    """The QUALITY proxies (§6.4), build-time, code-tier: mutation density (non-equivalent mutants
+    admitted per elementary process) and escaped-defect density (held-out-suite escapes per process).
+    A labelled proxy, not Jones's full defect construct; a module with no process reads zero density."""
+    processes = process_count if process_count else 1
+    return {
+        "mutation_density_per_process": (mutants_total - mutants_equivalent) / processes,
+        "escaped_defect_density": escaped_defects / processes,
+        "proxy": True,
+    }
+
+
+def cost(cosmic_cfp, rate_model):
+    """The projected COST band in dollars, dated (§6.2, I6). Computed from an injected, priced, dated
+    rate model; when the model is absent no dollar figure is produced and the result is marked
+    uncalibrated. No constant is fabricated here — the caller supplies the model (§5.3, §13)."""
+    if rate_model is None:
+        return {"total": None, "compute": None, "oversight": None, "tooling": None, "priced_at_date": None, "price_basis": "uncalibrated — verify", "uncalibrated": True}
+    compute = cosmic_cfp * rate_model["compute_per_cfp"]
+    oversight = cosmic_cfp * rate_model["oversight_per_cfp"]
+    tooling = cosmic_cfp * rate_model["tooling_per_cfp"]
+    return {"total": compute + oversight + tooling, "compute": compute, "oversight": oversight, "tooling": tooling, "priced_at_date": rate_model["price_date"], "price_basis": rate_model["price_basis"], "uncalibrated": False}
+
+
+def duration(cosmic_cfp, rate_model):
+    """The projected DURATION band in days, wall-clock (§6.3), from size via the model's throughput.
+    Uncalibrated without a model; no constant is fabricated."""
+    if rate_model is None:
+        return {"projected_low_days": None, "projected_high_days": None, "uncalibrated": True}
+    return {"projected_low_days": cosmic_cfp / rate_model["fast_cfp_per_day"], "projected_high_days": cosmic_cfp / rate_model["slow_cfp_per_day"], "uncalibrated": False}
+
+
+def jones(native, jones_constants):
+    """The JONES comparison block (§6.5, I3): the measured local ratio between a native measurement and
+    Jones's benchmark, per construct. Uncalibrated unless both the native actuals and Jones's constants
+    are supplied; no benchmark value is fabricated."""
+    if native is None or jones_constants is None:
+        return {"backfiring_ratio": None, "cost_per_fp_vs_jones": None, "defect_potential_vs_jones": None, "schedule_vs_jones": None, "uncalibrated": True}
+    return {
+        "backfiring_ratio": native["loc_per_fp"] / jones_constants["loc_per_fp"],
+        "cost_per_fp_vs_jones": native["cost_per_fp"] / jones_constants["cost_per_fp"],
+        "defect_potential_vs_jones": native["defect_potential"] / jones_constants["defect_potential"],
+        "schedule_vs_jones": native["schedule"] / jones_constants["schedule"],
+        "uncalibrated": False,
+    }
+
+
+def _bits_per_process(report):
+    """The integrity tripwire (§9): bits over VFP; zero when the module declares no process."""
+    total = report["vfp"]["total"]
+    return report["bits_of_case_distinction"] / total if total else 0.0
+
+
+def estimate(source, rate_model, jones_constants, build_inputs):
+    """Assemble the full §13 estimate for one .hd module: the deductive SIZE, the projected COST and
+    DURATION bands, the QUALITY proxy from build_inputs, the JONES comparison, the integrity tripwire,
+    and an assumptions ledger. Every un-supplied input yields an explicit uncalibrated marker and no
+    constant is fabricated. A malformed or module-less source returns the size fault, never raised."""
+    sized = size(source)
+    if "err" in sized:
+        return sized
+    report = sized["ok"]
+    return ok(
+        {
+            "size": report,
+            "cost": cost(report["cosmic_cfp"], rate_model),
+            "duration": duration(report["cosmic_cfp"], rate_model),
+            "quality": quality(build_inputs["mutants_total"], build_inputs["mutants_equivalent"], build_inputs["escaped_defects"], report["vfp"]["total"]),
+            "jones": jones(build_inputs["native"], jones_constants),
+            "integrity": {"bits_per_process": _bits_per_process(report), "honest_check_conformance_clean": build_inputs["honest_check_clean"], "umbra_silence_index": None},
+            "assumptions": {
+                "rate_model": rate_model if rate_model is not None else "uncalibrated — verify",
+                "jones_constants": jones_constants if jones_constants is not None else "uncalibrated — verify",
+            },
+        }
+    )

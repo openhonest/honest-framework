@@ -1,18 +1,28 @@
-"""honest-estimate — deductive SIZE from the .hd contract boundary.
+"""honest-estimate — size, cost, duration, and quality from the .hd contract boundary.
 
-The three size readings of §6.1, read off the declaration before code exists, none fused. The public
-surface:
+The three deductive SIZE readings (§6.1) plus the projected COST/DURATION bands (§6.2/§6.3), the
+build-time QUALITY proxy (§6.4), and the JONES comparison (§6.5), assembled by estimate() into the §13
+artifact. Size is read off the `.hd` before code exists; cost, duration, and Jones take an injected,
+priced/benchmark model and are marked uncalibrated when it is absent — no constant is fabricated.
 
-  - size(source)                 -> the SIZE Result for one .hd module (CFP, VFP, bits, flags)
+  - estimate(source, rate_model, jones_constants, build_inputs) -> the full §13 estimate Result
+  - size(source)                 -> the deductive SIZE Result (CFP, VFP, bits, flags)
   - elementary_processes(module) -> the process names (§7.1, boundary-role authority)
-  - vfp(module)                  -> the process count and its IFPUG split, with under_declared
-  - cfp(module)                  -> COSMIC data movements (§7.2, Honest mapping, uncertified)
-  - depth(module)                -> bits of case-distinction and the open-vocabulary flags
-
-Cost, duration, and quality (the measured and inductive dimensions) are not here; this leaf is the
-deductive, declaration-time half.
+  - vfp / cfp / depth (module)   -> the three size readings
+  - quality / cost / duration / jones -> the measured and projected dimensions, constants injected
 """
 
-from honest_estimate.estimate import cfp, depth, elementary_processes, size, vfp
+from honest_estimate.estimate import (
+    cfp,
+    cost,
+    depth,
+    duration,
+    elementary_processes,
+    estimate,
+    jones,
+    quality,
+    size,
+    vfp,
+)
 
-__all__ = ["cfp", "depth", "elementary_processes", "size", "vfp"]
+__all__ = ["cfp", "cost", "depth", "duration", "elementary_processes", "estimate", "jones", "quality", "size", "vfp"]

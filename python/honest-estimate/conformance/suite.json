@@ -8,13 +8,7 @@
         "expected": {
           "ok": {
             "cosmic_cfp": 4,
-            "vfp": {
-              "total": 2,
-              "ifpug_countable": 0,
-              "beyond_ifpug_internal": 2,
-              "internal_share_ratio": 1.0,
-              "under_declared": false
-            },
+            "vfp": { "total": 2, "ifpug_countable": 0, "beyond_ifpug_internal": 2, "internal_share_ratio": 1.0, "under_declared": false },
             "bits_of_case_distinction": 3.0,
             "open_vocab_flags": [],
             "cfp_certified": false
@@ -32,17 +26,9 @@
         "expected": {
           "ok": {
             "cosmic_cfp": 2,
-            "vfp": {
-              "total": 1,
-              "ifpug_countable": 0,
-              "beyond_ifpug_internal": 1,
-              "internal_share_ratio": 1.0,
-              "under_declared": false
-            },
+            "vfp": { "total": 1, "ifpug_countable": 0, "beyond_ifpug_internal": 1, "internal_share_ratio": 1.0, "under_declared": false },
             "bits_of_case_distinction": 1.0,
-            "open_vocab_flags": [
-              { "process": "act", "param": "note", "type": "str" }
-            ],
+            "open_vocab_flags": [ { "process": "act", "param": "note", "type": "str" } ],
             "cfp_certified": false
           }
         },
@@ -50,24 +36,72 @@
           "module m\n  layer tooling\n  set MODE = { \"on\", \"off\" }\n  boundary_in fn act : (mode: MODE, note: str) -> str"
         ]
       }
+    },
+    {
+      "id": "vc-quality",
+      "value_case": {
+        "function": "quality",
+        "expected": { "mutation_density_per_process": 2.0, "escaped_defect_density": 0.25, "proxy": true },
+        "args": [10, 2, 1, 4]
+      }
+    },
+    {
+      "id": "vc-cost-calibrated",
+      "value_case": {
+        "function": "cost",
+        "expected": { "total": 60, "compute": 20, "oversight": 30, "tooling": 10, "priced_at_date": "2026-07-27", "price_basis": "provider X", "uncalibrated": false },
+        "args": [10, { "compute_per_cfp": 2, "oversight_per_cfp": 3, "tooling_per_cfp": 1, "price_date": "2026-07-27", "price_basis": "provider X" }]
+      }
+    },
+    {
+      "id": "vc-cost-uncalibrated",
+      "value_case": {
+        "function": "cost",
+        "expected": { "total": null, "compute": null, "oversight": null, "tooling": null, "priced_at_date": null, "price_basis": "uncalibrated — verify", "uncalibrated": true },
+        "args": [10, null]
+      }
+    },
+    {
+      "id": "vc-duration-calibrated",
+      "value_case": {
+        "function": "duration",
+        "expected": { "projected_low_days": 2.0, "projected_high_days": 4.0, "uncalibrated": false },
+        "args": [12, { "fast_cfp_per_day": 6, "slow_cfp_per_day": 3 }]
+      }
+    },
+    {
+      "id": "vc-duration-uncalibrated",
+      "value_case": {
+        "function": "duration",
+        "expected": { "projected_low_days": null, "projected_high_days": null, "uncalibrated": true },
+        "args": [12, null]
+      }
+    },
+    {
+      "id": "vc-jones-calibrated",
+      "value_case": {
+        "function": "jones",
+        "expected": { "backfiring_ratio": 0.5, "cost_per_fp_vs_jones": 0.5, "defect_potential_vs_jones": 1.25, "schedule_vs_jones": 1.25, "uncalibrated": false },
+        "args": [
+          { "loc_per_fp": 50, "cost_per_fp": 1000, "defect_potential": 5, "schedule": 10 },
+          { "loc_per_fp": 100, "cost_per_fp": 2000, "defect_potential": 4, "schedule": 8 }
+        ]
+      }
+    },
+    {
+      "id": "vc-jones-uncalibrated",
+      "value_case": {
+        "function": "jones",
+        "expected": { "backfiring_ratio": null, "cost_per_fp_vs_jones": null, "defect_potential_vs_jones": null, "schedule_vs_jones": null, "uncalibrated": true },
+        "args": [null, { "loc_per_fp": 100, "cost_per_fp": 2000, "defect_potential": 4, "schedule": 8 }]
+      }
     }
   ],
   "value_oracle_exempt": [
-    {
-      "function": "elementary_processes",
-      "reason": "Takes the module IR (a large dict), not a portable literal; its role-authority and fallback branches are proved directly in laws_he, and its result is composed into the size value cases."
-    },
-    {
-      "function": "vfp",
-      "reason": "Takes the module IR; the IFPUG split, the zero-process ratio, and the under_declared flag are proved in laws_he and composed into the size value cases."
-    },
-    {
-      "function": "cfp",
-      "reason": "Takes the module IR; the boundary-role and side-effect data movements and the two-movement floor are proved in laws_he and composed into the size value cases."
-    },
-    {
-      "function": "depth",
-      "reason": "Takes the module IR; closed-set, vocabulary, and composed-type recursion plus open-parameter flagging are proved in laws_he and composed into the size value cases."
-    }
+    { "function": "elementary_processes", "reason": "Takes the module IR (a large dict), not a portable literal; its role-authority and fallback branches are proved directly in laws_he, and its result is composed into the size value cases." },
+    { "function": "vfp", "reason": "Takes the module IR; the IFPUG split, the zero-process ratio, and the under_declared flag are proved in laws_he and composed into the size value cases." },
+    { "function": "cfp", "reason": "Takes the module IR; the boundary-role and side-effect data movements and the two-movement floor are proved in laws_he and composed into the size value cases." },
+    { "function": "depth", "reason": "Takes the module IR; closed-set, vocabulary, and composed-type recursion plus open-parameter flagging are proved in laws_he and composed into the size value cases." },
+    { "function": "estimate", "reason": "Assembles the full §13 artifact from a source plus injected models; its output is a large nested object composed from the value-checked size/cost/duration/quality/jones functions, and its composition and fault path are proved in laws_he." }
   ]
 }

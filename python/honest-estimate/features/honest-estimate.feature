@@ -35,3 +35,8 @@ Feature: honest-estimate (implementation supplement)
     When _bits_of measures it
     Then it returns log-2 of a set or vocabulary, the sum over a composed type's fields, or zero with an open flag otherwise
     And a self-referential composed type is broken by the cycle guard and flagged, never recursed infinitely
+
+  Scenario: _bits_per_process divides depth bits by the process count
+    Given a size report
+    When _bits_per_process reads its bits and VFP total
+    Then it returns bits over the process count, or zero when the module declares no process

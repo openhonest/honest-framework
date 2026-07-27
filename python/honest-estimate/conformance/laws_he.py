@@ -10,9 +10,10 @@ Each probe returns a list of failures; run() aggregates.
 import math
 
 import honest_estimate
-from honest_estimate import cfp, depth, elementary_processes, size, vfp
+from honest_estimate import cfp, cost, depth, duration, elementary_processes, estimate, jones, quality, size, vfp
 from honest_estimate.estimate import (
     _bits_of,
+    _bits_per_process,
     _cardinalities,
     _head_atom,
     _invoked_within,
@@ -20,6 +21,10 @@ from honest_estimate.estimate import (
     _routed_targets,
     _under_declared,
 )
+
+_RATE = {"compute_per_cfp": 2, "oversight_per_cfp": 3, "tooling_per_cfp": 1, "fast_cfp_per_day": 6, "slow_cfp_per_day": 3, "price_date": "2026-07-27", "price_basis": "provider X"}
+_NATIVE = {"loc_per_fp": 50, "cost_per_fp": 1000, "defect_potential": 5, "schedule": 10}
+_JONES = {"loc_per_fp": 100, "cost_per_fp": 2000, "defect_potential": 4, "schedule": 8}
 
 _HD_A = (
     'module m\n  layer tooling\n  set PAIR = { "a", "b" }\n  set QUAD = { "w", "x", "y", "z" }\n'
@@ -67,7 +72,7 @@ def _probe_exports():
     """The public surface is exactly these five names, in this order."""
     return (
         []
-        if honest_estimate.__all__ == ["cfp", "depth", "elementary_processes", "size", "vfp"]
+        if honest_estimate.__all__ == ["cfp", "cost", "depth", "duration", "elementary_processes", "estimate", "jones", "quality", "size", "vfp"]
         else [f"__all__ drifted: {honest_estimate.__all__}"]
     )
 
@@ -305,8 +310,101 @@ def _probe_depth():
     return bad
 
 
+def _probe_quality():
+    """Mutation and escaped-defect densities per process; a module with no process reads zero."""
+    bad = []
+    if quality(10, 2, 1, 4) != {"mutation_density_per_process": 2.0, "escaped_defect_density": 0.25, "proxy": True}:
+        bad.append(f"quality: {quality(10, 2, 1, 4)}")
+    if quality(0, 0, 0, 0) != {"mutation_density_per_process": 0.0, "escaped_defect_density": 0.0, "proxy": True}:
+        bad.append(f"quality with no process: {quality(0, 0, 0, 0)}")
+    # With no process but non-zero counts, the guard divides by one (pins the `else 1`).
+    if quality(4, 0, 2, 0) != {"mutation_density_per_process": 4.0, "escaped_defect_density": 2.0, "proxy": True}:
+        bad.append(f"quality with no process divides by one: {quality(4, 0, 2, 0)}")
+    return bad
+
+
+def _probe_cost():
+    """A projected dollar band from an injected model; uncalibrated with no model, no figure fabricated."""
+    bad = []
+    got = cost(10, _RATE)
+    if got != {"total": 60, "compute": 20, "oversight": 30, "tooling": 10, "priced_at_date": "2026-07-27", "price_basis": "provider X", "uncalibrated": False}:
+        bad.append(f"cost calibrated: {got}")
+    if cost(10, None) != {"total": None, "compute": None, "oversight": None, "tooling": None, "priced_at_date": None, "price_basis": "uncalibrated — verify", "uncalibrated": True}:
+        bad.append(f"cost uncalibrated: {cost(10, None)}")
+    return bad
+
+
+def _probe_duration():
+    """A projected day band from an injected model; uncalibrated with no model."""
+    bad = []
+    if duration(12, _RATE) != {"projected_low_days": 2.0, "projected_high_days": 4.0, "uncalibrated": False}:
+        bad.append(f"duration calibrated: {duration(12, _RATE)}")
+    if duration(12, None) != {"projected_low_days": None, "projected_high_days": None, "uncalibrated": True}:
+        bad.append(f"duration uncalibrated: {duration(12, None)}")
+    return bad
+
+
+def _probe_jones():
+    """Measured local ratios per construct; uncalibrated unless both native actuals and constants exist."""
+    bad = []
+    got = jones(_NATIVE, _JONES)
+    if got != {"backfiring_ratio": 0.5, "cost_per_fp_vs_jones": 0.5, "defect_potential_vs_jones": 1.25, "schedule_vs_jones": 1.25, "uncalibrated": False}:
+        bad.append(f"jones calibrated: {got}")
+    uncal = {"backfiring_ratio": None, "cost_per_fp_vs_jones": None, "defect_potential_vs_jones": None, "schedule_vs_jones": None, "uncalibrated": True}
+    if jones(None, _JONES) != uncal or jones(_NATIVE, None) != uncal:
+        bad.append("jones must be uncalibrated when native actuals or constants are absent")
+    return bad
+
+
+def _probe_bits_per_process():
+    """Bits over VFP; zero when the module declares no process."""
+    bad = []
+    if _bits_per_process({"bits_of_case_distinction": 6.0, "vfp": {"total": 3}}) != 2.0:
+        bad.append("_bits_per_process should divide bits by the process count")
+    if _bits_per_process({"bits_of_case_distinction": 0.0, "vfp": {"total": 0}}) != 0.0:
+        bad.append("_bits_per_process with no process should be zero")
+    return bad
+
+
+def _probe_estimate():
+    """The full §13 artifact for one module, and the size fault on a malformed source."""
+    bad = []
+    build = {"mutants_total": 10, "mutants_equivalent": 2, "escaped_defects": 1, "native": _NATIVE, "honest_check_clean": True}
+    got = estimate(_HD_B, _RATE, _JONES, build)
+    ok_body = got.get("ok", {})
+    if ok_body.get("size", {}).get("cosmic_cfp") != 2:
+        bad.append(f"estimate should embed the size reading: {got}")
+    if ok_body.get("cost", {}).get("total") != 12 or ok_body.get("duration", {}).get("uncalibrated") is not False:
+        bad.append(f"estimate should project cost and duration from the model: {ok_body.get('cost')} {ok_body.get('duration')}")
+    if ok_body.get("quality", {}).get("mutation_density_per_process") != 8.0:
+        bad.append(f"estimate should embed the quality proxy: {ok_body.get('quality')}")
+    if ok_body.get("jones", {}).get("uncalibrated") is not False:
+        bad.append(f"estimate should embed the jones comparison: {ok_body.get('jones')}")
+    # The whole integrity and assumptions dicts, so a blanked or swapped key is caught.
+    if ok_body.get("integrity") != {"bits_per_process": 1.0, "honest_check_conformance_clean": True, "umbra_silence_index": None}:
+        bad.append(f"estimate integrity block: {ok_body.get('integrity')}")
+    if ok_body.get("assumptions") != {"rate_model": _RATE, "jones_constants": _JONES}:
+        bad.append(f"estimate should ledger the supplied models: {ok_body.get('assumptions')}")
+    # An absent model is recorded as uncalibrated on both keys, not fabricated.
+    uncal = estimate(_HD_B, None, None, build).get("ok", {})
+    if uncal.get("assumptions") != {"rate_model": "uncalibrated — verify", "jones_constants": "uncalibrated — verify"}:
+        bad.append(f"estimate should ledger both absent models as uncalibrated: {uncal.get('assumptions')}")
+    if uncal.get("cost", {}).get("uncalibrated") is not True:
+        bad.append("estimate with no model should mark cost uncalibrated")
+    # A malformed source returns the size fault.
+    if "err" not in estimate("module m\n  fn broken : (", _RATE, _JONES, build):
+        bad.append("estimate on a malformed .hd should return the size fault")
+    return bad
+
+
 _PROBES = (
     _probe_exports,
+    _probe_quality,
+    _probe_cost,
+    _probe_duration,
+    _probe_jones,
+    _probe_bits_per_process,
+    _probe_estimate,
     _probe_size_success,
     _probe_size_faults,
     _probe_size_first_module,

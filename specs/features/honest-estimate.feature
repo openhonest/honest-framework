@@ -28,3 +28,31 @@ Feature: honest-estimate — deductive SIZE from the .hd contract boundary
     When depth walks each process's input parameters
     Then a parameter typed by a set or vocabulary contributes log-2 of its cardinality, a composed type the sum of its fields' bits
     And a parameter of any other type is flagged open and contributes nothing
+
+  Scenario: quality reports the build-time defect proxies per process
+    Given the mutation and escaped-defect counts and the process count
+    When quality divides them
+    Then it reports the non-equivalent mutation density and the escaped-defect density per process, labelled a proxy
+
+  Scenario: cost projects a dollar band from an injected rate model
+    Given a size in CFP and a priced, dated rate model
+    When cost multiplies size by the model's per-CFP rates
+    Then it reports the compute, oversight, tooling, and total dollars with the price date and basis
+    And with no model it produces no figure and is marked uncalibrated, fabricating no constant
+
+  Scenario: duration projects a wall-clock band from an injected rate model
+    Given a size in CFP and a rate model's throughput
+    When duration divides size by the fast and slow throughputs
+    Then it reports the low and high day band, or is marked uncalibrated with no model
+
+  Scenario: jones reports the measured ratio to the benchmark per construct
+    Given the native actuals and Jones's benchmark constants
+    When jones divides native by benchmark
+    Then it reports the backfiring, cost-per-FP, defect-potential, and schedule ratios
+    And with either side absent it is marked uncalibrated, fabricating no benchmark value
+
+  Scenario: estimate assembles the full artifact for one module
+    Given a source, a rate model, Jones constants, and the build inputs
+    When estimate composes the dimensions
+    Then it returns the size, cost, duration, quality, jones, integrity, and assumptions, wrapped in a result
+    And every un-supplied input is recorded as uncalibrated, and a malformed source returns the size fault

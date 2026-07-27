@@ -42,3 +42,13 @@ module honest-estimate
   fn depth : (module: dict<str, any>) -> Depth
 
   fn size : (source: str) -> SizeReport
+
+  fn quality : (mutants_total: int, mutants_equivalent: int, escaped_defects: int, process_count: int) -> dict<str, any>
+
+  fn cost : (cosmic_cfp: int, rate_model: dict<str, any>) -> dict<str, any>
+
+  fn duration : (cosmic_cfp: int, rate_model: dict<str, any>) -> dict<str, any>
+
+  fn jones : (native: dict<str, any>, jones_constants: dict<str, any>) -> dict<str, any>
+
+  fn estimate : (source: str, rate_model: dict<str, any>, jones_constants: dict<str, any>, build_inputs: dict<str, any>) -> dict<str, any>
