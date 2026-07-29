@@ -1451,7 +1451,7 @@ The following documents extend and distill the framework specification. They are
 - **`honest-type-architecture.md`:** Architecture specification for honest-type. Includes the classify() algorithm, composed types, maybe bindings, chain execution model, fault semantics, and conformance suite.
 - **`honest-check-architecture.md`:** Complete rule set for the static linter. CLI, LSP, startup integration, and all HC and HC-P rules with algorithms.
 - **`honest-test-architecture.md`:** Complete specification for the test harness. Auto-generated tests, honesty tests, BDD runner, state machine testing, and coverage model.
-- **`honest-state-architecture.md`:** The six kinds of state, DATAOS client primitives, and pure function state machines.
+- **`honest-state-architecture.md`:** The six kinds of state, the single-mutator law, and each kind's home module (user state is DATAOS in honest-DOM; state machines are honest-type). honest-state defines no primitives of its own.
 - **`honest-observe-architecture.md`:** Event sourcing, projections, OTel export, and honest-framework semantic conventions.
 
 ### Application Production Axis
