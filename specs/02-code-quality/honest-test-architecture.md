@@ -506,6 +506,28 @@ FUNCTION test_auth_honesty():
 
 **Conformance requirement.** Every honest-test implementation must run the authentication-honesty test against the registered provider's `resolve_actor`. An implementation that reports no failures on a provider whose validation is broken (verified against the broken-provider probe in honest-test's own conformance suite, `honest-test/conformance/`) fails honest-test conformance.
 
+### 4.8 Test-Body Honesty — No Monkeypatching or Runtime Rebinding
+
+A test that swaps a function or method at test time — a `monkeypatch` fixture, `mock.patch` / `patch.object`, or a direct `setattr` on an imported module, class, or function — exercises a call graph that is not the one that runs in production. The target of a call becomes whatever the patch sets, decided at runtime, so the test proves a behaviour of the patched graph, not of the shipped code. This is unbounded call targeting introduced by the test itself: the test-time twin of honest-check HC-P018. honest-test rejects it at collection time.
+
+```
+FUNCTION check_test_body_honesty(test_module):
+    FOR EACH test_function IN test_module:
+        FOR EACH statement IN test_function.body:
+            IF statement uses a monkeypatch fixture (setattr/setitem/delattr/setenv),
+               OR calls mock.patch / patch.object / installs a Mock as a call target,
+               OR calls setattr(<imported module|class|function>, name, replacement):
+                EMIT rejection("test_body_dishonest", statement.location,
+                    "This test rebinds a call target at runtime, so it exercises a "
+                    "different call graph than production. Pass the dependency as a "
+                    "parameter (config-as-parameters, I/O at the boundary) and assert "
+                    "on the pure function, or inject a boundary plug as an argument.")
+```
+
+**The fix, and why it is always available.** This rule extends honest-test's existing discipline rather than adding a new burden. A pure function needs nothing patched — `assert f(input) == expected` is the whole test. A function that touches the outside world declares a boundary; a test substitutes that boundary by **passing a plug as a parameter**, exactly as the reference modules test their boundaries (honest-observe injects its runtime, honest-alerts injects delivery). Injection at the call site keeps the target set bounded and visible; patching in place makes it runtime-decided. If a test cannot be written without patching, the code under test is holding a hidden dependency it should be receiving as a parameter — the rejection points at that design, not at the test.
+
+**Carve-out: the framework's own boundary instrumentation is not monkeypatching.** honest-test's `io_monitor` (§4.4) and `call_monitor` (§4.5) patch watched I/O and non-deterministic symbols to **record that a call happened and then restore the original** — they observe a declared watch-list symbol, they do not substitute a collaborator of the unit under test, and they change no result. That record-and-restore monitoring is honest by construction and is not what this rule forbids. Two properties separate it from a rejected rebind: it lives in framework code (the reference implementation's `isolation.py` / `determinism.py`), not in a user test body, so it is outside the collection-time scope; and it restores the original rather than leaving a behaviour-changing stand-in in place. The rule fires only on a **test body** that installs a stand-in which alters behaviour.
+
 ---
 
 ## 5. State Machine Testing

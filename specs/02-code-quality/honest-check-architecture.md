@@ -31,6 +31,7 @@ Every HC rule is a precondition for auto-generation. Each rule, when it fires, n
 | HC-P014 | Cannot distinguish slots — recognizer reuse collapses semantic roles |
 | HC-P016 | Cannot verify purity — closure carries mutable state |
 | HC-P017 | Cannot generate serialization tests — HTTP output function has no declared vocabulary |
+| HC-P018 | Cannot enumerate the callees — a call whose target set is unbounded makes the call graph infinite |
 | HC-R001 | Cannot reach every function — orphan function has no declared role |
 
 **honest-check is a linter only in mechanism.** In purpose, it is the gate between dishonest code and the auto-generation pipeline. Code that passes honest-check is guaranteed to have a complete auto-generated test suite. Code that fails has no test story at all.
@@ -443,6 +444,7 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-P014 | Error | ✓ | Recognizer reused across slots |
 | HC-P016 | Error | ✓ | Nonlocal closure over mutable state |
 | HC-P017 | Error | ✓ | Serializer not declared as chain link |
+| HC-P018 | Error | ✓ | Unbounded call target (provably-unbounded call site) |
 | HC-R001 | Error | ✓ | Orphan function (no role, not reachable) |
 | HC-OR001 | Error | ✓ | Orchestrator calls another orchestrator |
 | HC-OR003 | Warning | ✓ | Suspected duplication between orchestrators |
@@ -1016,6 +1018,48 @@ FUNCTION check_HC_P017(ast):
 ```
 
 The `emits` vocabulary for an HTTP-producing link must include at minimum: a status recognizer, a Content-Type recognizer, and a body-shape recognizer. Additional recognizers for individual headers and cookies are required whenever the function sets them.
+
+#### HC-P018 — Unbounded call target
+
+A call site whose target set cannot be bounded to a finite, statically-visible set of callees gives its node an unbounded number of out-edges. The program's control-and-call graph is then no longer finite, and no finite set of traversals covers it — so auto-generation cannot enumerate the reachable callees and no complete suite exists. This is the call-graph twin of unbounded mutable state: the same reason exhaustive testing runs to infinity, moved from the state space to the set of possible next hops. HC-P013 rejects an unbounded *routing-key* value space; HC-P018 rejects an unbounded *callee* set.
+
+**The line is bounded vs unbounded, not static vs dynamic.** A dynamic-looking construct passes when its target set is bounded and visible, and the framework already prefers those forms:
+
+- A dict dispatch table (`HANDLERS = {...}`) has next hops equal to the table's literal values. Bounded — this is exactly the form HC-P001 pushes code toward.
+- `getattr(obj, key)` where `key` ranges over a fixed, statically-visible set is bounded.
+- A callable parameter is bounded when every call site passes it from a fixed, visible set.
+
+The violation is the provably-unbounded target set:
+
+- `eval` / `exec` of code, or of a string built at runtime.
+- `getattr` / `setattr`-then-call where the attribute name comes from unbounded input.
+- import by runtime string (`importlib.import_module(name)`, `__import__`) used to produce a callable.
+- a callable reconstructed from a string, or injected across a public boundary with no bounded contract.
+
+The classifier is three-valued, modelled on the state-bounds classifier (`slop-audit/tools/l1_analyzer/.../state_bounds.py`): prove the target set bounded, prove it unbounded, otherwise report undetermined. Only the **proven-unbounded** case is the rejection; undetermined is reported, never rejected, so the pure-static check never guesses.
+
+```
+FUNCTION check_HC_P018(ast):
+    FOR EACH call_site IN ast.all_calls:
+        bound = target_set_bound(call_site)     # BOUNDED | UNBOUNDED | UNDETERMINED
+        IF bound is UNBOUNDED:
+            EMIT error(HC-P018, call_site.location,
+                f"Call target at '{call_site}' is not bounded to a finite, "
+                f"statically-visible set of callees — the call graph is infinite "
+                f"and cannot be exhaustively tested. Use a declared dict dispatch "
+                f"table (HC-P001), or pass the callable as a parameter from a fixed "
+                f"set of call sites.")
+        ELIF bound is UNDETERMINED:
+            EMIT info(HC-P018, call_site.location,
+                "Call target could not be proven bounded or unbounded; declare the "
+                "dispatch set as data so it can be verified.")
+```
+
+**Why this matters.** `eval`, a callable rebuilt from a runtime string, or `importlib.import_module(request_value)` can invoke anything, so the set of functions a single line may run is open. No enumeration of test inputs reaches every callee, and a mutation in an unreachable callee is invisible to the generated suite. Bounding the target set to declared data makes the reachable callees a closed, inspectable list — the same move HC-P001 makes for branches and HC-P013 makes for routing keys.
+
+**Purity of the check.** HC-P018 is pure static analysis (it decides on the AST alone) and reasons about the *declared* dispatch surface, never by executing anything. Its runtime counterpart is honest-test's `call_monitor` (honest-test §4.5), which traps dynamic dispatch that reaches a watched symbol through an attribute chain (`getattr(time, "time")()`) at import time — the dynamic path a static check cannot see. Static rejection of the provably-unbounded form and runtime trapping of the dynamic residue are complementary, not redundant.
+
+**Relationship to the research program.** The corresponding Slop Audit measurement — a finite-testability *indicator* over the call graph, parallel to the L1.18 mutable-state indicator — is a separate instrument that requires its own pre-registration before any data collection and must not be folded into the frozen L1.18–L1.20. HC-P018 here is the framework's structural gate rule; the indicator is the measured artifact. They share the classifier but are governed separately.
 
 #### HC-R001 — Orphan function (no role, not reachable from any role)
 
