@@ -1482,6 +1482,41 @@ def _probe_testbody():
     return bad
 
 
+def _probe_pytest_plugin():
+    """The section 4.8 collection-time boundary (honest_test.pytest_plugin): rebind_report formats the
+    violations, and pytest_pycollect_makemodule fails a rebinding test module's collection (a CollectError)
+    while letting an honest one build normally. The hook is exercised through a stand-in module path whose
+    read_text returns the source, so no live pytest run is needed."""
+    import pytest
+
+    from honest_test.pytest_plugin import pytest_pycollect_makemodule, rebind_report
+
+    bad = []
+    if rebind_report([]) is not None:
+        bad.append("rebind_report returns None when there are no violations")
+    one = rebind_report([{"line": 3, "col": 5, "message": "M"}])
+    expected_one = "honest-test 4.8 — this test rebinds a call target at runtime, so it does not exercise the production call graph. line 3: M"
+    if one != expected_one:
+        bad.append(f"rebind_report names the single rebinding site exactly: {one!r}")
+    two = rebind_report([{"line": 3, "col": 5, "message": "A"}, {"line": 5, "col": 1, "message": "B"}])
+    if two != "honest-test 4.8 — this test rebinds a call target at runtime, so it does not exercise the production call graph. line 3: A; line 5: B":
+        bad.append(f"rebind_report joins multiple sites with '; ': {two!r}")
+
+    def module_path(source):
+        # read_text yields the source only when asked for utf-8, so the hook is verified to pass that
+        # encoding; a wrong encoding yields empty source (no violations) and the assertions below catch it.
+        return type("P", (), {"read_text": lambda self, encoding=None: source if encoding == "utf-8" else ""})()
+
+    if pytest_pycollect_makemodule(module_path("def test_t():\n    assert f(1) == 1\n"), None) is not None:
+        bad.append("an honest test module must be built normally (the hook returns None)")
+    try:
+        pytest_pycollect_makemodule(module_path("import mod\ndef test_t():\n    mod.fn = lambda: 1\n"), None)
+        bad.append("a rebinding test module must fail collection")
+    except pytest.Collector.CollectError:
+        pass
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
@@ -1504,6 +1539,7 @@ def run():
         "proof": _probe_proof(),
         "value": _probe_value(),
         "testbody": _probe_testbody(),
+        "pytest_plugin": _probe_pytest_plugin(),
     }
     violations = list(report["violations"])
     for name, messages in probes.items():

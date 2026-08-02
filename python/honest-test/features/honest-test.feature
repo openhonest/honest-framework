@@ -104,3 +104,13 @@ Feature: honest-test — Python supplement
     Given a test module's source
     When test_body_violations scans it
     Then it flags the monkeypatch fixture, mock.patch or patch.object, setattr on an imported symbol, and attribute assignment on an imported symbol, and leaves honest tests and local mutation alone
+
+  Scenario: rebind_report formats the collection-failure message for a test body's rebinds
+    Given a list of rebinding violations
+    When rebind_report formats them
+    Then it returns None for an empty list, and otherwise a message naming each site by line, joined with a semicolon
+
+  Scenario: pytest_pycollect_makemodule fails collection of a test module that rebinds a call target
+    Given a Python test module about to be collected
+    When pytest_pycollect_makemodule reads its source
+    Then it raises a CollectError when the body rebinds a call target, and returns nothing so an honest module builds normally
