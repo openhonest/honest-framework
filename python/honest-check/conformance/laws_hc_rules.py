@@ -2530,6 +2530,24 @@ _case("p004_boundary_spaces", "from honest_type import link\n@link(boundary = Tr
 # A DECORATED non-boundary link with I/O must still fire HC-P004: pins the boundary-decorator detector
 # (emptying its match strings would make every decorated function look like a boundary and suppress it).
 _case("p004_decorated_nonboundary_io", "from honest_type import link\n@link(accepts=A, emits=B)\ndef f(x):\n    open('x')\n", must_fire=("HC-P004", "HC008"))
+
+# ----------------------------------------------------------------- HC-P018 (Python) — unbounded call target
+# finite-testability.md: a call whose callee set cannot be bounded to a finite, statically-visible set.
+# The must_fire cases below are RED until HC-P018 is implemented; the must_not_fire cases assert the
+# bounded forms (a named call, a closed-set dict dispatch) stay clean once it is.
+_case("p018_eval", "def f(s):\n    return eval(s)\n", must_fire=("HC-P018",))
+_case("p018_exec", "def f(s):\n    exec(s)\n", must_fire=("HC-P018",))
+_case("p018_getattr_dynamic", "def f(o, name, a):\n    return getattr(o, name)(a)\n", must_fire=("HC-P018",))
+_case("p018_importlib_runtime", "import importlib\ndef f(dotted):\n    return importlib.import_module(dotted).run()\n", must_fire=("HC-P018",))
+_case("p018_named_call_clean", "def f(x):\n    return helper(x)\n", must_not_fire=("HC-P018",))
+_case("p018_dict_dispatch_clean", "def f(table, k, a):\n    return table[k](a)\n", must_not_fire=("HC-P018",))
+_case("p018_getattr_literal_clean", "def f(o, a):\n    return getattr(o, 'run')(a)\n", must_not_fire=("HC-P018",))
+_case("p018_importlib_literal_clean", "import importlib\ndef f():\n    return importlib.import_module('os').getcwd()\n", must_not_fire=("HC-P018",))
+_case("p018_call_of_non_getattr_clean", "def f(x):\n    return make()(x)\n", must_not_fire=("HC-P018",))
+_case("p018_getattr_kwarg_dynamic", "def f(o, name, x, a):\n    return getattr(o, name, default=x)(a)\n", must_fire=("HC-P018",))
+_case("p018_import_module_noarg", "import importlib\ndef f():\n    return importlib.import_module().run()\n", must_fire=("HC-P018",))
+_case("p018_dunder_import_runtime", "def f(name):\n    return __import__(name).run()\n", must_fire=("HC-P018",))
+
 _RULE_MESSAGES += [
     ('HC-P004', 'd = {}\nd.append(1)\ndef f():\n    return d\n', "Reads module-level mutable state 'd' inside a non-boundary function. Module-level mutable state is hidden state — pass it as a parameter or move it into persist."),
     ('HC003', "from honest_type import vocabulary, predicate\nV = vocabulary({'a': predicate(p), 'b': predicate(q)})\n", "Predicate types 'a' and 'b' may overlap — cannot be checked statically; verified by honest-test."),
@@ -2543,6 +2561,9 @@ _RULE_MESSAGES += [
     ('HC007', 'from honest_type import chain\nchain()\n', "Chain '<anonymous>' has no links. Add at least one @link to the chain, or remove the chain."),
     ('HC-HF001', _FEAT + "def f(state, m):\n    return feature_state(state, 'ghost')\n", "feature_state references 'ghost', which is not a declared flag in FEATURES."),
     ('HC-HF002', _FEAT + _HANDLERS_PARTIAL + "def f(state, m):\n    return HANDLERS[feature_state(state, 'new_checkout')](m)\n", "Handler table 'HANDLERS' is missing an entry for these states of 'new_checkout': ['off']."),
+    ('HC-P018', "def f(s):\n    return eval(s)\n", "Call to 'eval' runs code chosen at runtime — an unbounded call target. Dispatch over a declared closed set (a dict table) instead."),
+    ('HC-P018', "import importlib\ndef f(dotted):\n    return importlib.import_module(dotted).run()\n", "'import_module' imports a module named by a runtime string — an unbounded call target. Import a fixed module, or dispatch over a declared closed set."),
+    ('HC-P018', "def f(o, name, a):\n    return getattr(o, name)(a)\n", "Dispatch through getattr with a runtime attribute name is an unbounded call target. Dispatch over a declared closed set (a dict table) instead."),
 ]
 
 # Diagnostic severity per rule (pins the severity literal in each diagnostic() call).
@@ -2563,6 +2584,9 @@ _RULE_SEVERITIES += [
     ("HC006", "error", "from honest_type import vocabulary, composed\nV = vocabulary({'a': {'x'}}, composed_types=[composed('combo', captures='ghost')])\n"),
     ("HC-HF001", "error", _FEAT + "def f(state, m):\n    return feature_state(state, 'ghost')\n"),
     ("HC-HF002", "warning", _FEAT + _HANDLERS_PARTIAL + "def f(state, m):\n    return HANDLERS[feature_state(state, 'new_checkout')](m)\n"),
+    ("HC-P018", "error", "def f(s):\n    return eval(s)\n"),
+    ("HC-P018", "error", "import importlib\ndef f(dotted):\n    return importlib.import_module(dotted).run()\n"),
+    ("HC-P018", "error", "def f(o, name, a):\n    return getattr(o, name)(a)\n"),
 ]
 
 

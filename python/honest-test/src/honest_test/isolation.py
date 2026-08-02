@@ -79,7 +79,7 @@ def io_monitor():
     saved = []
     for path in _WATCH_LIST:
         module_name, attr = path.rsplit(".", 1)
-        module = importlib.import_module(module_name)
+        module = importlib.import_module(module_name)  # honest: ignore HC-P018: module_name derives from _WATCH_LIST, a declared closed set — a bounded target set (finite-testability.md section 4)
         saved.append((module, attr, getattr(module, attr)))
         setattr(module, attr, _recorder(path, detected))
     try:

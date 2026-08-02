@@ -289,6 +289,46 @@ def check_hc_p011(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
+_UNBOUNDED_CALL_BUILTINS = frozenset({"eval", "exec"})
+_DYNAMIC_IMPORT_CALLS = frozenset({"import_module", "__import__"})
+
+
+def _string_positional(call_node, index: int) -> bool:
+    """Whether the call's nth positional argument is a string literal — a bounded, fixed target. Called
+    only with call nodes, whose `arguments` field is always present."""
+    positional = [child for child in call_node.child_by_field_name("arguments").named_children if child.type != "keyword_argument"]
+    return index < len(positional) and positional[index].type == "string"
+
+
+def check_hc_p018(root, source: bytes, path: str) -> list[Diagnostic]:
+    """HC-P018 — unbounded call target: a call whose callee set cannot be bounded to a finite,
+    statically-visible set. eval/exec run code chosen at runtime; import by a runtime string produces a
+    callable from an unbounded module; getattr dispatch with a runtime attribute name resolves an
+    unbounded callee. Bounded forms — a named call, a closed-set dict dispatch, a literal getattr or a
+    literal import — are left alone. The gate-force realisation of finite-testability.md (its section 6):
+    rejecting the unbounded call target is what keeps the reaching-domain locally computable."""
+    out: list[Diagnostic] = []
+    for node in walk(root):
+        if node.type != "call":
+            continue
+        name = _call_name(node, source)
+        if name in _UNBOUNDED_CALL_BUILTINS:
+            line, col = line_col(node)
+            out.append(diagnostic("HC-P018", "error", path, line, col, f"Call to '{name}' runs code chosen at runtime — an unbounded call target. Dispatch over a declared closed set (a dict table) instead."))
+            continue
+        if name in _DYNAMIC_IMPORT_CALLS and not _string_positional(node, 0):
+            line, col = line_col(node)
+            out.append(diagnostic("HC-P018", "error", path, line, col, f"'{name}' imports a module named by a runtime string — an unbounded call target. Import a fixed module, or dispatch over a declared closed set."))
+            continue
+        function = node.child_by_field_name("function")
+        if function.type != "call" or _call_name(function, source) != "getattr":
+            continue
+        if not _string_positional(function, 1):
+            line, col = line_col(node)
+            out.append(diagnostic("HC-P018", "error", path, line, col, "Dispatch through getattr with a runtime attribute name is an unbounded call target. Dispatch over a declared closed set (a dict table) instead."))
+    return out
+
+
 def _class_methods(class_node):
     """The function_definition nodes directly in a class body."""
     body = class_node.child_by_field_name("body")
@@ -1644,6 +1684,7 @@ _ALL_CHECKS = (
     check_hc_p007,
     check_hc_p011,
     check_hc_p016,
+    check_hc_p018,
 )
 
 # JavaScript rule registry (section 5). The Honest Code principles are language-agnostic; their

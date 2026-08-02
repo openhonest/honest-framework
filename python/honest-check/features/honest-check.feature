@@ -201,6 +201,16 @@ Feature: honest-check — Python supplement
     When _call_name reads its callee
     Then it returns the bare name for a plain call and the attribute name for a method call
 
+  Scenario: _string_positional reports whether a call's nth positional argument is a string literal
+    Given a call node and an index
+    When _string_positional inspects that positional argument
+    Then it is true only when the argument exists and is a string literal, skipping keyword arguments
+
+  Scenario: check_hc_p018 flags a call whose target set cannot be bounded
+    Given source with calls
+    When check_hc_p018 scans them
+    Then it flags eval and exec, a runtime-string import, and getattr dispatch with a runtime attribute name, and leaves a named call, a closed-set dict dispatch, and a literal getattr or import alone
+
   Scenario: _class_methods collects the methods directly in a class body
     Given a class node
     When _class_methods reads its body

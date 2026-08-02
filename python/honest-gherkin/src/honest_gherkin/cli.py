@@ -64,7 +64,7 @@ def _load_steps(module_paths, registry):
     """Thread the registry through each --steps module's register(registry) builder (section 8.2),
     in order. Each module exports register only — no global, no decorator. I/O (imports modules)."""
     for dotted in module_paths:
-        module = importlib.import_module(dotted)
+        module = importlib.import_module(dotted)  # honest: ignore HC-P018: boundary — imports the step-definition module named on the CLI (--steps); this function is the declared I/O boundary
         registry = module.register(registry)
     return registry
 
