@@ -375,11 +375,38 @@ SM_CONSTRUCTION_SUBJECTS = [
     ("unknown_from_state", {"build": lambda: state_machine({"a"}, {"e"}, {("b", "e"): "a"}, "a"), "expect": "unknown state"}),
     ("unknown_event", {"build": lambda: state_machine({"a"}, {"e"}, {("a", "x"): "a"}, "a"), "expect": "unknown event"}),
 ]
+def _sm_immutable(subject):
+    """A constructed machine is immutable (section 7c 'no mutation'): the envelope and its transition
+    table are read-only mappings and terminal is a tuple, so a shared machine constant cannot be
+    corrupted at runtime. Each mutation attempt must raise."""
+    machine = state_machine({"a", "b"}, {"e"}, {("a", "e"): "b"}, "a", terminal=["b"])
+    bad = []
+    try:
+        machine["initial"] = "b"
+        bad.append("the machine envelope must be read-only (assigning a key should raise)")
+    except TypeError:
+        pass
+    try:
+        machine["transitions"][("b", "e")] = "a"
+        bad.append("the transition table must be read-only (assigning a key should raise)")
+    except TypeError:
+        pass
+    try:
+        machine["terminal"].append("c")
+        bad.append("terminal must be an immutable tuple (append should raise)")
+    except AttributeError:
+        pass
+    return bad
+
+
 SM_LAWS = [
     law("SM-construct", "an invalid state machine is rejected at construction", _sm_construction_rejected),
 ]
 SM_VOCAB_LAWS = [
     law("SM-vocab", "states/events may be declared as vocabularies", _sm_from_vocabulary),
+]
+SM_IMMUTABLE_LAWS = [
+    law("SM-immutable", "a constructed machine cannot be mutated", _sm_immutable),
 ]
 
 
@@ -427,6 +454,7 @@ def run():
         verify_laws(ENGINE_LAWS, EDGE_SUBJECTS),
         verify_laws(SM_LAWS, SM_CONSTRUCTION_SUBJECTS),
         verify_laws(SM_VOCAB_LAWS, [("vocabulary_states", {})]),
+        verify_laws(SM_IMMUTABLE_LAWS, [("machine", {})]),
     ]
     directs = [("HT-4", "reservation_layer total", _reservation_layer_law()), ("HT-engine", "catch-all admits a discriminating predicate", _catch_all_admits_discriminating())]
 

@@ -304,10 +304,11 @@ def _check_statemachine(case):
         machine, outcome, message = None, "error", str(exc)
     ok_ = outcome == case["expect"] and case.get("error_contains", "") in message
     if machine is not None:
-        for field in ("initial", "terminal"):
-            key = f"expect_{field}"
-            if key in case:
-                ok_ = ok_ and machine[field] == case[key]
+        if "expect_initial" in case:
+            ok_ = ok_ and machine["initial"] == case["expect_initial"]
+        if "expect_terminal" in case:
+            # terminal is an immutable tuple (section 7c); compare it as a sequence against the case list.
+            ok_ = ok_ and list(machine["terminal"]) == case["expect_terminal"]
     return ok_, f"got {outcome} ({message[:40]})"
 
 

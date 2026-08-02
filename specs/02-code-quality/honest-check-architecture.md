@@ -895,11 +895,14 @@ FUNCTION check_HC_P010(ast):
     FOR EACH function_def IN ast.pure_functions:
         FOR EACH return_stmt IN function_def.return_statements:
             IF return_stmt.value is class_instance:
-                IF NOT is_typeddict(return_stmt.value):
+                IF NOT is_typeddict(return_stmt.value)
+                   AND NOT is_immutable_mapping(return_stmt.value):   // MappingProxyType
                     EMIT error(HC-P010, return_stmt.location,
                         "Pure function returns non-serializable object. "
                         "Use TypedDict or dict.")
 ```
+
+An **immutable read-only mapping** (`MappingProxyType`) is accepted alongside `dict` and `TypedDict`. It is serializable-equivalent — it round-trips through `dict()` — and it is *preferable* to a mutable dict for a shared constant, because it cannot be corrupted after construction (the poka-yoke of §7c's state machine). HC-P010 targets opaque, behaviour-bearing objects, not read-only data, so a read-only mapping is honest data, not a class instance to be flagged.
 
 #### HC-P011 — Framework lifecycle hook
 

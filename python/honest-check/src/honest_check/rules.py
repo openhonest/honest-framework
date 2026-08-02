@@ -153,6 +153,11 @@ def _typeddict_names(root, source: bytes) -> set:
     return names
 
 
+# Immutable read-only mappings are honest data, not opaque objects: serializable via dict() and
+# preferable to a mutable dict for a shared constant (section 4.2). Accepted like dict/TypedDict.
+_IMMUTABLE_MAPPINGS = frozenset({"MappingProxyType"})
+
+
 def check_hc_p010(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC-P010 — a function returns a non-serializable class instance (section 4.2). A return whose
     value constructs a class (a PascalCase constructor call) that is not a TypedDict declared in this
@@ -173,7 +178,7 @@ def check_hc_p010(root, source: bytes, path: str) -> list[Diagnostic]:
         if not qualified:
             continue
         name = qualified.rsplit(".", 1)[-1]
-        if not name[:1].isupper() or name in typeddicts:
+        if not name[:1].isupper() or name in typeddicts or name in _IMMUTABLE_MAPPINGS:
             continue
         enclosing = _enclosing_function(node)
         if enclosing is not None and _is_boundary_function(enclosing, source):

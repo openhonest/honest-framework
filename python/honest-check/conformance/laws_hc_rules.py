@@ -317,6 +317,18 @@ _case(
     "def f(obj):\n    return obj.build(1)\n",
     must_not_fire=("HC-P010",),
 )
+# An immutable read-only mapping is honest data (serializable via dict(), and preferable to a mutable
+# dict for a shared constant) — accepted alongside dict/TypedDict, however the constructor is written.
+_case(
+    "p010_returns_mappingproxy_clean",
+    "from types import MappingProxyType\ndef f():\n    return MappingProxyType({'a': 1})\n",
+    must_not_fire=("HC-P010",),
+)
+_case(
+    "p010_returns_qualified_mappingproxy_clean",
+    "import types\ndef f():\n    return types.MappingProxyType({'a': 1})\n",
+    must_not_fire=("HC-P010",),
+)
 _case(
     "p010_bare_return_clean",
     "def f():\n    return\n",

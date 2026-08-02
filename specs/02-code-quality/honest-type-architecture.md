@@ -621,6 +621,8 @@ The complete honest-state specification — including the full state taxonomy, D
 
 A state machine is a lookup table: `(current_state, event) → next_state`. States and events are vocabularies. The transition table is a binding. No classes, no mutation — the machine is pure data and the executor is a pure function.
 
+The constructed machine is **immutable**: `state_machine()` returns a read-only mapping whose transition table is itself a read-only mapping and whose terminal states are a tuple. A machine therefore cannot be mutated after construction — the "no mutation" rule is enforced by the structure, not left to convention, so a shared machine constant cannot be corrupted at runtime (the bug category this eliminates: a mutated transition table silently changing behaviour everywhere the machine is used).
+
 ### Data Structures
 
 ```

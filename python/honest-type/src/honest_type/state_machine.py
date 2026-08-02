@@ -5,6 +5,8 @@ the transition table is a binding from (state, event) pairs to next states. No c
 mutation - the caller stores the state, the machine only computes the next one.
 """
 
+from types import MappingProxyType
+
 from honest_type.types import err, fault, ok
 
 
@@ -40,13 +42,13 @@ def state_machine(states, events, transitions, initial, terminal=None):
             raise StateMachineError(f"Transition to unknown state '{target}'.")
     if initial not in state_names:
         raise StateMachineError(f"Initial state '{initial}' is not a declared state.")
-    return {
+    return MappingProxyType({
         "states": state_names,
         "events": event_names,
-        "transitions": table,
+        "transitions": MappingProxyType(table),
         "initial": initial,
-        "terminal": list(terminal or []),
-    }
+        "terminal": tuple(terminal or []),
+    })
 
 
 def transition(machine, current_state, event):
