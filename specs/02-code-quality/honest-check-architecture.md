@@ -1023,6 +1023,8 @@ The `emits` vocabulary for an HTTP-producing link must include at minimum: a sta
 
 A call site whose target set cannot be bounded to a finite, statically-visible set of callees gives its node an unbounded number of out-edges. The program's control-and-call graph is then no longer finite, and no finite set of traversals covers it — so auto-generation cannot enumerate the reachable callees and no complete suite exists. This is the call-graph twin of unbounded mutable state: the same reason exhaustive testing runs to infinity, moved from the state space to the set of possible next hops. HC-P013 rejects an unbounded *routing-key* value space; HC-P018 rejects an unbounded *callee* set.
 
+HC-P018 is the gate-force realisation of the shared finite-testability predicate (`../finite-testability.md`): rejecting the unbounded call target is what keeps the reaching-domain locally computable (that spec's §6), so it is the precondition the honest-test / Slop Audit meters depend on rather than a rule that stands alone.
+
 **The line is bounded vs unbounded, not static vs dynamic.** A dynamic-looking construct passes when its target set is bounded and visible, and the framework already prefers those forms:
 
 - A dict dispatch table (`HANDLERS = {...}`) has next hops equal to the table's literal values. Bounded — this is exactly the form HC-P001 pushes code toward.
