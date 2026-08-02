@@ -1425,6 +1425,63 @@ def _probe_http_steps():
     return bad
 
 
+def _probe_testbody():
+    """test_body_violations (section 4.8): flags runtime rebinding in a test body — the monkeypatch
+    fixture, mock.patch / patch.object, setattr on an imported symbol, and a direct attribute assignment
+    on an imported symbol — and leaves honest tests and local mutation alone. Cases cover every rebind
+    construct, the clean paths, the import forms that define the imported-symbol scope, and the exact
+    rejection message and recorded line."""
+    from honest_test.testbody import test_body_violations
+
+    # The expected message is written out here, not imported from testbody, so that emptying any part of
+    # the module's own constant is caught (comparing against the imported constant would mutate both sides).
+    expected_message = (
+        "This test rebinds a call target at runtime, so it exercises a different call graph than production. "
+        "Pass the dependency as a parameter (config-as-parameters, I/O at the boundary) and assert on the pure "
+        "function, or inject a boundary plug as an argument."
+    )
+    bad = []
+    flagged = [
+        ("monkeypatch fixture", "def test_t(monkeypatch):\n    monkeypatch.setattr(mod, 'fn', lambda: 1)\n"),
+        ("mock.patch context manager", "from unittest import mock\ndef test_t():\n    with mock.patch('m.f'):\n        pass\n"),
+        ("bare patch", "from unittest.mock import patch\ndef test_t():\n    patch('m.f')\n"),
+        ("patch.object", "from unittest.mock import patch\ndef test_t():\n    patch.object(o, 'm')\n"),
+        ("setattr on an imported symbol", "import mod\ndef test_t():\n    setattr(mod, 'fn', lambda: 1)\n"),
+        ("attribute assignment on an imported module", "import mod\ndef test_t():\n    mod.fn = lambda: 1\n"),
+        ("attribute assignment on an aliased import", "import pkg.sub as ps\ndef test_t():\n    ps.fn = lambda: 1\n"),
+        ("attribute assignment on a dotted import", "import pkg.sub\ndef test_t():\n    pkg.fn = lambda: 1\n"),
+        ("attribute assignment on a from-imported name", "from p import fn\ndef test_t():\n    fn.attr = 1\n"),
+    ]
+    clean = [
+        ("attribute assignment on a from-import module", "from mod import fn\ndef test_t():\n    mod.g = 1\n"),
+        (".object() on a non-patch object", "def test_t():\n    d.object()\n"),
+        ("setattr on a local object", "def test_t():\n    obj = T()\n    setattr(obj, 'x', 1)\n"),
+        ("a plain call", "def test_t():\n    helper(x)\n"),
+        ("a call with no arguments", "def test_t():\n    run()\n"),
+        ("constructing a local object", "def test_t():\n    obj = T()\n"),
+        ("attribute assignment on a local object", "def test_t():\n    obj = T()\n    obj.field = 5\n"),
+        ("nested attribute assignment on a local", "def test_t():\n    a.b.c = 1\n"),
+        ("rebinding a from-imported name locally", "from p import fn\ndef test_t():\n    fn = 1\n"),
+        ("a star import then an honest call", "from x import *\ndef test_t():\n    helper()\n"),
+        ("injecting a dependency as a parameter", "def test_t():\n    def injected():\n        return 0\n    assert compute(now=injected) == 0\n"),
+    ]
+    for label, src in flagged:
+        if not test_body_violations(src):
+            bad.append(f"a rebind by {label} must be flagged: {src!r}")
+    for label, src in clean:
+        if test_body_violations(src):
+            bad.append(f"an honest test — {label} — must not be flagged: {src!r}")
+
+    reported = test_body_violations("import mod\ndef test_t():\n    mod.fn = lambda: 1\n")
+    if not reported or reported[0].get("message") != expected_message:
+        bad.append(f"the rejection message must be the section 4.8 text: {reported}")
+    if not reported or reported[0].get("line") != 3:
+        bad.append(f"the violation records the 1-based line of the rebind: {reported}")
+    if not reported or "col" not in reported[0]:
+        bad.append(f"the violation records the column of the rebind: {reported}")
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
@@ -1446,6 +1503,7 @@ def run():
         "runner": _probe_runner(),
         "proof": _probe_proof(),
         "value": _probe_value(),
+        "testbody": _probe_testbody(),
     }
     violations = list(report["violations"])
     for name, messages in probes.items():

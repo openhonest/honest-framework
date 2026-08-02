@@ -99,3 +99,8 @@ Feature: honest-test — Python supplement
     Given a value case and the function map
     When _invoke calls the function
     Then it calls with positional args, keyword args, or a single input, evaluating each argument and settling an awaitable result
+
+  Scenario: test_body_violations flags runtime rebinding in a test body
+    Given a test module's source
+    When test_body_violations scans it
+    Then it flags the monkeypatch fixture, mock.patch or patch.object, setattr on an imported symbol, and attribute assignment on an imported symbol, and leaves honest tests and local mutation alone

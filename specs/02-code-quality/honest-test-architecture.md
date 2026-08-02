@@ -508,7 +508,7 @@ FUNCTION test_auth_honesty():
 
 ### 4.8 Test-Body Honesty — No Monkeypatching or Runtime Rebinding
 
-A test that swaps a function or method at test time — a `monkeypatch` fixture, `mock.patch` / `patch.object`, or a direct `setattr` on an imported module, class, or function — exercises a call graph that is not the one that runs in production. The target of a call becomes whatever the patch sets, decided at runtime, so the test proves a behaviour of the patched graph, not of the shipped code. This is unbounded call targeting introduced by the test itself: the test-time twin of honest-check HC-P018, and a gate-force application of the shared finite-testability predicate (`../finite-testability.md` §6 — runtime rebinding is one of the constructs that make the reaching-domain undecidable). honest-test rejects it at collection time.
+A test that swaps a function or method at test time — a `monkeypatch` fixture, `mock.patch` / `patch.object`, or a direct `setattr` or attribute assignment on an imported module, class, or function — exercises a call graph that is not the one that runs in production. The target of a call becomes whatever the patch sets, decided at runtime, so the test proves a behaviour of the patched graph, not of the shipped code. This is unbounded call targeting introduced by the test itself: the test-time twin of honest-check HC-P018, and a gate-force application of the shared finite-testability predicate (`../finite-testability.md` §6 — runtime rebinding is one of the constructs that make the reaching-domain undecidable). honest-test rejects it at collection time.
 
 ```
 FUNCTION check_test_body_honesty(test_module):
@@ -516,7 +516,8 @@ FUNCTION check_test_body_honesty(test_module):
         FOR EACH statement IN test_function.body:
             IF statement uses a monkeypatch fixture (setattr/setitem/delattr/setenv),
                OR calls mock.patch / patch.object / installs a Mock as a call target,
-               OR calls setattr(<imported module|class|function>, name, replacement):
+               OR calls setattr(<imported module|class|function>, name, replacement),
+               OR rebinds an imported symbol by attribute assignment (imported.attr = replacement):
                 EMIT rejection("test_body_dishonest", statement.location,
                     "This test rebinds a call target at runtime, so it exercises a "
                     "different call graph than production. Pass the dependency as a "
