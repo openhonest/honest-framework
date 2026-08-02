@@ -1,0 +1,89 @@
+{
+  "spec": "finite-testability",
+  "version": "0.1",
+  "definition": "State is testability-neutral iff the production decisions reaching it partition its domain into a statically-enumerable finite set of equivalence classes. Partition-count, not value-count.",
+  "verdicts": ["NEUTRAL", "PROMISCUOUS", "UNRESOLVED"],
+  "note": "Portable, tool-neutral conformance vectors for finite-testability.md. Vendor these (copy and run by case id); do not import either tool. The gate (Honest Framework) realizes each verdict by construction across its rules (HC-P001/P003/P004/P016/P018): it accepts NEUTRAL and rejects PROMISCUOUS and UNRESOLVED constructs, demanding they be made bounded or declared. The meter (Slop Audit) measures the verdict directly and fail-closes to UNRESOLVED whatever it cannot prove, then discloses that (finite-testability.md section 7). Reference snippets are Python; each is minimal and illustrates only the construct the verdict turns on.",
+  "cases": [
+    {
+      "id": "observe-only-recorder",
+      "verdict": "NEUTRAL",
+      "drives_decision": false,
+      "reason": "self.emitted is written by append and read only by an external asserter; no method branches on it, so its reaching-set is empty (observe-only).",
+      "language": "python",
+      "source": "class Recorder:\n    def __init__(self):\n        self.emitted = []\n\n    def record(self, event):\n        self.emitted.append(event)\n"
+    },
+    {
+      "id": "value-indexed-cache",
+      "verdict": "PROMISCUOUS",
+      "drives_decision": true,
+      "reason": "the shared _cache is read in a branch keyed by an unbounded key, so the partition the decision imposes is unbounded.",
+      "language": "python",
+      "source": "_cache = {}\n\ndef handle(key):\n    if key in _cache:\n        return _cache[key]\n    _cache[key] = compute(key)\n    return _cache[key]\n"
+    },
+    {
+      "id": "multi-writer-capped-counter",
+      "verdict": "NEUTRAL",
+      "drives_decision": true,
+      "reason": "the counter is capped at max_tries and only meets a threshold comparison, partitioning its domain into two classes; the number of writer sites is irrelevant.",
+      "language": "python",
+      "source": "def step(counter, max_tries):\n    if counter >= max_tries:\n        return \"stop\"\n    return \"retry\"\n"
+    },
+    {
+      "id": "raw-int-vs-constant",
+      "verdict": "NEUTRAL",
+      "drives_decision": true,
+      "reason": "an unbounded-type integer that meets only comparisons against constants; the reaching partition is (number of comparisons + 1), independent of the value cardinality.",
+      "language": "python",
+      "source": "def classify(n):\n    if n < 0:\n        return \"neg\"\n    if n == 0:\n        return \"zero\"\n    return \"pos\"\n"
+    },
+    {
+      "id": "single-writer-local-but-dynamic-dispatch",
+      "verdict": "UNRESOLVED",
+      "drives_decision": true,
+      "reason": "the callee is selected by getattr with an open name argument, so the target set is unbounded; single-writer and local do not rescue it (the HC-P018 construct).",
+      "language": "python",
+      "source": "def dispatch(self, name, arg):\n    return getattr(self, name)(arg)\n"
+    },
+    {
+      "id": "returned-raw-value",
+      "verdict": "NEUTRAL",
+      "drives_decision": false,
+      "reason": "a returned value is this function's output, tested by asserting the return; covering its domain downstream is the caller's finite-testability, compositional.",
+      "language": "python",
+      "source": "def total(items):\n    return sum(items)\n"
+    },
+    {
+      "id": "module-global-in-branch",
+      "verdict": "PROMISCUOUS",
+      "drives_decision": true,
+      "reason": "a module-global mutable dict, writable from many sites and unbounded in domain, is read in a branch condition.",
+      "language": "python",
+      "source": "mode = {}\n\ndef run(x):\n    if mode.get(x):\n        return do_a(x)\n    return do_b(x)\n"
+    },
+    {
+      "id": "pass-to-unknown-callee",
+      "verdict": "UNRESOLVED",
+      "drives_decision": true,
+      "reason": "the callee is resolved from a runtime string via import-by-name, so the payload is passed to a statically-unbounded target; the reaching-set cannot be decided.",
+      "language": "python",
+      "source": "import importlib\n\ndef send(dotted_target, payload):\n    fn = importlib.import_module(dotted_target).handle\n    return fn(payload)\n"
+    },
+    {
+      "id": "closed-set-dispatch",
+      "verdict": "NEUTRAL",
+      "drives_decision": true,
+      "reason": "dispatch over a declared closed set: the target set is the table's literal values, statically enumerable (the HC-P001-preferred form).",
+      "language": "python",
+      "source": "HANDLERS = {\"a\": handle_a, \"b\": handle_b}\n\ndef dispatch(kind, arg):\n    return HANDLERS[kind](arg)\n"
+    },
+    {
+      "id": "bounded-enum-accumulator-driving-branch",
+      "verdict": "NEUTRAL",
+      "drives_decision": true,
+      "reason": "the reaching-domain is a bounded set of (state, event) pairs over closed vocabularies; the value drives behaviour yet stays finitely enumerable, so a naive observe-only-only rule would wrongly reject it.",
+      "language": "python",
+      "source": "TABLE = {(\"idle\", \"go\"): \"run\", (\"run\", \"stop\"): \"idle\"}\n\ndef next_state(state, event):\n    return TABLE.get((state, event), state)\n"
+    }
+  ]
+}
