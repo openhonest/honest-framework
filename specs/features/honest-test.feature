@@ -587,3 +587,13 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given a link's source
     When fault_exits reads its guards
     Then it returns the reachable fault exits each with a triggering manifest fragment solved from the guard, the deferred exits whose pure-manifest guard it could not solve, and the unreachable exits whose guard turns on external state, each disclosed with its reason
+
+  Scenario: perturbations perturbs a passing manifest one field at a time
+    Given a passing manifest
+    When perturbations varies it
+    Then it returns a variant with each field omitted and a variant with each field pushed to every edge value, so the chain can be run on each to trip guards that could not be read
+
+  Scenario: seam_breakers constructs a hand-off value the downstream rejects
+    Given a chain's links
+    When seam_breakers reads each adjacent pair
+    Then it returns, for each downstream that declares an accepts vocabulary, a near-miss of a declared member that the downstream rejects, exercising the hand-off fault

@@ -11,6 +11,10 @@ link is never asked to declare its failures a second time.
 """
 
 from honest_parse import node_text, parse_python, walk
+from honest_type.chains import link_meta
+from honest_type.recognizers import is_bounded, members, recognize
+
+from honest_test.adversarial import adversarial_neighbours
 
 # Operator token -> a value that makes `manifest[field] <op> literal` true, keyed by the tree-sitter
 # operator node type. Numeric comparison guards only; a value strategy 1 can solve by reading.
@@ -86,6 +90,43 @@ def _fault_ifs(source_bytes):
         for node in walk(root)
         if node.type == "if_statement" and _returns_err(node.child_by_field_name("consequence"), source_bytes)
     ]
+
+
+# Edge values a field is pushed to when its guard cannot be read (strategy 2): the values most likely
+# to trip an unread numeric or length guard. Every edge is tried on every field - an edge of the wrong
+# type is simply rejected at the door and trips nothing, so no runtime type check is needed to choose.
+_EDGES = (0, -1, 1_000_000, "", "x" * 1000)
+
+
+def perturbations(manifest) -> list:
+    """Strategy 2 (section 9.2.1): a passing manifest perturbed one field at a time - the field omitted,
+    and pushed to each edge value - so the chain can be run on each and the fault exits that trip
+    recorded. Pure: it yields the variant manifests; running them is the caller's job."""
+    variants = []
+    for field in manifest:
+        variants.append({key: value for key, value in manifest.items() if key != field})
+        for edge in _EDGES:
+            variants.append({**manifest, field: edge})
+    return variants
+
+
+def seam_breakers(links) -> list:
+    """Strategy 3 (section 9.2.1): for each adjacent pair, a hand-off value the downstream rejects - a
+    near-miss of a member its accepts vocabulary declares. Feeding it to the downstream trips the
+    hand-off fault. Pure; running it is the caller's job. A pair whose downstream declares no accepts
+    vocabulary, or a type that is not a bounded Set, has no readable seam and yields nothing."""
+    breakers = []
+    for index in range(len(links) - 1):
+        vocab = link_meta(links[index + 1])["accepts"]
+        if vocab is None:
+            continue
+        for name, recognizer in vocab["base_types"].items():
+            if not is_bounded(recognizer):
+                continue
+            member = min(members(recognizer))
+            breaker = min(neighbour for neighbour in adversarial_neighbours(member) if not recognize(neighbour, recognizer))
+            breakers.append({"seam": index, "manifest": {name: breaker}})
+    return breakers
 
 
 def fault_exits(source) -> dict:

@@ -2195,6 +2195,80 @@ def _probe_fault_paths():
     return bad
 
 
+def _probe_perturbations():
+    """Fault-path generation strategy 2 (§9.2.1): when a guard cannot be read, perturb a passing
+    manifest one field at a time - omit the field, or push it to a type-edge value - so the chain can be
+    run on each and the fault exits that trip recorded."""
+    from honest_test.fault_paths import perturbations
+
+    bad = []
+    manifest = {"size": 5, "name": "ok", "tag": "z"}
+    variants = perturbations(manifest)
+
+    # Each field omitted once - the variant keeps the OTHER two fields (three fields distinguish real
+    # omission, `key != field`, from keeping only the field, `key == field`).
+    if {"name": "ok", "tag": "z"} not in variants:
+        bad.append(f"perturbations: omits the size field, keeping the rest, got {variants}")
+    if {"size": 5, "tag": "z"} not in variants:
+        bad.append(f"perturbations: omits the name field, keeping the rest, got {variants}")
+    if {"size": 5, "name": "ok"} not in variants:
+        bad.append(f"perturbations: omits the tag field, keeping the rest, got {variants}")
+
+    # Every edge value tried on every field.
+    for edge in (0, -1, 1_000_000, "", "x" * 1000):
+        if {"size": edge, "name": "ok", "tag": "z"} not in variants:
+            bad.append(f"perturbations: pushes the size field to {edge!r}, got {variants}")
+        if {"size": 5, "name": edge, "tag": "z"} not in variants:
+            bad.append(f"perturbations: pushes the name field to {edge!r}, got {variants}")
+
+    return bad
+
+
+def _probe_seam_breakers():
+    """Fault-path generation strategy 3 (§9.2.1): for each adjacent pair, construct a hand-off value the
+    downstream rejects - a near-miss of a member its accepts vocabulary declares - so feeding it to the
+    downstream trips the hand-off fault. A downstream with no accepts vocabulary has no readable seam."""
+    from honest_type.recognizers import members, predicate, recognize
+
+    from honest_test.adversarial import adversarial_neighbours
+    from honest_test.fault_paths import seam_breakers
+
+    bad = []
+    # Close members ('cat'/'car' are one edit apart) so a near-miss can coincide with the other member -
+    # exercising both the kept and the excluded side of the rejection filter. The predicate type is
+    # unbounded and has no members to perturb.
+    accepts = vocabulary({"tier": {"cat", "car"}, "note": predicate(lambda token: token.isdigit())})
+
+    @link()
+    def up(manifest):
+        return ok(manifest)
+
+    @link()
+    def mid(manifest):
+        return ok(manifest)
+
+    @link(accepts=accepts)
+    def tail(manifest):
+        return ok(manifest)
+
+    # Seam 0 (downstream mid) has no accepts vocabulary; seam 1 (downstream tail) does. The accepts
+    # sits on the LAST link so the final seam is the one that yields a breaker.
+    breakers = seam_breakers([up, mid, tail])
+
+    tier = accepts["base_types"]["tier"]
+    expected = min(neighbour for neighbour in adversarial_neighbours(min(members(tier))) if not recognize(neighbour, tier))
+    if expected in {"cat", "car"}:
+        bad.append(f"seam_breakers probe: the expected breaker must be a near-miss, got {expected!r}")
+
+    if any(b["seam"] == 0 for b in breakers):
+        bad.append(f"seam_breakers: a downstream with no accepts vocabulary has no readable seam, got {breakers}")
+    seam1 = [b for b in breakers if b["seam"] == 1]
+    if len(seam1) != 1 or seam1[0]["manifest"] != {"tier": expected}:
+        bad.append(f"seam_breakers: the tail link's accepts vocabulary yields the tier near-miss {expected!r}, got {breakers}")
+
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
@@ -2220,6 +2294,8 @@ def run():
         "component_isolation": _probe_component_isolation(),
         "persist_contract": _probe_persist_contract(),
         "fault_paths": _probe_fault_paths(),
+        "perturbations": _probe_perturbations(),
+        "seam_breakers": _probe_seam_breakers(),
         "proof": _probe_proof(),
         "value": _probe_value(),
         "testbody": _probe_testbody(),
