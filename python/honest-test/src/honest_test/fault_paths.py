@@ -11,10 +11,11 @@ link is never asked to declare its failures a second time.
 """
 
 from honest_parse import node_text, parse_python, walk
-from honest_type.chains import link_meta
+from honest_type.chains import execute_chain, link_meta
 from honest_type.recognizers import is_bounded, members, recognize
 
 from honest_test.adversarial import adversarial_neighbours
+from honest_test.enumeration import enumerate_sets
 
 # Operator token -> a value that makes `manifest[field] <op> literal` true, keyed by the tree-sitter
 # operator node type. Numeric comparison guards only; a value strategy 1 can solve by reading.
@@ -127,6 +128,59 @@ def seam_breakers(links) -> list:
             breaker = min(neighbour for neighbour in adversarial_neighbours(member) if not recognize(neighbour, recognizer))
             breakers.append({"seam": index, "manifest": {name: breaker}})
     return breakers
+
+
+def function_source(source, name) -> str:
+    """The source text of the top-level function named `name` within `source`, or the empty string when
+    there is none. Used to hand each chain link its own source to read for fault exits."""
+    root = parse_python(source.encode("utf-8")).root_node
+    for node in walk(root):
+        if node.type == "function_definition" and node_text(node.child_by_field_name("name"), source.encode("utf-8")) == name:
+            return node_text(node, source.encode("utf-8"))
+    return ""
+
+
+def _tripped_code(links, manifest):
+    """The fault code a candidate manifest trips when run through the chain, or None when the chain runs
+    clean. A malformed candidate that makes a link raise (a field it reads is missing) trips nothing
+    cleanly, so the raise is caught here - this is the boundary where a bad candidate becomes no-result."""
+    try:  # honest: disable HC-P002: the boundary where a malformed generated candidate that makes a link raise becomes no clean fault trip
+        result = execute_chain(links, manifest)
+    except Exception:
+        return None
+    return result["err"]["code"] if "err" in result else None
+
+
+def fault_coverage(links, sources, vocab, bind) -> dict:
+    """Chain fault coverage (section 9.2): the input-reachable fault exits across the links (strategy 1's
+    reachable and deferred), how many are exercised by running the generated candidates - the read-guard
+    triggers, the field perturbations (strategy 2), and the seam breakers (strategy 3) - and the
+    unreachable exits disclosed with their reason. `sources` is each link's own source, in order."""
+    reachable = set()
+    unreachable = []
+    triggers = []
+    for source in sources:
+        exits = fault_exits(source)
+        for exit_point in exits["reachable"]:
+            reachable.add(exit_point["code"])
+            triggers.append(exit_point["trigger"])
+        for exit_point in exits["deferred"]:
+            reachable.add(exit_point["code"])
+        unreachable.extend(exits["unreachable"])
+    # enumerate_sets always yields at least one manifest (the empty one for a vocabulary with no bounded
+    # Sets), so every base below is a real starting point - no empty-fallback is needed.
+    manifests = enumerate_sets(vocab, bind)
+    candidates = (
+        [{**base, **trigger} for base in manifests for trigger in triggers]
+        + [variant for base in manifests for variant in perturbations(base)]
+        + [breaker["manifest"] for breaker in seam_breakers(links)]
+    )
+    tripped = {code for code in (_tripped_code(links, candidate) for candidate in candidates) if code is not None}
+    return {
+        "input_reachable": sorted(reachable),
+        "exercised": sorted(tripped & reachable),
+        "unreachable": unreachable,
+    }
 
 
 def fault_exits(source) -> dict:

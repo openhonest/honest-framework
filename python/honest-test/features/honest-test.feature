@@ -170,10 +170,15 @@ Feature: honest-test — Python supplement
     When _link_checks probes it
     Then it reports whether the link is pure and mutation-free on a fresh copy of every manifest, so one probe cannot hide another
 
-  Scenario: _first_fault finds the first faulting link in a chain run
-    Given a chain's links and a manifest
-    When _first_fault runs them in sequence
-    Then it returns the index of the first link that returns a non-ok result, feeding each link the previous link's output, or None when the chain runs clean
+  Scenario: _tripped_code reports the fault code a candidate trips
+    Given a chain and a candidate manifest
+    When _tripped_code runs it
+    Then it returns the fault code when the chain faults, None when it runs clean, and None when a malformed candidate makes a link raise, which it catches at this boundary
+
+  Scenario: _chain_coverage_entry builds the section-9.5 chains entry for one chain
+    Given a chain result carrying its fault coverage
+    When _chain_coverage_entry builds it
+    Then it reports the input-reachable and exercised fault-exit counts with the percentage, and discloses the unreachable exits by name
 
   Scenario: _adversarial_tokens counts the near-miss state and event tokens
     Given a state machine

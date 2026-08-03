@@ -15,10 +15,11 @@ import copy
 
 from honest_check.declgraph import extract_chains, extract_state_machines, resolve_aliases
 from honest_parse import parse_python
-from honest_type.chains import link_meta
+from honest_type.chains import execute_chain, link_meta
 from honest_type.recognizers import is_bounded, members, recognize
 
 from honest_test.adversarial import adversarial_neighbours
+from honest_test.fault_paths import fault_coverage, function_source
 from honest_test.coverage_data import (
     build_coverage,
     chain_coverage,
@@ -93,26 +94,13 @@ def _honesty(links, manifests) -> dict:
     }
 
 
-def _first_fault(links, manifest):
-    """The index of the first link that returns a non-ok result - a fault exit (section 9.2) - or None
-    if the whole chain runs clean. Runs on the given manifest; the caller passes a fresh copy so one
-    chain run cannot dirty the next."""
-    current = manifest
-    for index, link in enumerate(links):
-        result = link(current)
-        if "ok" not in result:
-            return index
-        current = result["ok"]
-    return None
-
-
 def run_chain(name, links, vocab, bind) -> dict:
     """Verify one chain (sections 3, 4): enumerate every manifest the vocabulary allows, run each
     through the chain, perturb every member into near-misses, and check the links are honest. The
-    returned record is data the report and the coverage document both read."""
+    returned record is data the report and the coverage document both read. Deliberate fault-path
+    coverage (section 9.2) is measured separately, at discovery, where each link's source is available."""
     manifests = enumerate_sets(vocab, bind)
-    faults = [_first_fault(links, copy.deepcopy(manifest)) for manifest in manifests]
-    passed = sum(1 for fault in faults if fault is None)
+    passed = sum(1 for manifest in manifests if "ok" in execute_chain(links, copy.deepcopy(manifest)))
     adversarial = _adversarial_rejections(vocab)
     return {
         "name": name,
@@ -121,7 +109,6 @@ def run_chain(name, links, vocab, bind) -> dict:
         "vocab_terms": [(n, len(members(r))) for n, r in vocab["base_types"].items() if is_bounded(r)],
         "permutations": len(manifests),
         "passed": passed,
-        "fault_paths_exercised": len({fault for fault in faults if fault is not None}),
         "adversarial_total": adversarial["total"],
         "adversarial_rejected": adversarial["rejected"],
         "honesty": _honesty(links, manifests),
@@ -280,13 +267,15 @@ def discover(src_dir, walk, read, import_module) -> dict:
         root = parse_python(source).root_node
         aliases = resolve_aliases(root, source)
         module = import_module(path)
+        source_text = source.decode("utf-8")
         for decl in extract_chains(root, source, aliases):
             links = [getattr(module, link_name) for link_name in decl["links"]]
             vocab = link_meta(links[0])["accepts"]
             if vocab is None:
                 untestable.append(decl["name"])
                 continue
-            chains.append({"name": decl["name"], "links": links, "vocab": vocab, "bind": link_meta(links[0])["binds"]})
+            sources = [function_source(source_text, link_name) for link_name in decl["links"]]
+            chains.append({"name": decl["name"], "links": links, "vocab": vocab, "bind": link_meta(links[0])["binds"], "sources": sources})
         for decl in extract_state_machines(root, source, aliases):
             machines.append({"name": decl["name"], "machine": getattr(module, decl["name"])})
     return {"chains": chains, "machines": machines, "untestable": untestable}
@@ -295,7 +284,10 @@ def discover(src_dir, walk, read, import_module) -> dict:
 def _run_discovered_chain(chain, run_feature) -> dict:
     """Verify a discovered chain and attach its BDD result when the developer wrote a feature for it
     (run_feature returns the feature's scenario counts, or None when there is no feature)."""
-    result = run_chain(chain["name"], chain["links"], chain["vocab"], chain["bind"])
+    result = {
+        **run_chain(chain["name"], chain["links"], chain["vocab"], chain["bind"]),
+        "fault_coverage": fault_coverage(chain["links"], chain["sources"], chain["vocab"], chain["bind"]),
+    }
     bdd = run_feature(chain)
     if bdd is None:
         return result
@@ -331,16 +323,24 @@ def all_passed(results) -> bool:
     )
 
 
+def _chain_coverage_entry(result) -> dict:
+    """The section-9.5 chains entry for one chain: the input-reachable fault exits and how many the
+    deliberate generation exercised (section 9.2), plus the unreachable exits disclosed by name."""
+    coverage = result["fault_coverage"]
+    entry = chain_coverage(len(coverage["input_reachable"]), len(coverage["exercised"]))
+    return {**entry, "unreachable": coverage["unreachable"]}
+
+
 def _coverage(results, timestamp) -> dict:
     """The section-9.5 coverage document from the run's records. Vocabulary coverage is complete by
     construction - every enumerated case is run; honesty coverage is measured per chain; chain coverage
-    counts the fault exits observed during enumeration (deliberate fault-path generation, section 9.2,
-    is separate work); state-machine coverage is the transitions that fired."""
+    is the input-reachable fault exits the deliberate generation exercised (section 9.2), with the
+    unreachable exits disclosed; state-machine coverage is the transitions that fired."""
     chains = [r for r in results if r["kind"] == "chain"]
     machines = [r for r in results if r["kind"] == "state_machine"]
     return build_coverage(
         {r["name"]: vocabulary_coverage(r["permutations"], r["permutations"]) for r in chains},
-        {r["name"]: chain_coverage(r["link_count"], r["fault_paths_exercised"]) for r in chains},
+        {r["name"]: _chain_coverage_entry(r) for r in chains},
         {r["name"]: honesty_coverage(r["link_count"], len(r["honesty"]["honest"]), len(r["honesty"]["boundary"])) for r in chains},
         {r["name"]: state_machine_coverage(r["transitions"], r["valid_passed"]) for r in machines},
         timestamp,

@@ -1562,8 +1562,6 @@ def _probe_suite_runner():
         bad.append(f"greet_pipeline: every near-miss rejected, got {pure['adversarial_rejected']}/{pure['adversarial_total']}")
     if pure["honesty"]["honest"] != ["link_a", "link_b"]:
         bad.append(f"greet_pipeline: both pure links verified honest, got {pure['honesty']['honest']}")
-    if pure["fault_paths_exercised"] != 0:
-        bad.append(f"greet_pipeline: a clean chain triggers no fault path, got {pure['fault_paths_exercised']}")
 
     boundary_chain = run_chain("write_pipeline", [link_a, link_write], run_vocab, run_bind)
     if boundary_chain["honesty"]["boundary"] != ["link_write"]:
@@ -1625,8 +1623,6 @@ def _probe_suite_runner():
         bad.append("broken_pipeline: a server-fault consumer must break the chain contract")
     if broken["passed"] != 0 or broken["permutations"] != 2:
         bad.append(f"broken_pipeline: every permutation fails, got {broken['passed']}/{broken['permutations']}")
-    if broken["fault_paths_exercised"] != 1:
-        bad.append(f"broken_pipeline: the faulting consumer is one exercised fault path, got {broken['fault_paths_exercised']}")
 
     # A chain where the second link faults unless it received the first link's output pins the manifest
     # threading: run_chain must feed each link the previous link's result, not the original manifest.
@@ -1639,8 +1635,8 @@ def _probe_suite_runner():
         return ok(manifest) if manifest.get("token") == "ok" else {"err": fault("no_token", "missing token", "server")}
 
     threaded = run_chain("threaded_pipeline", [adder, needs_token], run_vocab, run_bind)
-    if threaded["passed"] != threaded["permutations"] or threaded["fault_paths_exercised"] != 0:
-        bad.append(f"threaded_pipeline: each link receives the previous link's output, got {threaded['passed']}/{threaded['permutations']} fault_paths={threaded['fault_paths_exercised']}")
+    if threaded["passed"] != threaded["permutations"]:
+        bad.append(f"threaded_pipeline: each link receives the previous link's output, got {threaded['passed']}/{threaded['permutations']}")
 
     machine = state_machine(
         states={"idle", "running", "done"},
@@ -1852,8 +1848,13 @@ def _probe_runner_discovery():
         cov = json.loads(written["coverage.json"])
         if cov["version"] != "1.0" or cov["timestamp"] != "2026-01-01T00:00:00Z":
             bad.append(f"run_suite: coverage.json carries the version and timestamp: {cov}")
-        if "pipeline" not in cov["chains"] or "pipeline" not in cov["vocabularies"] or "pipeline" not in cov["honesty"]:
+        if "pipeline" not in cov["vocabularies"] or "pipeline" not in cov["honesty"]:
             bad.append(f"run_suite: coverage.json records the chain: {cov}")
+        # The chains entry is the §9.2 fault coverage: the fixture links have no fault exits, so the
+        # input-reachable count is 0, nothing is exercised (pct 100 by the nothing-to-cover rule), and
+        # no exit is unreachable.
+        if cov["chains"].get("pipeline") != {"fault_paths": 0, "exercised": 0, "pct": 100, "unreachable": []}:
+            bad.append(f"run_suite: coverage.json chains entry is the fault coverage with disclosed unreachable exits: {cov['chains']}")
         if "flow" not in cov["state_machines"]:
             bad.append(f"run_suite: coverage.json records the state machine: {cov}")
 
@@ -2269,6 +2270,85 @@ def _probe_seam_breakers():
     return bad
 
 
+def _probe_fault_coverage():
+    """Chain fault coverage (§9.2): fault_coverage reads every link's fault exits (strategy 1), runs the
+    generated candidates - read-guard triggers, field perturbations, seam breakers - through the chain,
+    and reports the input-reachable exits, the ones exercised, and the unreachable ones disclosed.
+    function_source hands each link its own source. A malformed candidate that makes a link raise trips
+    nothing cleanly."""
+    from honest_type.recognizers import predicate
+
+    from honest_test.fault_paths import fault_coverage, function_source
+
+    bad = []
+
+    def live(source, name, extra=""):
+        namespace = {}
+        exec("from honest_type import fault, link, ok\n" + extra + source + f"\n{name} = link()({name})\n", namespace)
+        return namespace[name]
+
+    # function_source extracts one function's text by name, and is empty when there is no such function.
+    multi = "def a(m):\n    return m\n\n\ndef b(m):\n    return {'err': fault('c')}\n"
+    if not function_source(multi, "b").startswith("def b"):
+        bad.append(f"function_source: extracts the named function, got {function_source(multi, 'b')!r}")
+    if "def a" in function_source(multi, "b"):
+        bad.append("function_source: extracts only the named function, not its neighbour")
+    if function_source(multi, "missing") != "":
+        bad.append("function_source: is empty when there is no such function")
+
+    # Scenario 1: a gate link with a read-guard exit (reachable + exercised), a truthy-guard exit
+    # (deferred, reachable but not exercised here), and a lookup exit (unreachable, disclosed). An empty
+    # vocabulary means the only candidate is the read-guard trigger.
+    gate_source = (
+        "def gate(manifest):\n"
+        "    if manifest['size'] <= 0:\n"
+        "        return {'err': fault('bad_size', 'm', 'client')}\n"
+        "    if manifest['flag']:\n"
+        "        return {'err': fault('flag_set', 'm', 'client')}\n"
+        "    if lookup(manifest['id']) is None:\n"
+        "        return {'err': fault('state', 'm', 'client')}\n"
+        "    return ok(manifest)\n"
+    )
+    gate = live(gate_source, "gate", "def lookup(x):\n    return None\n")
+    empty_vocab = vocabulary({"note": predicate(lambda token: token.isdigit())})
+    coverage = fault_coverage([gate], [gate_source], empty_vocab, binding({}))
+    if coverage["input_reachable"] != ["bad_size", "flag_set"]:
+        bad.append(f"fault_coverage: reachable and deferred exits are input-reachable, got {coverage['input_reachable']}")
+    if coverage["exercised"] != ["bad_size"]:
+        bad.append(f"fault_coverage: the read-guard exit is exercised by its trigger, got {coverage['exercised']}")
+    if [u["code"] for u in coverage["unreachable"]] != ["state"]:
+        bad.append(f"fault_coverage: the lookup exit is unreachable and disclosed, got {coverage['unreachable']}")
+
+    # Scenario 2: a link that reads a field, over a bounded vocabulary. No fault exits; perturbations run
+    # (a passing edge candidate is an ok run, an omitted-field candidate makes the link raise and is
+    # caught). Exercises the non-empty base, the clean-run path, and the raise-caught path.
+    reader_source = "def reader(manifest):\n    return ok({**manifest, 'seen': manifest['greeting']})\n"
+    reader = live(reader_source, "reader")
+    reader_vocab = vocabulary({"greeting": {"hi", "hey"}})
+    reader_cov = fault_coverage([reader], [reader_source], reader_vocab, binding({"greeting": "greeting"}))
+    if reader_cov != {"input_reachable": [], "exercised": [], "unreachable": []}:
+        bad.append(f"fault_coverage: a link with no fault exits has empty coverage, got {reader_cov}")
+
+    # Scenario 3: a two-link chain whose downstream declares an accepts vocabulary, so seam breakers are
+    # generated and run as candidates (the seam-candidate path).
+    seam_vocab = vocabulary({"tier": {"gold", "silver"}})
+
+    @link()
+    def up2(manifest):
+        return ok(manifest)
+
+    @link(accepts=seam_vocab)
+    def down2(manifest):
+        return ok(manifest)
+
+    seam_sources = ["def up2(manifest):\n    return ok(manifest)\n", "def down2(manifest):\n    return ok(manifest)\n"]
+    seam_cov = fault_coverage([up2, down2], seam_sources, empty_vocab, binding({}))
+    if seam_cov != {"input_reachable": [], "exercised": [], "unreachable": []}:
+        bad.append(f"fault_coverage: seam breakers run as candidates without tripping a fault here, got {seam_cov}")
+
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
@@ -2296,6 +2376,7 @@ def run():
         "fault_paths": _probe_fault_paths(),
         "perturbations": _probe_perturbations(),
         "seam_breakers": _probe_seam_breakers(),
+        "fault_coverage": _probe_fault_coverage(),
         "proof": _probe_proof(),
         "value": _probe_value(),
         "testbody": _probe_testbody(),

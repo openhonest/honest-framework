@@ -43,7 +43,7 @@ from honest_test.determinism import (
     verify_determinism,
 )
 from honest_test.enumeration import enumerate_sets
-from honest_test.fault_paths import fault_exits, perturbations, seam_breakers
+from honest_test.fault_paths import fault_coverage, fault_exits, function_source, perturbations, seam_breakers
 from honest_test.scaffolding import scaffold_chain
 from honest_test.http_steps import register_http_steps
 from honest_test.isolation import (
@@ -91,6 +91,8 @@ __all__ = [
     "fault_exits",
     "perturbations",
     "seam_breakers",
+    "fault_coverage",
+    "function_source",
     "check_oracle",
     "run_value_case",
     "run_value_cases",

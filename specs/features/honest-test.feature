@@ -597,3 +597,13 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given a chain's links
     When seam_breakers reads each adjacent pair
     Then it returns, for each downstream that declares an accepts vocabulary, a near-miss of a declared member that the downstream rejects, exercising the hand-off fault
+
+  Scenario: function_source extracts one link's source by name
+    Given a file's source and a function name
+    When function_source reads it
+    Then it returns the source text of the top-level function with that name, or the empty string when there is none
+
+  Scenario: fault_coverage measures a chain's input-reachable fault exits exercised
+    Given a chain's links, each link's source, its vocabulary, and its binding
+    When fault_coverage reads the fault exits and runs the generated candidates
+    Then it returns the input-reachable exits (reachable and deferred), how many the read-guard triggers, field perturbations, and seam breakers exercised, and the unreachable exits disclosed with their reason
