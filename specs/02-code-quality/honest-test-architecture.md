@@ -858,14 +858,30 @@ honest-test's exhaustive Set enumeration drives this to 100% automatically for b
 
 ### 9.2 Chain Coverage
 
-What percentage of fault exit points in a chain are exercised?
+A fault exit is a point where a link returns `err`. A chain of N links has up to N fault exits. Chain coverage is the share of the fault exits honest-test **can reach by input** that it actually triggers:
 
 ```
 chain_coverage(chain) =
-    fault_paths_exercised / total_fault_paths × 100
+    fault_paths_exercised / input_reachable_fault_paths × 100
 ```
 
-A chain of N links has up to N fault exit points. honest-test exercises each by generating inputs that trigger each link's failure conditions.
+The denominator is the fault exits an input can reach, not every fault exit — see the bound in 9.2.2.
+
+#### 9.2.1 Generating fault-triggering inputs
+
+honest-test triggers a fault exit by constructing a manifest that passes the links before it and makes the guarding link return `err`. It uses three strategies, in order:
+
+1. **Read the guard (primary).** honest-test parses the link and finds each `err` return. When the guard that reaches it is a condition over the manifest — a comparison, a membership test, or a boolean combination of those — honest-test solves for a manifest value that satisfies the guard, checks that value passes the upstream links, and runs the chain. The condition is read from the code that already holds it; nothing is declared twice.
+
+2. **Perturb a field (fallback).** When a guard cannot be read — it calls other logic, or is otherwise opaque — honest-test starts from a manifest that passes the whole chain and changes one field at a time: a value just past a numeric or length bound, or an omitted field the link reads directly. It runs each and records which fault exits trip.
+
+3. **Break the seam.** For each adjacent pair of links, honest-test constructs a valid output of the upstream link that the downstream link's guard rejects, exercising the hand-off fault between them.
+
+**Rejected: a declared fault table.** An earlier design had each link declare when it fails ("returns error X when Y"). It is rejected on two counts: that condition already lives in the link's code, so a declaration is a second copy that drifts from it; and it is a new thing the programmer must learn. honest-test reads the condition from the code (strategy 1), never asks for it again.
+
+#### 9.2.2 The bound: input-decided faults only
+
+Only a fault exit **decided by the manifest** can be reached by an input. A fault exit decided by something else — a lookup that finds nothing, an I/O call that fails, a computed result no manifest can force — cannot be triggered by any input, and honest-test does not pretend otherwise. Such an exit is **not** counted in the denominator and **not** silently reported as covered: it is disclosed by name with its reason (state-dependent), the way a set-aside mutant is (9.6). The measure states what it reaches and names what it cannot.
 
 ### 9.3 Honesty Coverage
 

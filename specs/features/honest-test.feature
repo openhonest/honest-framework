@@ -582,3 +582,8 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given a schema, a table, a row, an injected connect, and a dialect
     When verify_write applies the schema to a fresh database and writes the row
     Then it returns ok with the rows read back when the row conforms, err when the schema is invalid or a column is undeclared, and a write_rejected fault when the real database rejects the row for a CHECK, NOT NULL, or type violation
+
+  Scenario: fault_exits reads a link's fault exits and classifies them
+    Given a link's source
+    When fault_exits reads its guards
+    Then it returns the reachable fault exits each with a triggering manifest fragment solved from the guard, the deferred exits whose pure-manifest guard it could not solve, and the unreachable exits whose guard turns on external state, each disclosed with its reason

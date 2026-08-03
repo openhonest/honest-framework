@@ -234,3 +234,38 @@ Feature: honest-test — Python supplement
     Given a code and a detail
     When _finding assembles them
     Then it returns a finding with that code and detail, the data shape the isolation checks emit
+
+  Scenario: _string_value strips the quotes from a string literal node
+    Given a string literal node
+    When _string_value reads it
+    Then it returns the text with its surrounding quotes removed
+
+  Scenario: _has_call reports whether a guard turns on external state
+    Given a guard subtree
+    When _has_call scans it
+    Then it is true when the guard calls anything, the signal it depends on external state
+
+  Scenario: _returns_err reports whether an if-consequence returns an err
+    Given an if-consequence
+    When _returns_err scans it
+    Then it is true when the consequence returns a dict carrying a string err key, the shape of a fault exit
+
+  Scenario: _fault_code reads the fault code an err consequence carries
+    Given an err-returning consequence
+    When _fault_code reads it
+    Then it returns the first string argument of the consequence's fault call, or the empty string when there is none
+
+  Scenario: _manifest_field reads the field name of a manifest subscript
+    Given a node
+    When _manifest_field reads it
+    Then it returns the field name when the node is manifest indexed by a string literal, else nothing
+
+  Scenario: _solved_trigger solves a comparison guard to a triggering fragment
+    Given a guard condition
+    When _solved_trigger reads it
+    Then it returns a manifest fragment that makes the guard true when the guard compares a manifest field against an integer literal, else nothing
+
+  Scenario: _fault_ifs finds the if-statements that return an err fault
+    Given a link's parsed source
+    When _fault_ifs walks it
+    Then it returns every if-statement whose consequence returns an err fault

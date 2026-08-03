@@ -2108,6 +2108,93 @@ def _probe_persist_contract():
     return bad
 
 
+def _probe_fault_paths():
+    """Deliberate fault-path generation (§9.2): fault_exits reads a link's guards and returns the fault
+    exits an input can reach - each with a triggering manifest fragment (strategy 1, §9.2.1) - and
+    discloses the exits no input can reach because they turn on external state (§9.2.2), naming each
+    with its reason rather than silently dropping it."""
+    from honest_test.fault_paths import fault_exits
+
+    bad = []
+    source = (
+        "def gate(manifest):\n"
+        "    if manifest['size'] <= 0:\n"
+        "        return {'err': fault('bad_size', 'size must be positive', 'client')}\n"
+        "    if lookup(manifest['id']) is None:\n"
+        "        return {'err': fault('not_found', 'no such id', 'client')}\n"
+        "    return ok(manifest)\n"
+    )
+    exits = fault_exits(source)
+
+    reachable = exits["reachable"]
+    if [f["code"] for f in reachable] != ["bad_size"]:
+        bad.append(f"fault_exits: only the size guard is input-reachable, got {[f['code'] for f in reachable]}")
+    elif reachable[0]["trigger"].get("size", 1) > 0:
+        bad.append(f"fault_exits: the trigger must satisfy size <= 0, got {reachable[0]['trigger']}")
+
+    unreachable = exits["unreachable"]
+    if [f["code"] for f in unreachable] != ["not_found"]:
+        bad.append(f"fault_exits: the lookup guard is state-dependent and disclosed, not dropped, got {[f['code'] for f in unreachable]}")
+    elif unreachable[0]["reason"] != "state-dependent":
+        bad.append(f"fault_exits: an unreachable exit names its reason, got {unreachable[0]}")
+
+    # Every comparison operator solves to its exact boundary trigger.
+    ops_source = (
+        "def gate(manifest):\n"
+        "    if manifest['a'] <= 5:\n        return {'err': fault('le')}\n"
+        "    if manifest['a'] < 5:\n        return {'err': fault('lt')}\n"
+        "    if manifest['a'] >= 5:\n        return {'err': fault('ge')}\n"
+        "    if manifest['a'] > 5:\n        return {'err': fault('gt')}\n"
+        "    if manifest['a'] == 5:\n        return {'err': fault('eq')}\n"
+        "    if manifest['a'] != 5:\n        return {'err': fault('ne')}\n"
+        "    return ok(manifest)\n"
+    )
+    triggers = {f["code"]: f["trigger"]["a"] for f in fault_exits(ops_source)["reachable"]}
+    if triggers != {"le": 5, "lt": 4, "ge": 5, "gt": 6, "eq": 5, "ne": 6}:
+        bad.append(f"fault_exits: each operator solves to its boundary trigger, got {triggers}")
+
+    # Classification of every other guard shape: pure-but-unsolvable guards defer to perturbation, a
+    # state call is unreachable, an err with no fault() call still counts (empty code), an ok return is
+    # not a fault exit at all.
+    classify_source = (
+        "def gate(manifest):\n"
+        "    if manifest['flag']:\n        return {'err': fault('d_truthy')}\n"
+        "    if other['x'] <= 5:\n        return {'err': fault('d_nonmanifest')}\n"
+        "    if manifest['a'] <= limit:\n        return {'err': fault('d_nonliteral')}\n"
+        "    if flag <= 5:\n        return {'err': fault('d_nonsub')}\n"
+        "    if manifest[k] <= 5:\n        return {'err': fault('d_nonstrkey')}\n"
+        "    if manifest['a'] is None:\n        return {'err': fault('d_isop')}\n"
+        "    if 0 <= manifest['a'] <= 5:\n        return {'err': fault('d_chained')}\n"
+        "    if lookup(manifest['a']) is None:\n        return {'err': fault('u_call')}\n"
+        "    if manifest['a'] <= 5:\n        return {'err': 'plain'}\n"
+        "    if manifest['a'] <= 5:\n        return ok(manifest)\n"
+        "    return ok(manifest)\n"
+    )
+    classified = fault_exits(classify_source)
+    deferred = {f["code"]: f["reason"] for f in classified["deferred"]}
+    expected_deferred = {code: "needs-perturbation" for code in ("d_truthy", "d_nonmanifest", "d_nonliteral", "d_nonsub", "d_nonstrkey", "d_isop", "d_chained")}
+    if deferred != expected_deferred:
+        bad.append(f"fault_exits: pure-but-unsolvable guards defer to perturbation, got {deferred}")
+    if [f["code"] for f in classified["unreachable"]] != ["u_call"]:
+        bad.append(f"fault_exits: only the state call is unreachable, got {classified['unreachable']}")
+    if classified["reachable"] != [{"code": "", "trigger": {"a": 5}}]:
+        bad.append(f"fault_exits: an err with no fault() call is still a reachable exit with an empty code, got {classified['reachable']}")
+
+    # The fault code is the first STRING argument: a non-string first argument is skipped, and a fault
+    # call with no string argument yields an empty code.
+    argshape_source = (
+        "def gate(manifest):\n"
+        "    if manifest['a'] <= 5:\n        return {'err': fault(code_var, 'second')}\n"
+        "    if manifest['a'] >= 5:\n        return {'err': fault(only_var)}\n"
+        "    return ok(manifest)\n"
+    )
+    argcodes = [f["code"] for f in fault_exits(argshape_source)["reachable"]]
+    if argcodes != ["second", ""]:
+        bad.append(f"fault_exits: the code is the first string argument, skipping non-strings, got {argcodes}")
+
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
@@ -2132,6 +2219,7 @@ def run():
         "cli": _probe_cli(),
         "component_isolation": _probe_component_isolation(),
         "persist_contract": _probe_persist_contract(),
+        "fault_paths": _probe_fault_paths(),
         "proof": _probe_proof(),
         "value": _probe_value(),
         "testbody": _probe_testbody(),
