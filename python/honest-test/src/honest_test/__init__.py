@@ -21,6 +21,12 @@ from honest_test.authhonesty import (
     map_fault_to_http,
     test_auth_honesty,
 )
+from honest_test.component_isolation import (
+    component_classes,
+    test_css_isolation,
+    test_route_isolation,
+    test_startup_isolation,
+)
 from honest_test.coverage_data import (
     build_coverage,
     chain_coverage,
@@ -75,6 +81,10 @@ __all__ = [
     "run_state_machine",
     "compute_totals",
     "format_report",
+    "component_classes",
+    "test_css_isolation",
+    "test_route_isolation",
+    "test_startup_isolation",
     "check_oracle",
     "run_value_case",
     "run_value_cases",

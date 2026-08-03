@@ -1986,6 +1986,67 @@ def _probe_cli():
     return bad
 
 
+def _probe_component_isolation():
+    """Component isolation tests (§7): components must not collide in CSS namespace (§7.1) or route
+    (§7.2), and one component failing to load must not cascade into another (§7.3). component_classes
+    reads a template's static class tokens; the three checks return findings as data. load is injected
+    and returns a Result, so no try/except lives in the interior."""
+    from honest_test.component_isolation import (
+        component_classes,
+        test_css_isolation,
+        test_route_isolation,
+        test_startup_isolation,
+    )
+
+    bad = []
+
+    # 7.1 CSS namespace isolation.
+    card = {"name": "card", "template": b'<div class="card card__title"></div>'}
+    panel = {"name": "panel", "template": b'<section class="panel card__title"></section>'}
+    badge = {"name": "badge", "template": b'<span class="badge"></span>'}
+    if component_classes(card["template"]) != frozenset({"card", "card__title"}):
+        bad.append(f"component_classes: reads the static class tokens, got {component_classes(card['template'])}")
+    css = test_css_isolation([card, panel, badge])
+    if len(css) != 1 or css[0]["code"] != "css_namespace_collision":
+        bad.append(f"test_css_isolation: card and panel share card__title, got {css}")
+    elif css[0]["detail"] != {"components": ["card", "panel"], "classes": ["card__title"]}:
+        bad.append(f"test_css_isolation: names the two components and the shared class, got {css[0]['detail']}")
+    if test_css_isolation([card, badge]) != []:
+        bad.append("test_css_isolation: components with no shared class are isolated")
+
+    # 7.2 route isolation. Three components claim /search: the collision always names the FIRST owner,
+    # which pins the continue that keeps the first claimant as owner.
+    search = {"name": "search", "routes": ["/search"]}
+    find = {"name": "find", "routes": ["/search"]}
+    extra = {"name": "extra", "routes": ["/search"]}
+    home = {"name": "home", "routes": ["/"]}
+    routes = test_route_isolation([search, find, extra, home])
+    if [f["code"] for f in routes] != ["route_collision", "route_collision"]:
+        bad.append(f"test_route_isolation: two later components collide on /search, got {routes}")
+    elif routes[0]["detail"] != {"path": "/search", "components": ["search", "find"]} or \
+            routes[1]["detail"] != {"path": "/search", "components": ["search", "extra"]}:
+        bad.append(f"test_route_isolation: each collision names the first owner and the claimant, got {[r['detail'] for r in routes]}")
+    if test_route_isolation([search, home]) != []:
+        bad.append("test_route_isolation: components with distinct routes are isolated")
+
+    # 7.3 startup fault isolation: load returns a Result; a failing load must not cascade.
+    def load(component):
+        return {"err": "load failed"} if component["name"].startswith("broken") else {"ok": None}
+
+    isolated = test_startup_isolation([{"name": "ok1"}, {"name": "broken"}, {"name": "ok2"}], load)
+    if isolated != []:
+        bad.append(f"test_startup_isolation: one failing component with others loadable is not a cascade, got {isolated}")
+    cascade = test_startup_isolation([{"name": "broken1"}, {"name": "broken2"}], load)
+    if len(cascade) != 2 or any(f["code"] != "startup_cascade" for f in cascade):
+        bad.append(f"test_startup_isolation: two components failing to load independently is a cascade, got {cascade}")
+    elif {(f["detail"]["failed"], f["detail"]["cascaded_to"]) for f in cascade} != {("broken1", "broken2"), ("broken2", "broken1")}:
+        bad.append(f"test_startup_isolation: each cascade names the failed component and the one it cascaded to, got {[f['detail'] for f in cascade]}")
+    if test_startup_isolation([{"name": "ok1"}, {"name": "ok2"}], load) != []:
+        bad.append("test_startup_isolation: all components loading is clean")
+
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
@@ -2008,6 +2069,7 @@ def run():
         "suite_runner": _probe_suite_runner(),
         "runner_discovery": _probe_runner_discovery(),
         "cli": _probe_cli(),
+        "component_isolation": _probe_component_isolation(),
         "proof": _probe_proof(),
         "value": _probe_value(),
         "testbody": _probe_testbody(),

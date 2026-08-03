@@ -557,3 +557,23 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given the list of result records
     When all_passed folds them
     Then it is true only when every chain is clean and honest, every feature's scenarios all pass, and every state machine rejected every near-miss token
+
+  Scenario: component_classes reads a component's static CSS class tokens
+    Given a component's template
+    When component_classes scans it
+    Then it returns the set of static class tokens the template references, skipping interpolated class values
+
+  Scenario: test_css_isolation finds components that share a CSS class
+    Given a list of components
+    When test_css_isolation compares every pair
+    Then it reports each pair that shares a class name, since each component must namespace its classes under its own BEM block
+
+  Scenario: test_route_isolation finds components that claim the same route
+    Given a list of components
+    When test_route_isolation walks their routes
+    Then it reports each route path claimed by more than one component, naming the first owner and the later claimant
+
+  Scenario: test_startup_isolation finds a component whose load failure coincides with another's
+    Given a list of components and an injected loader
+    When test_startup_isolation loads each
+    Then it reports a cascade when a component that fails to load coincides with another that also fails independently, since components must be independently loadable

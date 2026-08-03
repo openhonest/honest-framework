@@ -229,3 +229,8 @@ Feature: honest-test — Python supplement
     Given command-line arguments
     When main runs
     Then it scans the given source directory (default src), prints the report, writes coverage.json, and returns 0 only when every chain and machine passed
+
+  Scenario: _finding builds a component-isolation finding
+    Given a code and a detail
+    When _finding assembles them
+    Then it returns a finding with that code and detail, the data shape the isolation checks emit
