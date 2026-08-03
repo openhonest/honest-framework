@@ -18,6 +18,20 @@ if [ -n "$py" ]; then
     "$root/python/coverage-all.sh"  || exit 1   # behavioural: all conformance suites pass AND 100% line+branch coverage
 fi
 
+# The slop-audit gate: the sister measure (Slop Audit's L1 analyzer) run against the active source. It
+# fails the commit on a production god-file or promiscuous, non-finitely-testable state — a regression
+# the honest-check gate above does not catch. It audits python/ only (not python.botched/, the archive).
+# Skipped, not failed, when slop-audit is not checked out alongside honest-framework.
+if [ -n "$py" ]; then
+    l1="$root/../slop-audit/tools/l1_analyzer"
+    if [ -d "$l1" ]; then
+        echo "slop-audit gate (no god-file, finitely testable)…"
+        uv run --project "$l1" l1-analyzer "$root/python" --gate --lang python || exit 1
+    else
+        echo "slop-audit gate skipped: l1_analyzer not found at $l1 (clone slop-audit beside honest-framework to enable it)." >&2
+    fi
+fi
+
 # The feature gate fires on staged Python (a new/removed function changes the function set) OR a
 # staged feature file (the scenario set changed). Affected modules only — it tests what changed.
 if [ -n "$py" ] || [ -n "$feat" ]; then
