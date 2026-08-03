@@ -317,6 +317,7 @@ name = "honest-test"
 version = "0.1.0"
 source = { editable = "honest-test" }
 dependencies = [
+    { name = "honest-check" },
     { name = "honest-gherkin" },
     { name = "honest-parse" },
     { name = "honest-type" },
@@ -325,6 +326,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "honest-check", editable = "honest-check" },
     { name = "honest-gherkin", editable = "honest-gherkin" },
     { name = "honest-parse", editable = "honest-parse" },
     { name = "honest-type", editable = "honest-type" },

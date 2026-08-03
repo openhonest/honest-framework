@@ -39,6 +39,9 @@ printf 'def add(a, b):\n    return a + b\n' > "$tmp/ok.py"
 $COV run --append --branch --source="$SRC" -m honest_check.cli "$tmp/ok.py" >/dev/null 2>&1 || true
 printf 'Feature: f\n\n  Scenario: s\n    Given a step\n' > "$tmp/f.feature"
 $COV run --append --branch --source="$SRC" -m honest_gherkin.cli run "$tmp/f.feature" >/dev/null 2>&1 || true
+mkdir -p "$tmp/tsrc"
+$COV run --append --branch --source="$SRC" -m honest_test.cli "$tmp/tsrc" >/dev/null 2>&1 || true
+rm -f coverage.json   # the runner CLI writes coverage.json to the cwd; this empty run only exercises the __main__ shim
 rm -rf "$tmp"
 
 if [ "$status" -ne 0 ]; then

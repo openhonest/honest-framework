@@ -62,6 +62,7 @@ from honest_test.statemachine import (
     test_valid_transitions,
 )
 from honest_test.proof import PROOF_RESULTS, decide_proof, emit_proofs, proof_payload
+from honest_test.runner import compute_totals, format_report, run_chain, run_state_machine
 from honest_test.supplied import load_config, supplied_for
 from honest_test.value_oracle import check_oracle, run_value_case, run_value_cases
 
@@ -70,6 +71,10 @@ __all__ = [
     "proof_payload",
     "decide_proof",
     "emit_proofs",
+    "run_chain",
+    "run_state_machine",
+    "compute_totals",
+    "format_report",
     "check_oracle",
     "run_value_case",
     "run_value_cases",

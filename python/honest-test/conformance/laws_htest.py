@@ -1517,6 +1517,475 @@ def _probe_pytest_plugin():
     return bad
 
 
+def _probe_suite_runner():
+    """The §11 orchestrating runner (honest_test.runner): run_chain wires enumeration -> execution ->
+    adversarial -> honesty -> chain contracts over live objects into one result record; run_state_machine
+    does the same for a machine; compute_totals folds the records; format_report renders the §11 report.
+    Live fixture chains and a live machine are built here and the runner is exercised on them."""
+    from honest_test.runner import compute_totals, format_report, run_chain, run_state_machine
+
+    bad = []
+
+    run_vocab = vocabulary({"greeting": {"hi", "hey"}, "lang": {"en", "fr"}})
+    run_bind = binding({"greeting": "greeting", "lang": "lang"})
+
+    @link()
+    def link_a(manifest):
+        return ok(manifest)
+
+    @link()
+    def link_b(manifest):
+        return ok({**manifest, "seen": True})
+
+    @link(boundary=True)
+    def link_write(manifest):
+        return ok(manifest)
+
+    @link(boundary=True)
+    def link_write2(manifest):
+        return ok(manifest)
+
+    pure = run_chain("greet_pipeline", [link_a, link_b], run_vocab, run_bind)
+    if pure["link_count"] != 2:
+        bad.append(f"greet_pipeline: 2 links, got {pure['link_count']}")
+    if pure["permutations"] != 4:
+        bad.append(f"greet_pipeline: 4 permutations (2x2), got {pure['permutations']}")
+    if pure["passed"] != 4:
+        bad.append(f"greet_pipeline: all 4 permutations pass, got {pure['passed']}")
+    if not (pure["honesty"]["purity"] and pure["honesty"]["mutation"] and pure["honesty"]["idempotency"] is True):
+        bad.append(f"greet_pipeline: pure links must be honest, got {pure['honesty']}")
+    if pure["honesty"]["boundary"]:
+        bad.append(f"greet_pipeline: no boundary links, got {pure['honesty']['boundary']}")
+    if not pure["contracts_ok"]:
+        bad.append("greet_pipeline: chain contracts must hold")
+    if pure["adversarial_total"] <= 0 or pure["adversarial_rejected"] != pure["adversarial_total"]:
+        bad.append(f"greet_pipeline: every near-miss rejected, got {pure['adversarial_rejected']}/{pure['adversarial_total']}")
+    if pure["honesty"]["honest"] != ["link_a", "link_b"]:
+        bad.append(f"greet_pipeline: both pure links verified honest, got {pure['honesty']['honest']}")
+    if pure["fault_paths_exercised"] != 0:
+        bad.append(f"greet_pipeline: a clean chain triggers no fault path, got {pure['fault_paths_exercised']}")
+
+    boundary_chain = run_chain("write_pipeline", [link_a, link_write], run_vocab, run_bind)
+    if boundary_chain["honesty"]["boundary"] != ["link_write"]:
+        bad.append(f"write_pipeline: boundary link named, got {boundary_chain['honesty']['boundary']}")
+    if boundary_chain["honesty"]["idempotency"] != "exempt":
+        bad.append(f"write_pipeline: boundary chain is idempotency-exempt (§4.3), got {boundary_chain['honesty']['idempotency']}")
+
+    if boundary_chain["honesty"]["honest"] != ["link_a"]:
+        bad.append(f"write_pipeline: only the non-boundary link is counted honest, got {boundary_chain['honesty']['honest']}")
+
+    two_boundary = run_chain("two_boundary_pipeline", [link_write, link_write2], run_vocab, run_bind)
+    if two_boundary["honesty"]["boundary"] != ["link_write", "link_write2"]:
+        bad.append(f"two_boundary_pipeline: boundary links named in order, got {two_boundary['honesty']['boundary']}")
+    if two_boundary["honesty"]["honest"] != []:
+        bad.append(f"two_boundary_pipeline: boundary links are not counted honest, got {two_boundary['honesty']['honest']}")
+
+    # Dishonest fixtures drive the failure-detection paths (§4.1/4.2/4.3) and the report's non-pass rendering.
+    scratch = {"n": 0}
+
+    @link()
+    def link_impure(manifest):
+        scratch["n"] += 1
+        return ok({**manifest, "count": scratch["n"]})
+
+    @link()
+    def link_mutates(manifest):
+        manifest["mutated"] = True
+        return ok(manifest)
+
+    impure = run_chain("impure_pipeline", [link_impure], run_vocab, run_bind)
+    if impure["honesty"]["purity"] is not False:
+        bad.append(f"impure_pipeline: impurity must be caught, got purity={impure['honesty']['purity']}")
+    if impure["honesty"]["idempotency"] is not False:
+        bad.append(f"impure_pipeline: non-idempotence must be caught, got {impure['honesty']['idempotency']}")
+    if impure["honesty"]["honest"] != []:
+        bad.append(f"impure_pipeline: an impure link is not counted honest, got {impure['honesty']['honest']}")
+
+    mutating = run_chain("mutating_pipeline", [link_mutates], run_vocab, run_bind)
+    if mutating["honesty"]["mutation"] is not False:
+        bad.append(f"mutating_pipeline: input mutation must be caught, got mutation={mutating['honesty']['mutation']}")
+    if mutating["honesty"]["honest"] != []:
+        bad.append(f"mutating_pipeline: a mutating link is not counted honest, got {mutating['honesty']['honest']}")
+
+    # A producer with a declared accepts vocabulary followed by a consumer that server-faults on its
+    # output breaks the chain contract (§4.6) and fails every permutation - the FAIL and BROKEN paths.
+    contract_vocab = vocabulary({"greeting": {"hi", "hey"}})
+    contract_bind = binding({"greeting": "greeting"})
+
+    @link(accepts=contract_vocab, binds=contract_bind)
+    def producer(manifest):
+        return ok(manifest)
+
+    @link()
+    def bad_consumer(manifest):
+        return {"err": fault("boom", "producer output rejected", "server")}
+
+    broken = run_chain("broken_pipeline", [producer, bad_consumer], contract_vocab, contract_bind)
+    if broken["contracts_ok"]:
+        bad.append("broken_pipeline: a server-fault consumer must break the chain contract")
+    if broken["passed"] != 0 or broken["permutations"] != 2:
+        bad.append(f"broken_pipeline: every permutation fails, got {broken['passed']}/{broken['permutations']}")
+    if broken["fault_paths_exercised"] != 1:
+        bad.append(f"broken_pipeline: the faulting consumer is one exercised fault path, got {broken['fault_paths_exercised']}")
+
+    # A chain where the second link faults unless it received the first link's output pins the manifest
+    # threading: run_chain must feed each link the previous link's result, not the original manifest.
+    @link()
+    def adder(manifest):
+        return ok({**manifest, "token": "ok"})
+
+    @link()
+    def needs_token(manifest):
+        return ok(manifest) if manifest.get("token") == "ok" else {"err": fault("no_token", "missing token", "server")}
+
+    threaded = run_chain("threaded_pipeline", [adder, needs_token], run_vocab, run_bind)
+    if threaded["passed"] != threaded["permutations"] or threaded["fault_paths_exercised"] != 0:
+        bad.append(f"threaded_pipeline: each link receives the previous link's output, got {threaded['passed']}/{threaded['permutations']} fault_paths={threaded['fault_paths_exercised']}")
+
+    machine = state_machine(
+        states={"idle", "running", "done"},
+        events={"start", "finish"},
+        transitions={("idle", "start"): "running", ("running", "finish"): "done"},
+        initial="idle",
+        terminal=["done"],
+    )
+    sm = run_state_machine("order_machine", machine)
+    if sm["states"] != 3 or sm["events"] != 2 or sm["transitions"] != 2:
+        bad.append(f"order_machine: 3 states / 2 events / 2 transitions, got {sm}")
+    if sm["valid_total"] != 2 or sm["valid_passed"] != sm["valid_total"]:
+        bad.append(f"order_machine: 2/2 valid transitions, got {sm['valid_passed']}/{sm['valid_total']}")
+    if sm["invalid_total"] <= 0 or sm["invalid_rejected"] != sm["invalid_total"]:
+        bad.append(f"order_machine: every invalid transition rejected, got {sm['invalid_rejected']}/{sm['invalid_total']}")
+    if sm["adversarial_total"] <= 0 or sm["adversarial_rejected"] != sm["adversarial_total"]:
+        bad.append(f"order_machine: every adversarial state/event token rejected, got {sm['adversarial_rejected']}/{sm['adversarial_total']}")
+
+    # A machine with no events has no state/event tokens to perturb (§5.3): the adversarial total is 0.
+    degenerate = state_machine(states={"only"}, events=set(), transitions={}, initial="only", terminal=["only"])
+    sm_degenerate = run_state_machine("degenerate_machine", degenerate)
+    if sm_degenerate["adversarial_total"] != 0:
+        bad.append(f"degenerate_machine: no events means no adversarial tokens, got {sm_degenerate['adversarial_total']}")
+
+    results = [pure, boundary_chain, sm]
+    totals = compute_totals(results)
+    if totals["permutations"] != 8 or totals["failures"] != 0:
+        bad.append(f"totals: 8 permutations / 0 failures, got {totals}")
+
+    # Exact §11 rendering: a single honest chain locks the header, the block, the footer, and every
+    # join; the variant assertions below lock the fail/exempt/boundary/broken/state-machine lines.
+    # Adversarial counts are read back from the record, so the oracle asserts structure, not a magic
+    # number that would make the test brittle to the near-miss generators.
+    adv, rej = pure["adversarial_total"], pure["adversarial_rejected"]
+    expected_pure = "\n".join([
+        "honest-test v0.1.0",
+        "Scanning src/ for chains...",
+        "",
+        "Found 1 chains, 2 links, 1 vocabularies",
+        "",
+        "greet_pipeline (2 links)",
+        "  Vocabulary: greeting(2) × lang(2)",
+        "  Permutations: 4",
+        "  Running... 4/4 PASS",
+        f"  Adversarial: {adv:,} near-miss inputs, {rej:,} rejected",
+        "  Honesty: purity ✓  mutation ✓  idempotency ✓",
+        "  Chain contracts: all outputs accepted by downstream links",
+        "",
+        "",
+        "Total: 4 permutations tested, 0 failures",
+        f"       {adv:,} adversarial inputs, {rej:,} rejected",
+        "       2/2 links verified honest (0 declared boundary)",
+        "       0/0 BDD scenarios PASS",
+    ])
+    if format_report([pure]) != expected_pure:
+        bad.append(f"format_report([pure]) exact mismatch: {format_report([pure])!r}")
+    if "  Honesty: purity ✗  mutation ✓  idempotency ✗" not in format_report([impure]):
+        bad.append("format_report: an impure chain renders failed purity/idempotency marks exactly")
+    if "  Honesty: purity ✓  mutation ✓  idempotency n/a (boundary)  boundary: link_write (expected)" not in format_report([boundary_chain]):
+        bad.append("format_report: a boundary chain renders the exempt idempotency and boundary line exactly")
+    if "  boundary: link_write, link_write2 (expected)" not in format_report([two_boundary]):
+        bad.append(f"format_report: multiple boundary links are comma-joined: {format_report([two_boundary])!r}")
+
+    # A boundary chain contributes its declared boundary to the footer's honest/total accounting.
+    if "       1/2 links verified honest (1 declared boundary)" not in format_report([boundary_chain]):
+        bad.append(f"format_report: the footer counts honest and boundary links: {format_report([boundary_chain])!r}")
+
+    broken_report = format_report([broken])
+    if "  Running... 0/2 FAIL" not in broken_report:
+        bad.append(f"format_report: a failing permutation renders FAIL exactly: {broken_report!r}")
+    if "  Chain contracts: BROKEN" not in broken_report:
+        bad.append(f"format_report: a broken contract renders BROKEN exactly: {broken_report!r}")
+
+    # A chain with a developer feature file renders the BDD line and contributes to the footer total.
+    bdd_record = {**pure, "bdd": {"feature": "features/greet_pipeline.feature", "passed": 2, "total": 3}}
+    bdd_report = format_report([bdd_record])
+    if "  BDD: features/greet_pipeline.feature — 2/3 scenarios PASS" not in bdd_report:
+        bad.append(f"format_report: a chain with a feature renders the BDD line: {bdd_report!r}")
+    if "       2/3 BDD scenarios PASS" not in bdd_report:
+        bad.append(f"format_report: the footer sums BDD scenarios: {bdd_report!r}")
+
+    sm_adv = sm["adversarial_total"]
+    sm_block = "\n".join([
+        "order_machine (state machine)",
+        "  States: 3, Events: 2, Transitions: 2",
+        "  Valid transitions: 2/2 PASS",
+        "  Invalid transitions: 4/4 correctly rejected",
+        f"  Adversarial: {sm_adv:,} near-miss state/event tokens, {sm_adv:,} rejected",
+    ])
+    if sm_block not in format_report([sm]):
+        bad.append(f"format_report([sm]) block mismatch: {format_report([sm])!r}")
+
+    return bad
+
+
+_FIXTURE_APP = (
+    "from honest_type import binding, chain, link, ok, state_machine, vocabulary\n"
+    "\n"
+    "vocab = vocabulary({'greeting': {'hi', 'hey'}})\n"
+    "bind = binding({'greeting': 'greeting'})\n"
+    "\n"
+    "@link(accepts=vocab, binds=bind)\n"
+    "def step_one(manifest):\n"
+    "    return ok(manifest)\n"
+    "\n"
+    "@link()\n"
+    "def step_two(manifest):\n"
+    "    return ok(manifest)\n"
+    "\n"
+    "@link()\n"
+    "def nostep(manifest):\n"
+    "    return ok(manifest)\n"
+    "\n"
+    "@link(accepts=vocab, binds=bind)\n"
+    "def step_three(manifest):\n"
+    "    return ok(manifest)\n"
+    "\n"
+    "pipeline = chain(step_one, step_two)\n"
+    "bare = chain(nostep)\n"
+    "other = chain(step_three)\n"
+    "flow = state_machine(states={'idle', 'running'}, events={'start'}, transitions={('idle', 'start'): 'running'}, initial='idle', terminal=['running'])\n"
+)
+
+_FIXTURE_BROKEN = (
+    "from honest_type import binding, chain, fault, link, ok, vocabulary\n"
+    "v = vocabulary({'g': {'x', 'y'}})\n"
+    "b = binding({'g': 'g'})\n"
+    "@link(accepts=v, binds=b)\n"
+    "def prod(manifest):\n"
+    "    return ok(manifest)\n"
+    "@link()\n"
+    "def broke(manifest):\n"
+    "    return {'err': fault('boom', 'server faulted', 'server')}\n"
+    "brokenpipe = chain(prod, broke)\n"
+)
+
+
+def _live_module(source):
+    """The live module a real import would produce: exec binds the same names run_suite's injected
+    import returns, so discover binds chains and machines to real honest_type objects."""
+    import types
+
+    namespace = {}
+    exec(source, namespace)
+    return types.SimpleNamespace(**{k: v for k, v in namespace.items() if not k.startswith("__")})
+
+
+def _probe_runner_discovery():
+    """The discovery + orchestration boundary (honest_test.runner): discover reads honest-check's
+    declaration graph for a file's chains and machines and binds them to the live objects an injected
+    import returns; run_suite scans, verifies, emits the section-11 report, names untestable chains,
+    and writes coverage.json - every boundary injected. _chain_ok and all_passed decide the exit."""
+    import json
+
+    from honest_test.runner import _chain_ok, all_passed, discover, run_suite
+
+    bad = []
+    module = _live_module(_FIXTURE_APP)
+
+    def walk(src_dir):
+        return ["app.py"]
+
+    def read(path):
+        return _FIXTURE_APP.encode("utf-8")
+
+    def import_module(path):
+        return module
+
+    discovered = discover("src", walk, read, import_module)
+    if [c["name"] for c in discovered["chains"]] != ["pipeline", "other"]:
+        bad.append(f"discover: the testable chains are pipeline and other, got {[c['name'] for c in discovered['chains']]}")
+    if discovered["untestable"] != ["bare"]:
+        bad.append(f"discover: the vocab-less chain is untestable, got {discovered['untestable']}")
+    if [m["name"] for m in discovered["machines"]] != ["flow"]:
+        bad.append(f"discover: the machine is flow, got {[m['name'] for m in discovered['machines']]}")
+    found = discovered["chains"][0]
+    if [link.__name__ for link in found["links"]] != ["step_one", "step_two"]:
+        bad.append(f"discover: pipeline binds live links in order, got {[link.__name__ for link in found['links']]}")
+    if found["vocab"] is not module.vocab:
+        bad.append("discover: pipeline's vocabulary is its first link's accepts vocabulary")
+    if found["bind"] is not module.bind:
+        bad.append("discover: pipeline's binding is its first link's binding")
+
+    emitted = []
+    written = {}
+
+    def run_feature(chain):
+        name = chain["name"]
+        return {"feature": f"features/{name}.feature", "passed": 2, "total": 2} if name == "pipeline" else None
+
+    def emit(text):
+        emitted.append(text)
+
+    def write(path, text):
+        written[path] = text
+
+    status = run_suite("src", walk, read, import_module, run_feature, emit, write, "2026-01-01T00:00:00Z")
+    if status != 0:
+        bad.append(f"run_suite: a clean fixture passes, got exit {status}")
+    report = "\n".join(emitted)
+    for needle in ("pipeline (2 links)", "flow (state machine)",
+                   "BDD: features/pipeline.feature — 2/2 scenarios PASS",
+                   "skipped (no input vocabulary declared): bare"):
+        if needle not in report:
+            bad.append(f"run_suite report missing {needle!r}: {report!r}")
+    if "coverage.json" not in written:
+        bad.append("run_suite: coverage.json is written")
+    else:
+        cov = json.loads(written["coverage.json"])
+        if cov["version"] != "1.0" or cov["timestamp"] != "2026-01-01T00:00:00Z":
+            bad.append(f"run_suite: coverage.json carries the version and timestamp: {cov}")
+        if "pipeline" not in cov["chains"] or "pipeline" not in cov["vocabularies"] or "pipeline" not in cov["honesty"]:
+            bad.append(f"run_suite: coverage.json records the chain: {cov}")
+        if "flow" not in cov["state_machines"]:
+            bad.append(f"run_suite: coverage.json records the state machine: {cov}")
+
+    broken_module = _live_module(_FIXTURE_BROKEN)
+    broken_status = run_suite("src", lambda d: ["b.py"], lambda p: _FIXTURE_BROKEN.encode("utf-8"),
+                              lambda p: broken_module, lambda n: None, lambda t: None, lambda p, t: None,
+                              "2026-01-01T00:00:00Z")
+    if broken_status != 1:
+        bad.append(f"run_suite: a fixture with a failing chain returns a non-zero exit, got {broken_status}")
+
+    # _chain_ok fails on each defect and passes a clean chain; boundary-exempt idempotency is not a defect.
+    base = {"passed": 2, "permutations": 2, "adversarial_rejected": 3, "adversarial_total": 3,
+            "contracts_ok": True, "honesty": {"purity": True, "mutation": True, "idempotency": True}}
+    if not _chain_ok(base):
+        bad.append("_chain_ok: a clean chain passes")
+    if not _chain_ok({**base, "honesty": {**base["honesty"], "idempotency": "exempt"}}):
+        bad.append("_chain_ok: boundary-exempt idempotency is not a defect")
+    defects = [
+        {**base, "passed": 1},
+        {**base, "adversarial_rejected": 2},
+        {**base, "contracts_ok": False},
+        {**base, "honesty": {**base["honesty"], "purity": False}},
+        {**base, "honesty": {**base["honesty"], "mutation": False}},
+        {**base, "honesty": {**base["honesty"], "idempotency": False}},
+    ]
+    for defect in defects:
+        if _chain_ok(defect):
+            bad.append(f"_chain_ok: must fail on {defect}")
+
+    # all_passed folds chains and machines; a machine that accepts a near-miss token fails the run.
+    ok_chain = {"kind": "chain", **base}
+    ok_machine = {"kind": "state_machine", "adversarial_rejected": 3, "adversarial_total": 3}
+    if not all_passed([ok_chain, ok_machine]):
+        bad.append("all_passed: a clean chain and machine pass")
+    if all_passed([{"kind": "chain", **base, "passed": 0}]):
+        bad.append("all_passed: a failing chain fails the run")
+    if all_passed([{"kind": "state_machine", "adversarial_rejected": 1, "adversarial_total": 3}]):
+        bad.append("all_passed: a machine accepting a near-miss token fails the run")
+    if not all_passed([{"kind": "chain", **base, "bdd": {"passed": 2, "total": 2}}]):
+        bad.append("all_passed: a chain whose feature scenarios all pass passes the run")
+    if all_passed([{"kind": "chain", **base, "bdd": {"passed": 1, "total": 2}}]):
+        bad.append("all_passed: a chain with a failing feature scenario fails the run")
+
+    return bad
+
+
+def _probe_cli():
+    """The CLI boundary (honest_test.cli): main scans a src directory, imports each module so the runner
+    binds live objects, runs the developer's feature per chain, prints the section-11 report, writes
+    coverage.json, and returns the exit code. Run against a real temporary project so the filesystem,
+    import, feature-run, write, and clock boundaries all execute; the conformance directory permits I/O."""
+    import io
+    import json
+    import os
+    import shutil
+    from contextlib import redirect_stdout
+
+    from honest_test import cli
+
+    bad = []
+    root = Path(tempfile.mkdtemp())
+    cwd = os.getcwd()
+    try:
+        src = root / "src"
+        src.mkdir()
+        (src / "app.py").write_text(_FIXTURE_APP, encoding="utf-8")
+        # A failing chain OUTSIDE src/, at the project root: scanning 'src' does not reach it, but
+        # scanning '' (the whole tree) would - so main([]) defaulting to 'src' passes only because the
+        # default really is 'src'.
+        (root / "bad.py").write_text(_FIXTURE_BROKEN, encoding="utf-8")
+        features = root / "features"
+        features.mkdir()
+        # A feature written against pipeline's scaffolded step patterns so _run_feature scaffolds a
+        # registry and runs it (the found branch); the 'other' chain has no feature (the None branch).
+        (features / "pipeline.feature").write_text(
+            "Feature: pipeline\n"
+            "\n"
+            "  Scenario: a greeting flows through\n"
+            '    Given a manifest for pipeline with greeting "hi"\n'
+            "    When the pipeline runs\n"
+            "    Then the result is ok\n",
+            encoding="utf-8",
+        )
+
+        out = io.StringIO()
+        os.chdir(root)
+        with redirect_stdout(out):
+            status = cli.main(["src"])
+        os.chdir(cwd)
+
+        if status != 0:
+            bad.append(f"cli.main: the fixture project passes, got exit {status}")
+        report = out.getvalue()
+        if "pipeline (2 links)" not in report:
+            bad.append(f"cli.main: prints the section-11 report: {report!r}")
+        if "BDD: features/pipeline.feature" not in report:
+            bad.append(f"cli.main: runs and reports the chain's feature: {report!r}")
+        coverage_file = root / "coverage.json"
+        if not coverage_file.is_file():
+            bad.append("cli.main: writes coverage.json beside the run")
+        else:
+            cov = json.loads(coverage_file.read_text(encoding="utf-8"))
+            if "pipeline" not in cov["chains"] or "flow" not in cov["state_machines"]:
+                bad.append(f"cli.main: coverage.json records the run: {cov}")
+            if not isinstance(cov["timestamp"], str) or not cov["timestamp"]:
+                bad.append(f"cli.main: coverage.json carries a real timestamp: {cov['timestamp']!r}")
+
+        # No argument defaults to the 'src' directory.
+        out2 = io.StringIO()
+        os.chdir(root)
+        with redirect_stdout(out2):
+            status2 = cli.main([])
+        os.chdir(cwd)
+        if status2 != 0:
+            bad.append(f"cli.main: defaults to the src directory, got exit {status2}")
+
+        # The scanned directory is the FIRST argument: a good src followed by a would-fail directory
+        # ('.' reaches the root's failing chain) still passes, because only argv[0] is scanned.
+        out3 = io.StringIO()
+        os.chdir(root)
+        with redirect_stdout(out3):
+            status3 = cli.main(["src", "."])
+        os.chdir(cwd)
+        if status3 != 0:
+            bad.append(f"cli.main: scans the first argument, not the last, got exit {status3}")
+    finally:
+        os.chdir(cwd)
+        shutil.rmtree(root, ignore_errors=True)
+
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
@@ -1536,6 +2005,9 @@ def run():
         "supplied": _probe_supplied(),
         "statemachine": _probe_statemachine(),
         "runner": _probe_runner(),
+        "suite_runner": _probe_suite_runner(),
+        "runner_discovery": _probe_runner_discovery(),
+        "cli": _probe_cli(),
         "proof": _probe_proof(),
         "value": _probe_value(),
         "testbody": _probe_testbody(),

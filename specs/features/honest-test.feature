@@ -522,3 +522,38 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given a registry
     When register_http_steps wires the steps in
     Then it returns the registry carrying the response assertions, request builders, when-senders, and session steps
+
+  Scenario: run_chain verifies one chain into a single result record
+    Given a chain's links, its vocabulary, and its binding
+    When run_chain runs it
+    Then it enumerates every manifest the vocabulary allows and records how many pass, perturbs every bounded member into near-misses and records how many the recognizers reject, and records the links' purity, mutation, idempotency, declared boundaries, and chain-contract verdict
+
+  Scenario: run_state_machine verifies one state machine into a single result record
+    Given a state machine declaration
+    When run_state_machine runs it
+    Then it records that every declared transition fires correctly and that every undeclared state-event pair faults, the undeclared count being the full grid minus the declared table
+
+  Scenario: compute_totals folds the per-chain records into the report footer totals
+    Given the list of result records
+    When compute_totals folds them
+    Then it sums permutations and failures and adversarial counts over the chain records only, since state machines carry no permutations
+
+  Scenario: format_report renders the section-11 report from the records
+    Given the list of result records
+    When format_report renders them
+    Then it emits the header with the discovery counts, one block per record dispatched on its kind, and the totals footer
+
+  Scenario: discover finds every testable construct under a source directory
+    Given a source directory, and injected walk, read, and import boundaries
+    When discover scans it
+    Then it reads each file's chain and state-machine declarations, binds the declared names to the live objects the import returns, and surfaces a chain whose first link has no accepts vocabulary as untestable rather than dropping it
+
+  Scenario: run_suite scans, verifies, reports, and writes coverage
+    Given a source directory and injected walk, read, import, feature-run, emit, write, and clock boundaries
+    When run_suite runs
+    Then it verifies every discovered chain and state machine, emits the section-11 report, names any untestable chain, writes the section-9.5 coverage document, and returns 0 only when the whole run passes
+
+  Scenario: all_passed decides whether the whole run passes
+    Given the list of result records
+    When all_passed folds them
+    Then it is true only when every chain is clean and honest, every feature's scenarios all pass, and every state machine rejected every near-miss token

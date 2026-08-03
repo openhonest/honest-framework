@@ -114,7 +114,7 @@ enforcement rules layered on that core — is built.
 | honest-gherkin | Spec-complete for its current milestone; later Gherkin features (Scenario Outline, Background execution, data tables, `Rule:`) are deferred by the spec itself. |
 | honest-persist, honest-auth | Substantially complete, one bounded gap each — persist: the Turso migrate-remote DDL path; auth: the no-domain-mutation conformance probe and the end-to-end conformance suite. |
 | honest-observe | Pure core substantially complete; the runnable CLI (`tail`/`inspect`/`query`), the config loader, and the default threshold-projection records are unbuilt. |
-| honest-test | Generation engine, honesty checks, state-machine and mutation adequacy complete; the orchestrating runner and the persist/component contract-test kinds are unbuilt. |
+| honest-test | Generation engine, honesty checks, state-machine and mutation adequacy, and the §11 orchestrating runner (`runner.py` discovery + `run_suite` + coverage.json) with its CLI (`cli.py`, runnable as `python -m honest_test.cli [src_dir]`) all complete; the persist/component contract-test kinds remain, and deliberate §9.2 fault-path generation for chain coverage is a filed follow-up. |
 | honest-alerts | Pure schema and decision core complete; the active runtime drivers (escalation, TTL-expiry, the SSE live surface, channel handlers) are unbuilt. |
 | honest-state | Taxonomy and the single-mutator law predicates complete; three of the four enforcement rules are in honest-check (HC-P004, HC-P016, HC-ST001 boundary-write). The fourth, HC-ST002 DOM-as-single-store, awaits honest-DOM's DATAOS manifest to read user-state declarations from the templates. |
 
