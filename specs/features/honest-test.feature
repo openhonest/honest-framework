@@ -577,3 +577,8 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     Given a list of components and an injected loader
     When test_startup_isolation loads each
     Then it reports a cascade when a component that fails to load coincides with another that also fails independently, since components must be independently loadable
+
+  Scenario: verify_write round-trips an adopter's row against a real database
+    Given a schema, a table, a row, an injected connect, and a dialect
+    When verify_write applies the schema to a fresh database and writes the row
+    Then it returns ok with the rows read back when the row conforms, err when the schema is invalid or a column is undeclared, and a write_rejected fault when the real database rejects the row for a CHECK, NOT NULL, or type violation

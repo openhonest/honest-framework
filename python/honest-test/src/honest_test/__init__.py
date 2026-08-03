@@ -60,6 +60,7 @@ from honest_test.honesty import (
 )
 from honest_test.laws import law, verify_laws
 from honest_test.length import enumerate_lengths, extract_length_bounds
+from honest_test.persist_contract import verify_write
 from honest_test.numeric import DEFAULT_LIMIT, fibonacci_sequence, numeric_values
 from honest_test.predicate import classify_predicate, classify_source
 from honest_test.statemachine import (
@@ -85,6 +86,7 @@ __all__ = [
     "test_css_isolation",
     "test_route_isolation",
     "test_startup_isolation",
+    "verify_write",
     "check_oracle",
     "run_value_case",
     "run_value_cases",

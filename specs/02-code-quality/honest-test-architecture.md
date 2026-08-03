@@ -580,30 +580,46 @@ FUNCTION test_adversarial_state_machine(machine):
 
 ## 6. honest-persist Tests
 
-honest-test generates contract tests for honest-persist query functions. These verify that queries behave correctly against the declared schema without requiring a production database.
+honest-test verifies honest-persist's query path against a **real** database, never a mock. honest-persist's one I/O seam is the injected `connect` (honest-persist-architecture.md §8.1); honest-test hands it a real in-memory driver (SQLite `:memory:`) recreated **ephemeral** per test (§8.2), applies the declared schema, and drives the genuine query builders and `execute` against it. There are no mock connections and no fakes to drift from how the real database behaves.
 
 ### 6.1 Schema Contract Tests
 
-For every query function declared against a `TableConfig`, honest-test verifies:
+For every table in a declared schema, honest-test:
 
-1. The query accepts a manifest conforming to the declared vocabulary
-2. The query returns rows conforming to the declared column schema
-3. The query rejects manifests with missing required fields
-4. The query handles empty result sets without faulting
+1. **Round-trip** — applies the schema to a fresh ephemeral database, inserts a row with `insert(...)`, reads it back with `select(...)`, and asserts the value the real database returns equals the value written.
+2. **Column validity** — asserts a query builder referencing an undeclared or misspelled column is rejected at build time (§7.2), before any SQL runs.
+3. **Required fields** — asserts an insert omitting a non-nullable column is rejected by the real database.
+4. **Empty sets** — asserts a `select` matching no rows returns `ok([])`, not a fault.
 
 ```
-FUNCTION test_persist_contract(query_fn, table_config, db_connection):
-    // Generate valid manifest from table_config's vocabulary
-    valid_manifest ← enumerate_test_cases(table_config.vocab)[0]
+FUNCTION test_persist_schema_contract(schema, connect):
+    findings ← []
+    FOR table, table_def IN schema:
+        conn ← connect()                       // a real in-memory database
+        apply(schema, conn)                    // create the declared tables
 
-    result ← query_fn(valid_manifest, db_connection)
+        row ← a value for every column in table_def
+        execute(insert(table, row), conn)
+        read_back ← execute(select(table, where=row's primary key), conn)
+        IF read_back["ok"] ≠ [row]:
+            EMIT failure("round_trip_mismatch", table)
 
-    ASSERT "ok" IN result OR "err" IN result
-    IF "ok" IN result:
-        ASSERT result["ok"] is list
-        IF len(result["ok"]) > 0:
-            ASSERT conforms_to_schema(result["ok"][0], table_config.columns)
+        IF NOT is_rejected(select(table, columns=["a_column_not_declared"])):
+            EMIT failure("undeclared_column_accepted", table)
+
+        missing ← row without a non-nullable column
+        IF "err" NOT IN execute(insert(table, missing), conn):
+            EMIT failure("missing_required_field_accepted", table)
+
+        empty ← execute(select(table, where=a key that matches nothing), conn)
+        IF empty ≠ ok([]):
+            EMIT failure("empty_set_faulted", table)
+    RETURN findings
 ```
+
+### 6.2 CHECK-Constraint Enumeration
+
+honest-persist's CHECK-expression vocabulary is closed (§7). honest-test enumerates it and, for each CHECK declared on a table, asserts the real database **rejects** a row that violates the constraint and **accepts** one that conforms — the exhaustive enumeration honest-persist's spec already assigns to honest-test.
 
 ---
 

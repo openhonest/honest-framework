@@ -2047,6 +2047,67 @@ def _probe_component_isolation():
     return bad
 
 
+def _probe_persist_contract():
+    """honest-persist contract tests (§6): verify_write round-trips an adopter's row against a REAL
+    in-memory SQLite database, never a mock. A conforming row inserts and reads back; an undeclared
+    column is caught pure by checked_insert; a CHECK, NOT NULL, or type violation is caught by the real
+    database at the write; an invalid schema is caught by diff. The connect boundary is a thin async
+    adapter over real sqlite3 — real SQL runs, the adapter only shapes the return."""
+    import sqlite3
+    import types
+
+    from honest_test.persist_contract import verify_write
+
+    bad = []
+
+    def connect():
+        raw = sqlite3.connect(":memory:")
+        raw.row_factory = sqlite3.Row
+
+        async def execute(sql, params=None):
+            cursor = raw.execute(sql, params) if params is not None else raw.execute(sql)
+            rows = [dict(record) for record in cursor.fetchall()]
+            raw.commit()
+            return {"rows": rows, "rowcount": cursor.rowcount}
+
+        return types.SimpleNamespace(execute=execute)
+
+    schema = {
+        "widget": {
+            "columns": {
+                "id": {"type": "integer", "primary_key": True, "nullable": False},
+                "name": {"type": "text", "nullable": False},
+                "size": {"type": "integer", "nullable": False, "check": "size > 0"},
+            }
+        }
+    }
+    invalid_schema = {"widget": {"columns": {"id": {"type": "integer"}}, "indexes": {"ix": {"columns": ["nonexistent"]}}}}
+
+    async def _run():
+        return {
+            "conforming": await verify_write(schema, "widget", {"id": 1, "name": "a", "size": 5}, connect, "sqlite"),
+            "undeclared": await verify_write(schema, "widget", {"id": 1, "name": "a", "size": 5, "bogus": 9}, connect, "sqlite"),
+            "check": await verify_write(schema, "widget", {"id": 1, "name": "a", "size": 0}, connect, "sqlite"),
+            "not_null": await verify_write(schema, "widget", {"id": 1, "size": 5}, connect, "sqlite"),
+            "invalid": await verify_write(invalid_schema, "widget", {"id": 1}, connect, "sqlite"),
+        }
+
+    r = asyncio.run(_run())
+
+    if r["conforming"] != ok([{"id": 1, "name": "a", "size": 5}]):
+        bad.append(f"verify_write: a conforming row round-trips against the real database, got {r['conforming']}")
+    if r["undeclared"].get("err", {}).get("code") != "unknown_column":
+        bad.append(f"verify_write: an undeclared column is caught pure by checked_insert before any SQL runs, got {r['undeclared']}")
+    for label in ("check", "not_null"):
+        rejection = r[label].get("err", {})
+        if rejection.get("code") != "write_rejected" or rejection.get("category") != "client" or rejection.get("detail") != {"table": "widget"}:
+            bad.append(f"verify_write: the {label} row is rejected by the real database as a client write_rejected fault naming the table, got {r[label]}")
+    if "err" not in r["invalid"]:
+        bad.append(f"verify_write: an invalid schema is rejected, got {r['invalid']}")
+
+    return bad
+
+
 def run():
     report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
     probes = {
@@ -2070,6 +2131,7 @@ def run():
         "runner_discovery": _probe_runner_discovery(),
         "cli": _probe_cli(),
         "component_isolation": _probe_component_isolation(),
+        "persist_contract": _probe_persist_contract(),
         "proof": _probe_proof(),
         "value": _probe_value(),
         "testbody": _probe_testbody(),
