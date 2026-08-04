@@ -3525,6 +3525,63 @@ def _probe_types_defaults():
     return bad
 
 
+def _probe_migrate_remote():
+    """§5.2 migrate-remote flow: on a cloud-synced connection (a truthy `synced` attribute) apply pulls
+    the current cloud state before applying any operation and pushes the completed schema only on
+    success, so DDL reaches the cloud without the sync engine replicating it. A failed migration is
+    never pushed, and a non-synced connection applies directly with no pull/push."""
+
+    class _SyncedConn:
+        synced = True
+
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, sql):
+            self.calls.append(("execute", sql))
+
+        async def pull(self):
+            self.calls.append(("pull", None))
+
+        async def push(self):
+            self.calls.append(("push", None))
+
+    class _SyncedFailingConn(_SyncedConn):
+        async def execute(self, sql):
+            self.calls.append(("execute", sql))
+            raise RuntimeError("ddl failed")
+
+    schema = {"t": {"columns": {"id": {"type": "text"}}}}
+    plan = diff({}, schema)
+    bad = []
+
+    async def _run():
+        synced = _SyncedConn()
+        result = await apply(plan, schema, synced, "turso")
+        if not result["success"]:
+            bad.append(f"migrate-remote: a clean create-table succeeds, got {result}")
+        if [kind for kind, _ in synced.calls] != ["pull", "execute", "push"]:
+            bad.append(f"migrate-remote: pull, then the operation, then push, got {[k for k, _ in synced.calls]}")
+
+        failing = _SyncedFailingConn()
+        failed = await apply(plan, schema, failing, "turso")
+        failed_kinds = [kind for kind, _ in failing.calls]
+        if failed["success"]:
+            bad.append("migrate-remote: a failing operation must not report success")
+        if "push" in failed_kinds:
+            bad.append(f"migrate-remote: a failed migration is never pushed, got {failed_kinds}")
+        if failed_kinds[:1] != ["pull"]:
+            bad.append(f"migrate-remote: the pull still happens before the failing operation, got {failed_kinds}")
+
+        plain = _Conn()
+        plain_result = await apply(plan, schema, plain, "turso")
+        if not plain_result["success"]:
+            bad.append(f"migrate-remote: a non-synced connection applies directly, got {plain_result}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 def run():
     groups = [
         verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
@@ -3532,6 +3589,7 @@ def run():
     ]
     probes = {
         "apply": _probe_apply(),
+        "migrate_remote": _probe_migrate_remote(),
         "instrumented_apply": _probe_instrumented_apply(),
         "pool": _probe_pool(),
         "pool_registry": _probe_pool_registry(),

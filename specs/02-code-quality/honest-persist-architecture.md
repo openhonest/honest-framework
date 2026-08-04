@@ -566,6 +566,15 @@ cloud-synced Turso database, `apply()` uses a **migrate-remote flow**: open a cl
 pull the current cloud state, apply the DDL locally, and push the result — so the schema
 change reaches the cloud without the sync engine attempting to replicate DDL.
 
+**The migrate-remote interface.** `apply()` detects a cloud-synced connection by a truthy `synced`
+attribute on the connection, duck-typed the same way it probes for `pause_push`. On a cloud-synced
+connection it wraps the operations: it awaits `conn.pull()` to bring the replica to the current cloud
+state before applying any operation, applies the operations locally, and, only when every operation
+succeeded, awaits `conn.push()` to send the completed schema to the cloud. A failed migration is never
+pushed, so the cloud never sees a partial schema. A connection with no `synced` attribute, or a falsy
+one, applies directly, exactly as before. Opening the clean replica is the caller's responsibility;
+`pull()` is what brings it to the current cloud state.
+
 **Rule: apply() refuses to run if DiffResult.ambiguities is non-empty.**
 Ambiguities must be resolved before applying. This is enforced, not
 advisory.

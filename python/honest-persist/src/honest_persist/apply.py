@@ -502,15 +502,12 @@ async def _emit_migration(emit, db_id, op, table, detail, sql, duration_ns, succ
         print(f"honest-persist: migration event emit failed: {exc}", file=sys.stderr)
 
 
-async def apply(diff_result, target, conn, dialect, emit=None, db_id=""):
-    """Execute a DiffResult against the connection in execution_order (section 5.2). Async I/O
-    boundary: refuses while ambiguities are unresolved, reconstructs tables that cannot be
-    altered in place (section 5.5) — pausing sync push for the rebuild — halts on the first
-    failure, and returns an ApplyResult. Emits one hf.persist.migration per operation through the
-    injected emit (section 8.7); a reconstructed table emits one reconstruct_table event. Not pure:
-    it awaits I/O through conn."""
-    if diff_result.get("ambiguities"):
-        return _apply_result(False, [], "unresolved ambiguities; resolve before applying", None)
+async def _apply_operations(diff_result, target, conn, dialect, emit, db_id):
+    """Execute the DiffResult operations in execution_order (section 5.2), reconstructing tables that
+    cannot be altered in place (section 5.5, pausing sync push for the rebuild), halting on the first
+    failure, and returning an ApplyResult. Emits one hf.persist.migration per operation through the
+    injected emit (section 8.7); a reconstructed table emits one reconstruct_table event. The ambiguity
+    refusal and the migrate-remote pull/push wrap live in apply(). Not pure: it awaits I/O through conn."""
     target_definition = _normalize(target)
     target_tables = target_definition["tables"]
     operations = diff_result["operations"]
@@ -558,4 +555,22 @@ async def apply(diff_result, target, conn, dialect, emit=None, db_id=""):
         executed.append(sql)
         await _emit_migration(emit, db_id, op["op"], op["table"], op["details"], sql, time.perf_counter_ns() - start, True, None)
     return _apply_result(True, executed, None, None)
+
+
+async def apply(diff_result, target, conn, dialect, emit=None, db_id=""):
+    """Execute a DiffResult against the connection (section 5.2). Async I/O boundary: refuses while
+    ambiguities are unresolved, then applies the operations. On a cloud-synced connection (a truthy
+    `synced` attribute, duck-typed the same way pause_push is probed) it wraps them in the migrate-remote
+    flow: pull the current cloud state, apply the operations locally, and push the completed schema only
+    when every operation succeeded, so DDL reaches the cloud without the sync engine replicating it. A
+    non-synced connection applies directly, and a failed migration is never pushed. Not pure."""
+    if diff_result.get("ambiguities"):
+        return _apply_result(False, [], "unresolved ambiguities; resolve before applying", None)
+    synced = getattr(conn, "synced", False)
+    if synced:
+        await conn.pull()
+    result = await _apply_operations(diff_result, target, conn, dialect, emit, db_id)
+    if synced and result["success"]:
+        await conn.push()
+    return result
 # honest: enable HC-P002

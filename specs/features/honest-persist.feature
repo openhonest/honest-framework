@@ -336,9 +336,14 @@ Feature: honest-persist — schema diffing, query building, and the write bounda
   Scenario: apply executes a diff against a database in execution order
     Given a diff result, the target schema, a connection, a target engine, and an optional injected emit
     When apply runs the operations in order
-    Then it applies each operation, rebuilding any table that cannot be altered in place, returns a record of what was applied, and emits one migration event per operation through the emit
-    But if the diff still has unresolved ambiguities it refuses and returns a failure
-    And it halts on the first operation that fails, emitting that operation with its fault code, returning the failure and what had already run
+    Then it refuses and returns a failure if the diff still has unresolved ambiguities, and otherwise applies the operations
+    And on a cloud-synced connection it pulls the current cloud state before applying and pushes the completed schema only when every operation succeeded, so a failed migration is never pushed
+    But a non-synced connection is applied directly with no pull or push
+
+  Scenario: _apply_operations executes a diff's operations in execution order
+    Given a diff result, the target schema, a connection, a target engine, and the injected emit
+    When _apply_operations runs the operations in order
+    Then it applies each operation, rebuilding any table that cannot be altered in place, returns a record of what was applied, emits one migration event per operation, and halts on the first operation that fails, returning the failure and what had already run
 
   Scenario: _emit_migration emits one migration event through the injected emit
     Given the injected emit, the operation facts, and whether it succeeded
