@@ -13,11 +13,17 @@ event type with no entry still renders its time, source, and type with an empty 
 events; this is what `honest-observe query` calls once the CLI has read the log.
 """
 
+import datetime as _dt
+
 from honest_type import err, fault, ok
 
 from honest_observe.projections import apply_projection
 
 _NS_PER_MS = 1_000_000
+
+# The window units of a --since flag (section 9.2), each in seconds. The table is the vocabulary; a spec
+# is a whole number followed by one of these letters.
+_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 def _ms(duration_ns) -> str:
@@ -57,6 +63,37 @@ def format_tail_line(event: dict) -> str:
     the event-type-specific field tail. Pure."""
     source = event.get("source", "server")
     return f"{_short_time(event['timestamp'])} {source:<7} {event['event_type']}  {_tail_fields(event)}"
+
+
+def parse_window(spec: str) -> int:
+    """A --since window (section 9.2) as a number of seconds: a whole number followed by a unit letter
+    (`s`, `m`, `h`, `d`). Pure."""
+    return int(spec[:-1]) * _UNIT_SECONDS[spec[-1]]
+
+
+def since_cutoff(now: str, window: str) -> str:
+    """The oldest timestamp a --since window admits (section 9.2): the current time minus the window,
+    formatted like the event timestamps it is compared against (ISO to millisecond precision, Z). Pure."""
+    base = _dt.datetime.fromisoformat(now.rstrip("Z"))
+    cut = base - _dt.timedelta(seconds=parse_window(window))
+    return cut.isoformat(timespec="milliseconds") + "Z"
+
+
+def tail_matches(event: dict, source=None, event_type=None, chain=None, request=None, since=None) -> bool:
+    """Whether an event passes the tail filters (section 9.2). Pure. Each argument narrows the stream by
+    one field and the filters combine with AND; a `None` filter does not constrain. An event missing the
+    field a filter names does not match that filter."""
+    if source is not None and event.get("source", "server") != source:
+        return False
+    if event_type is not None and event["event_type"] != event_type:
+        return False
+    if chain is not None and event["payload"].get("chain_name") != chain:
+        return False
+    if request is not None and _request_id_of(event) != request:
+        return False
+    if since is not None and event["timestamp"] < since:
+        return False
+    return True
 
 
 def _whole_ms(ms_value) -> str:
@@ -139,6 +176,18 @@ def format_inspect(request_id: str, events: list) -> str:
     return header + "\n\n" + "\n\n".join(sections) + "\n\n" + footer
 
 
+def _fold_declared(declaration: dict, events: list):
+    """Fold events through a declared projection (its fold, initial state, and filters). Pure."""
+    return apply_projection(
+        events,
+        declaration["fold"],
+        declaration["initial_state"],
+        event_types=declaration.get("event_types"),
+        aggregate_type=declaration.get("aggregate_type"),
+        aggregate_id=declaration.get("aggregate_id"),
+    )
+
+
 def run_named_projection(registry: dict, name: str, events: list):
     """Run a projection resolved by name from a registry (section 9.4). Pure: look up the declared
     projection (a declare_projection result), then fold the events through it with its filters and
@@ -147,12 +196,25 @@ def run_named_projection(registry: dict, name: str, events: list):
     declaration = registry.get(name)
     if declaration is None:
         return err(fault("unknown_projection", f"No projection named '{name}' in the registry", "client", {"name": name}))
-    state = apply_projection(
-        events,
-        declaration["fold"],
-        declaration["initial_state"],
-        event_types=declaration.get("event_types"),
-        aggregate_type=declaration.get("aggregate_type"),
-        aggregate_id=declaration.get("aggregate_id"),
-    )
-    return ok(state)
+    return ok(_fold_declared(declaration, events))
+
+
+def _bucket_start(timestamp: str, window: int) -> str:
+    """The start of the time bucket a timestamp falls in (section 9.4): the timestamp floored to a
+    multiple of the window seconds, formatted to whole seconds with Z. Pure."""
+    at = _dt.datetime.fromisoformat(timestamp).replace(tzinfo=_dt.timezone.utc)
+    floored = int(at.timestamp()) // window * window
+    return _dt.datetime.fromtimestamp(floored, _dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def run_bucketed_projection(registry: dict, name: str, events: list, window: int):
+    """Run a named projection independently over each time bucket of width `window` seconds (section 9.4).
+    Pure. Returns ok([(bucket_start, state), ...]) in ascending bucket order — a bucket appears only when
+    it holds at least one event — or err(fault 'unknown_projection') when the name is not registered."""
+    declaration = registry.get(name)
+    if declaration is None:
+        return err(fault("unknown_projection", f"No projection named '{name}' in the registry", "client", {"name": name}))
+    buckets = {}
+    for event in events:
+        buckets.setdefault(_bucket_start(event["timestamp"], window), []).append(event)
+    return ok([(start, _fold_declared(declaration, buckets[start])) for start in sorted(buckets)])

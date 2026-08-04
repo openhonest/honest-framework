@@ -7,7 +7,15 @@ stored by persist without importing it. The log storage itself is the runtime's 
 """
 
 from honest_observe.browser import browser_classify, browser_request, browser_response, build_browser_event, dom_changed
-from honest_observe.devtools import format_inspect, format_tail_line, run_named_projection
+from honest_observe.devtools import (
+    format_inspect,
+    format_tail_line,
+    parse_window,
+    run_bucketed_projection,
+    run_named_projection,
+    since_cutoff,
+    tail_matches,
+)
 from honest_observe.emit import emit
 from honest_observe.event_log import event_log_manifest, event_log_schema
 from honest_observe.hlc import hlc_compare, hlc_receive, hlc_send
@@ -76,7 +84,11 @@ __all__ = [
     "dom_changed",
     "format_tail_line",
     "format_inspect",
+    "parse_window",
+    "since_cutoff",
+    "tail_matches",
     "run_named_projection",
+    "run_bucketed_projection",
     "custom_metric",
     "compute_metric",
     "condition_met",

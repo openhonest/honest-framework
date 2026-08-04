@@ -1432,6 +1432,8 @@ honest-observe tail --request req_abc123
 honest-observe tail --since 5m
 ```
 
+**Filters.** Each flag narrows the stream by one field, and flags combine with AND: `--source` matches the event source (`server` when the event carries none), `--event` the `event_type`, `--chain` the payload's `chain_name`, `--request` the `request_id` wherever it appears (§9.3), and `--since` keeps events at or after the current time minus the given window. A window is a whole number followed by a unit — `s`, `m`, `h`, or `d`. An event missing the field a filter names does not match that filter.
+
 **Output format:**
 
 ```
@@ -1513,6 +1515,8 @@ honest-observe query request-rate --since 30m --bucket 1m
 ```
 
 Projections are defined in `honest-observe.toml` or in application code. `honest-observe query` resolves projection names from the registry and runs them.
+
+**Flags.** `--since` narrows the events fed to the projection to those at or after the current time minus the given window, using the same window grammar as `tail` (§9.2). `--bucket` partitions the (already `--since`-narrowed) events into consecutive time buckets of the given window and runs the projection independently over each bucket, printing one `bucket_start state` line per non-empty bucket in ascending time order; a bucket start is the event timestamp floored to the bucket window. Without `--bucket` the projection folds the whole narrowed stream and prints the single resulting state. An unknown projection name is a client fault surfaced as data, and the command exits non-zero.
 
 ### 9.5 Development Mode
 

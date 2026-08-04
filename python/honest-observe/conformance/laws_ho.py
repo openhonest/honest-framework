@@ -666,6 +666,233 @@ def _probe_query():
     return bad
 
 
+def _probe_cli():
+    """The honest-observe CLI (sections 9.2-9.4): `tail` streams filtered events, `inspect` renders one
+    request's execution trace, `query` runs a named projection. parse_window turns a --since window into
+    seconds; since_cutoff turns (now, window) into an ISO cutoff in the canonical event format;
+    tail_matches is the pure per-event filter (each flag narrows by one field, an absent field never
+    matches its filter); main dispatches the three commands over an injected log reader, clock, registry,
+    and emit, returning an exit code (0 ok, 1 when a client fault is surfaced as data)."""
+    from honest_observe import declare_projection, format_tail_line, parse_window, since_cutoff, tail_matches
+    from honest_observe.cli import main
+
+    bad = []
+
+    # parse_window: a whole number followed by a unit, in seconds.
+    for spec, secs in (("30s", 30), ("5m", 300), ("1h", 3600), ("24h", 86400), ("2d", 172800)):
+        if parse_window(spec) != secs:
+            bad.append(f"parse_window({spec!r}) should be {secs}, got {parse_window(spec)}")
+
+    # since_cutoff: now minus the window, formatted like the event timestamps it is compared against.
+    if since_cutoff("2026-03-15T14:23:07.006Z", "5m") != "2026-03-15T14:18:07.006Z":
+        bad.append(f"since_cutoff 5m wrong: {since_cutoff('2026-03-15T14:23:07.006Z', '5m')}")
+
+    # tail_matches: each flag narrows by one field; an event missing that field never matches the filter.
+    link = {"event_type": "hf.link.executed", "source": "server", "timestamp": "2026-03-15T14:23:07.006Z", "payload": {"link_name": "validate_filters", "chain_name": "fetch_items", "result": "ok", "duration_ns": 800000}}
+    resp = {"event_type": "hf.browser.response", "source": "browser", "timestamp": "2026-03-15T14:23:07.166Z", "payload": {"request_id": "req_abc", "status": 200, "swap_target": "#x", "duration_ms": 163}}
+    bare = {"event_type": "hf.chain.started", "timestamp": "2026-03-15T14:23:07.006Z", "payload": {"chain_name": "c", "link_count": 1}}
+    checks = [
+        (tail_matches(link, chain="fetch_items"), True, "chain matches the payload chain_name"),
+        (tail_matches(link, chain="other"), False, "chain excludes a different chain"),
+        (tail_matches(resp, chain="fetch_items"), False, "an event with no chain_name never matches --chain"),
+        (tail_matches(link, source="server"), True, "source matches an explicit server source"),
+        (tail_matches(link, source="browser"), False, "source excludes a different source"),
+        (tail_matches(resp, source="browser"), True, "source matches a browser event's own source field"),
+        (tail_matches(bare, source="server"), True, "an event with no source field defaults to server"),
+        (tail_matches(bare, source="browser"), False, "the server default does not match a browser filter"),
+        (tail_matches(resp, request="req_abc"), True, "request matches the request id"),
+        (tail_matches(link, request="req_abc"), False, "an event with no request id never matches --request"),
+        (tail_matches(link, event_type="hf.link.executed"), True, "event matches the type"),
+        (tail_matches(link, event_type="hf.chain.started"), False, "event excludes a different type"),
+        (tail_matches(link, since="2026-03-15T14:00:00.000Z"), True, "since keeps an event after the cutoff"),
+        (tail_matches(link, since="2026-03-15T14:23:07.006Z"), True, "since keeps an event exactly at the cutoff"),
+        (tail_matches(link, since="2026-03-15T15:00:00.000Z"), False, "since drops an event before the cutoff"),
+    ]
+    for got, want, why in checks:
+        if got != want:
+            bad.append(f"tail_matches: {why} (got {got})")
+
+    # main tail: with --chain, only the matching link line is emitted; exit 0.
+    lines = []
+    code = main(["tail", "--chain", "fetch_items"], lambda: [link, resp], lambda: "2026-03-15T14:30:00.000Z", {}, lines.append)
+    if code != 0 or lines != [format_tail_line(link)]:
+        bad.append(f"tail --chain should print only the matching link line: code={code} lines={lines}")
+
+    canonical = {
+        "event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": "req_abc",
+        "timestamp": "2026-03-15T14:23:07.023Z",
+        "payload": {"request_id": "req_abc", "http_method": "POST", "http_path": "/api/items", "http_status": 200, "duration_ns": 16000000, "source": "server", "link_sequence": []},
+    }
+
+    # main inspect: a known request renders its trace; exit 0.
+    seen = []
+    code = main(["inspect", "req_abc"], lambda: [canonical], lambda: "t", {}, seen.append)
+    if code != 0 or len(seen) != 1 or not seen[0].startswith("Request: req_abc"):
+        bad.append(f"inspect should render the request trace: code={code} out={seen}")
+
+    # main inspect: an unknown request is a client fault surfaced as data; exit 1.
+    miss = []
+    code = main(["inspect", "nope"], lambda: [canonical], lambda: "t", {}, miss.append)
+    if code != 1 or not miss or "nope" not in miss[0]:
+        bad.append(f"inspect of an unknown request should surface a fault and exit 1: code={code} out={miss}")
+
+    # main query: a known projection folds and prints ok(state); an unknown name exits 1.
+    registry = {"clicks": declare_projection("clicks", ["click"], lambda s, e: {"n": s["n"] + 1}, {"n": 0})}
+    click_events = [{"event_type": "click", "timestamp": "2026-01-01T00:00:00Z", "payload": {}}]
+    out = []
+    code = main(["query", "clicks"], lambda: click_events, lambda: "t", registry, out.append)
+    if code != 0 or out != ["{'n': 1}"]:
+        bad.append(f"query of a known projection should print its folded state: code={code} out={out}")
+    err = []
+    code = main(["query", "nope"], lambda: click_events, lambda: "t", registry, err.append)
+    if code != 1 or not err or "nope" not in err[0]:
+        bad.append(f"query of an unknown projection should surface a fault and exit 1: code={code} out={err}")
+
+    # main tail --since: the clock minus the window drops the older event and keeps the newer one.
+    old = {"event_type": "hf.chain.started", "source": "server", "timestamp": "2026-03-15T14:00:00.000Z", "payload": {"chain_name": "c", "link_count": 1}}
+    new = {"event_type": "hf.chain.started", "source": "server", "timestamp": "2026-03-15T14:29:00.000Z", "payload": {"chain_name": "c", "link_count": 1}}
+    kept = []
+    code = main(["tail", "--since", "5m"], lambda: [old, new], lambda: "2026-03-15T14:30:00.000Z", {}, kept.append)
+    if code != 0 or kept != [format_tail_line(new)]:
+        bad.append(f"tail --since 5m should keep only the event inside the window: code={code} lines={kept}")
+
+    # main query --since: only events at or after the cutoff reach the fold. An event exactly at the
+    # cutoff is kept (pins >= against >), and the older event is dropped rather than the newer (pins the
+    # filter against its negation): with a 5m window at 14:30 the cutoff is 14:25, so the 14:25 and 14:29
+    # events fold and the 14:20 one does not — a count of two.
+    at_cut = {"event_type": "hf.chain.started", "source": "server", "timestamp": "2026-03-15T14:25:00.000Z", "payload": {"chain_name": "c", "link_count": 1}}
+    older = {"event_type": "hf.chain.started", "source": "server", "timestamp": "2026-03-15T14:20:00.000Z", "payload": {"chain_name": "c", "link_count": 1}}
+    windowed = []
+    code = main(["query", "starts", "--since", "5m"], lambda: [older, at_cut, new], lambda: "2026-03-15T14:30:00.000Z",
+                {"starts": declare_projection("starts", ["hf.chain.started"], lambda s, e: {"n": s["n"] + 1}, {"n": 0})}, windowed.append)
+    if code != 0 or windowed != ["{'n': 2}"]:
+        bad.append(f"query --since should fold only the events at or after the cutoff: code={code} out={windowed}")
+
+    # main query --bucket: one line per non-empty bucket, in ascending time order, folded independently.
+    span = [
+        {"event_type": "hit", "timestamp": "2026-03-15T14:23:10.000Z", "payload": {}},
+        {"event_type": "hit", "timestamp": "2026-03-15T14:23:40.000Z", "payload": {}},
+        {"event_type": "hit", "timestamp": "2026-03-15T14:24:05.000Z", "payload": {}},
+    ]
+    buckets = []
+    code = main(["query", "hits", "--bucket", "1m"], lambda: span, lambda: "t",
+                {"hits": declare_projection("hits", ["hit"], lambda s, e: {"n": s["n"] + 1}, {"n": 0})}, buckets.append)
+    if code != 0 or buckets != ["2026-03-15T14:23:00Z {'n': 2}", "2026-03-15T14:24:00Z {'n': 1}"]:
+        bad.append(f"query --bucket should fold each minute independently: code={code} out={buckets}")
+    miss_bucket = []
+    code = main(["query", "nope", "--bucket", "1m"], lambda: span, lambda: "t", {}, miss_bucket.append)
+    if code != 1 or not miss_bucket or "nope" not in miss_bucket[0]:
+        bad.append(f"query --bucket of an unknown projection should surface a fault and exit 1: {miss_bucket}")
+
+    # run_bucketed_projection's own unknown-name fault is pinned directly (the CLI surfaces only its
+    # message, so its code, category, and detail need their own oracle).
+    from honest_observe import run_bucketed_projection
+
+    unknown = run_bucketed_projection({}, "nope", span, 60)
+    if unknown != {"err": {"code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "detail": {"name": "nope"}}}:
+        bad.append(f"run_bucketed_projection should surface a complete unknown_projection fault: {unknown}")
+
+    # main with no subcommand is an argparse usage error (exit 2) that names the program (required=True,
+    # prog="honest-observe"); --help prints the program description and each subcommand's help text.
+    import asyncio
+    import contextlib
+    import io
+    import re
+
+    err_buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err_buf):
+            main([], lambda: [], lambda: "t", {}, lambda line: None)
+        bad.append("main with no subcommand should exit via argparse")
+    except SystemExit as exc:
+        if exc.code != 2 or "honest-observe" not in err_buf.getvalue():
+            bad.append(f"no subcommand should be a usage error naming the program: code={exc.code} err={err_buf.getvalue()!r}")
+    help_buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(help_buf):
+            main(["--help"], lambda: [], lambda: "t", {}, lambda line: None)
+        bad.append("--help should exit")
+    except SystemExit:
+        pass
+    for fragment in (
+        "Read the event log and present it (section 9).",
+        "stream the log as structured lines (section 9.2)",
+        "render one request's execution trace (section 9.3)",
+        "run a named projection over the log (section 9.4)",
+    ):
+        if fragment not in help_buf.getvalue():
+            bad.append(f"--help should document {fragment!r}")
+
+    # read_event_log deserializes honest_event_log rows (section 10) back into events through a connection;
+    # _entry materializes the log and runs the CLI over it, printing to stdout.
+    from honest_observe.cli import _entry, _now, read_event_log
+
+    # Two rows pin the nullable-column handling: the first carries both auth and meta (each parsed into the
+    # event), the second carries neither (both dropped) — so emptying either "auth" or "meta" in the loop,
+    # or flipping its is-not-None guard, changes the result.
+    rows = [
+        {
+            "event_id": "e1", "event_type": "hf.link.executed", "event_version": "1",
+            "timestamp": "2026-03-15T14:23:07.006Z", "sequence": 1, "aggregate_type": "link", "aggregate_id": "validate",
+            "payload": '{"link_name": "validate", "chain_name": "fetch_items", "result": "ok", "duration_ns": 800000}',
+            "auth": '{"user_id": "u1"}', "meta": '{"tenant": "t1"}',
+        },
+        {
+            "event_id": "e2", "event_type": "hf.chain.started", "event_version": "1",
+            "timestamp": "2026-03-15T14:23:08.000Z", "sequence": 2, "aggregate_type": "chain", "aggregate_id": "fetch_items",
+            "payload": '{"chain_name": "fetch_items", "link_count": 2}', "auth": None, "meta": None,
+        },
+    ]
+
+    class _RowsConn:
+        def __init__(self, rows):
+            self.rows = rows
+            self.sql = None
+
+        async def execute(self, sql, params):
+            self.sql = sql
+            return {"rows": self.rows, "rowcount": len(self.rows)}
+
+    conn = _RowsConn(rows)
+    loaded = asyncio.run(read_event_log(conn))
+    expected_events = [
+        {
+            "event_type": "hf.link.executed", "event_version": "1", "timestamp": "2026-03-15T14:23:07.006Z",
+            "sequence": 1, "aggregate_type": "link", "aggregate_id": "validate", "event_id": "e1",
+            "payload": {"link_name": "validate", "chain_name": "fetch_items", "result": "ok", "duration_ns": 800000},
+            "auth": {"user_id": "u1"}, "meta": {"tenant": "t1"},
+        },
+        {
+            "event_type": "hf.chain.started", "event_version": "1", "timestamp": "2026-03-15T14:23:08.000Z",
+            "sequence": 2, "aggregate_type": "chain", "aggregate_id": "fetch_items", "event_id": "e2",
+            "payload": {"chain_name": "fetch_items", "link_count": 2},
+        },
+    ]
+    if loaded != expected_events:
+        bad.append(f"read_event_log should deserialize rows, parsing auth/meta and dropping them when null: {loaded}")
+    if "honest_event_log" not in conn.sql or "sequence" not in conn.sql:
+        bad.append(f"read_event_log should select honest_event_log ordered by sequence: {conn.sql}")
+
+    # _now is the wall clock formatted like the event log: an ISO timestamp to millisecond precision, Z.
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", _now()):
+        bad.append(f"_now should be an ISO millisecond timestamp with a Z suffix: {_now()!r}")
+
+    out_buf = io.StringIO()
+    with contextlib.redirect_stdout(out_buf):
+        code = _entry(["tail", "--chain", "fetch_items"], _RowsConn(rows), {})
+    if code != 0 or out_buf.getvalue() != format_tail_line(expected_events[0]) + "\n" + format_tail_line(expected_events[1]) + "\n":
+        bad.append(f"_entry should read the log and print the matching tail lines: code={code} out={out_buf.getvalue()!r}")
+
+    # _entry uses the real wall clock for --since; the 2026-03-15 row is always older than a 5m window,
+    # so it is dropped and nothing prints — exercising the clock while staying deterministic.
+    aged_buf = io.StringIO()
+    with contextlib.redirect_stdout(aged_buf):
+        code = _entry(["tail", "--since", "5m"], _RowsConn(rows), {})
+    if code != 0 or aged_buf.getvalue() != "":
+        bad.append(f"_entry --since should drop an event older than the window: code={code} out={aged_buf.getvalue()!r}")
+    return bad
+
+
 def _probe_threshold_engine():
     """The threshold metric engine (section 8b): a metric is a fold plus a value over the log
     (custom_metric / compute_metric), and a condition is the threshold-crossing decision
@@ -1003,6 +1230,7 @@ def run():
         "tail": _probe_tail(),
         "inspect": _probe_inspect(),
         "query": _probe_query(),
+        "cli": _probe_cli(),
         "threshold_engine": _probe_threshold_engine(),
         "builtin_metrics": _probe_builtin_metrics(),
         "threshold_projection": _probe_threshold_projection(),

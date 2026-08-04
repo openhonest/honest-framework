@@ -343,3 +343,78 @@ Feature: honest-observe — event envelope, recording, and projection
     Given an external id, its source, and the bindings
     When resolve_identity looks it up
     Then it returns the canonical id where bound, and None for an unknown source or id
+
+  Scenario: parse_window reads a since window into seconds
+    Given a window spec of a whole number and a unit letter
+    When parse_window reads it
+    Then it returns the window as a number of seconds
+
+  Scenario: since_cutoff turns a window into a comparable cutoff
+    Given the current time and a window spec
+    When since_cutoff subtracts the window
+    Then it returns the cutoff formatted like the event timestamps, to millisecond precision with a Z
+
+  Scenario: tail_matches decides whether an event passes the tail filters
+    Given an event and the source, event type, chain, request, and since filters
+    When tail_matches applies them
+    Then it returns whether every set filter matches, treating an absent field as a non-match
+
+  Scenario: _fold_declared folds events through a declared projection
+    Given a declared projection and the events
+    When _fold_declared runs it
+    Then it returns the state folded through the projection's fold and filters
+
+  Scenario: _bucket_start finds the bucket a timestamp falls in
+    Given a timestamp and a bucket window in seconds
+    When _bucket_start floors the timestamp to the window
+    Then it returns the bucket start to whole seconds with a Z
+
+  Scenario: run_bucketed_projection runs a projection per time bucket
+    Given a registry, a name, the events, and a bucket window
+    When run_bucketed_projection folds each bucket independently
+    Then it returns ok of the ascending bucket-and-state pairs, or an unknown_projection fault for an unregistered name
+
+  Scenario: _cmd_tail prints the events that pass the filters
+    Given the tail arguments, a log reader, a clock, and emit
+    When _cmd_tail streams the log
+    Then it emits a structured line for each event that passes the filters and returns zero
+
+  Scenario: _cmd_inspect renders one request's trace
+    Given a request id, a log reader, and emit
+    When _cmd_inspect looks it up
+    Then it emits the request's execution trace and returns zero, or a fault and one when no such request exists
+
+  Scenario: _cmd_query runs a named projection over the log
+    Given a projection name, optional since and bucket, a log reader, a registry, and emit
+    When _cmd_query runs it
+    Then it emits the folded state (bucketed when asked) and returns zero, or the fault message and one for an unknown name
+
+  Scenario: _parser builds the argument grammar for the three commands
+    Given the tail, inspect, and query command surface
+    When _parser is built
+    Then it returns an argument parser that requires one of the three subcommands with their flags
+
+  Scenario: main dispatches a CLI invocation to its command
+    Given the argument vector and the injected reader, clock, registry, and emit
+    When main parses and dispatches it
+    Then it returns the chosen command's exit code
+
+  Scenario: _deserialize turns a log row back into an event
+    Given one honest_event_log row with JSON text columns
+    When _deserialize parses it
+    Then it returns the event with payload parsed and auth or meta parsed only when present
+
+  Scenario: read_event_log reads the event log through a connection
+    Given a database connection
+    When read_event_log selects the log in order
+    Then it returns every honest_event_log row deserialized into an event
+
+  Scenario: _now reads the wall clock in the event-log format
+    Given the current moment
+    When _now reads it
+    Then it returns an ISO timestamp to millisecond precision with a Z
+
+  Scenario: _entry reads the log and runs the CLI over it
+    Given the argument vector, a connection, and a projection registry
+    When _entry materializes the log and dispatches
+    Then it runs the CLI over the events with the wall clock and stdout, returning the exit code
