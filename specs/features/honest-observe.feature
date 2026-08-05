@@ -418,3 +418,48 @@ Feature: honest-observe — event envelope, recording, and projection
     Given the argument vector, a connection, and a projection registry
     When _entry materializes the log and dispatches
     Then it runs the CLI over the events with the wall clock and stdout, returning the exit code
+
+  Scenario: load_config turns a parsed settings table into a validated configuration
+    Given a parsed honest-observe.toml as a dict
+    When load_config merges it over the defaults and validates it
+    Then it returns ok of the fully-defaulted config, or an invalid_config fault for a bad auth provider or a custom provider with no fields
+
+  Scenario: _merged_section lays supplied values over one section's defaults
+    Given a section name and the raw table
+    When _merged_section merges them
+    Then it returns the section's documented keys with supplied values overriding the defaults
+
+  Scenario: _read_text reads and parses the settings file
+    Given a path to a settings file
+    When _read_text reads it
+    Then it returns the parsed table, or the empty table when the file is absent
+
+  Scenario: read_config reads and loads the settings file
+    Given a path to a settings file
+    When read_config reads and loads it
+    Then it returns the loaded configuration, defaulting a missing file to all defaults
+
+  Scenario: development_mode reads the development switch
+    Given a loaded configuration
+    When development_mode reads it
+    Then it returns whether the development section is enabled
+
+  Scenario: framework_event_enabled decides whether an event kind is emitted
+    Given a configuration and an event kind
+    When framework_event_enabled reads it
+    Then it returns the kind's base toggle, except that development mode forces classify events on
+
+  Scenario: include_manifests decides whether payloads carry manifest values
+    Given a loaded configuration
+    When include_manifests reads it
+    Then it returns true only in development mode with the manifests sub-toggle set
+
+  Scenario: include_tracebacks decides whether error payloads carry tracebacks
+    Given a loaded configuration
+    When include_tracebacks reads it
+    Then it returns true only in development mode with the tracebacks sub-toggle set
+
+  Scenario: auto_tail decides whether tail auto-streams
+    Given a loaded configuration
+    When auto_tail reads it
+    Then it returns true only in development mode with the auto_tail sub-toggle set

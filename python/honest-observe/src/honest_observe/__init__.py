@@ -7,6 +7,15 @@ stored by persist without importing it. The log storage itself is the runtime's 
 """
 
 from honest_observe.browser import browser_classify, browser_request, browser_response, build_browser_event, dom_changed
+from honest_observe.config import (
+    auto_tail,
+    development_mode,
+    framework_event_enabled,
+    include_manifests,
+    include_tracebacks,
+    load_config,
+    read_config,
+)
 from honest_observe.devtools import (
     format_inspect,
     format_tail_line,
@@ -49,6 +58,13 @@ from honest_observe.snapshot import build_snapshot, declare_projection, resume_f
 from honest_observe.thresholds import builtin_metrics, compute_metric, condition_met, custom_metric, evaluate_threshold, threshold_projection
 
 __all__ = [
+    "load_config",
+    "read_config",
+    "development_mode",
+    "framework_event_enabled",
+    "include_manifests",
+    "include_tracebacks",
+    "auto_tail",
     "Event",
     "build_event",
     "extract_auth",

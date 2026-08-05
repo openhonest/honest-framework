@@ -893,6 +893,117 @@ def _probe_cli():
     return bad
 
 
+def _probe_config():
+    """The configuration loader and its toggle resolvers (section 11, section 9.5-9.6). load_config turns a
+    parsed honest-observe.toml (a dict) into a fully-defaulted, validated configuration as data: ok(config)
+    for a well-formed table, err(invalid_config) for a bad auth provider or a custom provider with no
+    fields. The resolvers are pure functions of that config: development mode is an override layer that
+    forces classify events on and lets the manifest, traceback, and auto-tail conveniences follow their own
+    [development] sub-toggles, with everything reading its base framework_events toggle in production."""
+    import os
+    import tempfile
+
+    from honest_observe import (
+        auto_tail,
+        development_mode,
+        framework_event_enabled,
+        include_manifests,
+        include_tracebacks,
+        load_config,
+        read_config,
+    )
+
+    bad = []
+
+    # An empty table is the all-defaults configuration: every section present and every documented key at
+    # its default. Pinned as one whole-config oracle so every default value and key is fixed.
+    defaults = load_config({})
+    expected_defaults = {
+        "event_log": {"table": "honest_event_log", "db_id": "primary", "retention_days": 365},
+        "auth": {"provider": "honest-auth", "fields": []},
+        "framework_events": {"chain_events": True, "link_events": True, "persist_events": True, "migration_events": True, "pool_events": True, "state_events": True, "classify_events": False},
+        "otel": {"enabled": False, "service": "", "environment": "production"},
+        "snapshots": {"enabled": True, "default_interval": 1000, "storage_table": "honest_projection_snapshots"},
+        "development": {"enabled": False, "auto_tail": False, "manifests": False, "tracebacks": False},
+    }
+    if defaults != {"ok": expected_defaults}:
+        bad.append(f"an empty config table should be the all-defaults configuration: {defaults}")
+
+    # Supplied values override the defaults, section by section, leaving unmentioned keys at their default.
+    merged = load_config({"event_log": {"db_id": "reporting"}, "framework_events": {"classify_events": True}})
+    if "err" in merged or merged["ok"]["event_log"]["db_id"] != "reporting" or merged["ok"]["event_log"]["table"] != "honest_event_log" or merged["ok"]["framework_events"]["classify_events"] is not True:
+        bad.append(f"supplied values should override only the keys given: {merged}")
+
+    # Validation, as data: a bad provider and a custom provider without fields both fault; custom with a
+    # non-empty fields list is accepted.
+    badprov = load_config({"auth": {"provider": "nope"}})
+    if badprov != {"err": {"code": "invalid_config", "message": "auth.provider must be one of honest-auth, custom, none; got 'nope'", "category": "client", "detail": {"provider": "nope"}}}:
+        bad.append(f"an unrecognised auth provider should be a complete invalid_config fault: {badprov}")
+    nofields = load_config({"auth": {"provider": "custom"}})
+    if nofields != {"err": {"code": "invalid_config", "message": "auth.provider 'custom' requires a non-empty fields list", "category": "client", "detail": {"provider": "custom"}}}:
+        bad.append(f"a custom provider with no fields should be a complete invalid_config fault: {nofields}")
+    withfields = load_config({"auth": {"provider": "custom", "fields": ["user_id"]}})
+    if "ok" not in withfields or withfields["ok"]["auth"]["fields"] != ["user_id"]:
+        bad.append(f"a custom provider with fields should be accepted: {withfields}")
+    # 'none' is a valid provider too — pins every entry of the provider vocabulary.
+    if "ok" not in load_config({"auth": {"provider": "none"}}):
+        bad.append("auth.provider 'none' should be accepted")
+
+    prod = load_config({})["ok"]
+    dev = load_config({"development": {"enabled": True, "manifests": True, "tracebacks": True, "auto_tail": True}})["ok"]
+    dev_bare = load_config({"development": {"enabled": True}})["ok"]
+
+    # development_mode reads the switch.
+    if development_mode(prod) is not False or development_mode(dev) is not True:
+        bad.append("development_mode should read development.enabled")
+
+    # framework_event_enabled: base toggle in production; classify is forced on in development; a
+    # base-on kind stays on either way; a base-off kind other than classify stays off in development.
+    resolver_checks = [
+        (framework_event_enabled(prod, "link"), True, "link on by base toggle"),
+        (framework_event_enabled(prod, "classify"), False, "classify off in production"),
+        (framework_event_enabled(dev_bare, "classify"), True, "classify forced on in development"),
+        (framework_event_enabled(dev_bare, "link"), True, "link stays on in development"),
+        (framework_event_enabled(load_config({"framework_events": {"link_events": False}})["ok"], "link"), False, "link off when its base toggle is off"),
+    ]
+    for got, want, why in resolver_checks:
+        if got != want:
+            bad.append(f"framework_event_enabled: {why} (got {got})")
+
+    # The three conveniences: false in production; in development each follows its own sub-toggle, so dev
+    # mode with the sub-toggle off still reads false.
+    convenience_checks = [
+        (include_manifests(prod), False, "manifests off in production"),
+        (include_manifests(dev), True, "manifests on with dev + sub-toggle"),
+        (include_manifests(dev_bare), False, "manifests off when dev on but sub-toggle off"),
+        (include_tracebacks(prod), False, "tracebacks off in production"),
+        (include_tracebacks(dev), True, "tracebacks on with dev + sub-toggle"),
+        (include_tracebacks(dev_bare), False, "tracebacks off when dev on but sub-toggle off"),
+        (auto_tail(prod), False, "auto_tail off in production"),
+        (auto_tail(dev), True, "auto_tail on with dev + sub-toggle"),
+        (auto_tail(dev_bare), False, "auto_tail off when dev on but sub-toggle off"),
+    ]
+    for got, want, why in convenience_checks:
+        if got != want:
+            bad.append(f"convenience resolver: {why} (got {got})")
+
+    # read_config is the boundary: it reads and parses the file, then load_config. A present file yields its
+    # values; a missing file is the all-defaults configuration.
+    handle, path = tempfile.mkstemp(suffix=".toml")
+    try:
+        with os.fdopen(handle, "w") as fh:
+            fh.write('[event_log]\ndb_id = "reporting"\n\n[development]\nenabled = true\nmanifests = true\n')
+        loaded = read_config(path)
+        if "err" in loaded or loaded["ok"]["event_log"]["db_id"] != "reporting" or include_manifests(loaded["ok"]) is not True:
+            bad.append(f"read_config should read and load the file: {loaded}")
+    finally:
+        os.remove(path)
+    missing = read_config(path)
+    if "err" in missing or missing["ok"] != load_config({})["ok"]:
+        bad.append(f"read_config of a missing file should be the all-defaults configuration: {missing}")
+    return bad
+
+
 def _probe_threshold_engine():
     """The threshold metric engine (section 8b): a metric is a fold plus a value over the log
     (custom_metric / compute_metric), and a condition is the threshold-crossing decision
@@ -1231,6 +1342,7 @@ def run():
         "inspect": _probe_inspect(),
         "query": _probe_query(),
         "cli": _probe_cli(),
+        "config": _probe_config(),
         "threshold_engine": _probe_threshold_engine(),
         "builtin_metrics": _probe_builtin_metrics(),
         "threshold_projection": _probe_threshold_projection(),

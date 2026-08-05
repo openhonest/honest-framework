@@ -1615,6 +1615,12 @@ default_interval  = 1000           # snapshot every N events
 storage_table     = "honest_projection_snapshots"
 ```
 
+**The config loader.** `load_config` turns a parsed `honest-observe.toml` (a plain dict) into a complete, typed configuration. Reading the file is the boundary's concern; `load_config` is pure — a dict in, a validated configuration out. Every documented key has a default, and those defaults live in one place: a single defaults table the loader merges the supplied values over, so a missing key is resolved once, here at the boundary, and never as a scattered call-site fallback. A missing file is simply the empty table, which resolves to the all-defaults configuration. The result carries all six sections — `event_log`, `auth`, `framework_events`, `otel`, `snapshots`, and `development` — fully populated.
+
+Validation is a fault as data, not an exception. `auth.provider` must be one of `honest-auth`, `custom`, or `none`, and `custom` requires a non-empty `fields` list. An unrecognised provider, or `custom` without fields, returns `err(fault "invalid_config", ...)`; a well-formed table returns `ok(config)`.
+
+**Acting on the toggles.** Whether an event kind is emitted, whether link and browser payloads carry manifest values, whether error payloads carry tracebacks, and whether `tail` auto-streams are all pure functions of the loaded configuration — there is no `if DEBUG` anywhere. Development mode (§9.5) is the `[development]` section, and it is an override layer, not a second switch. When `development.enabled` is set, `framework_event_enabled(config, "classify")` reads true regardless of the base `framework_events.classify_events`, and the three development conveniences each follow their own `[development]` sub-toggle: `include_manifests(config)` follows `development.manifests`, `include_tracebacks(config)` follows `development.tracebacks`, and `auto_tail(config)` follows `development.auto_tail`. With `development.enabled` false, `framework_event_enabled` reads each kind's base `framework_events` toggle and the three convenience resolvers all read false. The boundaries that emit consult these resolvers, so the decision is data and is the same decision everywhere it is asked.
+
 ---
 
 ## 12. Conformance
