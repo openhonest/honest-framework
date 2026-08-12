@@ -1,6 +1,6 @@
 {
   "spec": "finite-testability",
-  "version": "0.1",
+  "version": "0.2",
   "definition": "State is testability-neutral iff the production decisions reaching it partition its domain into a statically-enumerable finite set of equivalence classes. Partition-count, not value-count.",
   "verdicts": ["NEUTRAL", "PROMISCUOUS", "UNRESOLVED"],
   "note": "Portable, tool-neutral conformance vectors for finite-testability.md. Vendor these (copy and run by case id); do not import either tool. The gate (Honest Framework) realizes each verdict by construction across its rules (HC-P001/P003/P004/P016/P018): it accepts NEUTRAL and rejects PROMISCUOUS and UNRESOLVED constructs, demanding they be made bounded or declared. The meter (Slop Audit) measures the verdict directly and fail-closes to UNRESOLVED whatever it cannot prove, then discloses that (finite-testability.md section 7). Reference snippets are Python; each is minimal and illustrates only the construct the verdict turns on.",
@@ -43,7 +43,47 @@
       "drives_decision": true,
       "reason": "the callee is selected by getattr with an open name argument, so the target set is unbounded; single-writer and local do not rescue it (the HC-P018 construct).",
       "language": "python",
-      "source": "def dispatch(self, name, arg):\n    return getattr(self, name)(arg)\n"
+      "source": "class Router:\n    def __init__(self, name):\n        self._name = name\n\n    def route(self, arg):\n        return getattr(self, self._name)(arg)\n"
+    },
+    {
+      "id": "invoked-only-collaborator",
+      "verdict": "NEUTRAL",
+      "drives_decision": false,
+      "reason": "self.app is bound once at construction and its only non-assignment use is as the target of a call whose result is returned, so no decision reads its value to select an arm and its reaching-set is empty; what the collaborator does when it runs is the collaborator's own finite-testability, compositionally. The arguments passed through the call still reach an unbounded target and remain UNRESOLVED in their own right.",
+      "language": "python",
+      "source": "class Middleware:\n    def __init__(self, app):\n        self.app = app\n\n    async def __call__(self, scope, receive, send):\n        return await self.app(scope, receive, send)\n"
+    },
+    {
+      "id": "invoked-result-reaches-a-condition",
+      "verdict": "NEUTRAL",
+      "drives_decision": true,
+      "reason": "the host branches on what the injected collaborator returned, so a path from the state to a decision does exist and must be followed rather than assumed away. The partition is the host's own arm count, which is finite: a collaborator whose answer takes one arm against a collaborator whose answer takes the other. Finite partition, so NEUTRAL, but it drives a decision and the coverage matrix must say so.",
+      "language": "python",
+      "source": "class Guard:\n    def __init__(self, check):\n        self._check = check\n\n    def allow(self, req):\n        if self._check(req):\n            return \"ok\"\n        return \"deny\"\n"
+    },
+    {
+      "id": "rebound-call-target",
+      "verdict": "UNRESOLVED",
+      "drives_decision": true,
+      "reason": "the invoked slot is assigned in more than one place, so which callee is live at the call site depends on invisible history: runtime rebinding of dispatch, the construct honest-test section 4.8 rejects. Bound-once is what separates an injected collaborator from a rebindable dispatch slot.",
+      "language": "python",
+      "source": "class Router:\n    def __init__(self, handler):\n        self._h = handler\n\n    def swap(self, handler):\n        self._h = handler\n\n    def route(self, req):\n        return self._h(req)\n"
+    },
+    {
+      "id": "collaborator-mutated-through-the-slot",
+      "verdict": "UNRESOLVED",
+      "drives_decision": true,
+      "reason": "the host writes through the slot, so the collaborator at the call site is not provably the value that was injected and the host now depends on the collaborator's internal shape, which it cannot enumerate. The compositional argument needs its premise checked, not assumed; here the check fails and the state stays fail-closed.",
+      "language": "python",
+      "source": "class Host:\n    def __init__(self, sink):\n        self._sink = sink\n\n    def configure(self):\n        self._sink.limit = 10\n\n    def run(self, req):\n        return self._sink(req)\n"
+    },
+    {
+      "id": "module-level-invoked-slot",
+      "verdict": "UNRESOLVED",
+      "drives_decision": true,
+      "reason": "the slot is invoked, but it is a module global rather than instance state, so the scope rule that makes the compositional argument work does not apply: a class field's writers are the methods of its own class, while any compilation unit can assign a module global holding a callable. No writer set is enumerable, so it stays fail-closed. This is the boundary of the call-target rule.",
+      "language": "c",
+      "source": "typedef int (*Handler)(int);\nstatic Handler handler;\n\nint route(int r) { return handler(r); }\n"
     },
     {
       "id": "returned-raw-value",

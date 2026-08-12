@@ -1,6 +1,6 @@
 # Finite-testability: the shared definition
 
-Status: v0.1, locked core. **Tool-neutral and shared.** This is the common definition of finite-testability that the Honest Framework gate (honest-check `HC-P018`, honest-test §4.8) and the Slop Audit meter (`L1.18` / `L1.19`) both build on. It is **coupled to neither tool**: each implements it independently and both are checked against the same conformance vectors (`finite-testability-vectors.json`). Neither tool imports the other; the audit **cites** this definition and **vendors** the vectors by case id.
+Status: v0.2, locked core. **Tool-neutral and shared.** This is the common definition of finite-testability that the Honest Framework gate (honest-check `HC-P018`, honest-test §4.8) and the Slop Audit meter (`L1.18` / `L1.19`) both build on. It is **coupled to neither tool**: each implements it independently and both are checked against the same conformance vectors (`finite-testability-vectors.json`). Neither tool imports the other; the audit **cites** this definition and **vendors** the vectors by case id.
 
 Interim location note: this document lives under `honest-framework/specs/` only because the Foundation repository is not yet initialised. It is a standalone artifact intended for a neutral Foundation home and is relocatable without change. Placement does not imply ownership by the framework.
 
@@ -19,6 +19,8 @@ A piece of state is **testability-neutral** iff the production decisions reachin
 - **Partition.** The equivalence classes the reaching decisions impose on the reaching-domain (e.g. `>= max` imposes two classes; a dispatch over a closed vocabulary imposes one class per member).
 - **Observe-only.** S reaches no production decision (empty reaching-set). Written by an observer/boundary, read only by an asserter.
 - **Bounded target set (of a call).** The callees a call site can invoke are a finite, statically-visible set. Its complement — an unbounded target set — makes the reaching-domain uncomputable (§6).
+- **Call-target position.** A reference to S that is the callee of a call site: `S(...)`, `await S(...)`. S supplies *what runs*; it is not an operand any arm selector reads.
+- **Injected collaborator.** State bound exactly once, at construction or at module definition, whose every non-assignment reference is in call-target position. It is never mutated, never passed as a bare argument, never returned whole, and never read into a condition.
 
 ## 3. Verdicts
 
@@ -33,6 +35,8 @@ Every piece of state resolves to exactly one of three verdicts:
 - **Analysis scope is the class or module, not the function.** Instance-state writers and self-branches are the methods of the class, enumerable with no whole-program pass. At function scope everything escapes; at class scope most instance state resolves.
 - **Returns are output, not promiscuity.** A returned value is NEUTRAL for the function that produces it; covering the returned domain is the caller's concern (compositional). Returns are never fail-closed.
 - **Fail-close (UNRESOLVED) only on** a value passed to an unbounded call target, or reflective/dynamic access that hides the reaching-set. A shared-write value reaching an unbounded-partition decision is PROMISCUOUS (proven), not merely unresolved.
+- **Call-target position is compositional, exactly as return position is.** Invoking state is not a decision *on* that state: the call site does not read S's value to select an arm. So the meter does not fail-close here, and it does not assume the answer either. It follows the call result the same way it follows any other call result, and computes what the host does with it. Three outcomes fall out. If the result is returned or discarded, nothing partitions S's domain: the reaching-set is empty and S is NEUTRAL, drives-a-decision *no*. If the result reaches a branch, the partition is the host's own arm count, which is finite: S is NEUTRAL, drives-a-decision *yes*, because the host distinguishes only a collaborator whose answer takes one arm from a collaborator whose answer takes another. If the result reaches an unbounded decision, the ordinary rules apply and S is PROMISCUOUS. What the collaborator does when it runs is the collaborator's own finite-testability, exactly as covering a returned value's domain is the caller's. The rule is about S alone. The **arguments** passed through `S(...)` still reach an unbounded target and stay UNRESOLVED, so §6's decidability precondition is untouched.
+- **An injected collaborator must be provably still the thing that was injected.** The verdict above is a proof, so it needs its premises checked, and three constructs defeat them. **Not instance state:** the rule reaches only state whose writers are enumerable, which by the scope rule above means the fields of a class or struct, bound where the value is constructed. A module-level slot holding a callable — a C function pointer, a module global — has no enumerable writer set at all, because any compilation unit can assign it, so it stays UNRESOLVED. **Rebinding:** a call target assigned in more than one place is runtime rebinding of dispatch, the construct honest-test §4.8 rejects, where which callee is live at a call site depends on invisible history. **Reaching in:** writing through the slot (`S.attr = v`) or mutating S in place makes the host depend on the collaborator's internal shape, which the host cannot enumerate. Any one of the three keeps S UNRESOLVED. References that are neither a call target nor one of these constructs are ordinary references, and the ordinary rules decide them.
 - **Bounded includes declared-closed-set dynamic access.** `getattr`/`setattr`/`import` whose name argument ranges over a *declared closed set* (a vocabulary, a watch-list, an enum) has a bounded target set and is NEUTRAL. The violation is an *unbounded* name argument, not dynamism as such (this is the bounded-vs-unbounded, not static-vs-dynamic, line).
 
 ## 5. Two forces, one predicate: the gate/meter asymmetry
@@ -71,6 +75,11 @@ Both tools pass the same cases in `finite-testability-vectors.json` (the gate by
 | multi-writer-capped-counter | NEUTRAL | yes | domain {0..N}, two classes; writer-count irrelevant |
 | raw-int-vs-constant | NEUTRAL | yes | partition = comparison count + 1 |
 | single-writer-local-but-dynamic-dispatch | UNRESOLVED | yes | callee set unbounded; single-writer + local is not sufficient |
+| invoked-only-collaborator | NEUTRAL | no | bound once and only ever invoked; the result is returned, so no decision partitions its domain |
+| invoked-result-reaches-a-condition | NEUTRAL | yes | the host branches on what the collaborator returned; partition = the host's arm count |
+| rebound-call-target | UNRESOLVED | yes | the invoked slot is assigned in more than one place: runtime rebinding of dispatch |
+| collaborator-mutated-through-the-slot | UNRESOLVED | yes | the host writes through the slot, so S is not provably the value that was injected |
+| module-level-invoked-slot | UNRESOLVED | yes | a module global holding a callable: any compilation unit can assign it, so no writer set is enumerable |
 | returned-raw-value | NEUTRAL | n/a | compositional; the caller's concern |
 | module-global-in-branch | PROMISCUOUS | yes | shared-write into an unbounded partition |
 | pass-to-unknown-callee | UNRESOLVED | yes | reaching-set undecidable (the HC-P018 construct) |
