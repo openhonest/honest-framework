@@ -1017,8 +1017,11 @@ is synchronous in every language. A SQLite connection adapter makes that one blo
 without stalling other work (for example, on a worker thread) and presents the async `execute`
 the boundary expects. Above that adapter, nothing is synchronous.
 
-They accept a connection (not a pool — the caller manages connection acquisition). They return
-plain data: lists of dicts, single dicts, or scalars. `execute_one` and `execute_scalar` return
+They accept a connection, not a pool. The connection is resolved and supplied by persist itself,
+from the manifest, by the routing described in section 8.1 — the application never acquires,
+holds, or closes one. `execute` is an internal boundary function whose collaborator happens to be
+a connection; it is not the surface an application calls with a connection it went and got. They
+return plain data: lists of dicts, single dicts, or scalars. `execute_one` and `execute_scalar` return
 nothing (the host language's null) when there are no rows.
 
 The connection is the boundary's one collaborator, duck-typed: `await conn.execute(sql, params)`
@@ -1072,7 +1075,7 @@ FUNCTION transaction(writes, conn):                      -- async; awaits the co
 
 Catching here is sanctioned, exactly as in `apply` (section 5.2): a transaction cannot roll back without seeing the failure, so this one boundary function turns a driver error into control flow. Everywhere else, faults flow as data.
 
-**Preconditions are ordinary code.** Where a write should happen only under some condition — a balance stays non-negative, a set keeps at least one required member — the developer writes that check as an ordinary early-return guard in the link before the write, the same as any other business rule, and honest-test reaches it through the pure-function strategy (honest-test section 5). The framework provides no special check-and-write primitive and does not promise to make overlapping transactions safe for you: choosing an isolation level and handling concurrent writes is the application's responsibility, not honest-persist's.
+**Preconditions are ordinary code.** Where a write should happen only under some condition — a balance stays non-negative, a set keeps at least one required member — the developer writes that check as an ordinary early-return guard in the link before the write, the same as any other business rule, and honest-test reaches it through the pure-function strategy (honest-test section 5). The framework provides no special check-and-write primitive, and choosing an isolation level is the application's concern. Absorbing an engine's conflict aborts is not: see section 7.7.
 
 ### 7.6 Multiple Query Style APIs
 
@@ -1101,6 +1104,34 @@ results = await users.prisma.find_many(where={"status": "active"})
 
 The multiple styles are a concession to team familiarity. They do not change
 the underlying model: query is data, execution is I/O, no session, no state.
+
+### 7.7 Conflict Retry at the Boundary
+
+Some engines defer write-conflict detection to the commit. The write runs, and only then is the commit rejected, because another transaction touched the same data first. The engine's own sanctioned handling of that rejection is to roll it back and run it again.
+
+A rejection of this kind is not a logical failure. The write was well formed and permitted. It lost a race. Nothing about the application's data or intent was wrong, and re-running the identical statement is expected to succeed.
+
+**The boundary absorbs it, and the caller never learns it happened.** This follows from section 10. Which writes collide, and whether the engine detects collisions per row or per storage page, are engine properties. An application that handles conflict aborts must model the engine's detection granularity — and detection granularity changes between engines, and between versions of one engine. Push that upward and every caller has to change when the engine does.
+
+**The retry is thin, and thin is a requirement, not a description.** It re-runs the identical unit, unchanged. It makes exactly one decision: is this rejection a conflict, or a logical failure? A conflict is retried. A constraint violation is never retried — it will fail identically however many times it runs, and it belongs to the caller, who wrote a value the schema forbids.
+
+Thin is defined by what it excludes. No reordering of writes. No partial replay of a multi-write unit; the unit is the retry granularity, whole. No policy knob at this layer. A knob here would be the engine detail escaping into the caller by a different door, which is the thing section 10 forbids.
+
+**The retryable set is declared per dialect, as data.** Each dialect declares which rejections mean contention. Classification is a lookup against that declaration, never a chain of conditionals over driver message text scattered through the boundary.
+
+**The retry is bounded, and the bound is declared, not defaulted.** It sits beside the retryable set in the dialect's declaration, never as a literal inside the retry loop. The bound is load-bearing: under heavy contention it is the bound, not the engine, that decides how many writes land, so a value nobody chose is a value nobody can defend. This is not a contradiction of the no-knob rule above — the application does not set it, because the application does not know the engine. It is set once, deliberately, where the engine is known.
+
+A bound is only meaningful next to the contention it was chosen for, so the declaration records that too: the level of concurrent contention at which this bound was verified to land every write. Without it the number is a preference. With it, it is a claim an operator can check against the traffic actually arriving, and a claim that can be shown false.
+
+**Exhaustion is typed as contention, and it is an ordinary outcome.** When the bound is reached, the fault names contention as the cause. It is never reported as a constraint violation or a generic write failure. Reporting a lost race as the caller's error is a lie about whose fault it is, and it sends whoever debugs it to the wrong place. Contention exhaustion is not an exceptional condition to be handled at the last resort: on a contended row it is a routine result, and every consumer surface must carry it as one of the answers a write can give.
+
+**The retry emits, and the first attempt is counted separately.** A retry nobody can see hides a real cost. The conflict rate is a joint property of the application's access pattern and the engine's detection granularity; an application whose writes contend badly is an application with a fixable design, and it cannot be fixed if the rate is invisible. Absorbing the failure is correct. Concealing the frequency is not.
+
+The reason the first attempt is counted apart from the rest is that it degrades first. As contention rises, the share of writes that succeed without any retry falls steadily while the share that eventually land stays at everything — the retry quietly absorbs more and more, and nothing fails. By the time writes begin to fail outright, the system has already been running deep into its retry budget for some time. First-attempt success is therefore the leading indicator and the eventual success rate is the lagging one, and an implementation that emits only the second gives an operator no warning at all.
+
+This is not the write queue's retry (section 8.6). That one governs how many times, and over how long, the system will try to make a write durable, which is a question the caller has a genuine stake in and answers itself. This one absorbs an artefact of the engine, which the caller has no stake in and cannot answer.
+
+The bug category this eliminates: application code that must tell a lost race apart from its own error. Left to the caller, the two arrive by the same channel and are routinely conflated — a retryable contention abort gets reported to a user as invalid input, or a genuine constraint violation gets retried until a bound expires. Neither is recoverable once the distinction is lost, and only the layer that knows the engine can still make it.
 
 ---
 
@@ -1313,11 +1344,21 @@ the `hf.request.canonical` event.
 `emit_internal()` is a no-op. The check is a single boolean test before any
 work is done.
 
-### 8.6 Optimistic Write Queue
+### 8.6 The Write Queue Is the Asynchronous Path
 
-For high-latency backends, the write queue returns to the caller immediately
-while persisting in the background. It is transparent: the caller API does
-not change.
+The application makes exactly one choice at this boundary: how it wants to wait. Nothing else crosses the line — no connection, no pool, no dialect, no engine setting (section 10).
+
+**Synchronous** blocks, performs the write, and returns a success code. When it returns, the answer is known.
+
+**Asynchronous** returns a ticket at once. Not a completed write, and not a connection — a claim the application redeems later, by collecting the ticket, or never. It trades certainty now for the caller's time back.
+
+These are two different things, not two spellings of one thing. An asynchronous call that resolves only when the write is durable is a synchronous call with extra syntax.
+
+The write queue is the mechanism of the asynchronous path, and only of it. It holds the write as data — its statement and its parameters — so the write survives being deferred, can be drained later, and can be re-run. The ticket is how the application composes its own atomicity: deposit three writes and collect all three to make them a unit; collect one before depositing the write that depends on it to express an ordering; collect only the one whose answer is needed and leave the rest running. Failure is per ticket, so one write can be retried while the others stand. No single fixed transaction shape fits every multi-write operation, and this does not impose one.
+
+**Under the synchronous path there is no queue.** The call waits, so there is nothing to defer. An application that chooses synchronous and still needs queuing — to smooth a burst, to batch, to bound its own concurrency — builds that queue in its own I/O layer, where it belongs, because it is that application's policy and not the database library's.
+
+This is not a gap. A hidden queue beneath a synchronous call would return before the write was durable, which is precisely what synchronous promises it does not do. Providing one would make the return value a lie. The bug category the split eliminates: a call whose return value does not mean what its shape says it means.
 
 ```
 write_queue config:
@@ -1524,8 +1565,17 @@ access triggers a second query.
 **No active record.** Models do not have `save()`, `delete()`, or `update()`
 methods. Models are data. Persistence functions are separate.
 
-**No module-level connection state.** The pool is always a parameter, never
-a global.
+**No module-level connection state.** The pool cache is an ordinary value, threaded through as a
+parameter and handed back updated. It is never a global and never a singleton.
+
+**No connection or pool in the caller's hands.** The application chooses how it wants to wait, and
+nothing else. No connection, no pool, no dialect, and no engine flag crosses that line. A library
+that hands out connections makes every engine decision the application's decision: the application
+must then know which journal mode is safe, which concurrency mode is a preview, and which
+combination silently loses writes. It also leaves an engine-specific branch nowhere to live except
+inside the pool, because the pool is then the outermost thing the application touches. The bug
+category this eliminates is an engine detail escaping into application code, where it cannot be
+changed without changing every caller.
 
 **No revision chain for migrations.** The schema is the source of truth.
 Migrations are diffs against the live database, not against a previous
@@ -1552,7 +1602,10 @@ A conformant honest-persist implementation must:
 5. Implement `execute()` functions that return plain dicts, not model
    instances.
 
-6. Implement the pool as a parameter, not a global or singleton.
+6. Implement the pool as an internal value, threaded as a parameter, never a
+   global and never a singleton. It is never returned to the caller and never
+   accepted from the caller. A public function that takes or returns a
+   connection or a pool is a conformance failure, not a convenience (§8.1, §10).
 
 7. Support at least one dialect. Declare which dialects are supported.
 
@@ -1597,6 +1650,24 @@ A conformant honest-persist implementation must:
 18. Diff views, triggers, and procedures by the set theory of §5.7. Functions use
     replace semantics; a view's `depends_on` participates in dependency ordering.
 
+19. For any dialect that detects write conflicts at commit, absorb the conflict at
+    the boundary (§7.7): re-run the identical unit, bounded; classify by the
+    dialect's declared retryable set, never by conditionals over driver text; never
+    retry a constraint violation; type the exhausted fault as contention; and emit
+    every retry. A conflict abort must not reach application code, and its
+    frequency must not be hidden from operators. Count first-attempt success
+    separately from eventual success: the first degrades while the second still
+    reads as perfect, so only the first gives warning. The bound is declared beside
+    the retryable set, never written as a literal in the retry loop, and the
+    declaration records the contention level at which the bound was verified.
+
+20. Offer the synchronous path, the asynchronous path, or both, and declare which
+    (§8.6). The application's only choice at this boundary is which of them it
+    wants. An asynchronous surface requires the write queue; a synchronous-only
+    implementation omits it and provides no queue of its own. Contention
+    exhaustion is a declared outcome of a write on either path, not an
+    exceptional condition.
+
 **HC-P013 — Unbounded database routing key**
 
 Severity: Error
@@ -1619,9 +1690,16 @@ FUNCTION check_HC_P013(vocabulary, binding):
                       '{type_name}' — use a bounded Set recognizer instead")
 ```
 
-Implementations may omit the write queue, the multi-tenant manager, the type
+Implementations may omit the multi-tenant manager, the type
 abstractions of sections 6.3-6.5 (hierarchy, arrays and maps, ranges), and the
-zero-downtime cutover of section 9.2. These are optional extensions;
+zero-downtime cutover of section 9.2. An implementation may also offer only the
+synchronous path, in which case it omits the write queue (§8.6) and declares that
+it has no asynchronous surface. It may not offer an asynchronous surface without
+the queue: the ticket is a claim on a write held as data, and there is nothing to
+hold it. The boundary conflict retry of §7.7 is not covered by any of this — it is
+required on both paths for every dialect that detects conflicts at commit, because
+a query is already data (§7.2) and re-running it needs no queue. These are optional
+extensions;
 implementations must declare which they support. Enum abstraction (section 6.1)
 and CHECK enforcement (section 6.2) are not optional — they are cross-dialect
 correctness guarantees.
