@@ -1,0 +1,37 @@
+Documentation licence
+=====================
+
+Copyright 2026 Adam Z. Wasserman / Open Honest Foundation
+
+Documentation content is licensed under the Creative Commons
+Attribution-NonCommercial 4.0 International License (CC-BY-NC-4.0), not under
+the Apache License 2.0 that covers the code.
+
+    https://creativecommons.org/licenses/by-nc/4.0/
+    Full legal text: https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+What this covers
+----------------
+
+`specs/`, `articles/`, and `methodology/`, which is the same scope the previous
+combined LICENSE stated. All three directories exist in this repository.
+
+What it does not cover
+----------------------
+
+The software: `python/`, `javascript/`, `ruby/`, `principles/`, and the
+reference implementations generally. Those are Apache 2.0. See LICENSE.
+
+Code examples embedded inside documentation are part of the software and carry
+the Apache 2.0 licence, so anyone reading the specs can use what they find
+there without a non-commercial restriction.
+
+Why the split is in two files
+-----------------------------
+
+Both licences were previously stated in one summarised LICENSE. Licence
+detectors match canonical text, so a summary carrying an extra clause matched
+nothing: GitHub reported this repository as NOASSERTION ("Other") and every
+registry recorded no licence at all. LICENSE now holds the unmodified Apache
+2.0 text so it is detected, and this file carries the documentation terms.
+Neither licence has been altered; only which file states them.
