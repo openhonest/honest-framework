@@ -1020,3 +1020,9 @@ Feature: honest-check — Python supplement
     When declared_column is asked for its column
     Then it returns the column that keyword names
     But a keyword the four-column model does not name raises rather than defaulting
+
+  Scenario: undeclared_members names every member owing a declaration
+    Given the members the workspace declares and the ones found to carry a .hd
+    When undeclared_members compares them
+    Then it names every member with neither a declaration nor an exemption
+    But a member exempt by name is subtracted by that name, never by its file being absent

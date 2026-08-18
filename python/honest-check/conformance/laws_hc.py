@@ -1611,14 +1611,50 @@ def _probe_declared_roles():
         "  fn pure_one : (p: str) -> str\n"
         "  boundary_out fn emit : (p: str) -> str side_effect writes \"network\"\n"
     )
-    roles = declared_roles(source)
+    result = declared_roles(source)
     expected = {"intake": "boundary_in", "pure_one": "fn", "emit": "boundary_out"}
-    if roles != expected:
-        bad.append(f"declared_roles must return each function's declared role: {roles}")
-    if declared_roles("module m\n") != {}:
-        bad.append("a module declaring no function has no roles")
-    if declared_roles("module m\n  fn (((\n") != {}:
-        bad.append("source that does not parse yields no roles rather than raising")
+    if result.get("ok") != expected:
+        bad.append(f"declared_roles must return each function's declared role: {result}")
+    roles = result.get("ok", {})
+
+    # A declaration of nothing and a declaration that would not parse are different facts, and
+    # returning {} for both made them one value no caller could tell apart. That is how a gate
+    # comes to be satisfied by deleting the file it reads.
+    if declared_roles("module m\n").get("ok") != {}:
+        bad.append("a module declaring no function is ok with an empty mapping")
+    unparsable = declared_roles("module m\n  fn (((\n")
+    if "err" not in unparsable:
+        bad.append(f"source that does not parse must be a named failure, not an empty mapping: {unparsable}")
+    elif unparsable["err"]["code"] != "hd_unreadable":
+        bad.append(f"the failure must name itself: {unparsable['err']['code']}")
+    else:
+        for field in ("message", "category"):
+            if not unparsable["err"][field]:
+                bad.append(f"the failure carries an empty {field}, which tells the reader nothing")
+
+    # Membership: a member expected to carry a declaration and carrying none is a finding, and an
+    # exemption is written down rather than inferred from the file being absent.
+    from honest_check.declared import EXEMPT_FROM_DECLARATION, undeclared_members
+    # Names chosen so the assertion does not couple to whatever the real exemption table holds:
+    # one member that declares itself, one that does not, one that is exempt by name.
+    missing = undeclared_members({"declares-itself", "declares-nothing", "tree-sitter-honest-hd"}, {"declares-itself"})
+    if missing != ["declares-nothing"]:
+        bad.append(f"a member with no declaration and no exemption is a finding: {missing}")
+    if "tree-sitter-honest-hd" not in EXEMPT_FROM_DECLARATION:
+        bad.append("a generated-grammar package must be exempt by declaration, with its reason")
+    # Every exemption, not a sample. A key swapped for a sibling's would apply one member's
+    # exemption to another and leave the first unexcused, and the count is what catches it,
+    # because Python keeps the last of a duplicated key.
+    # The names themselves, not just how many. Emptying a key leaves the count intact and
+    # quietly un-exempts the member it belonged to. Coupled to the table on purpose: changing
+    # who is exempt should require saying so here, which is the visibility this rule is for.
+    if set(EXEMPT_FROM_DECLARATION) != {"tree-sitter-honest-hd", "tree-sitter-honest-jinja", "honest-page"}:
+        bad.append(f"the exemption table names: {sorted(EXEMPT_FROM_DECLARATION)}")
+    for member, reason in EXEMPT_FROM_DECLARATION.items():
+        if not reason.strip():
+            bad.append(f"the exemption for {member} carries no reason, which is the whole point of it")
+        if len(reason.split()) < 5:
+            bad.append(f"the reason for {member} says too little to argue with: {reason!r}")
 
     # The column each role names, and the refusal for one the model does not name. A default
     # column here would put a function the grammar grew into whichever column happened to be
