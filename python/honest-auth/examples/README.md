@@ -1,11 +1,8 @@
 # honest-auth provider templates
 
-These are **adopter scaffolds, not shipped providers.** They live outside `src/`, so they are outside
-every framework gate (honest-check lint, 100% coverage, value oracle, mutation, bijection) on purpose:
-they are starting points you copy into your own application and complete, then gate in *your* repo.
+These are **adopter scaffolds, not shipped providers.** They live outside `src/`, so they are outside every framework gate (honest-check lint, 100% coverage, value oracle, mutation, bijection) on purpose: they are starting points you copy into your own application and complete, then gate in *your* repo.
 
-The framework deliberately ships no default provider (spec section 3.2) — a weak default is a false sense
-of security. Each template here is a real `AuthProvider` shape with the one hard part left to you.
+The framework deliberately ships no default provider (spec section 3.2) — a weak default is a false sense of security. Each template here is a real `AuthProvider` shape with the one hard part left to you.
 
 | File | Factory | Provider |
 |---|---|---|
@@ -22,11 +19,8 @@ of security. Each template here is a real `AuthProvider` shape with the one hard
 
 ## What you complete
 
-- **`resolve_actor`** — the boundary validator. It currently **fails closed** (denies every request) until
-  you wire the provider's JWKS verification. Each file's docstring lists the exact steps: fetch/cache the
-  keys, verify the signature, check `iss`/`aud`/`exp`, map the `sub` claim to your actor.
-- **`test_token_generator`** — once `resolve_actor` is real, mint a token per class (valid, revoked,
-  expired, malformed, missing, forged) from the provider's test tenant.
+- **`resolve_actor`** — the boundary validator. It currently **fails closed** (denies every request) until you wire the provider's JWKS verification. Each file's docstring lists the exact steps: fetch/cache the   keys, verify the signature, check `iss`/`aud`/`exp`, map the `sub` claim to your actor.
+- **`test_token_generator`** — once `resolve_actor` is real, mint a token per class (valid, revoked, expired, malformed, missing, forged) from the provider's test tenant.
 
 ## How you know you are done
 
@@ -37,6 +31,4 @@ from honest_auth import authentication_honesty
 result = authentication_honesty(your_provider, context)   # ok(provider) when every token class is honest
 ```
 
-Until `resolve_actor` is wired, this fails on the `valid` class — the honest signal that the template is
-still a template. The URLs and claim names above are the stable patterns; confirm them against each
-provider's current documentation before you ship.
+Until `resolve_actor` is wired, this fails on the `valid` class — the honest signal that the template is still a template. The URLs and claim names above are the stable patterns; confirm them against each provider's current documentation before you ship.

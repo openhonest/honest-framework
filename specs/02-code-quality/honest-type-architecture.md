@@ -1,8 +1,6 @@
 # honest-type: Language-Agnostic Architecture Specification
 
-**Version:** 0.1 (Draft)
-**Date:** March 11, 2026
-**Status:** In progress — being developed interactively
+**Version:** 0.1 (Draft) **Date:** March 11, 2026 **Status:** In progress — being developed interactively
 
 ---
 
@@ -240,16 +238,13 @@ binding = {
 }
 ```
 
-When `format_name` is `"currency"` but no `integer` is present: `decimals: Nothing`.
-When `format_name` is `"currency"` and `integer` is `"2"`: `decimals: "2"`.
-When `format_name` is not `"currency"`: the composed type doesn't match at all.
+When `format_name` is `"currency"` but no `integer` is present: `decimals: Nothing`. When `format_name` is `"currency"` and `integer` is `"2"`: `decimals: "2"`. When `format_name` is not `"currency"`: the composed type doesn't match at all.
 
 ### 5.5 Staying fully listable, with Maybe
 
 Maybe adds exactly one more case to the list: `Nothing`.
 
-For a bounded Set of 4 integers: `maybe("integer")` has 5 test cases (4 values + Nothing).
-For an unbounded predicate: still unbounded, plus Nothing.
+For a bounded Set of 4 integers: `maybe("integer")` has 5 test cases (4 values + Nothing). For an unbounded predicate: still unbounded, plus Nothing.
 
 This plays cleanly with honest-test — `Nothing` is just another value to enumerate.
 
@@ -526,8 +521,7 @@ binding = {
 
 **Pass 2b:** format_name → format = "currency"
 
-**Pass 2c:** currency_code is maybe, slot "currency" not in manifest → Nothing.
-integer is maybe, slot "precision" not in manifest → Nothing.
+**Pass 2c:** currency_code is maybe, slot "currency" not in manifest → Nothing. integer is maybe, slot "precision" not in manifest → Nothing.
 
 **Final manifest:**
 ```

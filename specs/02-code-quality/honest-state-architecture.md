@@ -1,8 +1,6 @@
 # honest-state: Architecture Specification
 
-**Date:** June 2026
-**Status:** Active
-**Author:** Adam Zachary Wasserman
+**Date:** June 2026 **Status:** Active **Author:** Adam Zachary Wasserman
 
 ---
 

@@ -1,7 +1,6 @@
 # Honest Framework — JavaScript reference implementation
 
-This is the JavaScript track of the Honest Framework. The normative specifications live in
-[`../specs/`](../specs/); the mature reference implementation is [`../python/`](../python/).
+This is the JavaScript track of the Honest Framework. The normative specifications live in [`../specs/`](../specs/); the mature reference implementation is [`../python/`](../python/).
 
 ## Status
 
@@ -17,10 +16,7 @@ The bootstrapping path below is how the JavaScript-native seeds (`parse`/`type`/
 
 ## Bootstrapping (read the spec first)
 
-The normative path is **[Bootstrapping a New Language Implementation](../specs/01-framework/honest-framework-spec.md#bootstrapping-a-new-language-implementation)**
-in the Tier-1 spec. It is built **gate-first, in dependency order** — the verifier stands up
-before the modules it certifies — not module-first-tested-after. What follows is only the
-JavaScript-specific concretion of that path.
+The normative path is **[Bootstrapping a New Language Implementation](../specs/01-framework/honest-framework-spec.md#bootstrapping-a-new-language-implementation)** in the Tier-1 spec. It is built **gate-first, in dependency order** — the verifier stands up before the modules it certifies — not module-first-tested-after. What follows is only the JavaScript-specific concretion of that path.
 
 ### Build order (the dependency DAG)
 
@@ -32,24 +28,14 @@ test       → parse, type    the generative verifier
 persist    → type
 ```
 
-`parse` is the base, not `check`. JavaScript already has a tree-sitter grammar, so the boundary
-is a thin wrapper over the tree-sitter JavaScript grammar through the host's tree-sitter
-bindings — tree-sitter is the framework's sole AST mechanism, the same family that parses the
-Python reference. Nothing else touches the parser directly.
+`parse` is the base, not `check`. JavaScript already has a tree-sitter grammar, so the boundary is a thin wrapper over the tree-sitter JavaScript grammar through the host's tree-sitter bindings — tree-sitter is the framework's sole AST mechanism, the same family that parses the Python reference. Nothing else touches the parser directly.
 
 ### The seed-then-gate phases
 
-1. **Seed `parse`** — hand-verify the wrapper against the parser-boundary laws (node-text
-   round-trip, walk completeness and pre-order, 1-based line/col, error detection as a
-   biconditional, determinism, a closed language vocabulary, correct text decoding). The
-   `node --test` runner (already used by `honest-state/`) is the seed harness.
-2. **Seed `check`** — write the structural rules, then run them on their own source until clean.
-   Note the shortcut: honest-check's structural rules are tree-sitter *shapes*, so registering
-   the JavaScript grammar in the boundary lets the same rule shapes gate `.js`/`.mjs`/`.cjs` —
-   the structural stage is shared across languages, not reinvented per language.
+1. **Seed `parse`** — hand-verify the wrapper against the parser-boundary laws (node-text round-trip, walk completeness and pre-order, 1-based line/col, error detection as a    biconditional, determinism, a closed language vocabulary, correct text decoding). The    `node --test` runner (already used by `honest-state/`) is the seed harness.
+2. **Seed `check`** — write the structural rules, then run them on their own source until clean. Note the shortcut: honest-check's structural rules are tree-sitter *shapes*, so registering    the JavaScript grammar in the boundary lets the same rule shapes gate `.js`/`.mjs`/`.cjs` —    the structural stage is shared across languages, not reinvented per language.
 3. **Seed `test`** — write the generators, then have them verify their own laws.
-4. **Gate everything else** — every remaining module, and re-verification of the seeds, lands
-   only by passing the structural gate and its conformance.
+4. **Gate everything else** — every remaining module, and re-verification of the seeds, lands only by passing the structural gate and its conformance.
 
 ### Two conformance artefacts per module
 
@@ -58,9 +44,7 @@ Python reference. Nothing else touches the parser directly.
 
 ### Completeness is measured
 
-The bar is **100% line and branch coverage, enforced as a gate** (a branch-coverage tool wired
-to fail below 100%). An unhit line is dead code or an unspecified behaviour. Entry points are
-covered by executing them, never by exclusion — no carve-outs.
+The bar is **100% line and branch coverage, enforced as a gate** (a branch-coverage tool wired to fail below 100%). An unhit line is dead code or an unspecified behaviour. Entry points are covered by executing them, never by exclusion — no carve-outs.
 
 ## Invariants
 

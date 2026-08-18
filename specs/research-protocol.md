@@ -1,8 +1,6 @@
 # Research Protocol: Honest Framework Development Study
 
-**Version:** 0.1 (Draft)
-**Date:** March 22, 2026
-**Principal Investigator:** Adam Zachary Wasserman
+**Version:** 0.1 (Draft) **Date:** March 22, 2026 **Principal Investigator:** Adam Zachary Wasserman
 
 ---
 
@@ -49,17 +47,14 @@ The Honest Framework specification defines 12 modules with 50 conformance laws a
 
 ### 2.4 Phases
 
-**Phase 0: Specification completion (current)**
-Complete the remaining ~1-5% of specification. Map each conformance law to IFPUG elementary processes. This phase is itself instrumented (AI-assisted ideation and design).
+**Phase 0: Specification completion (current)** Complete the remaining ~1-5% of specification. Map each conformance law to IFPUG elementary processes. This phase is itself instrumented (AI-assisted ideation and design).
 
-**Phase 1: Python reference implementation (PI solo)**
-Build honest-py. All 12 modules. Full conformance suite passing. This establishes:
+**Phase 1: Python reference implementation (PI solo)** Build honest-py. All 12 modules. Full conformance suite passing. This establishes:
 - Baseline activity ratios for AI-assisted framework development under Honest Code
 - Time-to-conformance benchmarks per module
 - Reference implementation that other teams can study
 
-**Phase 2: Multi-language implementations (arm's-length teams)**
-Other language implementations begin. Each team receives:
+**Phase 2: Multi-language implementations (arm's-length teams)** Other language implementations begin. Each team receives:
 - The complete specification
 - The conformance suite (adapted to their language's property-based testing framework)
 - The structured SDLC requirements
@@ -146,9 +141,7 @@ Let the pairwise relative divergence between any two measures, computed on their
 
 - **Mild divergence (`d` within tolerance `T`)** is accepted and logged, not actioned. It is the expected measurement noise of differing granularity: one chain is several functions is several gherkins, but maps to fewer IFPUG elementary processes, and the feature/screen method aggregates differently again.
 - **Wild divergence (`d` exceeding `T`)** halts the FP claim for that increment and triggers investigation. Its *direction* localizes the defect:
-  - **M1 ≫ M2/M3** (more gherkins than laws/features account for): over-decomposition, or trivial-function inflation gaming the count, or genuine behavior not yet captured as a law or feature (a spec gap to close upward).
-  - **M1 ≪ M2/M3** (fewer gherkins than laws/features claim): the dangerous case, a law or feature asserts functionality that no function specifies. A coverage gap, not noise.
-  - **Levels agree but velocities diverge**: a process defect, e.g., FP being claimed faster than gherkins are authored, i.e. spec-after-the-fact.
+  - **M1 ≫ M2/M3** (more gherkins than laws/features account for): over-decomposition, or trivial-function inflation gaming the count, or genuine behavior not yet captured as a law or feature (a spec gap to close upward).   - **M1 ≪ M2/M3** (fewer gherkins than laws/features claim): the dangerous case, a law or feature asserts functionality that no function specifies. A coverage gap, not noise.   - **Levels agree but velocities diverge**: a process defect, e.g., FP being claimed faster than gherkins are authored, i.e. spec-after-the-fact.
 
 The root cause of every wild divergence is recorded in the decision log (§3.5). `T`, and any direction-specific sub-thresholds, are calibrated in Phase 0 from the observed inter-measure variance; they are reported as a fixed parameter of the study, not tuned afterward.
 
@@ -185,11 +178,7 @@ Implementations of the Honest Framework specification are licensed under [TBD] w
 2. Maintain the conformance-status.yaml file (Section 3.3)
 3. Provide monthly exports: `git log --all --numstat --format="COMMIT:%H %ad %s" --date=format:"%Y-%m-%d"`
 4. Complete a brief monthly survey (5 questions, <5 minutes):
-   - Team size (FTE)
-   - AI tools used
-   - Architectural approach (Honest Code principles followed? Which ones?)
-   - Biggest technical challenge this month
-   - Hours worked (approximate)
+   - Team size (FTE)    - AI tools used    - Architectural approach (Honest Code principles followed? Which ones?)    - Biggest technical challenge this month    - Hours worked (approximate)
 
 ### 4.2 What Teams Receive
 

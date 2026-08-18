@@ -36,11 +36,7 @@ The three-multiplier thesis is not purely theoretical. **Paper B (Paradigm AI Co
 
 - 25 programming problems (`public/tests/01-tax-calculation` through `25-config-resolver`, plus `sanity-check`), each specified as Gherkin + pytest
 - 5 paradigm variants per problem:
-  - **P1** — pure functions, TypedDicts, dispatch-table polymorphism (Honest Code)
-  - **P2** — frozen dataclasses (immutable but still object-oriented)
-  - **P3** — classes without inheritance (encapsulation)
-  - **P4** — inheritance-based (classical OO)
-  - **P5** — mixins + ABC (maximum class-heaviness)
+  - **P1** — pure functions, TypedDicts, dispatch-table polymorphism (Honest Code)   - **P2** — frozen dataclasses (immutable but still object-oriented)   - **P3** — classes without inheritance (encapsulation)   - **P4** — inheritance-based (classical OO)   - **P5** — mixins + ABC (maximum class-heaviness)
 - 3 AI models tested per variant: Claude, Gemini, GPT-4
 - Measurement: converged-on-first-attempt rate, final pass rate, attempts to convergence, per-scenario failing test count
 

@@ -4,27 +4,16 @@
 
 Keep the framework you build on — Rails, Django, Spring. Move your business logic out of your models and into plain functions, drop the callbacks and signals that bite you at 3am, and let a linter keep you honest. Whole classes of bug stop happening, and your tests stop needing a database. Nothing new to learn — a few habits to unlearn.
 
-This is the active reference implementation of the Honest Framework. It is a uv
-workspace: one shared virtual environment and lockfile, with each `honest-<name>/`
-an independently publishable package implementing exactly one spec module.
+This is the active reference implementation of the Honest Framework. It is a uv workspace: one shared virtual environment and lockfile, with each `honest-<name>/` an independently publishable package implementing exactly one spec module.
 
-The normative source is the specification, not this code. The flow is
-**spec → implementation → conformance**, never the reverse. When behaviour here
-diverges from `../specs/`, that is an implementation bug, not a spec amendment.
+The normative source is the specification, not this code. The flow is **spec → implementation → conformance**, never the reverse. When behaviour here diverges from `../specs/`, that is an implementation bug, not a spec amendment.
 
 ## Two audiences
 
-The packages built so far are **substrate** — the type system and the linter that
-the rest of the framework stands on. They are not the surface an application
-author works against. Read the path that fits you:
+The packages built so far are **substrate** — the type system and the linter that the rest of the framework stands on. They are not the surface an application author works against. Read the path that fits you:
 
-- **You want to *use* the framework** to build an application. The adopter-facing
-  surface lives in the upper-layer modules (components, dom, page), which are
-  still being built. The one substrate package you invoke directly today is the
-  linter: see [`honest-check/README.md`](honest-check/README.md). Everything else
-  here runs underneath the modules you will actually call.
-- **You want to work *on* the framework** — add a rule, implement a module, fix a
-  bug. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- **You want to *use* the framework** to build an application. The adopter-facing surface lives in the upper-layer modules (components, dom, page), which are   still being built. The one substrate package you invoke directly today is the   linter: see [`honest-check/README.md`](honest-check/README.md). Everything else   here runs underneath the modules you will actually call.
+- **You want to work *on* the framework** — add a rule, implement a module, fix a bug. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Packages
 
@@ -43,70 +32,33 @@ author works against. Read the path that fits you:
 | [`honest-features`](honest-features/) | The feature-flag subsystem — a static flag vocabulary, flag state threaded as a value, and an HMAC-signed toggle. Pure functions only; the route is the integration boundary. honest-check (HC-HF001/HC-HF002) verifies every call site references a declared flag and every handler table covers its states. | Partly — adopters declare FEATURES and handler tables; the engine is plumbing. |
 | [`honest-alerts`](honest-alerts/) | The Tier 3 message-passing layer — messages between actors, the mailbox as a projection over the event log, table-driven routing, a stateless supervisor, the lifecycle state machine, `send`/`send_and_wait`, DOM surfaces, and the observe event catalog. The decisions are pure; delivery, emit, and the reply wait reach the world only through an injected runtime, so honest-alerts imports neither honest-persist nor honest-observe. | Partly — adopters call `send` and render surfaces; the engine is plumbing. |
 
-The package inventory and per-module status are the authoritative checkpoint; this
-table is the short form. honest-alerts is the first application-tier (Tier 3) module;
-the rest above are the Tier 2 substrate.
+The package inventory and per-module status are the authoritative checkpoint; this table is the short form. honest-alerts is the first application-tier (Tier 3) module; the rest above are the Tier 2 substrate.
 
 ## The honesty gate
 
-Any code that passes `honest-check` is, by definition, structurally Honest Code.
-The linter is the operational definition: code that passes cannot represent the
-bug categories the framework eliminates (hidden state via classes, if/elif/else
-value-dispatch, I/O off the boundary, catching exceptions in business logic, and
-the rest). A pre-commit hook runs the gate on every commit, so no dishonest
-Python lands. Enable it once per clone from the repo root:
+Any code that passes `honest-check` is, by definition, structurally Honest Code. The linter is the operational definition: code that passes cannot represent the bug categories the framework eliminates (hidden state via classes, if/elif/else value-dispatch, I/O off the boundary, catching exceptions in business logic, and the rest). A pre-commit hook runs the gate on every commit, so no dishonest Python lands. Enable it once per clone from the repo root:
 
 ```sh
 ./bootstrap.sh
 ```
 
-It points git at the in-repo hooks, verifies `uv`, and syncs the workspace. It is
-idempotent. The full statement and the structural/behavioural split are in the
-[repository README](../README.md).
+It points git at the in-repo hooks, verifies `uv`, and syncs the workspace. It is idempotent. The full statement and the structural/behavioural split are in the [repository README](../README.md).
 
 ## Conformance: the behavioural circle
 
-The structural gate is only half the story. Every module is also verified
-behaviourally, two complementary ways, and both must pass:
+The structural gate is only half the story. Every module is also verified behaviourally, two complementary ways, and both must pass:
 
-- A **portable contract** — `<module>/conformance/suite.json` — a language-agnostic
-  collection of input/output cases. The *same* file is the cross-language
-  test-of-record: it is meant to prove any language implementation conformant, with no
-  host language in the loop.
-- A **generative proof** — `<module>/conformance/laws_*.py` — the module's own
-  declarations driven through honest-test's generators and asserted as laws across the
-  generated space. This reaches what no data format can express: predicates, composed
-  types, throwing functions, fake I/O boundaries, malformed input. It is where
-  *defining is testing* is actually realised.
-- A **value oracle** — the `value_case`s in `suite.json`, run through honest-test's
-  value-assertion vocabulary (`value-check.py`, wired into the gate). Generation proves
-  *properties* and *shape* but never *value*, so a pure, fully-covered function can still
-  return the wrong answer; the value oracle is the known-good `(input, expected)` pair
-  that catches it. A function is `proved` only when it passes the honesty checks, is fully
-  covered, and its value oracle holds — or, where a value oracle cannot apply, it is
-  declared exempt with a reason. Every public function that exists across the twelve
-  packages is so accounted for.
+- A **portable contract** — `<module>/conformance/suite.json` — a language-agnostic collection of input/output cases. The *same* file is the cross-language   test-of-record: it is meant to prove any language implementation conformant, with no   host language in the loop.
+- A **generative proof** — `<module>/conformance/laws_*.py` — the module's own declarations driven through honest-test's generators and asserted as laws across the   generated space. This reaches what no data format can express: predicates, composed   types, throwing functions, fake I/O boundaries, malformed input. It is where   *defining is testing* is actually realised.
+- A **value oracle** — the `value_case`s in `suite.json`, run through honest-test's value-assertion vocabulary (`value-check.py`, wired into the gate). Generation proves   *properties* and *shape* but never *value*, so a pure, fully-covered function can still   return the wrong answer; the value oracle is the known-good `(input, expected)` pair   that catches it. A function is `proved` only when it passes the honesty checks, is fully   covered, and its value oracle holds — or, where a value oracle cannot apply, it is   declared exempt with a reason. Every public function that exists across the twelve   packages is so accounted for.
 
-**Coverage** is measured, not asserted: the gate (`coverage-all.sh`) fails below **100%
-line and branch coverage**, and below a clean value-oracle run. An unhit line is dead code
-or an unspecified behaviour — both are defects the gate surfaces. All twelve packages are
-at 100%, and each is self-verifying in isolation.
+**Coverage** is measured, not asserted: the gate (`coverage-all.sh`) fails below **100% line and branch coverage**, and below a clean value-oracle run. An unhit line is dead code or an unspecified behaviour — both are defects the gate surfaces. All twelve packages are at 100%, and each is self-verifying in isolation.
 
-Coverage is not spec-completeness, and the difference matters. 100% coverage proves every
-line *that exists* is honest, reached, and value-checked; it cannot prove a package
-implements every requirement of its specification, because a line never written is a line
-the gate never misses. A module can sit at 100% coverage with a whole spec section unbuilt.
-So the gate answers "is what is here correct?" — an emphatic yes across all twelve — but
-not "is everything the spec asks for here?" That second question is answered per package
-below. The full path — build order, seeding, and what carries across languages — is in
-[`../specs/01-framework/honest-framework-spec.md`](../specs/01-framework/honest-framework-spec.md)
-under *Bootstrapping a New Language Implementation*.
+Coverage is not spec-completeness, and the difference matters. 100% coverage proves every line *that exists* is honest, reached, and value-checked; it cannot prove a package implements every requirement of its specification, because a line never written is a line the gate never misses. A module can sit at 100% coverage with a whole spec section unbuilt. So the gate answers "is what is here correct?" — an emphatic yes across all twelve — but not "is everything the spec asks for here?" That second question is answered per package below. The full path — build order, seeding, and what carries across languages — is in [`../specs/01-framework/honest-framework-spec.md`](../specs/01-framework/honest-framework-spec.md) under *Bootstrapping a New Language Implementation*.
 
 ## Where each package stands
 
-Every package's pure decision core is built to full depth and passes all gates. What varies
-is how much of each spec's *surface* — the orchestration, drivers, CLIs, and cross-module
-enforcement rules layered on that core — is built.
+Every package's pure decision core is built to full depth and passes all gates. What varies is how much of each spec's *surface* — the orchestration, drivers, CLIs, and cross-module enforcement rules layered on that core — is built.
 
 | Package | Spec surface |
 |---|---|

@@ -1,14 +1,8 @@
 # Glossary — the Honest Framework standard
 
-The specifications prefer plain language. A technical term appears in them only where a plain
-phrase would lose needed precision, and **every such term is defined here, in plain words.**
-If a term is not in this list, it should not be in the specs; if it is in the specs, it must be
-here. This is the standard's register of earned vocabulary, maintained as the specs change.
+The specifications prefer plain language. A technical term appears in them only where a plain phrase would lose needed precision, and **every such term is defined here, in plain words.** If a term is not in this list, it should not be in the specs; if it is in the specs, it must be here. This is the standard's register of earned vocabulary, maintained as the specs change.
 
-Two kinds of term earn a place: words the framework coins for its own concepts (which a plain
-phrase cannot replace without losing the concept), and the few general computing terms that are
-genuinely shorter and clearer than their plain paraphrase. Everything else is written out in
-plain language in the text itself.
+Two kinds of term earn a place: words the framework coins for its own concepts (which a plain phrase cannot replace without losing the concept), and the few general computing terms that are genuinely shorter and clearer than their plain paraphrase. Everything else is written out in plain language in the text itself.
 
 ---
 

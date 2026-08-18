@@ -1,9 +1,6 @@
 # honest-components: Architecture Specification
 
-**Version:** 0.2 (Draft)
-**Date:** March 2026
-**Status:** Active
-**Author:** Adam Zachary Wasserman
+**Version:** 0.2 (Draft) **Date:** March 2026 **Status:** Active **Author:** Adam Zachary Wasserman
 
 ---
 

@@ -27,13 +27,10 @@ It points git at the in-repo hooks, verifies `uv`, and syncs the workspace. Idem
 ## What's here
 
 - `specs/` — Honest Framework specifications, tiered:
-  - `specs/01-framework/` — core framework spec + conformance suite
-  - `specs/02-code-quality/` — code-quality dimension
-  - `specs/03-application-production/` — application-production dimension
+  - `specs/01-framework/` — core framework spec + conformance suite   - `specs/02-code-quality/` — code-quality dimension   - `specs/03-application-production/` — application-production dimension
 - `articles/` — three canonical articles (honest-advantages, honest-testing, honest-type-magic)
 - `principles/` — foundational philosophy
-  - `poka-yoke.md` — velocity-multiplier manifesto: which categories of bug each design decision eliminates structurally
-  - `honest-code-principles.md` — nineteen Honest Code practices
+  - `poka-yoke.md` — velocity-multiplier manifesto: which categories of bug each design decision eliminates structurally   - `honest-code-principles.md` — nineteen Honest Code practices
 - `methodology/` — verification approach
   - `contract-testing.md` — user-journey-to-function contract mapping methodology
 - `python/` — Python reference implementation (in active development)

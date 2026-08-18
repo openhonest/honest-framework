@@ -1,9 +1,6 @@
 # Honest Framework: Conformance Suite Specification
 
-**Version:** 0.1 (Draft)
-**Date:** March 2026
-**Status:** Active
-**Author:** Adam Zachary Wasserman
+**Version:** 0.1 (Draft) **Date:** March 2026 **Status:** Active **Author:** Adam Zachary Wasserman
 
 ---
 
@@ -60,8 +57,7 @@ Rejection   -- Token × Reason   (a failed classification)
 
 ### Laws
 
-**Law HT-1: Classification membership**
-If classify returns a result, that result is a declared name in the vocabulary.
+**Law HT-1: Classification membership** If classify returns a result, that result is a declared name in the vocabulary.
 
 ```
 ∀ vocab : Vocabulary, token : Token
@@ -70,8 +66,7 @@ If classify returns a result, that result is a declared name in the vocabulary.
 
 *Mandatory.*
 
-**Law HT-2: Classification exclusivity**
-No token can be classified as two different types simultaneously.
+**Law HT-2: Classification exclusivity** No token can be classified as two different types simultaneously.
 
 ```
 ∀ vocab : Vocabulary, token : Token
@@ -81,8 +76,7 @@ No token can be classified as two different types simultaneously.
 
 *Mandatory. Vocabulary construction must detect and reject overlapping recognizers.*
 
-**Law HT-3: Zero-drift**
-The classification function is identical at static analysis time, test generation time, and runtime. There is no separate "test mode" or "strict mode."
+**Law HT-3: Zero-drift** The classification function is identical at static analysis time, test generation time, and runtime. There is no separate "test mode" or "strict mode."
 
 ```
 classify_static  = classify_test  = classify_runtime
@@ -90,8 +84,7 @@ classify_static  = classify_test  = classify_runtime
 
 *Mandatory. This law cannot be tested by property-based testing — it must be verified by inspection of the implementation. An implementation that uses different code paths for different invocation contexts is non-conformant.*
 
-**Law HT-4: Reserved word rejection**
-Vocabulary construction must reject any member that collides with a framework reserved word.
+**Law HT-4: Reserved word rejection** Vocabulary construction must reject any member that collides with a framework reserved word.
 
 ```
 ∀ vocab : Vocabulary, name : TypeName
@@ -100,8 +93,7 @@ Vocabulary construction must reject any member that collides with a framework re
 
 *Mandatory.*
 
-**Law HT-5: Empty vocabulary rejection**
-A vocabulary with no recognizers is non-conformant.
+**Law HT-5: Empty vocabulary rejection** A vocabulary with no recognizers is non-conformant.
 
 ```
 ∀ vocab : Vocabulary
@@ -110,8 +102,7 @@ A vocabulary with no recognizers is non-conformant.
 
 *Mandatory.*
 
-**Law HT-6: Unrecognized token behavior**
-A token that matches no recognizer produces a Rejection, not a silent default or null.
+**Law HT-6: Unrecognized token behavior** A token that matches no recognizer produces a Rejection, not a silent default or null.
 
 ```
 ∀ vocab : Vocabulary, token : Token
@@ -121,8 +112,7 @@ A token that matches no recognizer produces a Rejection, not a silent default or
 
 *Mandatory. Silent defaults are non-conformant.*
 
-**Law HT-7: Set recognizer totality**
-For a vocabulary declared as a Set (a finite, listable set of values), every declared member must be recognizable.
+**Law HT-7: Set recognizer totality** For a vocabulary declared as a Set (a finite, listable set of values), every declared member must be recognizable.
 
 ```
 ∀ vocab : SetVocabulary, name : TypeName
@@ -132,8 +122,7 @@ For a vocabulary declared as a Set (a finite, listable set of values), every dec
 
 *Mandatory. A declared type that no token can match is a dead type and must be detected at construction.*
 
-**Law HT-8: Predicate recognizer purity**
-Custom predicate recognizers must be pure functions. Same token, same result, always.
+**Law HT-8: Predicate recognizer purity** Custom predicate recognizers must be pure functions. Same token, same result, always.
 
 ```
 ∀ pred : Recognizer, token : Token
@@ -161,8 +150,7 @@ Operation     -- a single atomic database change
 
 ### Laws
 
-**Law HP-1: Convergence**
-Applying a migration plan produced from a schema and a live database produces a database that conforms to the schema.
+**Law HP-1: Convergence** Applying a migration plan produced from a schema and a live database produces a database that conforms to the schema.
 
 ```
 ∀ schema : Schema, db : LiveDB
@@ -171,8 +159,7 @@ Applying a migration plan produced from a schema and a live database produces a 
 
 *Mandatory.*
 
-**Law HP-2: Idempotency**
-Applying a migration plan to the resulting database produces an empty plan.
+**Law HP-2: Idempotency** Applying a migration plan to the resulting database produces an empty plan.
 
 ```
 ∀ schema : Schema, db : LiveDB
@@ -182,8 +169,7 @@ Applying a migration plan to the resulting database produces an empty plan.
 
 *Mandatory. Running migration twice must be safe.*
 
-**Law HP-3: History independence**
-The migration plan depends only on the declared schema and the live database state. It does not depend on how the database reached its current state.
+**Law HP-3: History independence** The migration plan depends only on the declared schema and the live database state. It does not depend on how the database reached its current state.
 
 ```
 ∀ schema : Schema, db1 db2 : LiveDB
@@ -192,8 +178,7 @@ The migration plan depends only on the declared schema and the live database sta
 
 *Mandatory. This is the definitive break from migration file chains. An implementation that reads or writes migration history files is non-conformant.*
 
-**Law HP-4: Empty plan on conformance**
-If the live database already conforms to the declared schema, the migration plan is empty.
+**Law HP-4: Empty plan on conformance** If the live database already conforms to the declared schema, the migration plan is empty.
 
 ```
 ∀ schema : Schema, db : LiveDB
@@ -202,8 +187,7 @@ If the live database already conforms to the declared schema, the migration plan
 
 *Mandatory. Follows from HP-2 and HP-1 but stated explicitly for clarity.*
 
-**Law HP-5: Non-destructive default**
-The migration plan must not produce destructive operations (DROP COLUMN, DROP TABLE, DELETE) unless the implementation is explicitly configured to permit them.
+**Law HP-5: Non-destructive default** The migration plan must not produce destructive operations (DROP COLUMN, DROP TABLE, DELETE) unless the implementation is explicitly configured to permit them.
 
 ```
 ∀ schema : Schema, db : LiveDB
@@ -213,8 +197,7 @@ The migration plan must not produce destructive operations (DROP COLUMN, DROP TA
 
 *Mandatory. Default behavior is additive only. Destructive migrations require explicit opt-in.*
 
-**Law HP-6: Query purity**
-Query functions are pure: same inputs, same outputs. No hidden state, no caching that changes observable results.
+**Law HP-6: Query purity** Query functions are pure: same inputs, same outputs. No hidden state, no caching that changes observable results.
 
 ```
 ∀ query : Query, db : LiveDB
@@ -244,8 +227,7 @@ HMACRequest   -- {flag, state, timestamp, signature}
 
 ### Laws
 
-**Law HF-1: State membership**
-The current state of any flag is always a member of that flag's declared states set.
+**Law HF-1: State membership** The current state of any flag is always a member of that flag's declared states set.
 
 ```
 ∀ store : FlagStore, vocab : FlagVocab, flag : FlagName
@@ -254,8 +236,7 @@ The current state of any flag is always a member of that flag's declared states 
 
 *Mandatory. This must hold at all times, including immediately after startup and immediately after a state change.*
 
-**Law HF-2: Default validity**
-Every flag's default state is a member of its declared states set.
+**Law HF-2: Default validity** Every flag's default state is a member of its declared states set.
 
 ```
 ∀ vocab : FlagVocab, flag : FlagName
@@ -264,8 +245,7 @@ Every flag's default state is a member of its declared states set.
 
 *Mandatory. Vocabulary construction must reject a default that is not in the states set.*
 
-**Law HF-3: Initialization from defaults**
-At startup, the flag store is initialized from the vocabulary defaults. No I/O is performed during initialization.
+**Law HF-3: Initialization from defaults** At startup, the flag store is initialized from the vocabulary defaults. No I/O is performed during initialization.
 
 ```
 ∀ vocab : FlagVocab, flag : FlagName
@@ -274,8 +254,7 @@ At startup, the flag store is initialized from the vocabulary defaults. No I/O i
 
 *Mandatory. An implementation that reads environment variables, config files, or databases during flag store initialization is non-conformant.*
 
-**Law HF-4: feature_state purity**
-feature_state is a pure lookup. No I/O, no side effects, no logging.
+**Law HF-4: feature_state purity** feature_state is a pure lookup. No I/O, no side effects, no logging.
 
 ```
 ∀ store : FlagStore, flag : FlagName
@@ -284,8 +263,7 @@ feature_state is a pure lookup. No I/O, no side effects, no logging.
 
 *Mandatory.*
 
-**Law HF-5: Undeclared flag rejection**
-feature_state raises an error (KeyError, panic, exception) for undeclared flag names. It does not return a default.
+**Law HF-5: Undeclared flag rejection** feature_state raises an error (KeyError, panic, exception) for undeclared flag names. It does not return a default.
 
 ```
 ∀ store : FlagStore, vocab : FlagVocab, flag : FlagName
@@ -294,8 +272,7 @@ feature_state raises an error (KeyError, panic, exception) for undeclared flag n
 
 *Mandatory. Silent defaults for undeclared flags are non-conformant.*
 
-**Law HF-6: Handler table totality**
-A handler table keyed on a flag's state must be defined for every state in that flag's declared states set.
+**Law HF-6: Handler table totality** A handler table keyed on a flag's state must be defined for every state in that flag's declared states set.
 
 ```
 ∀ vocab : FlagVocab, flag : FlagName, table : HandlerTable
@@ -304,8 +281,7 @@ A handler table keyed on a flag's state must be defined for every state in that 
 
 *Mandatory. A handler table with a missing state produces ⊥ at dispatch time. honest-check rule HF002 enforces this statically.*
 
-**Law HF-7: HMAC signature coverage**
-The HMAC signature covers flag name, state, and timestamp jointly. A signature over any subset of these fields is non-conformant.
+**Law HF-7: HMAC signature coverage** The HMAC signature covers flag name, state, and timestamp jointly. A signature over any subset of these fields is non-conformant.
 
 ```
 signature = HMAC(secret, concat(flag, ":", state, ":", timestamp))
@@ -313,8 +289,7 @@ signature = HMAC(secret, concat(flag, ":", state, ":", timestamp))
 
 *Mandatory.*
 
-**Law HF-8: Replay window enforcement**
-A toggle request with a timestamp outside the configured replay window must be rejected regardless of signature validity.
+**Law HF-8: Replay window enforcement** A toggle request with a timestamp outside the configured replay window must be rejected regardless of signature validity.
 
 ```
 ∀ req : HMACRequest
@@ -323,8 +298,7 @@ A toggle request with a timestamp outside the configured replay window must be r
 
 *Mandatory. The replay window is configurable but must have a finite, positive value.*
 
-**Law HF-9: Constant-time signature comparison**
-Signature verification must use constant-time comparison. String equality comparison is non-conformant.
+**Law HF-9: Constant-time signature comparison** Signature verification must use constant-time comparison. String equality comparison is non-conformant.
 
 ```
 verify(expected, actual) = constant_time_compare(expected, actual)
@@ -352,8 +326,7 @@ RequestId     -- a unique identifier correlating all events within one request
 
 ### Laws
 
-**Law HO-1: Log immutability**
-Events are never modified or deleted after being appended. The log is append-only.
+**Law HO-1: Log immutability** Events are never modified or deleted after being appended. The log is append-only.
 
 ```
 ∀ log : EventLog, event : Event
@@ -363,8 +336,7 @@ Events are never modified or deleted after being appended. The log is append-onl
 
 *Mandatory.*
 
-**Law HO-2: Projection purity**
-Projections are pure functions. The same log produces the same read model.
+**Law HO-2: Projection purity** Projections are pure functions. The same log produces the same read model.
 
 ```
 ∀ proj : Projection, log : EventLog
@@ -373,8 +345,7 @@ Projections are pure functions. The same log produces the same read model.
 
 *Mandatory. A projection that reads external state (database, clock, random) is non-conformant. Time-windowed projections must receive the window bounds as parameters.*
 
-**Law HO-3: Projection composability**
-Any projection can be derived from any subset of the event log without reading events outside that subset.
+**Law HO-3: Projection composability** Any projection can be derived from any subset of the event log without reading events outside that subset.
 
 ```
 ∀ proj : Projection, log : EventLog, sub : EventLog
@@ -383,8 +354,7 @@ Any projection can be derived from any subset of the event log without reading e
 
 *Mandatory. Projections must not assume they receive the complete log.*
 
-**Law HO-4: Request correlation**
-Every event emitted within the scope of a request carries the same request_id. Events from different requests carry different request_ids.
+**Law HO-4: Request correlation** Every event emitted within the scope of a request carries the same request_id. Events from different requests carry different request_ids.
 
 ```
 ∀ e1 e2 : Event
@@ -393,8 +363,7 @@ Every event emitted within the scope of a request carries the same request_id. E
 
 *Mandatory.*
 
-**Law HO-5: Boundary emission**
-Every boundary function (decorated with @link or @catch_at_boundary) emits at minimum one event: the boundary invocation event. This emission is automatic and does not require developer code.
+**Law HO-5: Boundary emission** Every boundary function (decorated with @link or @catch_at_boundary) emits at minimum one event: the boundary invocation event. This emission is automatic and does not require developer code.
 
 ```
 ∀ boundary : Boundary, invocation : Invocation
@@ -403,8 +372,7 @@ Every boundary function (decorated with @link or @catch_at_boundary) emits at mi
 
 *Mandatory. An implementation that requires developer code to emit boundary events is non-conformant.*
 
-**Law HO-6: Browser/server log unification**
-Browser events and server events land in the same event log and share the same request_id namespace. No separate log exists for browser events.
+**Law HO-6: Browser/server log unification** Browser events and server events land in the same event log and share the same request_id namespace. No separate log exists for browser events.
 
 ```
 ∀ event : Event
@@ -414,8 +382,7 @@ Browser events and server events land in the same event log and share the same r
 
 *Mandatory. An implementation that maintains separate browser and server logs is non-conformant.*
 
-**Law HO-7: OTel as projection**
-OpenTelemetry export is a projection of the event log. The projection produces OTel-formatted traces, metrics, and logs. The event log is not modified by OTel export.
+**Law HO-7: OTel as projection** OpenTelemetry export is a projection of the event log. The projection produces OTel-formatted traces, metrics, and logs. The event log is not modified by OTel export.
 
 ```
 otel_export : EventLog → OTelPayload
@@ -443,8 +410,7 @@ Coverage      -- the fraction of declared types exercised by a test suite
 
 ### Laws
 
-**Law HTest-1: Exhaustive coverage for Set vocabularies**
-For a vocabulary declared as a finite Set, honest-test generates at least one test case per declared member.
+**Law HTest-1: Exhaustive coverage for Set vocabularies** For a vocabulary declared as a finite Set, honest-test generates at least one test case per declared member.
 
 ```
 ∀ vocab : SetVocabulary
@@ -454,8 +420,7 @@ For a vocabulary declared as a finite Set, honest-test generates at least one te
 
 *Mandatory. A generated test suite that fails to exercise any declared member is non-conformant.*
 
-**Law HTest-2: No test case exercises an undeclared type**
-Generated test cases only assert outcomes that are declared in the vocabulary.
+**Law HTest-2: No test case exercises an undeclared type** Generated test cases only assert outcomes that are declared in the vocabulary.
 
 ```
 ∀ vocab : Vocabulary, tc : TestCase ∈ generate(vocab)
@@ -464,8 +429,7 @@ Generated test cases only assert outcomes that are declared in the vocabulary.
 
 *Mandatory.*
 
-**Law HTest-3: Test isolation**
-Each generated test case is independent. The outcome of one test case does not affect the outcome of another.
+**Law HTest-3: Test isolation** Each generated test case is independent. The outcome of one test case does not affect the outcome of another.
 
 ```
 ∀ tc1 tc2 : TestCase ∈ generate(vocab)
@@ -474,8 +438,7 @@ Each generated test case is independent. The outcome of one test case does not a
 
 *Mandatory. An implementation that shares mutable state between test cases is non-conformant.*
 
-**Law HTest-4: Determinism**
-Given the same vocabulary, honest-test generates the same test suite on every invocation.
+**Law HTest-4: Determinism** Given the same vocabulary, honest-test generates the same test suite on every invocation.
 
 ```
 ∀ vocab : Vocabulary
@@ -484,8 +447,7 @@ Given the same vocabulary, honest-test generates the same test suite on every in
 
 *Mandatory. Random or timestamp-seeded test generation is non-conformant for the core suite. Property-based supplemental tests may use seeds.*
 
-**Law HTest-5: Rejection coverage**
-honest-test generates at least one test case asserting that an unrecognized token produces a Rejection.
+**Law HTest-5: Rejection coverage** honest-test generates at least one test case asserting that an unrecognized token produces a Rejection.
 
 ```
 ∀ vocab : Vocabulary
@@ -495,8 +457,7 @@ honest-test generates at least one test case asserting that an unrecognized toke
 
 *Mandatory.*
 
-**Law HTest-6: Handler table coverage (honest-features integration)**
-For every handler table keyed on a feature flag's states, honest-test generates one test case per state.
+**Law HTest-6: Handler table coverage (honest-features integration)** For every handler table keyed on a feature flag's states, honest-test generates one test case per state.
 
 ```
 ∀ vocab : FlagVocab, flag : FlagName, table : HandlerTable
@@ -525,8 +486,7 @@ RuleSet       -- a collection of rules to enforce
 
 ### Laws
 
-**Law HC-1: No execution**
-honest-check never executes application code. All analysis is static.
+**Law HC-1: No execution** honest-check never executes application code. All analysis is static.
 
 ```
 ∀ rule : Rule, source : SourceFile
@@ -535,8 +495,7 @@ honest-check never executes application code. All analysis is static.
 
 *Mandatory.*
 
-**Law HC-2: Determinism**
-Given the same source file and rule set, honest-check produces the same diagnostics on every invocation.
+**Law HC-2: Determinism** Given the same source file and rule set, honest-check produces the same diagnostics on every invocation.
 
 ```
 ∀ rules : RuleSet, source : SourceFile
@@ -545,8 +504,7 @@ Given the same source file and rule set, honest-check produces the same diagnost
 
 *Mandatory. An implementation that produces different diagnostics for the same input is non-conformant.*
 
-**Law HC-3: Severity monotonicity**
-If a file produces an Error diagnostic, it also produces all Warning and Info diagnostics for the same violation. Diagnostics are not suppressed by higher-severity findings.
+**Law HC-3: Severity monotonicity** If a file produces an Error diagnostic, it also produces all Warning and Info diagnostics for the same violation. Diagnostics are not suppressed by higher-severity findings.
 
 ```
 ∀ source : SourceFile, rule : Rule
@@ -556,8 +514,7 @@ If a file produces an Error diagnostic, it also produces all Warning and Info di
 
 *Mandatory.*
 
-**Law HC-4: No false negatives on mandatory rules**
-For every mandatory rule, if a violation exists in the source, honest-check reports it. Mandatory rules may not be suppressed by configuration.
+**Law HC-4: No false negatives on mandatory rules** For every mandatory rule, if a violation exists in the source, honest-check reports it. Mandatory rules may not be suppressed by configuration.
 
 ```
 ∀ source : SourceFile, rule : MandatoryRule
@@ -566,8 +523,7 @@ For every mandatory rule, if a violation exists in the source, honest-check repo
 
 *Mandatory.*
 
-**Law HC-5: Cross-language rule equivalence**
-The rule algorithms defined in this spec produce equivalent diagnostics regardless of the target language implementation. A Python source file and an equivalent Ruby source file violating the same rule produce diagnostically equivalent results.
+**Law HC-5: Cross-language rule equivalence** The rule algorithms defined in this spec produce equivalent diagnostics regardless of the target language implementation. A Python source file and an equivalent Ruby source file violating the same rule produce diagnostically equivalent results.
 
 ```
 ∀ rule : CrossLanguageRule, py_source ruby_source : SourceFile
@@ -625,8 +581,7 @@ The FP practitioner's instinct — IO monad, effect system, free monad — is th
 
 ### Formal laws
 
-**Law IO-1: Boundary containment**
-All I/O operations occur inside functions decorated as boundary links. No I/O operation occurs inside a pure function.
+**Law IO-1: Boundary containment** All I/O operations occur inside functions decorated as boundary links. No I/O operation occurs inside a pure function.
 
 ```
 ∀ f : PureFunction
@@ -635,8 +590,7 @@ All I/O operations occur inside functions decorated as boundary links. No I/O op
 
 *Mandatory. Verified statically by honest-check. An implementation that permits I/O inside pure functions is non-conformant.*
 
-**Law IO-2: Link purity of output**
-A link function's output is determined entirely by its input manifest and the results of its I/O operations. It has no hidden dependencies on global mutable state.
+**Law IO-2: Link purity of output** A link function's output is determined entirely by its input manifest and the results of its I/O operations. It has no hidden dependencies on global mutable state.
 
 ```
 ∀ link : Link, manifest : Manifest, world : WorldState
@@ -646,8 +600,7 @@ A link function's output is determined entirely by its input manifest and the re
 
 *Mandatory.*
 
-**Law IO-3: Chain boundary scope**
-I/O performed inside a chain is scoped to that chain's execution. No I/O result leaks into the pure function layer as mutable state.
+**Law IO-3: Chain boundary scope** I/O performed inside a chain is scoped to that chain's execution. No I/O result leaks into the pure function layer as mutable state.
 
 ```
 ∀ chain : Chain
@@ -656,8 +609,7 @@ I/O performed inside a chain is scoped to that chain's execution. No I/O result 
 
 *Mandatory.*
 
-**Law IO-4: Time and randomness at the boundary**
-Clock reads and random value generation are I/O operations and must occur in link functions. Pure functions that require time or randomness must receive them as parameters.
+**Law IO-4: Time and randomness at the boundary** Clock reads and random value generation are I/O operations and must occur in link functions. Pure functions that require time or randomness must receive them as parameters.
 
 ```
 ∀ f : PureFunction

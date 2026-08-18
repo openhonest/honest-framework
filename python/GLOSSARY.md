@@ -1,13 +1,8 @@
 # Glossary — Honest Framework reference implementation
 
-A living lexicon, maintained in parallel with the Python reference build. Each
-entry is the working definition as implemented, with the governing spec section
-where one applies. Terms are added as each module/rule tier lands.
+A living lexicon, maintained in parallel with the Python reference build. Each entry is the working definition as implemented, with the governing spec section where one applies. Terms are added as each module/rule tier lands.
 
-Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1),
-`specs/02-code-quality/honest-type-architecture.md`,
-`specs/02-code-quality/honest-check-architecture.md`,
-`principles/honest-code-principles.md`, `principles/poka-yoke.md`.
+Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1), `specs/02-code-quality/honest-type-architecture.md`, `specs/02-code-quality/honest-check-architecture.md`, `principles/honest-code-principles.md`, `principles/poka-yoke.md`.
 
 ---
 
