@@ -86,6 +86,27 @@ def _record_fields(module):
     return {t["name"]: {fl["name"]: fl["type"] for fl in t["record"]} for t in module["types"] if t["record"]}
 
 
+def _bad_surfaces(module):
+    """Every surface id is unique within its block, and a block declares at least one.
+
+    Order is not checked, and cannot be from one module's IR: the declaration is the order, so
+    there is nothing here to compare it against. Whether a rendered page matches it is a
+    cross-artifact question honest-check answers by resolving the template's ids against this
+    block, as HC-REF001 resolves an action target against a mounted route.
+    """
+    faults = []
+    for block in module["surfaces"]:
+        here = {"surfaces": block["name"]}
+        if not block["members"]:
+            faults.append(fault("empty_surfaces", f"Surfaces block '{block['name']}' declares no surface. A page that renders none has no contract to state.", "client", here))
+        seen = set()
+        for member in block["members"]:
+            if member["id"] in seen:
+                faults.append(fault("duplicate_surface", f"Surfaces block '{block['name']}' declares '{member['id']}' more than once. An id names one element, so the order is ambiguous.", "client", {**here, "id": member["id"]}))
+            seen.add(member["id"])
+    return faults
+
+
 def _bad_projections(module):
     """A dispatch entry's `from` names a real field of its caller's input, and the handler takes it.
 
@@ -114,6 +135,7 @@ def _bad_projections(module):
 
 
 _CHECKS = (
+    _bad_surfaces,
     _unknown_links,
     _unknown_targets,
     _duplicate_names,

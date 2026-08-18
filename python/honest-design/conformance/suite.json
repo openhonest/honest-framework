@@ -39,6 +39,7 @@
                 "sets": [],
                 "vocabularies": [],
                 "dispatches": [],
+                "surfaces": [],
                 "examples": [],
                 "functions": [
                   {
@@ -117,7 +118,12 @@
           "vocabularies": [],
           "routes": [],
           "entries": [],
-          "dispatches": []
+          "dispatches": [],
+          "name": "m",
+          "layer": "",
+          "surfaces": [],
+          "examples": [],
+          "html_attrs": []
         },
         "expected": []
       }
@@ -146,7 +152,12 @@
           "vocabularies": [],
           "routes": [],
           "entries": [],
-          "dispatches": []
+          "dispatches": [],
+          "name": "m",
+          "layer": "",
+          "surfaces": [],
+          "examples": [],
+          "html_attrs": []
         },
         "expected": [
           {

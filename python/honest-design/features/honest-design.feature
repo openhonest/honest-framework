@@ -226,3 +226,20 @@ Feature: honest-design — the .hd architecture-declaration read path
     Given a module IR
     When render places its functions and draws its chains
     Then it returns the diagram with four columns and the chain edges
+
+  Scenario: _read_surface_member reads one surface from the syntax tree
+    Given a surface_member node and the source it came from
+    When _read_surface_member reads it
+    Then it returns the id the rendered element must carry and the element it lives in
+
+  Scenario: _read_surfaces keeps the surfaces in the order they were declared
+    Given a surfaces_decl node and the source it came from
+    When _read_surfaces reads it
+    Then it returns the block's name and its members in declaration order
+    Because that order is the contract the page must render
+
+  Scenario: _bad_surfaces faults a repeated id and an empty block
+    Given a module whose surfaces block repeats an id or declares none
+    When _bad_surfaces checks it
+    Then it reports duplicate_surface naming the id, or empty_surfaces
+    But it does not check order, which the declaration itself carries

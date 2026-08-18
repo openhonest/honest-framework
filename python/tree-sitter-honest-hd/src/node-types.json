@@ -433,6 +433,10 @@
           "named": true
         },
         {
+          "type": "surfaces_decl",
+          "named": true
+        },
+        {
           "type": "type_decl",
           "named": true
         },
@@ -726,6 +730,58 @@
     }
   },
   {
+    "type": "surface_member",
+    "named": true,
+    "fields": {
+      "element": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "id": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "surfaces_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "surface_member",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "type",
     "named": true,
     "fields": {},
@@ -855,7 +911,19 @@
     "named": false
   },
   {
+    "type": "[",
+    "named": false
+  },
+  {
+    "type": "]",
+    "named": false
+  },
+  {
     "type": "actor",
+    "named": false
+  },
+  {
+    "type": "as",
     "named": false
   },
   {
@@ -966,6 +1034,10 @@
   {
     "type": "string",
     "named": true
+  },
+  {
+    "type": "surfaces",
+    "named": false
   },
   {
     "type": "type",

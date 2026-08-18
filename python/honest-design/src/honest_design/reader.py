@@ -170,6 +170,20 @@ def _read_layer(node, source):
     return _field_text(node, "name", source)
 
 
+def _read_surface_member(node, source) -> ir.SurfaceMember:
+    """One surface: the id a rendered element must carry, and the element it lives in."""
+    return {"id": _unquote(_field_text(node, "id", source)),
+            "element": _field_text(node, "element", source)}
+
+
+def _read_surfaces(node, source) -> ir.Surfaces:
+    """A surfaces block. The members keep their declared order because that order is the
+    contract: the page must render them in the sequence written here."""
+    return {"name": _field_text(node, "name", source),
+            "members": [_read_surface_member(c, source)
+                        for c in node.named_children if c.type == "surface_member"]}
+
+
 # body declaration -> (Module field, handler). Each handler is a function of (node, source).
 _BODY = {
     "layer_decl": ("layer", _read_layer),
@@ -177,6 +191,7 @@ _BODY = {
     "set_decl": ("sets", _read_set),
     "vocabulary_decl": ("vocabularies", _read_vocab),
     "dispatch_decl": ("dispatches", _read_dispatch),
+    "surfaces_decl": ("surfaces", _read_surfaces),
     "example_decl": ("examples", _read_example),
     "function_decl": ("functions", _read_function),
     "chain_decl": ("chains", _read_chain),
@@ -198,6 +213,7 @@ def _read_module(node, source) -> ir.Module:
         "sets": groups.get("sets", []),
         "vocabularies": groups.get("vocabularies", []),
         "dispatches": groups.get("dispatches", []),
+        "surfaces": groups.get("surfaces", []),
         "examples": groups.get("examples", []),
         "functions": groups.get("functions", []),
         "chains": groups.get("chains", []),

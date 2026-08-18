@@ -9,6 +9,8 @@ Result constructors, reader determinism, and the public surface. Each probe retu
 failures; run() aggregates.
 """
 
+from pathlib import Path
+
 from honest_design import err, fault, ok, read_hd, render, validate
 from honest_design import __all__ as PUBLIC
 
@@ -185,6 +187,78 @@ def _probe_result():
     return bad
 
 
+def _probe_surfaces():
+    """A page's contract is which surfaces it renders and in what order, and until now the
+    language could not say it. honest-page had no .hd at all because writing one required
+    inventing syntax, and the missing file read as unfinished work rather than as a gap here.
+
+    Square brackets carry the order: every other block in this grammar is unordered, so an
+    ordered one gets a different bracket rather than a convention the reader must already know.
+    The order is positional with no index, because a number beside each surface could disagree
+    with the sequence, which is two copies of one fact."""
+    bad = []
+    page = (
+        'module honest_page\n\n'
+        '  surfaces PageSurfaces = [\n'
+        '    "honest-alerts-banners" as div,\n'
+        '    "honest-header" as header,\n'
+        '    "honest-alerts-toasts" as div,\n'
+        '    "honest-main" as main,\n'
+        '    "honest-footer" as footer,\n'
+        '    "honest-alerts-modal" as div\n'
+        '  ]\n'
+    )
+    result = read_hd(page)
+    if "ok" not in result:
+        return [f"a surfaces block must parse: {result.get('err')}"]
+
+    blocks = result["ok"]["modules"][0]["surfaces"]
+    if len(blocks) != 1 or blocks[0]["name"] != "PageSurfaces":
+        return [f"the block is named and there is one of it: {blocks}"]
+
+    members = blocks[0]["members"]
+    if [m["id"] for m in members] != [
+        "honest-alerts-banners", "honest-header", "honest-alerts-toasts",
+        "honest-main", "honest-footer", "honest-alerts-modal",
+    ]:
+        bad.append(f"the ids read back in the order they were declared: {[m['id'] for m in members]}")
+    if [m["element"] for m in members] != ["div", "header", "div", "main", "footer", "div"]:
+        bad.append(f"each member names the element it lives in: {[m['element'] for m in members]}")
+
+    # Declaring none is a different fact from declaring nothing, so it must still parse and be
+    # caught by the validator rather than by the grammar.
+    empty = read_hd("module m\n\n  surfaces S = [\n  ]\n")
+    if "ok" not in empty:
+        bad.append("an empty block parses; refusing it is the validator's job, not the grammar's")
+
+    # Every existing declaration must keep parsing: the block is new syntax, not a change to old.
+    for hd in sorted(Path(__file__).resolve().parents[2].glob("honest-*/*.hd")):
+        if "ok" not in read_hd(hd.read_text()):
+            bad.append(f"{hd.name} stopped parsing")
+
+    # The validator's two checks. Order is not among them: the declaration IS the order, so
+    # there is nothing inside one module to compare it against.
+    def _module(src):
+        return read_hd(src)["ok"]["modules"][0]
+
+    clean = validate(_module(page))
+    if clean:
+        bad.append(f"a well-formed surfaces block validates clean: {clean}")
+
+    duped = validate(_module('module m\n\n  surfaces S = [\n    "a" as div,\n    "a" as main\n  ]\n'))
+    if not duped or duped[0]["code"] != "duplicate_surface":
+        bad.append(f"an id declared twice in one block is a fault: {duped}")
+    elif "a" not in duped[0]["message"]:
+        bad.append(f"the fault must name the id it caught: {duped[0]['message']}")
+    elif duped[0]["detail"] != {"surfaces": "S", "id": "a"}:
+        bad.append(f"the fault must locate itself by block and id: {duped[0]['detail']}")
+
+    none = validate(_module("module m\n\n  surfaces S = [\n  ]\n"))
+    if not none or none[0]["code"] != "empty_surfaces":
+        bad.append(f"a block declaring no surface is a fault: {none}")
+    return bad
+
+
 def _probe_entry_boundaries():
     """read_hd and validate are the module's two public entry points, so they are boundaries and
     must answer a wrong input with a named fault rather than a traceback from somewhere inside.
@@ -231,12 +305,16 @@ def _probe_entry_boundaries():
         "  fn c : (r: R) -> str invokes d\n"
         "  dispatch d = { \"k\" -> h from f }\n"
     )["ok"]["modules"][0]
-    every = validate(projected) + validate(mismatched) + faults + [byte_result["err"]]
+    surface_faults = (
+        validate(read_hd('module m\n\n  surfaces S = [\n    "a" as div,\n    "a" as main\n  ]\n')["ok"]["modules"][0])
+        + validate(read_hd('module m\n\n  surfaces S = [\n  ]\n')["ok"]["modules"][0])
+    )
+    every = validate(projected) + validate(mismatched) + surface_faults + faults + [byte_result["err"]]
     for f in every:
         for field in ("code", "message", "category"):
             if not f[field]:
                 bad.append(f"a fault carried an empty {field}: {f}")
-    if {f["code"] for f in every} < {"unknown_projection", "projection_mismatch", "not_a_module", "hd_source_not_text"}:
+    if {f["code"] for f in every} < {"unknown_projection", "projection_mismatch", "not_a_module", "hd_source_not_text", "duplicate_surface", "empty_surfaces"}:
         bad.append(f"the law must cover every code it claims: {sorted({f['code'] for f in every})}")
     return bad
 
@@ -322,6 +400,7 @@ def run():
         "malformed": _probe_malformed(),
         "determinism": _probe_determinism(),
         "result": _probe_result(),
+        "surfaces": _probe_surfaces(),
         "entry_boundaries": _probe_entry_boundaries(),
         "validate": _probe_validate(),
         "projection": _probe_projection(),

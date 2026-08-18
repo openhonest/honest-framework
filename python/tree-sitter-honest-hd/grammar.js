@@ -39,6 +39,7 @@ module.exports = grammar({
       $.layer_decl,
       $.type_decl,
       $.set_decl,
+      $.surfaces_decl,
       $.vocabulary_decl,
       $.dispatch_decl,
       $.example_decl,
@@ -73,6 +74,21 @@ module.exports = grammar({
     // --- Sets and vocabularies ----------------------------------------------
 
     set_decl: $ => seq('set', field('name', $.identifier), '=', '{', commaSep($.set_member), '}'),
+
+    // --- Surfaces ------------------------------------------------------------
+
+    // The surfaces a module renders, in the document order the page requires. Square brackets
+    // rather than braces because the order IS the contract: every other block in this grammar
+    // (set, vocabulary, dispatch) is unordered, and a reader should see the difference in the
+    // syntax rather than have to know it. The order is positional with no index, because a
+    // number beside each member could disagree with the sequence.
+    surfaces_decl: $ => seq(
+      'surfaces', field('name', $.identifier), '=', '[', commaSep($.surface_member), ']',
+    ),
+
+    // `as <element>` carries the part of the contract that says which element an id lives in:
+    // a header id in a <header>, an alert zone in a <div>.
+    surface_member: $ => seq(field('id', $.string), 'as', field('element', $.identifier)),
 
     set_member: $ => seq(field('value', $.string), optional(seq(':', field('description', $.string)))),
 
