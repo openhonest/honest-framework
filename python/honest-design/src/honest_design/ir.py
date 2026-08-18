@@ -67,6 +67,7 @@ class Vocabulary(TypedDict):
 class DispatchEntry(TypedDict):
     key: str
     handler: str
+    projection: str  # the slice of the input the handler is fed; "" when none is declared
 
 
 class Dispatch(TypedDict):

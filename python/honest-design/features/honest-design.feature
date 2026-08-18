@@ -187,6 +187,21 @@ Feature: honest-design — the .hd architecture-declaration read path
     When _impure_pure_functions checks them
     Then it returns an impure_pure_function fault for each pure fn that declares a side effect
 
+  Scenario: _callers_of finds the functions that invoke a dispatch table
+    Given a module IR with functions and dispatch tables
+    When _callers_of is given a table name
+    Then it returns every function whose invokes names that table, since their input is what the table projects from
+
+  Scenario: _record_fields collects every declared record's fields by type name
+    Given a module IR with type declarations
+    When _record_fields folds them
+    Then it returns each record type's field names and their types, and skips aliases
+
+  Scenario: _bad_projections flags a dispatch entry whose from clause does not hold
+    Given a module IR with dispatch entries that project a field
+    When _bad_projections checks them against the caller's input and the handler's parameter
+    Then it returns an unknown_projection fault when the field is not on the caller's input, and a projection_mismatch fault when the handler does not take exactly that field's type
+
   Scenario: validate returns a module's faults
     Given a module IR
     When validate runs every check over it

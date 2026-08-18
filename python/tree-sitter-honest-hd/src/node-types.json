@@ -105,6 +105,16 @@
             "named": true
           }
         ]
+      },
+      "projection": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
       }
     }
   },
@@ -883,6 +893,10 @@
   },
   {
     "type": "fn",
+    "named": false
+  },
+  {
+    "type": "from",
     "named": false
   },
   {

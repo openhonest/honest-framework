@@ -1,9 +1,6 @@
 # honest-design: Architecture Specification
 
-**Version:** 0.1 (Draft)
-**Date:** July 2026
-**Status:** Active
-**Author:** Adam Zachary Wasserman
+**Version:** 0.1 (Draft) **Date:** July 2026 **Status:** Active **Author:** Adam Zachary Wasserman
 
 ---
 
@@ -126,6 +123,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `set <name> = { "a", ... }` | A bounded recognizer set of string literals; each member may be written `"member" : "description"`. |
 | `vocabulary <name> = { set, ... }` | A vocabulary composed of sets (its Cartesian product is the exhaustive test space). |
 | `dispatch <name> = { "k" -> handler, ... }` | A dict-dispatch table — the honest replacement for `if/elif`. |
+| `dispatch <name> = { "k" -> handler from <field>, ... }` | The same, where each entry names the slice of the caller's input its handler is fed. `from` is optional per entry. Without it every handler in a table must declare the same wide input, which hides which field each one actually reads. |
 | `example <name> of <chain> = "..."` | A living-spec example bound to a chain. |
 | `boundary_in fn <name> : (args) -> ret side_effect reads "<source>"` | Column 1. Input boundary; declares what it reads. |
 | `orchestrator fn <name> : (args) -> ret invokes <list> [raises <faults>]` | Column 2. Runs chains; names what it invokes and the faults it may raise. |
@@ -136,7 +134,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `entry "<callsite>" -> fn` | An entry point whose call-site shape is a string — a decorator, a context manager, a middleware registration — dispatching to a function. |
 | `html_attr "attr" "desc"` | A declared client-side attribute. |
 
-A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes it can return, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). There is exactly one way to say each thing.
+A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes it can return, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). A dispatch entry may add `from <field>`, naming the slice of the caller's input that entry's handler is fed; the handler then declares that field's type instead of the whole record, so a predicate reading one field of sixteen says so in its signature rather than in a comment. There is exactly one way to say each thing.
 
 ### 3.3 Workspace files
 
@@ -190,6 +188,12 @@ The validator is a pure function `Module (IR) → [fault]`. An empty list is a v
 - Every `route` and `entry` targets a declared function (else `unknown_target`; the input-boundary dual of HC001).
 - Names are unique within each declaration kind — functions, types, sets, chains, vocabularies (else `duplicate_name`; duals of HC004/HC005/HC006).
 - A plain `fn` declares no `side_effect` (else `impure_pure_function`) — only `boundary_in`/`boundary_out` may.
+- The two public entry points check their own input, because both are boundaries and the caller's type is not
+  something the module may assume. `read_hd` refuses a non-text source (`hd_source_not_text`) rather than
+  failing inside the parse, and `validate` names a document handed over in place of one module
+  (`not_a_module`) rather than raising from whichever check reads a field first. `hd_syntax_error` is the
+  third code the reader emits, for source that parses to an error node.
+- A dispatch entry's `from` names a real field of its caller's input (else `unknown_projection`), and its handler takes exactly one parameter of that field's type (else `projection_mismatch`). The caller is found through `invokes`. Without both checks the projection is a comment, and a signature that overstates what it reads is the defect the notation exists to catch.
 
 Three further checks are deliberately **not** in the per-module pass, each for a stated reason:
 

@@ -82,15 +82,7 @@ module.exports = grammar({
 
     dispatch_decl: $ => seq('dispatch', field('name', $.identifier), '=', '{', commaSep($.dispatch_entry), '}'),
 
-    // A dispatch entry may name the slice of its input that the handler is fed. Without it every
-    // handler in a table must declare the same wide input, which hides which field each one
-    // actually reads. `from` is optional, so every existing declaration stays valid.
-    dispatch_entry: $ => seq(
-      field('key', $.string),
-      '->',
-      field('handler', $.identifier),
-      optional(seq('from', field('projection', $.identifier))),
-    ),
+    dispatch_entry: $ => seq(field('key', $.string), '->', field('handler', $.identifier)),
 
     // --- Examples (living spec) ---------------------------------------------
 

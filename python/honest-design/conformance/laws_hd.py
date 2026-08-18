@@ -52,7 +52,7 @@ def _probe_module():
         bad.append(f"set members (with and without description) wrong: {m['sets']}")
     if m["vocabularies"] != [{"name": "v", "sets": ["s", "s2"]}]:
         bad.append(f"vocabulary wrong: {m['vocabularies']}")
-    if m["dispatches"] != [{"name": "d", "entries": [{"key": "k", "handler": "h"}, {"key": "j", "handler": "g"}]}]:
+    if m["dispatches"] != [{"name": "d", "entries": [{"key": "k", "handler": "h", "projection": ""}, {"key": "j", "handler": "g", "projection": ""}]}]:
         bad.append(f"dispatch wrong: {m['dispatches']}")
     if m["examples"] != [{"name": "e", "chain": "c", "text": "does a thing"}]:
         bad.append(f"example wrong: {m['examples']}")
@@ -185,6 +185,62 @@ def _probe_result():
     return bad
 
 
+def _probe_entry_boundaries():
+    """read_hd and validate are the module's two public entry points, so they are boundaries and
+    must answer a wrong input with a named fault rather than a traceback from somewhere inside.
+    Both were found by the first consumer outside this workspace: bytes into read_hd raised
+    AttributeError from source.encode, and the obvious composition validate(read_hd(src)) raised
+    KeyError('functions') because one returns a document and the other takes a module."""
+    bad = []
+
+    byte_result = read_hd(b"module t\n")
+    if "err" not in byte_result:
+        bad.append("read_hd must refuse a non-text source rather than accept it")
+    elif byte_result["err"]["code"] != "hd_source_not_text":
+        bad.append(f"read_hd's refusal must name the code: {byte_result['err']['code']}")
+
+    document = read_hd("module t\n")["ok"]
+    faults = validate(document)
+    if not faults or faults[0]["code"] != "not_a_module":
+        bad.append(f"validate must name a document handed to it in place of a module: {faults}")
+    elif "modules" not in faults[0]["message"]:
+        bad.append("the refusal must say what to pass instead, naming the document's modules")
+    if "err" in byte_result and "text" not in byte_result["err"]["message"]:
+        bad.append("read_hd's refusal must say it wanted text")
+
+    # A projection fault carries where it was found. Nothing asserted its detail, so the three
+    # keys could be swapped for each other and every test still passed.
+    projected = read_hd(
+        "module m\n\n  type R = {\n    f: str\n  }\n\n"
+        "  fn h : (f: str) -> str\n"
+        "  fn c : (r: R) -> str invokes d\n"
+        "  dispatch d = { \"k\" -> h from ghost }\n"
+    )["ok"]["modules"][0]
+    projection_faults = [f for f in validate(projected) if f["code"] == "unknown_projection"]
+    if not projection_faults:
+        bad.append("an unknown projection must fault")
+    elif projection_faults[0]["detail"] != {"dispatch": "d", "key": "k", "projection": "ghost"}:
+        bad.append(f"the fault must locate itself by dispatch, key and projection: {projection_faults[0]['detail']}")
+
+    # Every fault the validator can emit, checked as one law rather than string by string: a
+    # fault whose message or category is empty tells the reader nothing, and nothing here
+    # asserted either, so any of them could have been blanked and every test still passed.
+    mismatched = read_hd(
+        "module m\n\n  type R = {\n    f: str\n  }\n\n"
+        "  fn h : (n: int) -> str\n"
+        "  fn c : (r: R) -> str invokes d\n"
+        "  dispatch d = { \"k\" -> h from f }\n"
+    )["ok"]["modules"][0]
+    every = validate(projected) + validate(mismatched) + faults + [byte_result["err"]]
+    for f in every:
+        for field in ("code", "message", "category"):
+            if not f[field]:
+                bad.append(f"a fault carried an empty {field}: {f}")
+    if {f["code"] for f in every} < {"unknown_projection", "projection_mismatch", "not_a_module", "hd_source_not_text"}:
+        bad.append(f"the law must cover every code it claims: {sorted({f['code'] for f in every})}")
+    return bad
+
+
 def _probe_validate():
     """The validator raises nothing on a valid module and pins each fault it does raise."""
     bad = []
@@ -233,6 +289,29 @@ def _probe_public_surface():
     return []
 
 
+def _probe_projection():
+    """`from` reads back, stays optional, and is checked rather than decorative."""
+    bad = []
+    src = ("module m\n  type P = { a: str  b: int }\n  fn f : (a: str) -> bool\n"
+           "  fn g : (b: int) -> bool\n  orchestrator fn r : (p: P) -> bool invokes D\n"
+           "  dispatch D = { \"one\" -> f from a, \"two\" -> g from b }\n")
+    entries = _module(src)["dispatches"][0]["entries"]
+    if entries != [{"key": "one", "handler": "f", "projection": "a"}, {"key": "two", "handler": "g", "projection": "b"}]:
+        bad.append(f"projection did not read back: {entries}")
+    if validate(_module(src)) != []:
+        bad.append(f"a matching projection should validate clean: {validate(_module(src))}")
+    absent = _module("module m\n  fn f : (a: str) -> bool\n  dispatch D = { \"one\" -> f }\n")["dispatches"][0]["entries"]
+    if absent != [{"key": "one", "handler": "f", "projection": ""}]:
+        bad.append(f"an entry without `from` must still parse, projection empty: {absent}")
+    ghost = validate(_module(src.replace("from a", "from zz")))
+    if [f["code"] for f in ghost] != ["unknown_projection"]:
+        bad.append(f"a projection naming no field must fault: {ghost}")
+    mismatch = validate(_module(src.replace("fn g : (b: int)", "fn g : (b: str)")))
+    if [f["code"] for f in mismatch] != ["projection_mismatch"]:
+        bad.append(f"a handler that does not take the projected field must fault: {mismatch}")
+    return bad
+
+
 def run():
     probes = {
         "module": _probe_module(),
@@ -243,7 +322,9 @@ def run():
         "malformed": _probe_malformed(),
         "determinism": _probe_determinism(),
         "result": _probe_result(),
+        "entry_boundaries": _probe_entry_boundaries(),
         "validate": _probe_validate(),
+        "projection": _probe_projection(),
         "render": _probe_render(),
         "public_surface": _probe_public_surface(),
     }

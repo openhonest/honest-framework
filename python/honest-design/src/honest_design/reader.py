@@ -88,7 +88,16 @@ def _read_vocab(node, source) -> ir.Vocabulary:
 
 
 def _read_dispatch_entry(node, source) -> ir.DispatchEntry:
-    return {"key": _unquote(_field_text(node, "key", source)), "handler": _field_text(node, "handler", source)}
+    """An entry, and the slice of the input its handler is fed when one is declared.
+
+    `projection` is "" rather than absent when the entry does not declare one: a reader that
+    sometimes omits a key makes every consumer branch on its presence, and the two cases mean
+    different things only to whoever remembers which.
+    """
+    projection = _field(node, "projection")
+    return {"key": _unquote(_field_text(node, "key", source)),
+            "handler": _field_text(node, "handler", source),
+            "projection": _text(projection, source) if projection is not None else ""}
 
 
 def _read_dispatch(node, source) -> ir.Dispatch:
@@ -239,7 +248,13 @@ def _document(groups) -> ir.Document:
 
 
 def read_hd(source):
-    """Read `.hd` source text into a Document IR, or a fault if the source is malformed."""
+    """Read `.hd` source text into a Document IR, or a fault if the source is malformed.
+
+    This is a boundary: the source arrives from outside and its type is not something the
+    module can assume. A non-text source is refused by name here rather than allowed to fail
+    as an AttributeError from inside the parse, which is what the promise above means."""
+    if not isinstance(source, str):
+        return err(fault("hd_source_not_text", f"read_hd takes .hd source as text, not {type(source).__name__}", "client", {}))
     source = source.encode("utf-8")
     root = honest_parse.parse(source, "hd").root_node
     error = honest_parse.first_error_node(root)
