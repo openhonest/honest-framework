@@ -1,9 +1,6 @@
 # honest-check: Architecture Specification
 
-**Version:** 0.1 (Draft)
-**Date:** March 15, 2026
-**Status:** Active
-**Author:** Adam Zachary Wasserman
+**Version:** 0.1 (Draft) **Date:** March 15, 2026 **Status:** Active **Author:** Adam Zachary Wasserman
 
 ---
 
@@ -547,6 +544,39 @@ FUNCTION check_HC_REF004(vocabulary, scanned_templates):
 ```
 
 `vocabulary` maps each checked attribute — `hf-format` to the format names, `hf-type` to the input-type names, and each `hf-*-format` option to its enumerated set — to its allowed values, read from the **manifest honest-format emits** (`manifest.json`), never inferred by scraping the runtime's dispatch tables (declared, never inferred). An attribute carrying a free value — `hf-decimals`, `hf-currency`, a raw prefix — names no enumerated vocabulary, is absent from the map, and is not judged; only the closed-vocabulary attributes are resolved. A value carrying interpolation (`hf-format="{{ kind }}"`) is dynamic and skipped whole, exactly as HC-REF001 skips an interpolated route path. The manifest is read only where a `format_manifest` path is configured, so HC-REF004 runs only where an application declares which honest-format vocabulary its templates target — exactly as HC002/HC-REF001 run only where templates are configured.
+
+#### HC-REF005 — Declaration and implementation resolve to each other
+
+A module's `.hd` declares its surface: `fn name : (params) -> result` for each function the module offers. Nothing today reads that declaration against the source. A module can declare eight functions and implement a hundred and one, and no gate objects, so the declaration silently becomes a document about an earlier version of the module. Measured across the reference implementation: 152 declared, 560 public functions implemented, 408 implemented and never declared. In one module the undeclared set included the function the module is named for.
+
+HC-REF005 applies "Every reference resolves" in both directions between the two artifacts. A declaration naming no implementation is an unbuilt promise. An implementation named by no declaration is undeclared surface, which is the same defect as an unmodelled route: it exists, it is callable, and nobody chose it on the record.
+
+```
+FUNCTION check_HC_REF005(hd_module, source_functions):
+    declared ← { d.name FOR d IN hd_module.fn_declarations }
+    offered  ← { f.name FOR f IN source_functions IF f is not internal }
+
+    FOR EACH name IN declared - offered:
+        EMIT error(HC-REF005, hd_module.location_of(name),
+            f"'{name}' is declared in {hd_module.path} and implemented nowhere. "
+            "Implement it, or remove the declaration.")
+
+    FOR EACH name IN offered - declared:
+        EMIT error(HC-REF005, source_location_of(name),
+            f"'{name}' is offered by the module and declared in no .hd. "
+            "Declare it, or mark it internal.")
+
+    FOR EACH name IN declared & offered:
+        IF arity(hd_module.declaration(name)) ≠ arity(source_function(name)):
+            EMIT error(HC-REF005, source_location_of(name),
+                f"'{name}' is declared with {n} parameters and implemented with {m}.")
+```
+
+**Internal is declared, not inferred.** A leading underscore is a convention, and a convention cannot carry a gate: `parse` is public by any reading and carries no underscore. A function is internal because it says so, through the module's own internal marker, and every other function must appear in the `.hd`. The author states which of the two a function is; the checker never guesses. This is the same rule as the entry-point set: a tool that infers the surface will either reject the API or bless what nobody chose.
+
+**Names and arity first, types later.** Matching the `.hd` type language against the host language's annotations is a separate problem with its own decisions, and the name and parameter-count check catches the drift this rule exists for without waiting on it. A conformant implementation may check types; none is required to yet.
+
+**The repair is generatable, and that matters for adoption.** 408 findings is not 408 judgments. honest-design already parses `.hd` and honest-parse already parses source, so the missing `fn` lines can be emitted from the AST for a person to review and correct, once. The gate then holds them in step. A rule whose first run produces hundreds of findings is only affordable when the fix is mechanical, and here it is.
 
 #### HC004 — Dead vocabulary type
 
@@ -1500,6 +1530,7 @@ src/pipelines/user.py:42: info
 | HC-REF002 | Error | Static | — | Template include/extends target does not resolve to a template |
 | HC-REF003 | Error | Static | — | Template class reference does not resolve to a defined rule |
 | HC-REF004 | Error | Static | — | Behavioural attribute value is not a declared vocabulary member |
+| HC-REF005 | Error | Static | — | Declaration and implementation do not resolve to each other |
 | HC-ST001 | Error | Static | — | Write to persisted state outside an I/O-boundary function |
 | HC-ST002 | Error | Static | — | Shadow copy of user state outside the manifest-declared DOM |
 | HC-HF001 | Error | Static | — | `feature_state` references a flag not declared in FEATURES |

@@ -1,48 +1,30 @@
 # honest-persist: Language-Agnostic Architecture Specification
 
-**Version:** 0.1 (Draft)
-**Date:** March 2026
-**Status:** Reverse-engineered from declaro-persistum Python implementation
+**Version:** 0.1 (Draft) **Date:** March 2026 **Status:** Reverse-engineered from declaro-persistum Python implementation
 
 ---
 
 ## 1. Purpose
 
-This document defines the exact algorithms, data structures, and conformance
-requirements that every implementation of honest-persist must satisfy.
+This document defines the exact algorithms, data structures, and conformance requirements that every implementation of honest-persist must satisfy.
 
-An implementor reading this document should be able to build a conformant
-honest-persist in any language with async I/O support, without reading the
-Python source code.
+An implementor reading this document should be able to build a conformant honest-persist in any language with async I/O support, without reading the Python source code.
 
 ### 1.1 What honest-persist Is
 
-honest-persist is a **schema-first, pure-function persistence layer**. It
-replaces ORM session objects, identity maps, active record patterns, and
-migration revision chains with three ideas:
+honest-persist is a **schema-first, pure-function persistence layer**. It replaces ORM session objects, identity maps, active record patterns, and migration revision chains with three ideas:
 
-1. **Schema as data.** A schema is a plain data structure describing tables,
-   columns, indexes, and constraints. No class hierarchy. No annotations
-   requiring a framework to parse. The schema is JSON-serializable.
+1. **Schema as data.** A schema is a plain data structure describing tables, columns, indexes, and constraints. No class hierarchy. No annotations    requiring a framework to parse. The schema is JSON-serializable.
 
-2. **Migrations as a diff.** To migrate, you compare the schema you have
-   against the schema you want. The diff is a pure function: same inputs,
-   same output. No revision chain. No linear history file. Branches carry
-   their own schema state without conflict.
+2. **Migrations as a diff.** To migrate, you compare the schema you have against the schema you want. The diff is a pure function: same inputs,    same output. No revision chain. No linear history file. Branches carry    their own schema state without conflict.
 
-3. **Queries as data.** A query is a plain data structure describing what
-   SQL to run and with what parameters. Execution is a separate step. No
-   session. No unit of work. No identity map.
+3. **Queries as data.** A query is a plain data structure describing what SQL to run and with what parameters. Execution is a separate step. No    session. No unit of work. No identity map.
 
 ### 1.2 What honest-persist Is Not
 
-honest-persist has no opinion about application architecture. It does not
-provide an active record base class, a repository pattern, or a unit of work.
-It provides the three things listed above and nothing else.
+honest-persist has no opinion about application architecture. It does not provide an active record base class, a repository pattern, or a unit of work. It provides the three things listed above and nothing else.
 
-honest-persist does not own the database connection lifecycle. Connections
-are passed in. Pools are owned by the caller. honest-persist functions take
-a connection and return data.
+honest-persist does not own the database connection lifecycle. Connections are passed in. Pools are owned by the caller. honest-persist functions take a connection and return data.
 
 ### 1.3 honest-persist in the Honest Framework
 
@@ -54,45 +36,21 @@ honest-observe    — event sourcing and observability
 honest-check      — static verification across all layers
 ```
 
-honest-persist sits at the I/O boundary. Its query execution functions are
-explicitly boundary functions — they perform I/O. Everything above the
-execution layer is pure.
+honest-persist sits at the I/O boundary. Its query execution functions are explicitly boundary functions — they perform I/O. Everything above the execution layer is pure.
 
 ---
 
 ## 2. Schema Loaders
 
-A schema is a plain data structure. Any mechanism that produces that data
-structure is a valid schema source. honest-persist does not mandate how
-schemas are defined — only what they must contain.
+A schema is a plain data structure. Any mechanism that produces that data structure is a valid schema source. honest-persist does not mandate how schemas are defined — only what they must contain.
 
 ### 2.1 The Idiomatic Loader Pattern
 
-Implementations are expected to provide a **schema loader** that reads from
-the idiomatic type or model system of the host language and produces a
-`Schema` dict. This is not optional ceremony — it is how honest-persist
-integrates naturally into each language's existing ecosystem.
+Implementations are expected to provide a **schema loader** that reads from the idiomatic type or model system of the host language and produces a `Schema` dict. This is not optional ceremony — it is how honest-persist integrates naturally into each language's existing ecosystem.
 
-**Python:** The reference implementation reads from Pydantic `BaseModel`
-subclasses decorated with `@table(name)`. Field types, `Literal` annotations,
-and `Field(json_schema_extra=...)` metadata translate directly to `Column`
-definitions; an inner `Meta` class carries a composite primary key, indexes, and
-constraints. The loader is `load_schema_from_models(*models)`, a pure function
-taking the model classes. It is an **optional adapter** — Pydantic is never a
-dependency of the pure core; an adopter installs `honest-persist[pydantic]` and
-imports the loader from `honest_persist.loader`. A hand-written `Schema` dict
-needs none of it (section 2.2).
+**Python:** The reference implementation reads from Pydantic `BaseModel` subclasses decorated with `@table(name)`. Field types, `Literal` annotations, and `Field(json_schema_extra=...)` metadata translate directly to `Column` definitions; an inner `Meta` class carries a composite primary key, indexes, and constraints. The loader is `load_schema_from_models(*models)`, a pure function taking the model classes. It is an **optional adapter** — Pydantic is never a dependency of the pure core; an adopter installs `honest-persist[pydantic]` and imports the loader from `honest_persist.loader`. A hand-written `Schema` dict needs none of it (section 2.2).
 
-A second optional adapter, `load_schema_from_django(*models)` in
-`honest_persist.django_loader` (installed via `honest-persist[django]`), reads
-Django model definitions the same way: each model's `_meta` fields become
-`Column` definitions — field types mapped to abstract SQL types, `null` to
-nullability, `primary_key` and `unique` to flags, `choices` to `literal_values`,
-a `ForeignKey` to a `references`, and a value default to a SQL literal — keyed by
-Django's db column names. Both loaders render a host default value to its SQL
-literal through one shared, dependency-free helper, so a Django codebase and a
-Pydantic codebase reach the same `Schema` shape. Neither framework is imported by
-the pure core.
+A second optional adapter, `load_schema_from_django(*models)` in `honest_persist.django_loader` (installed via `honest-persist[django]`), reads Django model definitions the same way: each model's `_meta` fields become `Column` definitions — field types mapped to abstract SQL types, `null` to nullability, `primary_key` and `unique` to flags, `choices` to `literal_values`, a `ForeignKey` to a `references`, and a value default to a SQL literal — keyed by Django's db column names. Both loaders render a host default value to its SQL literal through one shared, dependency-free helper, so a Django codebase and a Pydantic codebase reach the same `Schema` shape. Neither framework is imported by the pure core.
 
 Other languages have equivalent idiomatic sources:
 
@@ -105,15 +63,11 @@ Other languages have equivalent idiomatic sources:
 | Elixir     | Ecto schema definitions (read-only)         |
 | Java       | Record classes with annotations             |
 
-The loader is a pure function: it reads the type definitions and returns a
-`Schema` dict. No I/O. No database contact. The same schema definition
-produces the same `Schema` dict every time.
+The loader is a pure function: it reads the type definitions and returns a `Schema` dict. No I/O. No database contact. The same schema definition produces the same `Schema` dict every time.
 
 ### 2.2 Plain Dict Schemas Are Always Valid
 
-The idiomatic loader is a convenience. A `Schema` dict written by hand, or
-generated by any other means (TOML files, JSON config, code generation), is
-equally valid. The loader does not gate access to honest-persist.
+The idiomatic loader is a convenience. A `Schema` dict written by hand, or generated by any other means (TOML files, JSON config, code generation), is equally valid. The loader does not gate access to honest-persist.
 
 This matters for:
 - Languages without a dominant model library
@@ -122,20 +76,14 @@ This matters for:
 
 ### 2.3 What the Loader Must Produce
 
-Regardless of source, the output must conform to the `Schema` type in
-section 4.5. The loader is responsible for:
+Regardless of source, the output must conform to the `Schema` type in section 4.5. The loader is responsible for:
 
-1. Mapping host-language types to SQL type strings (`str` → `"text"`,
-   `int` → `"integer"`, `UUID` → `"uuid"`, etc.)
-2. Extracting column constraints (`nullable`, `default`, `unique`,
-   `primary_key`, `references`)
+1. Mapping host-language types to SQL type strings (`str` → `"text"`, `int` → `"integer"`, `UUID` → `"uuid"`, etc.)
+2. Extracting column constraints (`nullable`, `default`, `unique`, `primary_key`, `references`)
 3. Converting `Literal` or equivalent enum types to `literal_values` lists
-4. Passing through migration hints (`renamed_from`, `is_new`) if the source
-   annotation system supports them
+4. Passing through migration hints (`renamed_from`, `is_new`) if the source annotation system supports them
 
-Type mapping is dialect-aware. The loader produces abstract type names
-(`"text"`, `"integer"`, `"uuid"`). The applier resolves these to
-dialect-specific SQL types at execution time.
+Type mapping is dialect-aware. The loader produces abstract type names (`"text"`, `"integer"`, `"uuid"`). The applier resolves these to dialect-specific SQL types at execution time.
 
 ---
 
@@ -149,15 +97,9 @@ A schema is a flat dict mapping table names to table definitions:
 Schema = dict[TableName, Table]
 ```
 
-A schema is a complete description of the desired database state. It is not
-a migration script. It is not a diff. It is the destination. Two schemas
-can be compared with `diff()` to produce the operations that transform one
-into the other.
+A schema is a complete description of the desired database state. It is not a migration script. It is not a diff. It is the destination. Two schemas can be compared with `diff()` to produce the operations that transform one into the other.
 
-Views, triggers, and procedures are not tables; they live alongside the tables in a
-`SchemaDefinition` (section 4.15), which is the complete unit `diff()` and `apply()` operate
-on. A bare `Schema` (tables only) is the common case and is accepted as a tables-only
-definition.
+Views, triggers, and procedures are not tables; they live alongside the tables in a `SchemaDefinition` (section 4.15), which is the complete unit `diff()` and `apply()` operate on. A bare `Schema` (tables only) is the common case and is accepted as a tables-only definition.
 
 ### 3.2 Dialect
 
@@ -169,14 +111,45 @@ honest-persist is polymorphic across SQL dialects. The supported dialects are:
 "turso"       — Turso embedded with optional Cloud sync (MVCC, Rust-native)
 ```
 
-Dialect is declared at pool creation time. All operations are dialect-aware.
-Application code does not contain dialect conditionals — dialect differences
-are resolved inside honest-persist, in lookup tables.
+Dialect is declared at pool creation time. All operations are dialect-aware. Application code does not contain dialect conditionals — dialect differences are resolved inside honest-persist, in lookup tables.
+
+### 3.2.1 Choosing a Store
+
+A store is chosen on properties that survive a release, never on a vendor's current build. A version's defect is a dated operational fact: it belongs in the notes an operator keeps, with the date it was measured, so a reader can check whether it still holds. A standard that names one is wrong on the day it is repaired.
+
+Four questions decide it.
+
+**Where does the engine run?** Embedded in the process, or reached over a network. Embedded removes a hop and a failure mode, and it makes the store's availability the process's own. Networked lets many processes share one truth.
+
+**Where do migrations run?** Against the same place the application reads, or against a primary the application does not read directly. A store whose replication carries data but not schema needs its DDL applied at the primary, and the migration workflow differs accordingly (§5.2, §5.5).
+
+**Does it offer a single-command atomic test-and-set?** One operation whose return value distinguishes "I took it" from "someone else holds it". This is the property Honest Code principle 19 requires of any guard, and it is what makes a store usable for coordination between instances. A store without one forces a read then a write, which is the check-then-act that principle forbids.
+
+**What consistency does it claim?** Read the vendor's own statement of what a committed write guarantees, and against which concurrent readers and writers. Claims differ by journal mode and by configuration within a single engine, so the question is answered per configuration, not per product.
+
+The three SQL dialects honest-persist drives (§3.2) answer them differently, and the differences are architectural rather than versioned.
+
+**SQLite.** The engine is a library inside your process and the database is one file. There is no network hop, so there is no network failure mode, and the database's availability is the process's own. One writer at a time; readers run concurrently under WAL. Migrations run in-process against the file. Choose it when exactly one process writes and the data lives with the application: a single-node service, a desktop or embedded application, a test database, a local copy of something authoritative elsewhere. Stop choosing it the moment a second process must write, because the property that makes it simple is the one that then fails.
+
+**Turso.** The same engine with a replica model. The application reads a local embedded copy at local-file latency and writes reach a remote primary through sync, so it buys SQLite's read latency against a shared source of truth. The cost is the sync seam, and it has two edges. A read can be behind the primary, so a read is not guaranteed to reflect another instance's last write. And schema changes have to reach the primary rather than the local replica, which is why migration takes a different path here (§5.2, §5.5). Choose it when reads dominate heavily, read latency matters, and the application tolerates a replica that is briefly behind. Do not choose it when a read must see the last write from somewhere else.
+
+**PostgreSQL.** A server reached over a network, doing its own concurrency control. Many concurrent writers, transactional DDL, and the richest constraint and type system of the three, which matters because a constraint the database enforces is one the application cannot forget. The cost is the hop and an operational component you run and monitor. Choose it when more than one process writes, when a write must be immediately visible to every reader, or when you need a constraint the other two cannot express.
+
+Two questions separate them, and they are worth asking in this order. **How many processes write?** One is SQLite; more than one is Turso or Postgres. **Must a read see the last write?** If yes, Postgres; if a brief lag is acceptable, Turso. Default to PostgreSQL when the answers are not yet known, because it is the choice whose failure modes are visible rather than silent, and moving off it later is cheaper than discovering you needed it.
+
+The architectural shape above is durable. Anything finer — a journal mode, an isolation level, a sync guarantee — is read from the engine's own documentation for the version and configuration in hand, not from here.
+
+**Redis is not one of them.** It is not SQL, it declares no schema, and honest-persist carries no Redis backend and will not gain one. Its defining property is the third question: single-command atomic operations. That makes it the natural answer for **operational state shared across horizontally scaled instances** — sessions, rate-limit counters, in-flight locks, presence — and that is the one job for which the framework sanctions it.
+
+Three bounds apply to that use.
+
+- **Losing the store logs somebody out; it does not lose a record.** If the business would notice the data missing, it is not operational state and it does not go here.
+- **Every write is a single atomic command.** `SET NX`, `INCR`, `EXPIRE`. A read followed by a write across instances is the check-then-act principle 19 forbids, and it is the defect this permission would otherwise introduce. Redis is the single mutator honest-state requires only while the instances issue commands it serialises.
+- **Each use is declared where it happens.** honest-check `HC-P006` warns on a `redis` import, and the sanctioned use does not exempt the rule. It carries `# honest: disable HC-P006 <reason>` at the site, so every Redis use in a tree is greppable with its justification attached and the boundary can be audited rather than assumed. `HC-SUP001` and `HC-SUP002` already reject a dead directive and one that carries no reason.
 
 ### 3.3 The Three Layers
 
-honest-persist has three distinct layers. They compose but do not bleed into
-each other:
+honest-persist has three distinct layers. They compose but do not bleed into each other:
 
 ```
 Schema Layer    — define_table(), diff(), apply()
@@ -193,8 +166,7 @@ Pool Layer      — internal to honest-persist. Never caller-facing.
 
 ## 4. Data Structures
 
-All data structures are plain dicts (TypedDict in Python, plain objects in
-JavaScript, structs in Go). No class instances. JSON-serializable.
+All data structures are plain dicts (TypedDict in Python, plain objects in JavaScript, structs in Go). No class instances. JSON-serializable.
 
 ### 4.1 Column
 
@@ -256,8 +228,7 @@ Schema = dict[String, Table]   -- table name → Table
 
 ### 4.6 Operation
 
-A single DDL operation. The `op` field is the discriminator. The `details`
-field carries op-specific data.
+A single DDL operation. The `op` field is the discriminator. The `details` field carries op-specific data.
 
 ```
 Operation = {
@@ -277,8 +248,7 @@ OperationType =
     "create_function" | "drop_function"   | "replace_function"
 ```
 
-The view, trigger, and function operations diff the schema objects in sections
-4.12-4.14; their generation rules are in section 5.7.
+The view, trigger, and function operations diff the schema objects in sections 4.12-4.14; their generation rules are in section 5.7.
 
 ### 4.7 DiffResult
 
@@ -327,8 +297,7 @@ Query = {
 }
 ```
 
-A Query is a plain data structure. It has no execute method. Execution is
-always a separate function call at the I/O boundary.
+A Query is a plain data structure. It has no execute method. Execution is always a separate function call at the I/O boundary.
 
 ### 4.11 LatencyRecord
 
@@ -346,9 +315,7 @@ LatencyRecord = {
 
 ### 4.12 View
 
-A view is a named query. A materialized view is a view whose result is stored and
-refreshed; on dialects without native materialized views it is emulated by a registry entry, a
-backing table, and refresh triggers (section 6.6).
+A view is a named query. A materialized view is a view whose result is stored and refreshed; on dialects without native materialized views it is emulated by a registry entry, a backing table, and refresh triggers (section 6.6).
 
 ```
 View = {
@@ -373,8 +340,7 @@ Trigger = {
 
 ### 4.14 Procedure
 
-A stored procedure or function. Functions are replaceable (`CREATE OR REPLACE`);
-procedures without replace semantics are dropped and recreated.
+A stored procedure or function. Functions are replaceable (`CREATE OR REPLACE`); procedures without replace semantics are dropped and recreated.
 
 ```
 Procedure = {
@@ -392,14 +358,11 @@ Parameter = {
 }
 ```
 
-The `query` and `body` fields carry dialect SQL: the spec is language-agnostic about the
-*structure* of these objects and how they *diff*, while the SQL inside them is dialect-
-specific (section 12).
+The `query` and `body` fields carry dialect SQL: the spec is language-agnostic about the *structure* of these objects and how they *diff*, while the SQL inside them is dialect- specific (section 12).
 
 ### 4.15 SchemaDefinition
 
-`Schema` (section 4.5) is the tables. The complete declared state a migration targets — the
-tables plus the extended objects of sections 4.12-4.14 — is a SchemaDefinition:
+`Schema` (section 4.5) is the tables. The complete declared state a migration targets — the tables plus the extended objects of sections 4.12-4.14 — is a SchemaDefinition:
 
 ```
 SchemaDefinition = {
@@ -410,14 +373,9 @@ SchemaDefinition = {
 }
 ```
 
-`diff()`, `apply()`, and `validate_schema()` operate on a SchemaDefinition: the table set-
-theory (section 5.1) runs over its `tables`, the extended-object diff (section 5.7) over its
-`views`/`triggers`/`procedures`, and schema validation (section 5.6) over both.
+`diff()`, `apply()`, and `validate_schema()` operate on a SchemaDefinition: the table set- theory (section 5.1) runs over its `tables`, the extended-object diff (section 5.7) over its `views`/`triggers`/`procedures`, and schema validation (section 5.6) over both.
 
-As a convenience, a bare `Schema` — a `dict[String, Table]` with no extended objects — is
-accepted anywhere a SchemaDefinition is expected and is read as `{ tables: <that> }`. So a
-tables-only definition needs no wrapper, every tables-only example in this spec remains valid,
-and an implementation may support tables only until it adds extended objects.
+As a convenience, a bare `Schema` — a `dict[String, Table]` with no extended objects — is accepted anywhere a SchemaDefinition is expected and is read as `{ tables: <that> }`. So a tables-only definition needs no wrapper, every tables-only example in this spec remains valid, and an implementation may support tables only until it adds extended objects.
 
 ---
 
@@ -429,11 +387,7 @@ and an implementation may support tables only until it adds extended objects.
 diff(current: SchemaDefinition, target: SchemaDefinition, decisions?: dict) → DiffResult
 ```
 
-Computes the operations needed to transform `current` into `target`. This
-is a pure function: no I/O, no side effects, same inputs produce same output.
-`current` and `target` are SchemaDefinitions (section 4.15); a bare `dict[String, Table]` is
-accepted as a tables-only definition. The algorithm below operates on the `tables`; the
-extended objects (views, triggers, procedures) diff on the same pass (section 5.7).
+Computes the operations needed to transform `current` into `target`. This is a pure function: no I/O, no side effects, same inputs produce same output. `current` and `target` are SchemaDefinitions (section 4.15); a bare `dict[String, Table]` is accepted as a tables-only definition. The algorithm below operates on the `tables`; the extended objects (views, triggers, procedures) diff on the same pass (section 5.7).
 
 **Algorithm:**
 
@@ -548,45 +502,21 @@ FUNCTION compute_column_alterations(current_col, target_col):
 apply(result: DiffResult, target: SchemaDefinition, conn: Connection, dialect: Dialect) → ApplyResult
 ```
 
-Executes the operations from a DiffResult against the database. This is an
-I/O boundary function — async, like execute and transactions (section 7.4, 7.5),
-awaiting the connection's `execute` and its sync-push pause/resume. It is not pure.
+Executes the operations from a DiffResult against the database. This is an I/O boundary function — async, like execute and transactions (section 7.4, 7.5), awaiting the connection's `execute` and its sync-push pause/resume. It is not pure.
 
-Operations execute in `execution_order` (topologically sorted). On any
-failure, execution halts. The ApplyResult records what was executed before
-failure. An operation that cannot be applied in place on the dialect is routed
-through table reconstruction (section 5.5) rather than a single DDL statement.
-`apply()` takes the target SchemaDefinition because reconstructing a table requires
-its full target column definitions, which the operation deltas alone do not carry.
+Operations execute in `execution_order` (topologically sorted). On any failure, execution halts. The ApplyResult records what was executed before failure. An operation that cannot be applied in place on the dialect is routed through table reconstruction (section 5.5) rather than a single DDL statement. `apply()` takes the target SchemaDefinition because reconstructing a table requires its full target column definitions, which the operation deltas alone do not carry.
 
-**DDL on a Turso embedded replica.** Turso's WAL sync replicates DML but not DDL, so DDL
-cannot reach the cloud by pushing it through the replica's sync connection — the sync engine
-would try to replay schema changes against tables the cloud does not yet have. On a
-cloud-synced Turso database, `apply()` uses a **migrate-remote flow**: open a clean replica,
-pull the current cloud state, apply the DDL locally, and push the result — so the schema
-change reaches the cloud without the sync engine attempting to replicate DDL.
+**DDL on a Turso embedded replica.** Turso's WAL sync replicates DML but not DDL, so DDL cannot reach the cloud by pushing it through the replica's sync connection — the sync engine would try to replay schema changes against tables the cloud does not yet have. On a cloud-synced Turso database, `apply()` uses a **migrate-remote flow**: open a clean replica, pull the current cloud state, apply the DDL locally, and push the result — so the schema change reaches the cloud without the sync engine attempting to replicate DDL.
 
-**The migrate-remote interface.** `apply()` detects a cloud-synced connection by a truthy `synced`
-attribute on the connection, duck-typed the same way it probes for `pause_push`. On a cloud-synced
-connection it wraps the operations: it awaits `conn.pull()` to bring the replica to the current cloud
-state before applying any operation, applies the operations locally, and, only when every operation
-succeeded, awaits `conn.push()` to send the completed schema to the cloud. A failed migration is never
-pushed, so the cloud never sees a partial schema. A connection with no `synced` attribute, or a falsy
-one, applies directly, exactly as before. Opening the clean replica is the caller's responsibility;
-`pull()` is what brings it to the current cloud state.
+**The migrate-remote interface.** `apply()` detects a cloud-synced connection by a truthy `synced` attribute on the connection, duck-typed the same way it probes for `pause_push`. On a cloud-synced connection it wraps the operations: it awaits `conn.pull()` to bring the replica to the current cloud state before applying any operation, applies the operations locally, and, only when every operation succeeded, awaits `conn.push()` to send the completed schema to the cloud. A failed migration is never pushed, so the cloud never sees a partial schema. A connection with no `synced` attribute, or a falsy one, applies directly, exactly as before. Opening the clean replica is the caller's responsibility; `pull()` is what brings it to the current cloud state.
 
-**Rule: apply() refuses to run if DiffResult.ambiguities is non-empty.**
-Ambiguities must be resolved before applying. This is enforced, not
-advisory.
+**Rule: apply() refuses to run if DiffResult.ambiguities is non-empty.** Ambiguities must be resolved before applying. This is enforced, not advisory.
 
 ### 5.3 Ambiguity Detection
 
-An ambiguity is a change that honest-persist cannot resolve safely without
-human input. Two conditions produce ambiguities:
+An ambiguity is a change that honest-persist cannot resolve safely without human input. Two conditions produce ambiguities:
 
-**Possible rename:** A column was dropped in current and a new column
-appeared in target, with no `renamed_from` hint. If both columns have the
-same type, this might be a rename — or it might be a genuine drop and add.
+**Possible rename:** A column was dropped in current and a new column appeared in target, with no `renamed_from` hint. If both columns have the same type, this might be a rename — or it might be a genuine drop and add.
 
 ```
 confidence = 1.0   IF types match AND names are similar (edit distance ≤ 2)
@@ -594,17 +524,13 @@ confidence = 1.0   IF types match AND names are similar (edit distance ≤ 2)
            = 0.0   IF types differ
 ```
 
-Ambiguities with confidence < 0.5 are not reported — they are treated as
-genuine drop+add.
+Ambiguities with confidence < 0.5 are not reported — they are treated as genuine drop+add.
 
-**Resolution:** Ambiguities are resolved by adding `renamed_from` hints to
-the schema definition, or by supplying a decisions dict to `diff()`. The
-decisions dict maps `"table.column"` to a decision record.
+**Resolution:** Ambiguities are resolved by adding `renamed_from` hints to the schema definition, or by supplying a decisions dict to `diff()`. The decisions dict maps `"table.column"` to a decision record.
 
 ### 5.4 Dependency Graph
 
-Some operations must precede others. The dependency graph captures these
-relationships. Topological sort produces a valid execution order.
+Some operations must precede others. The dependency graph captures these relationships. Topological sort produces a valid execution order.
 
 **Dependency rules (lookup table, not imperative logic):**
 
@@ -621,26 +547,15 @@ dependency_rules = {
 }
 ```
 
-If the dependency graph contains a cycle, `diff()` returns a fault. A cycle
-is a design error in the schema (mutual FK references require a workaround
-such as deferred constraints).
+If the dependency graph contains a cycle, `diff()` returns a fault. A cycle is a design error in the schema (mutual FK references require a workaround such as deferred constraints).
 
 ### 5.5 Table Reconstruction
 
-Not every operation can be expressed as a single DDL statement on every dialect.
-PostgreSQL alters columns and constraints in place; SQLite and Turso cannot change a
-column's type, drop its NOT NULL, or add/drop a foreign key in place. For those
-(operation, dialect) pairs, `apply()` must rebuild the table rather than issue one
-statement — otherwise the operation either errors or, worse, silently no-ops and `apply()`
-reports success while the schema drifts from its definition.
+Not every operation can be expressed as a single DDL statement on every dialect. PostgreSQL alters columns and constraints in place; SQLite and Turso cannot change a column's type, drop its NOT NULL, or add/drop a foreign key in place. For those (operation, dialect) pairs, `apply()` must rebuild the table rather than issue one statement — otherwise the operation either errors or, worse, silently no-ops and `apply()` reports success while the schema drifts from its definition.
 
-**`requires_reconstruction(op, dialect)`** is a pure lookup returning true when an
-operation cannot be applied in place on a dialect. For SQLite and Turso it is
-`{ alter_column, add_foreign_key, drop_foreign_key, drop_constraint }`; for PostgreSQL it
-is empty.
+**`requires_reconstruction(op, dialect)`** is a pure lookup returning true when an operation cannot be applied in place on a dialect. For SQLite and Turso it is `{ alter_column, add_foreign_key, drop_foreign_key, drop_constraint }`; for PostgreSQL it is empty.
 
-**The reconstruction strategy** is a single transaction. It is language-agnostic; the exact
-SQL is dialect-specific (section 12):
+**The reconstruction strategy** is a single transaction. It is language-agnostic; the exact SQL is dialect-specific (section 12):
 
 ```
 FUNCTION reconstruct_table(table, target_definition, conn, dialect):
@@ -653,83 +568,45 @@ FUNCTION reconstruct_table(table, target_definition, conn, dialect):
         6. re-enable foreign-key checks and verify every foreign key still points at a real row
 ```
 
-`apply()` routes each operation to reconstruction or direct DDL by consulting
-`requires_reconstruction`. Reconstruction is atomic: a failure at any step rolls the whole
-transaction back, so a table is never left half-migrated. A temporary table left by a
-crashed reconstruction follows a naming convention (`_hp_tmp_{table}_{id}`) and is recovered
-on the next run.
+`apply()` routes each operation to reconstruction or direct DDL by consulting `requires_reconstruction`. Reconstruction is atomic: a failure at any step rolls the whole transaction back, so a table is never left half-migrated. A temporary table left by a crashed reconstruction follows a naming convention (`_hp_tmp_{table}_{id}`) and is recovered on the next run.
 
-This makes the `apply()` contract — *after `apply()`, the database matches the target
-schema* — hold on every dialect, not just the ones with in-place alteration.
+This makes the `apply()` contract — *after `apply()`, the database matches the target schema* — hold on every dialect, not just the ones with in-place alteration.
 
-**Turso cloud-synced databases.** A Turso embedded replica's sync loop replicates only DML,
-and it must never observe a reconstruction's intermediate state (a table dropped but not yet
-renamed). `apply()` therefore **pauses sync push for the duration of the reconstruction
-transaction** and resumes it afterward, so the cloud sees the completed table, never a
-half-migrated one.
+**Turso cloud-synced databases.** A Turso embedded replica's sync loop replicates only DML, and it must never observe a reconstruction's intermediate state (a table dropped but not yet renamed). `apply()` therefore **pauses sync push for the duration of the reconstruction transaction** and resumes it afterward, so the cloud sees the completed table, never a half-migrated one.
 
 ### 5.6 Schema Validation
 
-A schema is validated for internal consistency before it is diffed or applied. This is a
-construction-time check, not a runtime surprise — the same discipline `vocabulary()` and
-`state_machine()` follow.
+A schema is validated for internal consistency before it is diffed or applied. This is a construction-time check, not a runtime surprise — the same discipline `vocabulary()` and `state_machine()` follow.
 
 **`validate_schema(schema)` checks:**
 
-- every foreign-key `references` (`"table.column"`) targets a table and column that exist
-  in the schema,
-- every composite `primary_key`, index, and constraint names only columns that exist on its
-  table,
+- every foreign-key `references` (`"table.column"`) targets a table and column that exist in the schema,
+- every composite `primary_key`, index, and constraint names only columns that exist on its table,
 - every view's `depends_on` names objects that exist.
 
-A schema that fails validation returns a fault (`schema_invalid`) listing each broken
-reference. A schema with a dangling foreign key cannot be diffed or applied — the error
-surfaces at the schema, where it can be read, not at the database, where it cannot.
+A schema that fails validation returns a fault (`schema_invalid`) listing each broken reference. A schema with a dangling foreign key cannot be diffed or applied — the error surfaces at the schema, where it can be read, not at the database, where it cannot.
 
 ### 5.7 Extended-Object Diff
 
-Views, triggers, and procedures (sections 4.12-4.14) are carried in the SchemaDefinition's
-`views`/`triggers`/`procedures` maps (section 4.15) and diff by the same set theory as tables:
-present-in-target-only is created, present-in-current-only is dropped, present-in-both-but-
-changed is replaced.
+Views, triggers, and procedures (sections 4.12-4.14) are carried in the SchemaDefinition's `views`/`triggers`/`procedures` maps (section 4.15) and diff by the same set theory as tables: present-in-target-only is created, present-in-current-only is dropped, present-in-both-but- changed is replaced.
 
-- **Views.** A changed `query` emits `drop_view` + `create_view` (or `alter_view` where the
-  dialect supports replacing a view). A view's `depends_on` participates in the dependency
-  graph (section 5.4): a view is created after the tables and views it reads and dropped
-  before them. A materialized view instead emits its backing table, registry row, and refresh
-  triggers (section 6.6).
-- **Triggers.** A changed trigger emits `drop_trigger` + `create_trigger`, ordered after the
-  table it fires on.
-- **Functions** are replaceable: a change emits `replace_function` (`CREATE OR REPLACE`), so
-  dependents are not invalidated. **Procedures** without replace semantics emit
-  `drop_function` + `create_function`.
+- **Views.** A changed `query` emits `drop_view` + `create_view` (or `alter_view` where the dialect supports replacing a view). A view's `depends_on` participates in the dependency   graph (section 5.4): a view is created after the tables and views it reads and dropped   before them. A materialized view instead emits its backing table, registry row, and refresh   triggers (section 6.6).
+- **Triggers.** A changed trigger emits `drop_trigger` + `create_trigger`, ordered after the table it fires on.
+- **Functions** are replaceable: a change emits `replace_function` (`CREATE OR REPLACE`), so dependents are not invalidated. **Procedures** without replace semantics emit   `drop_function` + `create_function`.
 
-Because `query` and `body` are opaque dialect SQL, the diff compares them as strings: any
-difference is a change. Semantic equivalence across whitespace or dialect rewriting is not
-attempted — a normalized definition in, a normalized definition out.
+Because `query` and `body` are opaque dialect SQL, the diff compares them as strings: any difference is a change. Semantic equivalence across whitespace or dialect rewriting is not attempted — a normalized definition in, a normalized definition out.
 
 ---
 
 ## 6. Abstractions
 
-honest-persist compiles high-level type declarations into relational structures that behave
-identically across dialects. The application declares intent — an enum, a hierarchy, an
-array, a range; honest-persist generates the tables, constraints, and operations that
-realize it. Every abstraction reduces to ordinary tables and queries, so nothing
-in the abstraction layer escapes the verification the rest of the library is subject to.
+honest-persist compiles high-level type declarations into relational structures that behave identically across dialects. The application declares intent — an enum, a hierarchy, an array, a range; honest-persist generates the tables, constraints, and operations that realize it. Every abstraction reduces to ordinary tables and queries, so nothing in the abstraction layer escapes the verification the rest of the library is subject to.
 
-The abstraction expansion is a single pure function, `expand_schema(schema) -> schema`. It rewrites
-every abstraction declaration in a schema into the ordinary tables, columns, and constraints that
-realize it, and runs before the schema is diffed or applied. Nothing downstream sees an abstraction:
-diff, apply, and inspect operate only on the relational expansion, which is therefore subject to
-exactly the same verification as any hand-written schema. A schema that declares no abstraction is
-returned unchanged in shape.
+The abstraction expansion is a single pure function, `expand_schema(schema) -> schema`. It rewrites every abstraction declaration in a schema into the ordinary tables, columns, and constraints that realize it, and runs before the schema is diffed or applied. Nothing downstream sees an abstraction: diff, apply, and inspect operate only on the relational expansion, which is therefore subject to exactly the same verification as any hand-written schema. A schema that declares no abstraction is returned unchanged in shape.
 
 ### 6.1 Enums
 
-`Literal` type annotations on columns generate lookup tables with foreign key
-constraints. This is the honest-persist mechanism for enforcing enum values
-across all dialects, consistently.
+`Literal` type annotations on columns generate lookup tables with foreign key constraints. This is the honest-persist mechanism for enforcing enum values across all dialects, consistently.
 
 **Given:**
 
@@ -751,36 +628,17 @@ ALTER TABLE orders ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'
 
 **Migration behavior:**
 
-Adding a value: `INSERT INTO _hp_enum_orders_status VALUES ('cancelled')`.
-Removing a value: `DELETE FROM _hp_enum_orders_status WHERE value = 'cancelled'`
-— fails if existing rows reference it (FK enforcement). This is correct: you
-cannot safely remove an enum value that data depends on.
+Adding a value: `INSERT INTO _hp_enum_orders_status VALUES ('cancelled')`. Removing a value: `DELETE FROM _hp_enum_orders_status WHERE value = 'cancelled'` — fails if existing rows reference it (FK enforcement). This is correct: you cannot safely remove an enum value that data depends on.
 
-This mechanism is dialect-agnostic. SQLite, PostgreSQL, and Turso all
-support FK constraints. The lookup table approach works identically across all
-three.
+This mechanism is dialect-agnostic. SQLite, PostgreSQL, and Turso all support FK constraints. The lookup table approach works identically across all three.
 
-A column carries its enum membership as `literal_values`. The pure `expand_schema` transform
-(section 6) rewrites it: the column becomes a text column referencing `_hp_enum_{table}_{column}`
-(keeping its nullability and default), and the lookup table is generated carrying the allowed values
-as seed rows. After applying the schema, the migration workflow runs `enum_seed_queries(schema,
-dialect)` — one idempotent insert-or-ignore per seed row, in the dialect's ignore form
-(`INSERT OR IGNORE` on SQLite and Turso, `ON CONFLICT DO NOTHING` on PostgreSQL) — so the lookup
-holds exactly the declared values and re-running the migration adds new ones without disturbing
-existing rows. Removing a value is a `DELETE` from the lookup, which the foreign key refuses while
-any row still references it.
+A column carries its enum membership as `literal_values`. The pure `expand_schema` transform (section 6) rewrites it: the column becomes a text column referencing `_hp_enum_{table}_{column}` (keeping its nullability and default), and the lookup table is generated carrying the allowed values as seed rows. After applying the schema, the migration workflow runs `enum_seed_queries(schema, dialect)` — one idempotent insert-or-ignore per seed row, in the dialect's ignore form (`INSERT OR IGNORE` on SQLite and Turso, `ON CONFLICT DO NOTHING` on PostgreSQL) — so the lookup holds exactly the declared values and re-running the migration adds new ones without disturbing existing rows. Removing a value is a `DELETE` from the lookup, which the foreign key refuses while any row still references it.
 
 ### 6.2 CHECK Constraint Enforcement
 
-A `check` declared on a column, or a CHECK `constraint`, must be **enforced** on every
-dialect — not merely declared. An engine that silently ignores a CHECK leaves the schema
-lying about what it guarantees: the constraint says the data is constrained; the database
-does not enforce it. A declared-but-unenforced constraint is exactly the dishonesty the
-framework refuses.
+A `check` declared on a column, or a CHECK `constraint`, must be **enforced** on every dialect — not merely declared. An engine that silently ignores a CHECK leaves the schema lying about what it guarantees: the constraint says the data is constrained; the database does not enforce it. A declared-but-unenforced constraint is exactly the dishonesty the framework refuses.
 
-Where the dialect enforces CHECK natively, honest-persist emits it as DDL. Where it does
-not (older engines, some Turso configurations), honest-persist **compiles the CHECK
-expression into a row validator** and enforces it at the write boundary:
+Where the dialect enforces CHECK natively, honest-persist emits it as DDL. Where it does not (older engines, some Turso configurations), honest-persist **compiles the CHECK expression into a row validator** and enforces it at the write boundary:
 
 ```
 FUNCTION compile_check(expression) -> RowValidator:
@@ -788,88 +646,38 @@ FUNCTION compile_check(expression) -> RowValidator:
     return a pure function (row -> Bool) that evaluates the tree against a row
 ```
 
-The expression is parsed once (a pure function) into honest-persist's own closed, finite
-CHECK-expression vocabulary, so honest-test enumerates it and verifies each
-operator compiles on every dialect (section 11). A declared CHECK that can be neither
-natively enforced nor compiled is a construction-time fault — never a silently dropped
-guarantee.
+The expression is parsed once (a pure function) into honest-persist's own closed, finite CHECK-expression vocabulary, so honest-test enumerates it and verifies each operator compiles on every dialect (section 11). A declared CHECK that can be neither natively enforced nor compiled is a construction-time fault — never a silently dropped guarantee.
 
 ### 6.3 Hierarchy
 
-A column declared as a hierarchy — `{ "type": "hierarchy" }`, a self-referential parent reference —
-compiles to a **closure table** alongside the base table. The column becomes a nullable parent
-reference of the base table's primary-key type (a root has no parent), and a generated
-`_hp_closure_{table}` stores every ancestor/descendant pair with its depth: `ancestor`, `descendant`
-(both the node-id type), and `depth` (integer). The closure turns subtree, ancestor, and descendant
-queries into a single indexed read instead of a recursive walk, on every dialect.
+A column declared as a hierarchy — `{ "type": "hierarchy" }`, a self-referential parent reference — compiles to a **closure table** alongside the base table. The column becomes a nullable parent reference of the base table's primary-key type (a root has no parent), and a generated `_hp_closure_{table}` stores every ancestor/descendant pair with its depth: `ancestor`, `descendant` (both the node-id type), and `depth` (integer). The closure turns subtree, ancestor, and descendant queries into a single indexed read instead of a recursive walk, on every dialect.
 
-The maintenance and query logic are pure query builders over the closure (section 7):
-`closure_insert(table, node, parent)` adds a node — its self-pair at depth 0 plus a pair from every
-ancestor of the parent; `closure_descendants(table, node)` and `closure_ancestors(table, node)` read
-a subtree or an ancestor chain in one query; `closure_delete(table, node)` removes a node and its
-whole subtree; and `closure_move(table, node, new_parent)` relocates a subtree as two steps — detach
-its cross-links to the old ancestors, then reconnect it under the new parent's ancestors. The
-application sees a hierarchy declaration; the relational expansion is honest-persist's.
+The maintenance and query logic are pure query builders over the closure (section 7): `closure_insert(table, node, parent)` adds a node — its self-pair at depth 0 plus a pair from every ancestor of the parent; `closure_descendants(table, node)` and `closure_ancestors(table, node)` read a subtree or an ancestor chain in one query; `closure_delete(table, node)` removes a node and its whole subtree; and `closure_move(table, node, new_parent)` relocates a subtree as two steps — detach its cross-links to the old ancestors, then reconnect it under the new parent's ancestors. The application sees a hierarchy declaration; the relational expansion is honest-persist's.
 
 ### 6.4 Arrays and Maps
 
-A column declared as an array — `{ "type": "array", "element_type": "<type>" }` — or a map —
-`{ "type": "map", "key_type": "<type>", "value_type": "<type>" }` — compiles to a **junction
-table**, one row per element, keyed back to the owning row. The column is removed from the base
-table and a generated table takes its place:
+A column declared as an array — `{ "type": "array", "element_type": "<type>" }` — or a map — `{ "type": "map", "key_type": "<type>", "value_type": "<type>" }` — compiles to a **junction table**, one row per element, keyed back to the owning row. The column is removed from the base table and a generated table takes its place:
 
-- Array: `_hp_array_{table}_{column}` with `owner_id` (the owning row's key), `ordinal` (integer
-  position), and `value` (the element type).
-- Map: `_hp_map_{table}_{column}` with `owner_id`, `key` (the key type), and `value` (the value
-  type).
+- Array: `_hp_array_{table}_{column}` with `owner_id` (the owning row's key), `ordinal` (integer position), and `value` (the element type).
+- Map: `_hp_map_{table}_{column}` with `owner_id`, `key` (the key type), and `value` (the value type).
 
-The `owner_id` takes the base table's primary-key type, falling back to integer (the implicit
-rowid) when no primary key is declared. This keeps the data in first normal form and queryable on
-every dialect, rather than relying on a dialect-specific array or JSON type.
+The `owner_id` takes the base table's primary-key type, falling back to integer (the implicit rowid) when no primary key is declared. This keeps the data in first normal form and queryable on every dialect, rather than relying on a dialect-specific array or JSON type.
 
-The element operations are pure query builders over the junction table, composing the ordinary query
-layer (section 7): `array_append`, `array_set`, `array_remove`, and `array_reindex` for arrays;
-`map_put` and `map_remove` for maps. `array_reindex` closes the gap a removal leaves, decrementing
-the ordinals above the removed position. Dialects with native array or JSON support may specialize
-the generation, but the declared structure and its operations are identical across dialects.
+The element operations are pure query builders over the junction table, composing the ordinary query layer (section 7): `array_append`, `array_set`, `array_remove`, and `array_reindex` for arrays; `map_put` and `map_remove` for maps. `array_reindex` closes the gap a removal leaves, decrementing the ordinals above the removed position. Dialects with native array or JSON support may specialize the generation, but the declared structure and its operations are identical across dialects.
 
 ### 6.5 Ranges
 
-A column declared as a range — `{ "type": "range", "bound_type": "<type>" }` — compiles to a
-**pair of bound columns**, `{column}_lower` and `{column}_upper` (each of `bound_type`, inheriting
-the declared column's nullability), and a CHECK constraint named `{column}_range` enforcing
-`{column}_lower <= {column}_upper`. This gives range semantics on dialects without a native range
-type, and reduces to the native type where one exists. The CHECK is rendered inline in the table's
-`CREATE TABLE`, so the bound invariant is enforced from the moment the table exists.
+A column declared as a range — `{ "type": "range", "bound_type": "<type>" }` — compiles to a **pair of bound columns**, `{column}_lower` and `{column}_upper` (each of `bound_type`, inheriting the declared column's nullability), and a CHECK constraint named `{column}_range` enforcing `{column}_lower <= {column}_upper`. This gives range semantics on dialects without a native range type, and reduces to the native type where one exists. The CHECK is rendered inline in the table's `CREATE TABLE`, so the bound invariant is enforced from the moment the table exists.
 
-The expansion is part of the pure `expand_schema` transform (section 6): the application declares the
-range; honest-persist rewrites it to the two bound columns and the CHECK before the schema is diffed
-or applied. Overlap, containment, and adjacency are pure query terms over the bound columns —
-`range_overlaps(column, lower, upper)`, `range_contains(column, point)`, and `range_adjacent(column,
-lower, upper)` each return a parameterized WHERE condition (`{ "sql": ..., "params": ... }`). Two
-ranges overlap when each starts at or before the other ends; a range contains a point when the point
-lies between its bounds; two ranges are adjacent when one's upper bound equals the other's lower.
+The expansion is part of the pure `expand_schema` transform (section 6): the application declares the range; honest-persist rewrites it to the two bound columns and the CHECK before the schema is diffed or applied. Overlap, containment, and adjacency are pure query terms over the bound columns — `range_overlaps(column, lower, upper)`, `range_contains(column, point)`, and `range_adjacent(column, lower, upper)` each return a parameterized WHERE condition (`{ "sql": ..., "params": ... }`). Two ranges overlap when each starts at or before the other ends; a range contains a point when the point lies between its bounds; two ranges are adjacent when one's upper bound equals the other's lower.
 
 ### 6.6 Materialized Views
 
-A view with `materialized: true` (section 4.12) stores its result instead of recomputing it on every
-read. **honest-persist uses the database's native materialized view where the dialect has one, and
-backfills an equivalent where it does not.** PostgreSQL has a native `MATERIALIZED VIEW`; SQLite and
-Turso have nothing, so honest-persist reconstructs the same behaviour from ordinary relational
-objects. Either way a materialized view is subject to the same verification as any hand-written
-object, and — this is the invariant that matters — a materialized view declared once produces the
-same observable result on every dialect: a stored, refreshable copy of the query.
+A view with `materialized: true` (section 4.12) stores its result instead of recomputing it on every read. **honest-persist uses the database's native materialized view where the dialect has one, and backfills an equivalent where it does not.** PostgreSQL has a native `MATERIALIZED VIEW`; SQLite and Turso have nothing, so honest-persist reconstructs the same behaviour from ordinary relational objects. Either way a materialized view is subject to the same verification as any hand-written object, and — this is the invariant that matters — a materialized view declared once produces the same observable result on every dialect: a stored, refreshable copy of the query.
 
-The choice is `apply`'s, not the diff's. The diff is dialect-agnostic (section 5.1): it emits a
-single `create_matview` (or `drop_matview`) operation carrying the whole view definition. `apply`,
-which knows the dialect, renders that one operation into the dialect's statements. Nothing about the
-SQLite backing-table shape leaks into the PostgreSQL path or vice versa.
+The choice is `apply`'s, not the diff's. The diff is dialect-agnostic (section 5.1): it emits a single `create_matview` (or `drop_matview`) operation carrying the whole view definition. `apply`, which knows the dialect, renders that one operation into the dialect's statements. Nothing about the SQLite backing-table shape leaks into the PostgreSQL path or vice versa.
 
-**The registry.** A materialized view is an extended object, so its canonical definition — the
-`query`, the `materialized` flag, the `refresh` strategy, and `depends_on` — is recorded in the
-`_hp_object` registry alongside every other view, trigger, and procedure (section 9.1). The
-definition round-trips through the registry identically on every dialect; only the stored form in
-the database differs.
+**The registry.** A materialized view is an extended object, so its canonical definition — the `query`, the `materialized` flag, the `refresh` strategy, and `depends_on` — is recorded in the `_hp_object` registry alongside every other view, trigger, and procedure (section 9.1). The definition round-trips through the registry identically on every dialect; only the stored form in the database differs.
 
 **PostgreSQL (native).** `apply` renders:
 
@@ -877,52 +685,27 @@ the database differs.
 CREATE MATERIALIZED VIEW {name} AS {query}
 ```
 
-Refresh is the native `REFRESH MATERIALIZED VIEW {name}`. PostgreSQL does not auto-refresh a
-materialized view, so an auto-refresh strategy adds a trigger *function* that calls `REFRESH` and a
-statement-level trigger on each source table — the correct PostgreSQL mechanism, not an inline
-trigger body.
+Refresh is the native `REFRESH MATERIALIZED VIEW {name}`. PostgreSQL does not auto-refresh a materialized view, so an auto-refresh strategy adds a trigger *function* that calls `REFRESH` and a statement-level trigger on each source table — the correct PostgreSQL mechanism, not an inline trigger body.
 
-**SQLite / Turso (backfilled).** With no native materialized view, `apply` stores the result in a
-table of the same name:
+**SQLite / Turso (backfilled).** With no native materialized view, `apply` stores the result in a table of the same name:
 
 ```sql
 CREATE TABLE {name} AS {query}
 ```
 
-The database derives the backing table's columns from the query result, so honest-persist never
-parses the `query` — the `CREATE TABLE AS` form hands that to the database, exactly as it hands the
-opaque `query` and `body` strings everywhere else (section 5.7). Refresh clears and re-evaluates the
-query in place (`DELETE FROM {name}; INSERT INTO {name} {query}`) so the table and its indexes
-survive. An auto-refresh strategy adds an `AFTER` trigger on each source whose inline body runs that
-same refresh — SQLite's trigger form, which has no separate function.
+The database derives the backing table's columns from the query result, so honest-persist never parses the `query` — the `CREATE TABLE AS` form hands that to the database, exactly as it hands the opaque `query` and `body` strings everywhere else (section 5.7). Refresh clears and re-evaluates the query in place (`DELETE FROM {name}; INSERT INTO {name} {query}`) so the table and its indexes survive. An auto-refresh strategy adds an `AFTER` trigger on each source whose inline body runs that same refresh — SQLite's trigger form, which has no separate function.
 
-`refresh_materialized_view(schema, name, dialect)` is the pure builder of the refresh statements for
-the dialect: the native `REFRESH` on PostgreSQL, the delete-and-reinsert on SQLite and Turso.
+`refresh_materialized_view(schema, name, dialect)` is the pure builder of the refresh statements for the dialect: the native `REFRESH` on PostgreSQL, the delete-and-reinsert on SQLite and Turso.
 
 **Refresh strategy.** The `refresh` value selects when a refresh runs, on every dialect:
 
-- **`manual`** — no triggers. The view refreshes only when the application calls for it. Correct
-  when the result may lag its sources and a scheduled or on-demand refresh is enough.
-- **`trigger`** — an `AFTER INSERT`, `AFTER UPDATE`, and `AFTER DELETE` trigger on every source table
-  in `depends_on` (named `_hp_refresh_{name}_on_{source}_{event}`) re-runs the refresh, so any change
-  to a source keeps the view current. The trigger is rendered in the dialect's form — a function plus
-  statement-level triggers on PostgreSQL, an inline-body trigger on SQLite and Turso.
-- **`on_commit`** — the same refresh triggers as `trigger`. Neither SQLite, Turso, nor a plain
-  PostgreSQL trigger offers a deferred commit-time hook, so `on_commit` behaves as `trigger`; the
-  distinction is preserved in the registry and honored where a dialect offers a real commit hook.
+- **`manual`** — no triggers. The view refreshes only when the application calls for it. Correct when the result may lag its sources and a scheduled or on-demand refresh is enough.
+- **`trigger`** — an `AFTER INSERT`, `AFTER UPDATE`, and `AFTER DELETE` trigger on every source table in `depends_on` (named `_hp_refresh_{name}_on_{source}_{event}`) re-runs the refresh, so any change   to a source keeps the view current. The trigger is rendered in the dialect's form — a function plus   statement-level triggers on PostgreSQL, an inline-body trigger on SQLite and Turso.
+- **`on_commit`** — the same refresh triggers as `trigger`. Neither SQLite, Turso, nor a plain PostgreSQL trigger offers a deferred commit-time hook, so `on_commit` behaves as `trigger`; the   distinction is preserved in the registry and honored where a dialect offers a real commit hook.
 
-**Diff and apply.** A materialized view is diffed as a view (section 5.7): creating one emits a
-single `create_matview` operation ordered after the sources it reads, dropping one emits
-`drop_matview`, and a change to `query`, `refresh`, or `depends_on` is a drop followed by a create.
-`apply` expands the operation into the dialect's statements — the native materialized view or the
-backing table, plus any refresh triggers — and its `_hp_object` row is kept in step by
-`object_registry_queries` after apply, like every other extended object (section 9.1).
+**Diff and apply.** A materialized view is diffed as a view (section 5.7): creating one emits a single `create_matview` operation ordered after the sources it reads, dropping one emits `drop_matview`, and a change to `query`, `refresh`, or `depends_on` is a drop followed by a create. `apply` expands the operation into the dialect's statements — the native materialized view or the backing table, plus any refresh triggers — and its `_hp_object` row is kept in step by `object_registry_queries` after apply, like every other extended object (section 9.1).
 
-**Round-trip.** The inspector reconstructs each `_hp_object` row of a materialized view into a
-`materialized` view in the schema's `views` map. On SQLite it treats the view's backing table and
-`_hp_refresh_*` triggers as owned rather than free-standing; on PostgreSQL the native materialized
-view is not a base table and never appears among the tables at all. Either way a schema whose
-materialized views already exist diffs to no operations.
+**Round-trip.** The inspector reconstructs each `_hp_object` row of a materialized view into a `materialized` view in the schema's `views` map. On SQLite it treats the view's backing table and `_hp_refresh_*` triggers as owned rather than free-standing; on PostgreSQL the native materialized view is not a base table and never appears among the tables at all. Either way a schema whose materialized views already exist diffs to no operations.
 
 ---
 
@@ -930,8 +713,7 @@ materialized views already exist diffs to no operations.
 
 ### 7.1 Principle
 
-A query is data. Building a query is a pure function. Executing a query is
-I/O. These are always separate steps.
+A query is data. Building a query is a pure function. Executing a query is I/O. These are always separate steps.
 
 ```
 // Pure — build the query
@@ -941,9 +723,7 @@ q = select(table="users", columns=["id", "email"], where={"status": "active"})
 rows = await execute(q, conn)
 ```
 
-No method chaining that hides execution. No `session.query(User).filter(...)`.
-The query object is always inspectable, loggable, and serializable before it
-runs.
+No method chaining that hides execution. No `session.query(User).filter(...)`. The query object is always inspectable, loggable, and serializable before it runs.
 
 ### 7.2 Query Builders (Pure Functions)
 
@@ -957,22 +737,13 @@ delete(table, where)                                                → Query
 raw(sql, params?)                                                   → Query
 ```
 
-Each builder produces parameterized SQL. Parameters are always named, never
-positional. The `params` dict in the Query is the complete parameter set —
-no escaping needed at the caller site.
+Each builder produces parameterized SQL. Parameters are always named, never positional. The `params` dict in the Query is the complete parameter set — no escaping needed at the caller site.
 
 ### 7.3 Schema-Checked Building
 
-A query builder takes only names, and a misspelled or undeclared column — `emial` for
-`email` — is a typo that, with a raw builder, reaches the database as a runtime error in
-production. When the application's schema is available, honest-persist catches it earlier,
-at build time, with a pure check. This is validation against the *declared schema*, not the
-live database: it needs no connection and runs as a pure function, so honest-test enumerates
-it.
+A query builder takes only names, and a misspelled or undeclared column — `emial` for `email` — is a typo that, with a raw builder, reaches the database as a runtime error in production. When the application's schema is available, honest-persist catches it earlier, at build time, with a pure check. This is validation against the *declared schema*, not the live database: it needs no connection and runs as a pure function, so honest-test enumerates it.
 
-The schema-checked builders take the Schema as their first argument and return a Result —
-`ok(Query)` when every table and column the query names is declared, or a fault that lists
-exactly what was not found:
+The schema-checked builders take the Schema as their first argument and return a Result — `ok(Query)` when every table and column the query names is declared, or a fault that lists exactly what was not found:
 
 ```
 checked_select(schema, table, columns?, where?, order_by?, joins?, limit?, offset?) → Result
@@ -986,18 +757,9 @@ Result =
   | err({code: "unknown_column", detail: {table, columns, declared}})
 ```
 
-Every column the query names is checked: the selected columns, the WHERE keys, the ORDER BY
-keys, and the INSERT/UPDATE value keys. The `*` wildcard and an ORDER BY `-` prefix are
-recognised and skipped. A join's named table is checked for existence; its `ON` expression is
-raw SQL and is not column-checked, the same boundary `raw()` draws. `select` with no columns
-(all columns) and `raw()` carry no column names to check and so have no checked variant. On
-success the Result wraps exactly the Query the matching raw builder (section 7.2) produces, so
-the checked and raw layers never diverge.
+Every column the query names is checked: the selected columns, the WHERE keys, the ORDER BY keys, and the INSERT/UPDATE value keys. The `*` wildcard and an ORDER BY `-` prefix are recognised and skipped. A join's named table is checked for existence; its `ON` expression is raw SQL and is not column-checked, the same boundary `raw()` draws. `select` with no columns (all columns) and `raw()` carry no column names to check and so have no checked variant. On success the Result wraps exactly the Query the matching raw builder (section 7.2) produces, so the checked and raw layers never diverge.
 
-There is **no proxy object, no attribute access, no method chaining**: the check is a pure
-function from `(schema, names)` to a Result, the same shape every other honest-persist
-validator returns. The bug it makes structurally catchable is an undeclared column reaching
-the database.
+There is **no proxy object, no attribute access, no method chaining**: the check is a pure function from `(schema, names)` to a Result, the same shape every other honest-persist validator returns. The bug it makes structurally catchable is an undeclared column reaching the database.
 
 ### 7.4 Execute (I/O Boundary)
 
@@ -1008,32 +770,13 @@ execute_scalar(query: Query, conn: Connection)   → Any?
 execute_many(query: Query, conn: Connection)     → Int  // rows affected
 ```
 
-All execute functions are async, and so is the connection they await — the spec's standing
-assumption is a host language with async I/O support (see the introduction). **Async is the
-layer's interface everywhere; synchrony lives only at the SQLite edge.** A backend with a
-native async driver is awaited directly. SQLite is the one inherently synchronous backend — an
-embedded library reached by a blocking in-process call, not a network service — so its driver
-is synchronous in every language. A SQLite connection adapter makes that one blocking call
-without stalling other work (for example, on a worker thread) and presents the async `execute`
-the boundary expects. Above that adapter, nothing is synchronous.
+All execute functions are async, and so is the connection they await — the spec's standing assumption is a host language with async I/O support (see the introduction). **Async is the layer's interface everywhere; synchrony lives only at the SQLite edge.** A backend with a native async driver is awaited directly. SQLite is the one inherently synchronous backend — an embedded library reached by a blocking in-process call, not a network service — so its driver is synchronous in every language. A SQLite connection adapter makes that one blocking call without stalling other work (for example, on a worker thread) and presents the async `execute` the boundary expects. Above that adapter, nothing is synchronous.
 
-They accept a connection, not a pool. The connection is resolved and supplied by persist itself,
-from the manifest, by the routing described in section 8.1 — the application never acquires,
-holds, or closes one. `execute` is an internal boundary function whose collaborator happens to be
-a connection; it is not the surface an application calls with a connection it went and got. They
-return plain data: lists of dicts, single dicts, or scalars. `execute_one` and `execute_scalar` return
-nothing (the host language's null) when there are no rows.
+They accept a connection, not a pool. The connection is resolved and supplied by persist itself, from the manifest, by the routing described in section 8.1 — the application never acquires, holds, or closes one. `execute` is an internal boundary function whose collaborator happens to be a connection; it is not the surface an application calls with a connection it went and got. They return plain data: lists of dicts, single dicts, or scalars. `execute_one` and `execute_scalar` return nothing (the host language's null) when there are no rows.
 
-The connection is the boundary's one collaborator, duck-typed: `await conn.execute(sql, params)`
-returns `{rows: [row, ...], rowcount: Int}`, where each row is a plain dict. `execute` returns
-`rows`; `execute_one` the first row or null; `execute_scalar` the first column of the first row
-or null; `execute_many` the `rowcount`. These functions do not catch — a driver error
-propagates to the outer boundary (honest-type's `catch_at_boundary`), the single place a fault
-is turned back into output.
+The connection is the boundary's one collaborator, duck-typed: `await conn.execute(sql, params)` returns `{rows: [row, ...], rowcount: Int}`, where each row is a plain dict. `execute` returns `rows`; `execute_one` the first row or null; `execute_scalar` the first column of the first row or null; `execute_many` the `rowcount`. These functions do not catch — a driver error propagates to the outer boundary (honest-type's `catch_at_boundary`), the single place a fault is turned back into output.
 
-**No ORM magic:** rows are returned as plain dicts (or language-equivalent
-plain data structures). No model instances. No lazy loading. No identity map.
-What comes back from the database is what you get.
+**No ORM magic:** rows are returned as plain dicts (or language-equivalent plain data structures). No model instances. No lazy loading. No identity map. What comes back from the database is what you get.
 
 ### 7.5 Transactions
 
@@ -1079,9 +822,7 @@ Catching here is sanctioned, exactly as in `apply` (section 5.2): a transaction 
 
 ### 7.6 Multiple Query Style APIs
 
-honest-persist provides three query style APIs over the same Query/execute
-foundation. All three compile to the same Query dict. All three execute via
-the same execute functions.
+honest-persist provides three query style APIs over the same Query/execute foundation. All three compile to the same Query dict. All three execute via the same execute functions.
 
 **Native fluent:**
 ```python
@@ -1102,8 +843,7 @@ results = await users.objects.filter(status="active").all()
 results = await users.prisma.find_many(where={"status": "active"})
 ```
 
-The multiple styles are a concession to team familiarity. They do not change
-the underlying model: query is data, execution is I/O, no session, no state.
+The multiple styles are a concession to team familiarity. They do not change the underlying model: query is data, execution is I/O, no session, no state.
 
 ### 7.7 Conflict Retry at the Boundary
 
@@ -1139,9 +879,7 @@ The bug category this eliminates: application code that must tell a lost race ap
 
 ### 8.1 Internal Ownership
 
-The caller never receives, manages, or closes a pool object. Pools are an
-internal concern of honest-persist. The caller sends a manifest. Persist
-resolves the correct pool internally and routes the operation.
+The caller never receives, manages, or closes a pool object. Pools are an internal concern of honest-persist. The caller sends a manifest. Persist resolves the correct pool internally and routes the operation.
 
 The caller surface for database routing is manifest keys:
 
@@ -1154,61 +892,29 @@ manifest = {
 }
 ```
 
-On receiving a manifest with a `db_id` or `tenant_id` it has not seen before,
-persist creates the pool, caches it, and serves the request. No caller action
-required.
+On receiving a manifest with a `db_id` or `tenant_id` it has not seen before, persist creates the pool, caches it, and serves the request. No caller action required.
 
 ### 8.1.1 Why this is worth pausing on: a pool with no hidden state
 
-A connection pool is the textbook case of hidden, shared, mutable state. The
-usual version is a long-lived object that everything reaches into: it keeps a
-private cache of open connections, its methods quietly change that cache, and no
-caller can see what is inside or in what order things happened. That is precisely
-the shape the Honest Framework forbids: no Big State, no hidden mutation, no
-object whose methods rewrite their own innards. So an honest connection pool
-looks, at first, impossible.
+A connection pool is the textbook case of hidden, shared, mutable state. The usual version is a long-lived object that everything reaches into: it keeps a private cache of open connections, its methods quietly change that cache, and no caller can see what is inside or in what order things happened. That is precisely the shape the Honest Framework forbids: no Big State, no hidden mutation, no object whose methods rewrite their own innards. So an honest connection pool looks, at first, impossible.
 
-It is not, and the way out is instructive. The pool is split into three plain
-pieces:
+It is not, and the way out is instructive. The pool is split into three plain pieces:
 
-- **The routing is a pure function.** Deciding which pool a manifest wants is
-  data in, data out (section 8.1). No state is touched and no I/O is performed.
-- **The cache is an ordinary value, passed in and handed back.** It is not a
-  field on an object or a module-level global. It is a plain map the caller
-  passes in and receives back, updated, next to the result. The state is visible
-  and explicit at every step, never lurking out of sight.
-- **The only real I/O is a single injected function.** Opening a connection is
-  the one impure act, and the framework never performs it: the adopter supplies a
-  `connect` function for their driver. The framework imports no database driver
-  at all.
+- **The routing is a pure function.** Deciding which pool a manifest wants is data in, data out (section 8.1). No state is touched and no I/O is performed.
+- **The cache is an ordinary value, passed in and handed back.** It is not a field on an object or a module-level global. It is a plain map the caller   passes in and receives back, updated, next to the result. The state is visible   and explicit at every step, never lurking out of sight.
+- **The only real I/O is a single injected function.** Opening a connection is the one impure act, and the framework never performs it: the adopter supplies a   `connect` function for their driver. The framework imports no database driver   at all.
 
 Two things follow, and they are the point.
 
-First, there is nothing hidden to corrupt. This is the bug category the design
-eliminates, and it is the worst one a pool can have: two requests stepping on a
-shared cache, a connection handed out twice, behaviour that depends on invisible
-history. When the cache is a value you hold and pass forward, there is no shared,
-hidden thing for one code path to mutate behind another's back. The state is
-yours, named, on every line.
+First, there is nothing hidden to corrupt. This is the bug category the design eliminates, and it is the worst one a pool can have: two requests stepping on a shared cache, a connection handed out twice, behaviour that depends on invisible history. When the cache is a value you hold and pass forward, there is no shared, hidden thing for one code path to mutate behind another's back. The state is yours, named, on every line.
 
-Second, it is testable against a real database with no mocks. Because the one I/O
-seam is the injected `connect`, you can hand in a real driver, even a small
-in-memory database such as SQLite, and drive the whole pool and the query path
-above it against a genuine database: create a table, insert a row, read it back,
-and check the actual value returned. There are no mock connections to write and
-no fakes to drift from how the real thing behaves.
+Second, it is testable against a real database with no mocks. Because the one I/O seam is the injected `connect`, you can hand in a real driver, even a small in-memory database such as SQLite, and drive the whole pool and the query path above it against a genuine database: create a table, insert a row, read it back, and check the actual value returned. There are no mock connections to write and no fakes to drift from how the real thing behaves.
 
-The lesson reaches past pools. Anything that seems to require a stateful,
-I/O-heavy object, a pool or a cache or a session store, can be built the same
-way: a pure decision in the middle, the state threaded through as a value, and
-the I/O pushed to one injected seam at the edge. The pool is just the sharpest
-example, because it is the component everyone expects to be impossible to do
-honestly.
+The lesson reaches past pools. Anything that seems to require a stateful, I/O-heavy object, a pool or a cache or a session store, can be built the same way: a pure decision in the middle, the state threaded through as a value, and the I/O pushed to one injected seam at the edge. The pool is just the sharpest example, because it is the component everyone expects to be impossible to do honestly.
 
 ### 8.2 Pool Lifecycle Variants
 
-A manifest key named `db_lifecycle` controls how persist treats the database
-on first contact and at startup:
+A manifest key named `db_lifecycle` controls how persist treats the database on first contact and at startup:
 
 ```
 db_lifecycle values:
@@ -1217,14 +923,11 @@ db_lifecycle values:
     "on_demand"    -- create on first manifest, destroy when idle for threshold_ms.
 ```
 
-`"ephemeral"` databases are recreated at startup in the order they appear in
-the persist configuration. This is the mechanism for test databases, scratch
-spaces, and session-scoped storage.
+`"ephemeral"` databases are recreated at startup in the order they appear in the persist configuration. This is the mechanism for test databases, scratch spaces, and session-scoped storage.
 
 ### 8.3 Fault Table
 
-Every pool-layer failure is a typed fault, not an exception. The caller
-inspects the fault code and knows exactly what failed and who is responsible.
+Every pool-layer failure is a typed fault, not an exception. The caller inspects the fault code and knows exactly what failed and who is responsible.
 
 ```
 "unknown_database"      -- db_id in manifest not registered and no DSN provided
@@ -1236,33 +939,19 @@ inspects the fault code and knows exactly what failed and who is responsible.
 "lifecycle_failed"      -- ephemeral recreation failed at startup
 ```
 
-`"unknown_database"` and `"unknown_tenant"` are caller errors. `"pool_exhausted"`
-and `"lifecycle_failed"` are capacity or configuration errors. `"credential_rejected"`
-is a configuration error. The category field in the fault struct carries this
-distinction — the boundary maps it to the appropriate HTTP status or log level.
+`"unknown_database"` and `"unknown_tenant"` are caller errors. `"pool_exhausted"` and `"lifecycle_failed"` are capacity or configuration errors. `"credential_rejected"` is a configuration error. The category field in the fault struct carries this distinction — the boundary maps it to the appropriate HTTP status or log level.
 
 ### 8.4 Security: The Vocabulary Is the Whitelist
 
-`db_id`, `tenant_id`, and `credential` must be declared as bounded Set
-recognizers in the application vocabulary. A manifest cannot carry an
-arbitrary database identifier unless that identifier is a recognized member
-of the declared Set.
+`db_id`, `tenant_id`, and `credential` must be declared as bounded Set recognizers in the application vocabulary. A manifest cannot carry an arbitrary database identifier unless that identifier is a recognized member of the declared Set.
 
-This is enforced structurally: honest-check rule HC-P013 warns when `db_id`,
-`tenant_id`, or `credential` appear in a manifest binding backed by an
-unbounded predicate recognizer. See section 11 (Conformance Requirements)
-and the honest-check specification for HC-P013.
+This is enforced structurally: honest-check rule HC-P013 warns when `db_id`, `tenant_id`, or `credential` appear in a manifest binding backed by an unbounded predicate recognizer. See section 11 (Conformance Requirements) and the honest-check specification for HC-P013.
 
 ### 8.5 Instrumentation via honest-observe
 
-honest-persist emits directly to honest-observe from inside `execute()`. No
-middleware is involved. No sink callback. No caller wiring. `execute()` is
-already an I/O boundary function; emitting an event from it is the same
-pattern as any other boundary function calling `emit()`.
+honest-persist emits directly to honest-observe from inside `execute()`. No middleware is involved. No sink callback. No caller wiring. `execute()` is already an I/O boundary function; emitting an event from it is the same pattern as any other boundary function calling `emit()`.
 
-This is the correct architecture. The middleware instruments what happens
-before and after the chain. honest-persist instruments what happens inside
-the chain at the I/O boundary. Both feed the same event log.
+This is the correct architecture. The middleware instruments what happens before and after the chain. honest-persist instruments what happens inside the chain at the I/O boundary. Both feed the same event log.
 
 **`hf.persist.query`** — emitted by `execute()` after every query
 
@@ -1283,10 +972,7 @@ payload: {
 }
 ```
 
-`sql_hash` is always present. `sql` is only included when
-`environment = "development"` — full SQL in production logs is a security
-concern. The hash is sufficient for grouping and identifying slow queries
-without exposing parameter values.
+`sql_hash` is always present. `sql` is only included when `environment = "development"` — full SQL in production logs is a security concern. The hash is sufficient for grouping and identifying slow queries without exposing parameter values.
 
 **Emit algorithm inside execute():**
 
@@ -1330,19 +1016,11 @@ FUNCTION execute(query, conn):
         RAISE exception
 ```
 
-`emit_internal()` writes directly to the honest-observe event log. It never
-blocks the query result. A failure in `emit_internal()` is logged to stderr
-and swallowed — it must never cause a query to fail.
+`emit_internal()` writes directly to the honest-observe event log. It never blocks the query result. A failure in `emit_internal()` is logged to stderr and swallowed — it must never cause a query to fail.
 
-`current_request_id()` reads the request ID from a context variable set by
-the honest-py intake middleware at the start of each request. This is the
-join key that allows `@catch_at_boundary` to sum `query_count` and
-`query_duration_ns` across all queries in a single request when assembling
-the `hf.request.canonical` event.
+`current_request_id()` reads the request ID from a context variable set by the honest-py intake middleware at the start of each request. This is the join key that allows `@catch_at_boundary` to sum `query_count` and `query_duration_ns` across all queries in a single request when assembling the `hf.request.canonical` event.
 
-**Zero overhead when disabled.** When `observe_queries = false` in config,
-`emit_internal()` is a no-op. The check is a single boolean test before any
-work is done.
+**Zero overhead when disabled.** When `observe_queries = false` in config, `emit_internal()` is a no-op. The check is a single boolean test before any work is done.
 
 ### 8.6 The Write Queue Is the Asynchronous Path
 
@@ -1367,18 +1045,13 @@ write_queue config:
     retry:         Bool     -- supervisor retries with exponential backoff
 ```
 
-**Read transparency:** SELECT results merge pending queue entries by primary
-key. A pending insert appears in subsequent SELECTs immediately.
+**Read transparency:** SELECT results merge pending queue entries by primary key. A pending insert appears in subsequent SELECTs immediately.
 
-**Failure handling:** After 6 hours without successful write, the supervisor
-emits a `hf.persist.queue_stalled` event to honest-observe and raises the
-fault to the application. Writes are never silently discarded.
+**Failure handling:** After 6 hours without successful write, the supervisor emits a `hf.persist.queue_stalled` event to honest-observe and raises the fault to the application. Writes are never silently discarded.
 
 ### 8.7 Migration Events
 
-`apply()` is an I/O boundary. Every DDL operation it executes emits
-`hf.persist.migration`. Schema history becomes part of the unified event
-log: queryable, replayable, auditable.
+`apply()` is an I/O boundary. Every DDL operation it executes emits `hf.persist.migration`. Schema history becomes part of the unified event log: queryable, replayable, auditable.
 
 **`hf.persist.migration`** — emitted by `apply()` for each operation executed
 
@@ -1398,18 +1071,13 @@ payload: {
 }
 ```
 
-A migration that applies 12 operations produces 12 `hf.persist.migration`
-events, one per operation, in execution order. This provides a complete
-schema change history without any separate migration tracking table.
+A migration that applies 12 operations produces 12 `hf.persist.migration` events, one per operation, in execution order. This provides a complete schema change history without any separate migration tracking table.
 
-Projection over `hf.persist.migration` answers: when was column X added?
-what DDL ran during last night's deployment? which table has changed most
-frequently?
+Projection over `hf.persist.migration` answers: when was column X added? what DDL ran during last night's deployment? which table has changed most frequently?
 
 ### 8.8 Pool Events
 
-Pool lifecycle events emit `hf.persist.pool`. Pool health is in the same
-queryable log as everything else.
+Pool lifecycle events emit `hf.persist.pool`. Pool health is in the same queryable log as everything else.
 
 **`hf.persist.pool`** — emitted on pool lifecycle transitions
 
@@ -1429,10 +1097,7 @@ payload: {
 }
 ```
 
-`exhausted` fires when all connections are in use and a request is queued.
-`retry` fires when a connection attempt fails and is retried. `error` fires
-for unrecoverable pool failures. All of these were previously silent or
-logged to stderr with no structured record. They are now first-class events.
+`exhausted` fires when all connections are in use and a request is queued. `retry` fires when a connection attempt fails and is retried. `error` fires for unrecoverable pool failures. All of these were previously silent or logged to stderr with no structured record. They are now first-class events.
 
 ---
 
@@ -1467,9 +1132,7 @@ The complete migration workflow, showing which steps are pure and which are I/O:
 
 Steps 1 and 3 are pure functions. Steps 2 and 5 are I/O boundaries.
 
-**No revision chain.** The schema is the source of truth. There is no `V001`,
-`V002`, `V003` migration history. The diff is always computed from the live
-database state against the current schema definition. This means:
+**No revision chain.** The schema is the source of truth. There is no `V001`, `V002`, `V003` migration history. The diff is always computed from the live database state against the current schema definition. This means:
 
 - Branches can diverge and merge without migration conflicts.
 - Rollback is computed by diffing in the opposite direction.
@@ -1477,20 +1140,9 @@ database state against the current schema definition. This means:
 
 ### 9.1 The Inspector
 
-`inspect(conn, dialect)` returns the **complete** live SchemaDefinition (section 4.15): tables,
-views, triggers, procedures, and materialized views. This is not optional. The diff is computed
-fresh every migration by comparing `inspect(live)` against the target, so anything the inspector
-fails to report is invisible to the diff — a changed view is never redefined, a stale trigger is
-never dropped, and a materialized view is re-created on every run until it errors. An inspector that
-reads only tables can migrate only tables. The inspector must round-trip every object the schema can
-declare.
+`inspect(conn, dialect)` returns the **complete** live SchemaDefinition (section 4.15): tables, views, triggers, procedures, and materialized views. This is not optional. The diff is computed fresh every migration by comparing `inspect(live)` against the target, so anything the inspector fails to report is invisible to the diff — a changed view is never redefined, a stale trigger is never dropped, and a materialized view is re-created on every run until it errors. An inspector that reads only tables can migrate only tables. The inspector must round-trip every object the schema can declare.
 
-**How it reads, without parsing SQL.** Table structure is read from the dialect's catalog — columns,
-types, nullability, keys, defaults — because that structure is recoverable there (SQLite's
-`PRAGMA table_info`, PostgreSQL's `information_schema`). Extended objects are not: a view's `query`
-and a trigger's `body` are opaque dialect SQL that honest-persist never parses (section 5.7), so the
-inspector cannot rebuild their definitions from the database's rendered DDL. Instead honest-persist
-keeps its own registry of the extended objects it creates:
+**How it reads, without parsing SQL.** Table structure is read from the dialect's catalog — columns, types, nullability, keys, defaults — because that structure is recoverable there (SQLite's `PRAGMA table_info`, PostgreSQL's `information_schema`). Extended objects are not: a view's `query` and a trigger's `body` are opaque dialect SQL that honest-persist never parses (section 5.7), so the inspector cannot rebuild their definitions from the database's rendered DDL. Instead honest-persist keeps its own registry of the extended objects it creates:
 
 ```sql
 CREATE TABLE _hp_object (
@@ -1500,29 +1152,13 @@ CREATE TABLE _hp_object (
 )
 ```
 
-Every `create`/`replace`/`drop` of a view, trigger, procedure, or materialized view keeps `_hp_object`
-in step: `object_registry_queries(schema, dialect)` is the pure builder of the idempotent upserts and
-deletes, run after `apply` in the same workflow slot as `enum_seed_queries` (section 6.1). The
-inspector reads `_hp_object` and reconstructs each extended object exactly from the stored JSON — a
-byte-exact round-trip that never depends on how the database re-renders DDL. A materialized view is
-stored here like any view (its `materialized`/`refresh`/`depends_on` travel in the definition); the
-inspector attaches its backing table and `_hp_refresh_*` triggers to it and does not report them
-separately (section 6.6).
+Every `create`/`replace`/`drop` of a view, trigger, procedure, or materialized view keeps `_hp_object` in step: `object_registry_queries(schema, dialect)` is the pure builder of the idempotent upserts and deletes, run after `apply` in the same workflow slot as `enum_seed_queries` (section 6.1). The inspector reads `_hp_object` and reconstructs each extended object exactly from the stored JSON — a byte-exact round-trip that never depends on how the database re-renders DDL. A materialized view is stored here like any view (its `materialized`/`refresh`/`depends_on` travel in the definition); the inspector attaches its backing table and `_hp_refresh_*` triggers to it and does not report them separately (section 6.6).
 
-**Owned objects.** honest-persist generates relational objects the application never declares —
-enum lookups (`_hp_enum_*`), array and map junctions (`_hp_array_*`, `_hp_map_*`), closure tables,
-materialized-view backing tables and their refresh triggers, and `_hp_object` itself. The inspector
-reconstructs these to exactly the shape `expand_schema` (section 6) produces for the same
-declarations, so a schema whose abstractions and extended objects already exist diffs to no
-operations. The catalog SQL each inspector runs is dialect-specific and implementation-defined
-(section 12); the contract above — a complete SchemaDefinition, extended objects via `_hp_object`,
-owned objects reconciled — is normative and identical across dialects.
+**Owned objects.** honest-persist generates relational objects the application never declares — enum lookups (`_hp_enum_*`), array and map junctions (`_hp_array_*`, `_hp_map_*`), closure tables, materialized-view backing tables and their refresh triggers, and `_hp_object` itself. The inspector reconstructs these to exactly the shape `expand_schema` (section 6) produces for the same declarations, so a schema whose abstractions and extended objects already exist diffs to no operations. The catalog SQL each inspector runs is dialect-specific and implementation-defined (section 12); the contract above — a complete SchemaDefinition, extended objects via `_hp_object`, owned objects reconciled — is normative and identical across dialects.
 
 ### 9.2 Zero-Downtime Cutover
 
-The workflow above applies a diff in place. Moving a live database to a new home — a new
-engine, a new host, a major restructure — without downtime is a separate, staged operation,
-still expressed as data and pure-planned where possible:
+The workflow above applies a diff in place. Moving a live database to a new home — a new engine, a new host, a major restructure — without downtime is a separate, staged operation, still expressed as data and pure-planned where possible:
 
 ```
 1. Bulk transfer (I/O)    -- copy existing rows to the destination in foreign-key order,
@@ -1533,19 +1169,9 @@ still expressed as data and pure-planned where possible:
 4. Detach (I/O)           -- stop writing to the source.
 ```
 
-Each phase is explicit and reversible up to promotion. The mirror writes through the same
-query and transaction layer as ordinary writes (section 7), so the destination is never
-written by a path that bypasses the library. Cutover is an operational workflow, not a schema
-primitive: it composes the diff/apply and query layers, it does not replace them.
+Each phase is explicit and reversible up to promotion. The mirror writes through the same query and transaction layer as ordinary writes (section 7), so the destination is never written by a path that bypasses the library. Cutover is an operational workflow, not a schema primitive: it composes the diff/apply and query layers, it does not replace them.
 
-The phases, their ordering, the read target of each, and the batch query are pure decisions —
-`cutover_phases()`, `cutover_advance(phase)`, `cutover_read_target(phase)` (the source until
-promotion, the destination after), `cutover_plan(schema)` (the tables in foreign-key order so a
-referenced table is copied before its referrers, falling back to declared order on a cycle), and
-`copy_batch_query(table, primary_key, after, limit)` (the next resumable batch). The only I/O is
-`bulk_copy_table(...)`, which copies a table in primary-key batches resumable from the last key, and
-`mirror_write(query, source, dest)`, which dual-writes a built query to both databases. Both go
-through the ordinary query layer.
+The phases, their ordering, the read target of each, and the batch query are pure decisions — `cutover_phases()`, `cutover_advance(phase)`, `cutover_read_target(phase)` (the source until promotion, the destination after), `cutover_plan(schema)` (the tables in foreign-key order so a referenced table is copied before its referrers, falling back to declared order on a cycle), and `copy_batch_query(table, primary_key, after, limit)` (the next resumable batch). The only I/O is `bulk_copy_table(...)`, which copies a table in primary-key batches resumable from the last key, and `mirror_write(query, source, dest)`, which dual-writes a built query to both databases. Both go through the ordinary query layer.
 
 ---
 
@@ -1553,33 +1179,21 @@ through the ordinary query layer.
 
 These are design violations, not style suggestions:
 
-**No sessions.** No object that accumulates pending changes and flushes them
-on commit. Each operation is explicit.
+**No sessions.** No object that accumulates pending changes and flushes them on commit. Each operation is explicit.
 
-**No identity maps.** Fetching the same row twice returns two dicts. They are
-equal if the data is equal. They are not the same object.
+**No identity maps.** Fetching the same row twice returns two dicts. They are equal if the data is equal. They are not the same object.
 
-**No lazy loading.** A query returns what it says it returns. No attribute
-access triggers a second query.
+**No lazy loading.** A query returns what it says it returns. No attribute access triggers a second query.
 
-**No active record.** Models do not have `save()`, `delete()`, or `update()`
-methods. Models are data. Persistence functions are separate.
+The same rule says something stronger than it first appears, and it is worth stating because it was not the reason the rule was adopted. A result is fully materialized before `execute` returns, so no partially-consumed cursor ever outlives the call. There is no half-read result to still be open when the next operation runs. On engines where an in-progress statement changes what a concurrent write on the same connection means, a partially-read result held across a write can defer that write, discard it after it reported success, or abort the process outright. None of those can arise here, because the object that would have to be alive does not exist once `execute` has returned. The rule was adopted for predictable queries. It eliminates that second bug category for free, on engines that did not exist when it was written.
 
-**No module-level connection state.** The pool cache is an ordinary value, threaded through as a
-parameter and handed back updated. It is never a global and never a singleton.
+**No active record.** Models do not have `save()`, `delete()`, or `update()` methods. Models are data. Persistence functions are separate.
 
-**No connection or pool in the caller's hands.** The application chooses how it wants to wait, and
-nothing else. No connection, no pool, no dialect, and no engine flag crosses that line. A library
-that hands out connections makes every engine decision the application's decision: the application
-must then know which journal mode is safe, which concurrency mode is a preview, and which
-combination silently loses writes. It also leaves an engine-specific branch nowhere to live except
-inside the pool, because the pool is then the outermost thing the application touches. The bug
-category this eliminates is an engine detail escaping into application code, where it cannot be
-changed without changing every caller.
+**No module-level connection state.** The pool cache is an ordinary value, threaded through as a parameter and handed back updated. It is never a global and never a singleton.
 
-**No revision chain for migrations.** The schema is the source of truth.
-Migrations are diffs against the live database, not against a previous
-migration file.
+**No connection or pool in the caller's hands.** The application chooses how it wants to wait, and nothing else. No connection, no pool, no dialect, and no engine flag crosses that line. A library that hands out connections makes every engine decision the application's decision: the application must then know which journal mode is safe, which concurrency mode is a preview, and which combination silently loses writes. It also leaves an engine-specific branch nowhere to live except inside the pool, because the pool is then the outermost thing the application touches. The bug category this eliminates is an engine detail escaping into application code, where it cannot be changed without changing every caller.
+
+**No revision chain for migrations.** The schema is the source of truth. Migrations are diffs against the live database, not against a previous migration file.
 
 ---
 
@@ -1587,25 +1201,17 @@ migration file.
 
 A conformant honest-persist implementation must:
 
-1. Implement `diff()` as a pure function with the set-theory algorithm in
-   section 5.1. Same inputs, same output, always.
+1. Implement `diff()` as a pure function with the set-theory algorithm in section 5.1. Same inputs, same output, always.
 
-2. Implement `apply()` as an I/O function that refuses to run when
-   `DiffResult.ambiguities` is non-empty.
+2. Implement `apply()` as an I/O function that refuses to run when `DiffResult.ambiguities` is non-empty.
 
-3. Implement the dependency graph and topological sort for operation
-   ordering. Detect cycles and return a fault.
+3. Implement the dependency graph and topological sort for operation ordering. Detect cycles and return a fault.
 
-4. Implement enum abstraction via `_hp_enum_{table}_{column}` lookup tables
-   with FK constraints.
+4. Implement enum abstraction via `_hp_enum_{table}_{column}` lookup tables with FK constraints.
 
-5. Implement `execute()` functions that return plain dicts, not model
-   instances.
+5. Implement `execute()` functions that return plain dicts, not model instances.
 
-6. Implement the pool as an internal value, threaded as a parameter, never a
-   global and never a singleton. It is never returned to the caller and never
-   accepted from the caller. A public function that takes or returns a
-   connection or a pool is a conformance failure, not a convenience (§8.1, §10).
+6. Implement the pool as an internal value, threaded as a parameter, never a global and never a singleton. It is never returned to the caller and never    accepted from the caller. A public function that takes or returns a    connection or a pool is a conformance failure, not a convenience (§8.1, §10).
 
 7. Support at least one dialect. Declare which dialects are supported.
 
@@ -1617,8 +1223,7 @@ A conformant honest-persist implementation must:
 
 11. `emit_internal()` is a no-op when `observe_queries = false`. Zero overhead when disabled.
 
-12. Declare `db_id`, `tenant_id`, and `credential` as bounded Set recognizers
-   in the application vocabulary. honest-check enforces this via HC-P013.
+12. Declare `db_id`, `tenant_id`, and `credential` as bounded Set recognizers in the application vocabulary. honest-check enforces this via HC-P013.
 
 13. Implement `transaction()` as specified in §7.5: several writes grouped into
     one all-or-nothing step. If any write fails, the transaction rolls back and a
@@ -1672,10 +1277,7 @@ A conformant honest-persist implementation must:
 
 Severity: Error
 
-`db_id`, `tenant_id`, or `credential` appears in a manifest binding backed
-by a predicate recognizer rather than a bounded Set. An unbounded routing key
-allows arbitrary database identifiers to reach the pool layer. The vocabulary
-is the whitelist; a predicate bypasses it.
+`db_id`, `tenant_id`, or `credential` appears in a manifest binding backed by a predicate recognizer rather than a bounded Set. An unbounded routing key allows arbitrary database identifiers to reach the pool layer. The vocabulary is the whitelist; a predicate bypasses it.
 
 ```
 FUNCTION check_HC_P013(vocabulary, binding):
@@ -1690,34 +1292,15 @@ FUNCTION check_HC_P013(vocabulary, binding):
                       '{type_name}' — use a bounded Set recognizer instead")
 ```
 
-Implementations may omit the multi-tenant manager, the type
-abstractions of sections 6.3-6.5 (hierarchy, arrays and maps, ranges), and the
-zero-downtime cutover of section 9.2. An implementation may also offer only the
-synchronous path, in which case it omits the write queue (§8.6) and declares that
-it has no asynchronous surface. It may not offer an asynchronous surface without
-the queue: the ticket is a claim on a write held as data, and there is nothing to
-hold it. The boundary conflict retry of §7.7 is not covered by any of this — it is
-required on both paths for every dialect that detects conflicts at commit, because
-a query is already data (§7.2) and re-running it needs no queue. These are optional
-extensions;
-implementations must declare which they support. Enum abstraction (section 6.1)
-and CHECK enforcement (section 6.2) are not optional — they are cross-dialect
-correctness guarantees.
+Implementations may omit the multi-tenant manager, the type abstractions of sections 6.3-6.5 (hierarchy, arrays and maps, ranges), and the zero-downtime cutover of section 9.2. An implementation may also offer only the synchronous path, in which case it omits the write queue (§8.6) and declares that it has no asynchronous surface. It may not offer an asynchronous surface without the queue: the ticket is a claim on a write held as data, and there is nothing to hold it. The boundary conflict retry of §7.7 is not covered by any of this — it is required on both paths for every dialect that detects conflicts at commit, because a query is already data (§7.2) and re-running it needs no queue. These are optional extensions; implementations must declare which they support. Enum abstraction (section 6.1) and CHECK enforcement (section 6.2) are not optional — they are cross-dialect correctness guarantees.
 
 ---
 
 ## 12. What This Spec Does Not Cover
 
-- The exact SQL generation for each dialect (dialect-specific, not
-  language-agnostic) — including the exact SQL of table reconstruction (section
-  5.5) and of the abstraction expansions (section 6); their *strategies* are
-  language-agnostic and in-spec, only the SQL is dialect-specific
+- The exact SQL generation for each dialect (dialect-specific, not language-agnostic) — including the exact SQL of table reconstruction (section   5.5) and of the abstraction expansions (section 6); their *strategies* are   language-agnostic and in-spec, only the SQL is dialect-specific
 - The Pydantic loader (Python-specific, not part of the core pattern)
 - The CLI (`declaro diff`, `declaro apply`) — tooling, not the library
 - The SQLAlchemy-style query API — compatibility shim, not core pattern
-- The inspector's catalog SQL (which system tables each dialect reads) — implementation-defined
-  per dialect. Its *contract* is normative and in-spec (section 9.1): a complete SchemaDefinition,
-  extended objects reconstructed from the `_hp_object` registry, owned objects reconciled
-- Native dialect specializations (PostgreSQL native enums and array types,
-  PRAGMA emulation for engines lacking introspection) — optimizations behind the
-  dialect-agnostic abstractions of section 6
+- The inspector's catalog SQL (which system tables each dialect reads) — implementation-defined per dialect. Its *contract* is normative and in-spec (section 9.1): a complete SchemaDefinition,   extended objects reconstructed from the `_hp_object` registry, owned objects reconciled
+- Native dialect specializations (PostgreSQL native enums and array types, PRAGMA emulation for engines lacking introspection) — optimizations behind the   dialect-agnostic abstractions of section 6
