@@ -274,3 +274,14 @@ Feature: honest-test — Python supplement
     Given a link's parsed source
     When _fault_ifs walks it
     Then it returns every if-statement whose consequence returns an err fault
+
+  Scenario: __getattr__ resolves a public name to its defining module on first use
+    Given the name of one of honest-test's public exports
+    When __getattr__ is asked for it
+    Then it imports only the module that defines that name and returns it
+    But a name absent from the export table raises an attribute error naming it
+
+  Scenario: __dir__ lists the public names without importing them
+    Given the module has been imported but no export has been touched
+    When __dir__ is called
+    Then it returns every public name and imports nothing
