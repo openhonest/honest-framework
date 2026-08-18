@@ -31,7 +31,6 @@ COLUMNS = {"boundary_in": 1, "orchestrator": 2, "fn": 3, "boundary_out": 4}
 EXEMPT_FROM_DECLARATION = {
     "tree-sitter-honest-hd": "a tree-sitter grammar package: generated C and a grammar.js, no honest functions to declare",
     "tree-sitter-honest-jinja": "a tree-sitter grammar package: generated C and a grammar.js, no honest functions to declare",
-    "honest-page": "declaration blocked, not waived: its contract is six rendered surfaces in a normative document order (spec 2.2), and the .hd language declares no surface and no ordering, so the file cannot be written without new syntax. Language gap is honest-framework-9ri, the declaration is honest-framework-3h1; remove this entry when the .hd lands",
 }
 
 

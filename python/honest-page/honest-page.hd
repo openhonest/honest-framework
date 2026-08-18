@@ -1,0 +1,36 @@
+# honest-page declared in .hd — the page contract: the surfaces a host page must render, in the
+# order it must render them, and the reference application that renders them. The implementation
+# is templates plus python/app.py, which the architecture spec names as normative; this file is
+# the module's statement of itself, which until the surfaces block existed could not be written.
+
+module honest-page
+
+  layer application
+
+  # The six required surfaces, in the document order section 2.2 requires. The order is the
+  # contract, not a rendering preference: banners sit above the header because a page-level alert
+  # supersedes chrome, toasts sit below it so they do not occlude navigation, and the modal is
+  # last so it stacks above everything.
+  surfaces PageSurfaces = [
+    "honest-alerts-banners" as div,
+    "honest-header" as header,
+    "honest-alerts-toasts" as div,
+    "honest-main" as main,
+    "honest-footer" as footer,
+    "honest-alerts-modal" as div
+  ]
+
+  fn search_chain : (manifest: dict<str, any>) -> list<any>
+
+  fn extract_tokens : (path_params: dict<str, str>, query_params: dict<str, str>, state: dict<str, any>) -> list<str>
+
+  boundary_in fn intake : (request: any, call_next: any) -> any side_effect reads "HTTP"
+
+  boundary_in fn index : (request: any) -> any side_effect reads "HTTP"
+
+  boundary_in fn search : (request: any) -> any side_effect reads "HTTP"
+
+  boundary_out fn alerts_stream : (request: any) -> any side_effect writes "HTTP"
+
+  route "GET /" -> index
+  route "GET /search" -> search

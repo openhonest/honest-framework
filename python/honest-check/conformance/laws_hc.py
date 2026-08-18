@@ -1648,7 +1648,7 @@ def _probe_declared_roles():
     # The names themselves, not just how many. Emptying a key leaves the count intact and
     # quietly un-exempts the member it belonged to. Coupled to the table on purpose: changing
     # who is exempt should require saying so here, which is the visibility this rule is for.
-    if set(EXEMPT_FROM_DECLARATION) != {"tree-sitter-honest-hd", "tree-sitter-honest-jinja", "honest-page"}:
+    if set(EXEMPT_FROM_DECLARATION) != {"tree-sitter-honest-hd", "tree-sitter-honest-jinja"}:
         bad.append(f"the exemption table names: {sorted(EXEMPT_FROM_DECLARATION)}")
     for member, reason in EXEMPT_FROM_DECLARATION.items():
         if not reason.strip():
