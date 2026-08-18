@@ -1,6 +1,6 @@
 # Honest Code principles → honest-check rule coverage
 
-Maps each of the 16 principles in `principles/honest-code-principles.md` to the
+Maps each of the 19 principles in `principles/honest-code-principles.md` to the
 rule(s) that enforce it. Keep this current when a principle or rule changes — it is
 the guard against a principle silently losing enforcement.
 

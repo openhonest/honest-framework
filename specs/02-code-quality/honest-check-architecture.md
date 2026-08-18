@@ -1494,6 +1494,16 @@ src/pipelines/user.py:42: info
 | HC-P012 | Warning | Test | — | Excessive test doubles in test (honest-test) |
 | HC-SUP001 | Error | Static | — | Suppression matched no diagnostic (dead directive) |
 | HC-SUP002 | Error | Static | — | Suppression carries no reason |
+| HC-SYN | Error | Static | ✓ | Source does not parse — gates every other rule |
+| HC-P018 | Error | Static | — | Unbounded call target |
+| HC-REF001 | Error | Static | — | Template action target does not resolve to a mounted route |
+| HC-REF002 | Error | Static | — | Template include/extends target does not resolve to a template |
+| HC-REF003 | Error | Static | — | Template class reference does not resolve to a defined rule |
+| HC-REF004 | Error | Static | — | Behavioural attribute value is not a declared vocabulary member |
+| HC-ST001 | Error | Static | — | Write to persisted state outside an I/O-boundary function |
+| HC-ST002 | Error | Static | — | Shadow copy of user state outside the manifest-declared DOM |
+| HC-HF001 | Error | Static | — | `feature_state` references a flag not declared in FEATURES |
+| HC-HF002 | Warning | Static | — | Handler table missing an entry for a declared flag state |
 
 **Withdrawn:** *HC-SM06 ("transition writes to undeclared state field")* has been removed. It assumed a state-machine model where a state is a record of fields and transitions are field-writing functions. The canonical model (`honest-state-architecture.md`) defines a state as an atomic name and `transition()` as a pure `(state, event) → next_state` lookup that writes nothing — the caller persists the next state. There are no transition-written fields to police, so the rule described a model the framework does not have. honest-state §4 correctly lists only HC-SM01/02/03/04/05.
 

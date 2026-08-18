@@ -1020,11 +1020,12 @@ payload: {
 ```
 payload: {
     changed_keys:   [String], // which manifest slots changed
-    from:           dict,     // previous values for changed keys
     to:             dict,     // new values for changed keys
     request_id:     String?,  // current request context if within one
 }
 ```
+
+The browser sends new values only, never the previous ones. The DOM is the current state and keeps no copy of prior state, so the previous value of a slot is already in the event log. honest-observe supplies it as a projection, the last recorded value for that slot, when the event lands. Asking the browser for a `from` would force the shadow copy DATAOS forbids. See `../03-application-production/honest-DOM-architecture.md` §5.3.
 
 ### 8.5 request_id Threading
 

@@ -1717,34 +1717,45 @@ FUNCTION check_HC_P001(ast):
 
 Detection: `if x == "a": ... elif x == "b": ... elif x == "c":` — three or more string/type equality tests on the same variable.
 
-#### HC-P002 — Class with mutating methods
+#### HC-P002 — Exception caught in non-boundary function
 
 **Severity: Error**
 
-A class that defines methods which assign to `self.*` is hiding state. Data should be TypedDicts, behaviour should be pure functions.
+Business logic does not catch. Functions raise; the boundary catches, inspects the typed exception and maps it to a response. A `try`/`except` inside a non-boundary function swallows faults and produces a caught path the manifest cannot see. Faults inside business logic are data, not exceptions. `honest-check-architecture.md` §HC-P002 is canonical.
 
 ```
 FUNCTION check_HC_P002(ast):
-    FOR EACH class_def IN ast.all_classes:
-        FOR EACH method IN class_def.methods:
-            IF method assigns to self.*:
-                EMIT error(HC-P002, method.location,
-                    f"Method '{method.name}' mutates self — use TypedDict + pure function")
+    FOR EACH function_def IN ast.all_functions:
+        IF function_def is a boundary (decorated @boundary or @link(boundary=True)):
+            CONTINUE
+        FOR EACH try_stmt IN function_def.body:
+            IF try_stmt has an except clause:
+                EMIT error(HC-P002, try_stmt.location,
+                    f"Function '{function_def.name}' catches an exception in business "
+                    "logic. Let the function raise; catch at the boundary, or return "
+                    "a fault as data.")
 ```
 
-Exception: `__init__` that only sets immutable values from parameters is permitted with a warning rather than error. Setters and mutating methods are always errors.
+A `try` with only a `finally` is not a catch and does not fire.
 
-#### HC-P003 — Inheritance
+#### HC-P003 — Class declaration
 
 **Severity: Error**
 
-Class inheritance is forbidden. `class B(A)` where `A` is not a framework base type (TypedDict, Protocol) is an error.
+A class definition is permitted only when it subclasses a framework-approved base. Both inheriting from a non-approved base and declaring a class with no explicit base are violations: a bare class implicitly inherits `object`, which is not approved, and is the main way non-honest code sneaks in. `honest-check-architecture.md` §HC-P003 is canonical.
 
 ```
 FUNCTION check_HC_P003(ast):
-    allowed_bases ← {"TypedDict", "Protocol", "ABC", "Exception"}
+    allowed_bases ← {"TypedDict", "Protocol", "ABC", "Exception",
+                      "BaseException", "Error"}   // language-specific
 
     FOR EACH class_def IN ast.all_classes:
+        IF class_def.bases IS EMPTY:
+            EMIT error(HC-P003, class_def.location,
+                f"Class '{class_def.name}' has no declared base. Use a TypedDict "
+                "for data shapes or a pure function.")
+            CONTINUE
+
         FOR EACH base IN class_def.bases:
             IF base NOT IN allowed_bases:
                 EMIT error(HC-P003, class_def.location,
@@ -1923,8 +1934,8 @@ FUNCTION check_HC_P012(test_files):
 | HC-SM04 | Warning | Dead state (no outgoing transitions) | State machine |
 | HC-SM05 | Error | Initial state not in vocabulary | State machine |
 | HC-P001 | Error | if/elif/else dispatch chain | Application AST |
-| HC-P002 | Error | Class with mutating methods | Application AST |
-| HC-P003 | Error | Inheritance | Application AST |
+| HC-P002 | Error | Exception caught in non-boundary function | Application AST |
+| HC-P003 | Error | Class declaration | Application AST |
 | HC-P004 | Error | I/O inside non-boundary function | Application AST |
 | HC-P005 | Warning | isinstance() in business logic | Application AST |
 | HC-P006 | Warning | Cache without profiling annotation | Application AST |
@@ -2296,8 +2307,8 @@ Chain Coverage
 
 Principle Coverage (HC-P rules)
   HC-P001 (if/elif dispatch): 100% clean
-  HC-P002 (mutating classes): 100% clean
-  HC-P003 (inheritance):      100% clean
+  HC-P002 (catch in logic):   100% clean
+  HC-P003 (class declaration):100% clean
   HC-P009 (feature files):    80% — 2 chains missing .feature files
     ⚠ missing: reset_password_pipeline.feature
     ⚠ missing: export_data_pipeline.feature

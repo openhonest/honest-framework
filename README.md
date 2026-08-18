@@ -14,7 +14,7 @@ Language-agnostic framework specification for code that is correct by design. Th
 
 The linter is the operational definition of Honest Code. Code that passes cannot represent the bug categories the framework eliminates: hidden state via classes, if/elif/else value-dispatch, I/O off the boundary, catching exceptions in business logic, indiscriminate mutable state, recognizer reuse, and the rest. There is no "mostly honest." Code passes the gate, or it is rejected as dishonest.
 
-This is enforced at commit time: a pre-commit hook runs `honest-check` over every module, so **no dishonest Python can land**. Enable it once per clone:
+This is enforced at commit time: a pre-commit hook runs `honest-check` over every module, so **no dishonest code can land**. Enable it once per clone:
 
 ```sh
 ./bootstrap.sh
@@ -33,7 +33,7 @@ It points git at the in-repo hooks, verifies `uv`, and syncs the workspace. Idem
 - `articles/` — three canonical articles (honest-advantages, honest-testing, honest-type-magic)
 - `principles/` — foundational philosophy
   - `poka-yoke.md` — velocity-multiplier manifesto: which categories of bug each design decision eliminates structurally
-  - `honest-code-principles.md` — sixteen Honest Code practices
+  - `honest-code-principles.md` — nineteen Honest Code practices
 - `methodology/` — verification approach
   - `contract-testing.md` — user-journey-to-function contract mapping methodology
 - `python/` — Python reference implementation (in active development)

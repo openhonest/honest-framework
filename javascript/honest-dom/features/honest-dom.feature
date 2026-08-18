@@ -87,7 +87,7 @@ Feature: honest-DOM (domx) — the client-side DATAOS primitives
   Scenario: domChanged builds the manifest-state-change payload
     Given a manifest state change seen by the observer
     When domChanged builds its payload
-    Then it names the hf.dom.changed event with the changed keys and their previous and new values
+    Then it names the hf.dom.changed event with the changed keys and their new values
 
   Scenario: redact drops value-bearing fields outside development mode
     Given a payload and the observability mode

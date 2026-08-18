@@ -496,7 +496,7 @@ Every request in an honest-framework application passes through three instrument
 **Layer 1: Frontend (outbound)**
 *Governed by: honest-DOM-architecture.md, honest-page-architecture.md*
 
-The user interacts with the page. DOM state changes. domx detects the change via its MutationObserver and emits `hf.dom.changed` to honest-observe via `sendBeacon()`. The changed manifest slots are recorded: which keys changed, from what, to what.
+The user interacts with the page. DOM state changes. domx detects the change via its MutationObserver and emits `hf.dom.changed` to honest-observe via `sendBeacon()`. The changed manifest slots are recorded: which keys changed and their new values. The browser keeps no copy of prior state, so honest-observe supplies the previous value as a projection over the log.
 
 The interaction triggers an HTMX request. Before the request fires, domx calls `collect(appManifest)` and merges the current DOM state into the request body as `_state`. domx emits `hf.browser.request` to honest-observe: method, URL, trigger, target, manifest keys.
 
@@ -504,7 +504,7 @@ The `h*-` attributes on the triggering element declare the presentation intent. 
 
 ```
 User interaction
-  → domx: hf.dom.changed emitted  (keys changed, from/to values)
+  → domx: hf.dom.changed emitted  (keys changed, new values)
   → domx: collect(appManifest)    (DOM state merged into request body as _state)
   → HTMX: hf.browser.request emitted  (method, url, trigger, target)
   → HTTP request leaves browser
@@ -1446,7 +1446,7 @@ The following documents extend and distill the framework specification. They are
 
 ### Code Quality Axis
 
-- **`honest-code-principles.md`:** Sixteen practices that describe what correct code looks like at the level of daily programming decisions. The distillation of the code quality axis.
+- **`honest-code-principles.md`:** Nineteen practices that describe what correct code looks like at the level of daily programming decisions. The distillation of the code quality axis.
 - **`honest-persist-architecture.md`:** Language-agnostic architecture specification for honest-persist. Defines exact algorithms, data structures, and conformance requirements. An implementor can build a conformant honest-persist from this document alone.
 - **`honest-type-architecture.md`:** Architecture specification for honest-type. Includes the classify() algorithm, composed types, maybe bindings, chain execution model, fault semantics, and conformance suite.
 - **`honest-check-architecture.md`:** Complete rule set for the static linter. CLI, LSP, startup integration, and all HC and HC-P rules with algorithms.
