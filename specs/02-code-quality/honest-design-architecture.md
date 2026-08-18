@@ -60,6 +60,12 @@ The reference implementation is `python/honest-design/`, with the tree-sitter `.
 
 Every declared function carries its column in its **role keyword**: `boundary_in` (column 1), `orchestrator` (column 2), `fn` (column 3), `boundary_out` (column 4). The role is not decoration — it is a claim the validator and honest-check enforce: a plain `fn` that does I/O is a violation; an `orchestrator` that reaches the outside world off a boundary is a violation; only a `boundary_in`/`boundary_out` function may name a `side_effect`.
 
+**The columns are ordered, and the arrows run one way.** Work enters at column 1, is composed in column 2, is computed in column 3, and leaves at column 4. Two consequences follow, and both are claims rather than description.
+
+**An output boundary is a terminus.** A `boundary_out` may call pure functions and other output boundaries. It may not invoke an orchestrator, a chain, or an input boundary. An output that re-enters the interior turns the graph into a loop: the pipeline stops being something that runs once between an arrival and a departure, an emit can trigger work that emits again, and the interior is no longer reachable only from column 1. That last point is what the finite-testability argument rests on, so a backward arrow from column 4 does not merely look untidy, it removes the property the layout exists to show.
+
+**A pure function does not reach a boundary.** Column 3 is downstream of column 2 and upstream of column 4, and it calls neither. A pure function that invokes a boundary has performed I/O at one remove, which is the defect `HC-P004` names when the I/O is written inline and which no rule yet names when it is one call away.
+
 The model is language-agnostic. The same `.hd` describes the module whether it is implemented in Python, JavaScript, Ruby, PHP, Elixir, or Go; the file is byte-identical across targets (framework spec, "Same engine, same grammar, same files"). What differs per language is only the code an adapter emits into each column, never the columns themselves.
 
 ---
