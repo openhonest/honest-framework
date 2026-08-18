@@ -1531,8 +1531,53 @@ def _probe_hc_st001():
     return bad
 
 
+def _probe_declared_roles():
+    """honest-check has never opened a .hd. It reconstructs a function's role from the Python
+    decorator, which carries one boolean, while the declaration distinguishes boundary_in from
+    boundary_out and names the resource each touches. So the gate enforces a coarser role than
+    the author declared, and no rule about arrow direction can be written from Python alone."""
+    from honest_check.declared import declared_column, declared_roles
+
+    bad = []
+    source = (
+        "module m\n\n"
+        "  boundary_in fn intake : (p: str) -> str side_effect reads \"filesystem\"\n"
+        "  fn pure_one : (p: str) -> str\n"
+        "  boundary_out fn emit : (p: str) -> str side_effect writes \"network\"\n"
+    )
+    roles = declared_roles(source)
+    expected = {"intake": "boundary_in", "pure_one": "fn", "emit": "boundary_out"}
+    if roles != expected:
+        bad.append(f"declared_roles must return each function's declared role: {roles}")
+    if declared_roles("module m\n") != {}:
+        bad.append("a module declaring no function has no roles")
+    if declared_roles("module m\n  fn (((\n") != {}:
+        bad.append("source that does not parse yields no roles rather than raising")
+
+    # The column each role names, and the refusal for one the model does not name. A default
+    # column here would put a function the grammar grew into whichever column happened to be
+    # first, which is the silent-miss the closed table exists to prevent.
+    # Every row of the table, orchestrator included. Three of four rows left the fourth free to
+    # be blanked or swapped with nothing noticing.
+    placed = {role: declared_column(role) for role in ("boundary_in", "orchestrator", "fn", "boundary_out")}
+    if placed != {"boundary_in": 1, "orchestrator": 2, "fn": 3, "boundary_out": 4}:
+        bad.append(f"declared_column must place each of the four roles: {placed}")
+    if {name: declared_column(role) for name, role in roles.items()} != {"intake": 1, "pure_one": 3, "emit": 4}:
+        bad.append("declared_column must place a role read from a real declaration")
+    try:
+        declared_column("boundary_sideways")
+        bad.append("a role the four-column model does not name must raise")
+    except KeyError as exc:
+        # The bare subscript would raise KeyError too, so asserting the type proves nothing
+        # about the guard. The named refusal is what has to survive.
+        if "no column for role" not in str(exc) or "boundary_sideways" not in str(exc):
+            bad.append(f"the refusal must say what it did not recognise and why: {exc}")
+    return bad
+
+
 def run():
     probes = {
+        "declared_roles": _probe_declared_roles(),
         "hc_st001": _probe_hc_st001(),
         "exports": _probe_exports(),
         "routes": _probe_routes(),

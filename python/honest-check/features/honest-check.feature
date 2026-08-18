@@ -1008,3 +1008,15 @@ Feature: honest-check — Python supplement
     Given the user-state slots the templates declare and the scanned client modules
     When check_hc_st002 resolves each module-level binding against them
     Then it reports HC-ST002 for a binding named after a declared slot and for one caching collect, staying silent otherwise
+
+  Scenario: declared_roles reads each function's declared role from .hd source
+    Given the text of a module's .hd declaration
+    When declared_roles reads it
+    Then it returns every declared function name mapped to its role keyword
+    But source that does not parse yields no roles rather than raising
+
+  Scenario: declared_column places a role in the four-column model
+    Given a role keyword the author declared
+    When declared_column is asked for its column
+    Then it returns the column that keyword names
+    But a keyword the four-column model does not name raises rather than defaulting

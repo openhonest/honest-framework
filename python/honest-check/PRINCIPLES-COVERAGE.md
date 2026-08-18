@@ -1,8 +1,6 @@
 # Honest Code principles → honest-check rule coverage
 
-Maps each of the 19 principles in `principles/honest-code-principles.md` to the
-rule(s) that enforce it. Keep this current when a principle or rule changes — it is
-the guard against a principle silently losing enforcement.
+Maps each of the 19 principles in `principles/honest-code-principles.md` to the rule(s) that enforce it. Keep this current when a principle or rule changes — it is the guard against a principle silently losing enforcement.
 
 | # | Principle | Enforced by | Coverage |
 |---|---|---|---|
@@ -32,7 +30,4 @@ the guard against a principle silently losing enforcement.
 
 ## Status
 
-Every principle that is a *static property of server-side Python code* is enforced
-by honest-check. The remaining principles are owned by honest-test (mocks, gherkin)
-or the JS/DOM layer (DATAOS, imperative DOM), or are process guidance (strangler).
-There is no longer an unenforced, in-scope principle.
+Every principle that is a *static property of server-side Python code* is enforced by honest-check. The remaining principles are owned by honest-test (mocks, gherkin) or the JS/DOM layer (DATAOS, imperative DOM), or are process guidance (strangler). There is no longer an unenforced, in-scope principle.
