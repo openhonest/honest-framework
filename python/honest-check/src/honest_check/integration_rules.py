@@ -47,7 +47,6 @@ def check_hc_r001(root, source: bytes, path: str) -> list[Diagnostic]:
     not swept. Auto-generation reaches roled functions and, transitively, the helpers
     they call; anything left over has no test story.
     """
-    aliases = resolve_aliases(root, source)
     functions = functions_by_name(root, source)
     roled = {name for name, node in functions.items() if function_role(node, source) is not None}
     if not roled:

@@ -1516,6 +1516,28 @@ def _probe_hc_st001():
         qualified = f"import honest_persist\ndef save(rows, conn):\n    honest_persist.{name}(rows, conn)\n"
         if "HC-ST001" not in [d["rule"] for d in check_source(qualified, "app/orders.py")]:
             bad.append(f"HC-ST001 should fire on honest_persist.{name}() outside a boundary")
+    # The message a rule hands the reader is the whole product of the rule firing, and nothing
+    # asserted it. Three fragments of this one had been set aside as unkillable on the stated
+    # ground that no law asserts message wording, which is a gap saying so rather than an
+    # equivalence. Each fragment carries content a reader needs: what was written, that it
+    # happened off a boundary, what a boundary is, and where the law is written down.
+    reported = [d for d in check_source(
+        "from honest_persist import transaction\ndef save(rows, conn):\n    transaction(rows, conn)\n",
+        "app/orders.py") if d["rule"] == "HC-ST001"]
+    if not reported:
+        bad.append("HC-ST001 must fire for the message assertions below to mean anything")
+    else:
+        message = reported[0]["message"]
+        for needed, why in (
+            ("transaction", "the message must name the write it caught"),
+            ("outside an I/O-boundary function", "the message must say the write was off a boundary"),
+            ("single mutator", "the message must state the law it enforces, not only the breach"),
+            ("@link(boundary=True)", "the message must say how to declare one"),
+            ("honest-state", "the message must cite where the law is written"),
+        ):
+            if needed not in message:
+                bad.append(f"{why}: {message!r}")
+
     at_boundary = "from honest_persist import transaction\n@boundary\ndef save(rows, conn):\n    transaction(rows, conn)\n"
     if [d for d in check_source(at_boundary, "app/orders.py") if d["rule"] == "HC-ST001"]:
         bad.append("HC-ST001 should not fire inside a boundary function")
@@ -1528,6 +1550,50 @@ def _probe_hc_st001():
     top_level = "from honest_persist import transaction\ntransaction(rows, conn)\n"
     if [d for d in check_source(top_level, "app/x.py") if d["rule"] == "HC-ST001"]:
         bad.append("HC-ST001 should skip a module-level call with no enclosing function")
+    return bad
+
+
+def _probe_diagnostic_messages():
+    """Every diagnostic carries a message, and the message names its subject.
+
+    Nothing asserted this. Three HC-ST001 message strings were set aside as unkillable mutants
+    on the stated ground that no conformance case or law asserts message wording — which is not
+    equivalence, it is a gap saying so out loud. A blanked message is what the reader is left
+    with when a rule fires, so it is the part of a diagnostic that matters most to them and the
+    part nothing was checking. Asserted as one law over every rule rather than per message, so a
+    rule added tomorrow inherits it."""
+    from honest_check.rules import check_source
+
+    bad = []
+    # One source that trips a spread of rules at once, so the law covers more than one message.
+    source = (
+        "import redis\n"
+        "class Thing:\n"
+        "    def go(self):\n"
+        "        return 1\n"
+        "def dispatch(kind, arg):\n"
+        "    if kind == 'a':\n"
+        "        return 1\n"
+        "    elif kind == 'b':\n"
+        "        return 2\n"
+        "    elif kind == 'c':\n"
+        "        return 3\n"
+        "def swallow():\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except ValueError:\n"
+        "        pass\n"
+    )
+    diagnostics = check_source(source, "app/thing.py")
+    if not diagnostics:
+        bad.append("the fixture must trip at least one rule for the law to say anything")
+    for d in diagnostics:
+        if not d["message"].strip():
+            bad.append(f"{d['rule']} emitted an empty message at line {d['line']}")
+        elif len(d["message"].split()) < 3:
+            bad.append(f"{d['rule']}'s message is too short to tell a reader anything: {d['message']!r}")
+        if not d["rule"].strip():
+            bad.append(f"a diagnostic at line {d['line']} carries no rule id")
     return bad
 
 
@@ -1577,6 +1643,7 @@ def _probe_declared_roles():
 
 def run():
     probes = {
+        "diagnostic_messages": _probe_diagnostic_messages(),
         "declared_roles": _probe_declared_roles(),
         "hc_st001": _probe_hc_st001(),
         "exports": _probe_exports(),
