@@ -110,6 +110,21 @@ reassembled = "\n".join(parts)
 assert reassembled.strip() == html.strip()
 ```
 
+### Static references are boundaries too
+
+Boundaries are not only runtime wire formats. Whenever a test asserts an artifact's own **shape** — a rendered HTML fragment, a config file, a stylesheet — it must also assert that the identifiers that artifact **references** resolve to definitions elsewhere. A rendered artifact routinely names things defined in another file: an `hx-get="/api/…"` that must hit a mounted route, an `onclick="openMenu('X')"` whose `X` must be a key in a JS config object, a `class="widget-panel"` a stylesheet must actually style, a template `{% include %}` that must exist. Asserting the artifact contains the right strings proves nothing about whether the strings it *points at* resolve. Two green tests can describe a button and a menu system that do not connect — a "dead button" that passes every shape test and does nothing.
+
+So for every identifier an artifact emits that is defined elsewhere, check that the definition exists:
+
+```python
+# For each nav button emitting toggleMenu('X') + a dropdown container selector:
+assert 'X' in parse_menu_config(base_html)            # the JS config key exists
+assert f'{dropdown_selector}:not(.active)' in css     # the CSS rule exists
+# ...and the route it hx-gets is mounted (a route test covers that reference).
+```
+
+These checks are **static and cheap** — a file read, no browser, server, or DB. Do not leave them to an end-to-end test. E2E catches a dangling reference only *incidentally*, as the first runtime thing that happens to depend on it, and pays browser latency and flakiness to report a condition a file read would decide deterministically. When a feature's correctness depends on three hand-authored artifacts agreeing (the HTML, the config, the CSS), the deeper fix is to make it **one** source they are all generated from — but until then, the reference-resolves assertion is the guard.
+
 ## Step 6: Honest Code Audit
 
 For each function in the chain, verify:
@@ -131,6 +146,7 @@ Before declaring a feature "tested":
 - [ ] Contract documented for every function boundary
 - [ ] Every contract branch has at least one assertion
 - [ ] Boundary formats tested (sender output == receiver input)
+- [ ] Every identifier an artifact references (route, config key, CSS class, template include) resolves to a definition — checked statically, not left to the browser
 - [ ] Total assertion count stated
 - [ ] Honest Code audit completed
 - [ ] End-to-end browser test confirms visible result
