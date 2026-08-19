@@ -27,3 +27,15 @@ framework backup/
 
 # Local beads tracker (dolt-backed working DB; not a release artefact)
 .beads/
+
+# Session-context aids, not release artefacts (see CLAUDE.md). Tracked by accident in the
+# reflow commit through an over-broad `git add`; ignored here so it cannot recur.
+.agents/
+.claude/
+.codex/
+
+# Editor and generator backups.
+*.bak
+
+# macOS AppleDouble metadata. Four of these were tracked before today and carry nothing.
+._*
