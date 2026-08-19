@@ -1,9 +1,6 @@
 # honest-design: Architecture Specification
 
-**Version:** 0.1 (Draft)
-**Date:** July 2026
-**Status:** Active
-**Author:** Adam Zachary Wasserman
+**Version:** 0.1 (Draft) **Date:** July 2026 **Status:** Active **Author:** Adam Zachary Wasserman
 
 ---
 
@@ -62,6 +59,15 @@ The reference implementation is `python/honest-design/`, with the tree-sitter `.
 | 4. Output boundary | Writes to the outside world — responses, persistence, event emits | `boundary_out fn ... side_effect writes "..."` |
 
 Every declared function carries its column in its **role keyword**: `boundary_in` (column 1), `orchestrator` (column 2), `fn` (column 3), `boundary_out` (column 4). The role is not decoration — it is a claim the validator and honest-check enforce: a plain `fn` that does I/O is a violation; an `orchestrator` that reaches the outside world off a boundary is a violation; only a `boundary_in`/`boundary_out` function may name a `side_effect`.
+
+
+**Why surfaces are declared and not inferred.** A page's contract is which surfaces it renders and in what order. Until now that could be written in prose and asserted by a conformance law, but not declared. So a module whose whole contract was an ordering had no `.hd` at all, and nobody noticed: the missing file read as unfinished work rather than as a gap in this language. The `surfaces` block closes it. The order is the declaration, honest-check resolves a rendered template's ids against it, and a module that renders surfaces is now describable in the same file as everything else about it.
+
+**The columns are ordered, and the arrows run one way.** Work enters at column 1, is composed in column 2, is computed in column 3, and leaves at column 4. Two consequences follow, and both are claims rather than description.
+
+**An output boundary is a terminus.** A `boundary_out` may call pure functions and other output boundaries. It may not invoke an orchestrator, a chain, or an input boundary. An output that re-enters the interior turns the graph into a loop: the pipeline stops being something that runs once between an arrival and a departure, an emit can trigger work that emits again, and the interior is no longer reachable only from column 1. That last point is what the finite-testability argument rests on, so a backward arrow from column 4 does not merely look untidy, it removes the property the layout exists to show.
+
+**A pure function does not reach a boundary.** Column 3 is downstream of column 2 and upstream of column 4, and it calls neither. A pure function that invokes a boundary has performed I/O at one remove, which is the defect `HC-P004` names when the I/O is written inline and which no rule yet names when it is one call away.
 
 The model is language-agnostic. The same `.hd` describes the module whether it is implemented in Python, JavaScript, Ruby, PHP, Elixir, or Go; the file is byte-identical across targets (framework spec, "Same engine, same grammar, same files"). What differs per language is only the code an adapter emits into each column, never the columns themselves.
 
@@ -124,8 +130,10 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `layer <name>` | The module's tier: `foundation`, `tooling`, `domain`, ... |
 | `type <Name> = <expr>` | A type. `<expr>` is a scalar (`str`, `int`, `bool`, `void`, `any`), a generic (`list<T>`, `dict<K,V>`, `set<T>`, `Callable<...>`), or a record (`{ field: type ... }`); a return or field type may be a union (`Manifest \| Fault`). Types from other modules are referenced by name, not redeclared. |
 | `set <name> = { "a", ... }` | A bounded recognizer set of string literals; each member may be written `"member" : "description"`. |
+| `surfaces <name> = [ "id" as <element>, ... ]` | The surfaces a module renders, in the order the page requires. Each member names the `id` it is identified by and the element it lives in. Square brackets, not braces: the order is the contract, and a `set` is unordered. |
 | `vocabulary <name> = { set, ... }` | A vocabulary composed of sets (its Cartesian product is the exhaustive test space). |
 | `dispatch <name> = { "k" -> handler, ... }` | A dict-dispatch table — the honest replacement for `if/elif`. |
+| `dispatch <name> = { "k" -> handler from <field>, ... }` | The same, where each entry names the slice of the caller's input its handler is fed. `from` is optional per entry. Without it every handler in a table must declare the same wide input, which hides which field each one actually reads. |
 | `example <name> of <chain> = "..."` | A living-spec example bound to a chain. |
 | `boundary_in fn <name> : (args) -> ret side_effect reads "<source>"` | Column 1. Input boundary; declares what it reads. |
 | `orchestrator fn <name> : (args) -> ret invokes <list> [raises <faults>]` | Column 2. Runs chains; names what it invokes and the faults it may raise. |
@@ -136,7 +144,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `entry "<callsite>" -> fn` | An entry point whose call-site shape is a string — a decorator, a context manager, a middleware registration — dispatching to a function. |
 | `html_attr "attr" "desc"` | A declared client-side attribute. |
 
-A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes it can return, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). There is exactly one way to say each thing.
+A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes it can return, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). A dispatch entry may add `from <field>`, naming the slice of the caller's input that entry's handler is fed; the handler then declares that field's type instead of the whole record, so a predicate reading one field of sixteen says so in its signature rather than in a comment. There is exactly one way to say each thing.
 
 ### 3.3 Workspace files
 
@@ -190,6 +198,14 @@ The validator is a pure function `Module (IR) → [fault]`. An empty list is a v
 - Every `route` and `entry` targets a declared function (else `unknown_target`; the input-boundary dual of HC001).
 - Names are unique within each declaration kind — functions, types, sets, chains, vocabularies (else `duplicate_name`; duals of HC004/HC005/HC006).
 - A plain `fn` declares no `side_effect` (else `impure_pure_function`) — only `boundary_in`/`boundary_out` may.
+- The two public entry points check their own input, because both are boundaries and the caller's type is not
+  something the module may assume. `read_hd` refuses a non-text source (`hd_source_not_text`) rather than
+  failing inside the parse, and `validate` names a document handed over in place of one module
+  (`not_a_module`) rather than raising from whichever check reads a field first. `hd_syntax_error` is the
+  third code the reader emits, for source that parses to an error node.
+- Every surface id in a `surfaces` block is unique within it (else `duplicate_surface`), and the block declares at least one (else `empty_surfaces`). Order is not checked here, because the declaration *is* the order. Whether a rendered page matches it is a cross-artifact question, and honest-check answers it by resolving the template's ids against this block, as `HC-REF001` resolves an action target against a mounted route.
+
+- A dispatch entry's `from` names a real field of its caller's input (else `unknown_projection`), and its handler takes exactly one parameter of that field's type (else `projection_mismatch`). The caller is found through `invokes`. Without both checks the projection is a comment, and a signature that overstates what it reads is the defect the notation exists to catch.
 
 Three further checks are deliberately **not** in the per-module pass, each for a stated reason:
 

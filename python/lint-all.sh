@@ -15,6 +15,24 @@ if [ ${#srcdirs[@]} -eq 0 ]; then
     exit 2
 fi
 
+# Membership: every workspace member carries a declaration, or is exempt by name with a reason.
+# A gate you leave by deleting a file is not a gate, so absence is checked before content.
+echo "lint-all: every workspace member declares itself…"
+if ! uv run --package honest-check python -c '
+import pathlib, sys
+from honest_check.declared import undeclared_members
+root = pathlib.Path(__file__).parent if False else pathlib.Path(".")
+members = {d.name for d in root.iterdir() if d.is_dir() and (d / "pyproject.toml").exists()}
+found = {d.name for d in root.iterdir() if d.is_dir() and list(d.glob("*.hd"))}
+missing = undeclared_members(members, found)
+if missing:
+    print("lint-all: these workspace members carry no .hd and no exemption:", ", ".join(missing), file=sys.stderr)
+    print("  Write the declaration, or add the member to EXEMPT_FROM_DECLARATION with its reason.", file=sys.stderr)
+    sys.exit(1)
+'; then
+    exit 1
+fi
+
 echo "lint-all: ${srcdirs[*]}"
 if uv run --package honest-check python -m honest_check.cli "${srcdirs[@]}"; then
     echo "lint-all: all modules pass honest-check."

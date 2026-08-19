@@ -1,16 +1,8 @@
 # honest-check self-compliance audit
 
-honest-check must itself pass every Honest Code rule — including the rules it does
-not yet *automate*. Until all 34 Full-set rules are implemented, this file records
-the **manual** audit of honest-check's own source against each not-yet-automated
-rule. Re-run the audit whenever the source changes; promote a row to "automated"
-when its rule lands in `_ALL_CHECKS`.
+honest-check must itself pass every Honest Code rule — including the rules it does not yet *automate*. Until all 34 Full-set rules are implemented, this file records the **manual** audit of honest-check's own source against each not-yet-automated rule. Re-run the audit whenever the source changes; promote a row to "automated" when its rule lands in `_ALL_CHECKS`.
 
-Automated rules (32) enforce themselves on every self-lint (`python -m
-honest_check.cli src/honest_check`, exit 0). The rule set is now closed: the only
-remaining manual row is HC-P010 (subsumed by HC-P003); HC-SM06 was withdrawn from
-the spec, HC-P015 was removed with the guard primitive, and HC-P008/P009/P012
-belong to honest-test.
+Automated rules (32) enforce themselves on every self-lint (`python -m honest_check.cli src/honest_check`, exit 0). The rule set is now closed: the only remaining manual row is HC-P010 (subsumed by HC-P003); HC-SM06 was withdrawn from the spec, HC-P015 was removed with the guard primitive, and HC-P008/P009/P012 belong to honest-test.
 
 | Rule | Manual audit result |
 |---|---|
@@ -24,25 +16,12 @@ belong to honest-test.
 
 ## HC-P010 standing exemption: the AST-traversal layer
 
-honest-check is an AST linter, so its parsing and declaration-graph helpers
-necessarily return tree-sitter `Node` / `Tree` objects (`parse`, `first_error_node`,
-`link_decorator_call`, `_dictionary_arg`, `constructor_calls`, and others). These
-are non-serializable class instances, which the *literal* HC-P010 would flag.
+honest-check is an AST linter, so its parsing and declaration-graph helpers necessarily return tree-sitter `Node` / `Tree` objects (`parse`, `first_error_node`, `link_decorator_call`, `_dictionary_arg`, `constructor_calls`, and others). These are non-serializable class instances, which the *literal* HC-P010 would flag.
 
-This is the same shape of tension as dict-dispatch-vs-HC008 and cli-I/O-vs-HC-P004:
-the rule's intent is to stop *business* logic from returning opaque objects instead
-of TypedDicts, not to forbid an AST tool from trafficking in AST nodes. The nodes
-**are** the data under analysis.
+This is the same shape of tension as dict-dispatch-vs-HC008 and cli-I/O-vs-HC-P004: the rule's intent is to stop *business* logic from returning opaque objects instead of TypedDicts, not to forbid an AST tool from trafficking in AST nodes. The nodes **are** the data under analysis.
 
-Resolution (to encode when HC-P010 is implemented): HC-P010 exempts functions whose
-return is a parser `Node`/`Tree` (the AST-traversal layer). It still flags a pure
-function that returns a *custom* class instance where a TypedDict/dict belongs.
-Until then, this is the manual ruling: AST-node returns here are compliant by
-exemption; any new helper returning a non-node custom class instance is a violation.
+Resolution (to encode when HC-P010 is implemented): HC-P010 exempts functions whose return is a parser `Node`/`Tree` (the AST-traversal layer). It still flags a pure function that returns a *custom* class instance where a TypedDict/dict belongs. Until then, this is the manual ruling: AST-node returns here are compliant by exemption; any new helper returning a non-node custom class instance is a violation.
 
 ## Re-audit checklist
 
-When `src/honest_check/` changes, re-check the two non-N/A rows: any new duplicated
-helper (HC-OR003 intent) and any new function returning a non-node custom class
-(HC-P010). The N/A rows stay N/A as long as honest-check declares no honest-type
-constructs on its own functions.
+When `src/honest_check/` changes, re-check the two non-N/A rows: any new duplicated helper (HC-OR003 intent) and any new function returning a non-node custom class (HC-P010). The N/A rows stay N/A as long as honest-check declares no honest-type constructs on its own functions.

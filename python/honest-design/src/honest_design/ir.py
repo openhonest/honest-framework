@@ -67,6 +67,17 @@ class Vocabulary(TypedDict):
 class DispatchEntry(TypedDict):
     key: str
     handler: str
+    projection: str  # the slice of the input the handler is fed; "" when none is declared
+
+
+class SurfaceMember(TypedDict):
+    id: str       # the id the rendered element must carry
+    element: str  # the element it lives in: header, main, footer, div
+
+
+class Surfaces(TypedDict):
+    name: str
+    members: list  # list[SurfaceMember], in the document order the page requires
 
 
 class Dispatch(TypedDict):
@@ -108,6 +119,7 @@ class Module(TypedDict):
     sets: list
     vocabularies: list
     dispatches: list
+    surfaces: list  # list[Surfaces]
     examples: list
     functions: list
     chains: list

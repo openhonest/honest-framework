@@ -15,4 +15,8 @@ module honest-check
 
   fn check_source : (source: str, path: str, language: str) -> list<Diagnostic>
 
+  fn declared_roles : (source: str) -> Result
+  fn undeclared_members : (members: set<str>, with_declaration: set<str>) -> list<str>
+  fn declared_column : (role: str) -> int
+
   boundary_in fn startup_check : (paths: list<str>, on_error: str, severity: str) -> list<Diagnostic> side_effect reads "filesystem"

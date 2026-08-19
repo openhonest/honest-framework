@@ -9,6 +9,8 @@ Result constructors, reader determinism, and the public surface. Each probe retu
 failures; run() aggregates.
 """
 
+from pathlib import Path
+
 from honest_design import err, fault, ok, read_hd, render, validate
 from honest_design import __all__ as PUBLIC
 
@@ -52,7 +54,7 @@ def _probe_module():
         bad.append(f"set members (with and without description) wrong: {m['sets']}")
     if m["vocabularies"] != [{"name": "v", "sets": ["s", "s2"]}]:
         bad.append(f"vocabulary wrong: {m['vocabularies']}")
-    if m["dispatches"] != [{"name": "d", "entries": [{"key": "k", "handler": "h"}, {"key": "j", "handler": "g"}]}]:
+    if m["dispatches"] != [{"name": "d", "entries": [{"key": "k", "handler": "h", "projection": ""}, {"key": "j", "handler": "g", "projection": ""}]}]:
         bad.append(f"dispatch wrong: {m['dispatches']}")
     if m["examples"] != [{"name": "e", "chain": "c", "text": "does a thing"}]:
         bad.append(f"example wrong: {m['examples']}")
@@ -185,6 +187,138 @@ def _probe_result():
     return bad
 
 
+def _probe_surfaces():
+    """A page's contract is which surfaces it renders and in what order, and until now the
+    language could not say it. honest-page had no .hd at all because writing one required
+    inventing syntax, and the missing file read as unfinished work rather than as a gap here.
+
+    Square brackets carry the order: every other block in this grammar is unordered, so an
+    ordered one gets a different bracket rather than a convention the reader must already know.
+    The order is positional with no index, because a number beside each surface could disagree
+    with the sequence, which is two copies of one fact."""
+    bad = []
+    page = (
+        'module honest_page\n\n'
+        '  surfaces PageSurfaces = [\n'
+        '    "honest-alerts-banners" as div,\n'
+        '    "honest-header" as header,\n'
+        '    "honest-alerts-toasts" as div,\n'
+        '    "honest-main" as main,\n'
+        '    "honest-footer" as footer,\n'
+        '    "honest-alerts-modal" as div\n'
+        '  ]\n'
+    )
+    result = read_hd(page)
+    if "ok" not in result:
+        return [f"a surfaces block must parse: {result.get('err')}"]
+
+    blocks = result["ok"]["modules"][0]["surfaces"]
+    if len(blocks) != 1 or blocks[0]["name"] != "PageSurfaces":
+        return [f"the block is named and there is one of it: {blocks}"]
+
+    members = blocks[0]["members"]
+    if [m["id"] for m in members] != [
+        "honest-alerts-banners", "honest-header", "honest-alerts-toasts",
+        "honest-main", "honest-footer", "honest-alerts-modal",
+    ]:
+        bad.append(f"the ids read back in the order they were declared: {[m['id'] for m in members]}")
+    if [m["element"] for m in members] != ["div", "header", "div", "main", "footer", "div"]:
+        bad.append(f"each member names the element it lives in: {[m['element'] for m in members]}")
+
+    # Declaring none is a different fact from declaring nothing, so it must still parse and be
+    # caught by the validator rather than by the grammar.
+    empty = read_hd("module m\n\n  surfaces S = [\n  ]\n")
+    if "ok" not in empty:
+        bad.append("an empty block parses; refusing it is the validator's job, not the grammar's")
+
+    # Every existing declaration must keep parsing: the block is new syntax, not a change to old.
+    for hd in sorted(Path(__file__).resolve().parents[2].glob("honest-*/*.hd")):
+        if "ok" not in read_hd(hd.read_text()):
+            bad.append(f"{hd.name} stopped parsing")
+
+    # The validator's two checks. Order is not among them: the declaration IS the order, so
+    # there is nothing inside one module to compare it against.
+    def _module(src):
+        return read_hd(src)["ok"]["modules"][0]
+
+    clean = validate(_module(page))
+    if clean:
+        bad.append(f"a well-formed surfaces block validates clean: {clean}")
+
+    duped = validate(_module('module m\n\n  surfaces S = [\n    "a" as div,\n    "a" as main\n  ]\n'))
+    if not duped or duped[0]["code"] != "duplicate_surface":
+        bad.append(f"an id declared twice in one block is a fault: {duped}")
+    elif "a" not in duped[0]["message"]:
+        bad.append(f"the fault must name the id it caught: {duped[0]['message']}")
+    elif duped[0]["detail"] != {"surfaces": "S", "id": "a"}:
+        bad.append(f"the fault must locate itself by block and id: {duped[0]['detail']}")
+
+    none = validate(_module("module m\n\n  surfaces S = [\n  ]\n"))
+    if not none or none[0]["code"] != "empty_surfaces":
+        bad.append(f"a block declaring no surface is a fault: {none}")
+    return bad
+
+
+def _probe_entry_boundaries():
+    """read_hd and validate are the module's two public entry points, so they are boundaries and
+    must answer a wrong input with a named fault rather than a traceback from somewhere inside.
+    Both were found by the first consumer outside this workspace: bytes into read_hd raised
+    AttributeError from source.encode, and the obvious composition validate(read_hd(src)) raised
+    KeyError('functions') because one returns a document and the other takes a module."""
+    bad = []
+
+    byte_result = read_hd(b"module t\n")
+    if "err" not in byte_result:
+        bad.append("read_hd must refuse a non-text source rather than accept it")
+    elif byte_result["err"]["code"] != "hd_source_not_text":
+        bad.append(f"read_hd's refusal must name the code: {byte_result['err']['code']}")
+
+    document = read_hd("module t\n")["ok"]
+    faults = validate(document)
+    if not faults or faults[0]["code"] != "not_a_module":
+        bad.append(f"validate must name a document handed to it in place of a module: {faults}")
+    elif "modules" not in faults[0]["message"]:
+        bad.append("the refusal must say what to pass instead, naming the document's modules")
+    if "err" in byte_result and "text" not in byte_result["err"]["message"]:
+        bad.append("read_hd's refusal must say it wanted text")
+
+    # A projection fault carries where it was found. Nothing asserted its detail, so the three
+    # keys could be swapped for each other and every test still passed.
+    projected = read_hd(
+        "module m\n\n  type R = {\n    f: str\n  }\n\n"
+        "  fn h : (f: str) -> str\n"
+        "  fn c : (r: R) -> str invokes d\n"
+        "  dispatch d = { \"k\" -> h from ghost }\n"
+    )["ok"]["modules"][0]
+    projection_faults = [f for f in validate(projected) if f["code"] == "unknown_projection"]
+    if not projection_faults:
+        bad.append("an unknown projection must fault")
+    elif projection_faults[0]["detail"] != {"dispatch": "d", "key": "k", "projection": "ghost"}:
+        bad.append(f"the fault must locate itself by dispatch, key and projection: {projection_faults[0]['detail']}")
+
+    # Every fault the validator can emit, checked as one law rather than string by string: a
+    # fault whose message or category is empty tells the reader nothing, and nothing here
+    # asserted either, so any of them could have been blanked and every test still passed.
+    mismatched = read_hd(
+        "module m\n\n  type R = {\n    f: str\n  }\n\n"
+        "  fn h : (n: int) -> str\n"
+        "  fn c : (r: R) -> str invokes d\n"
+        "  dispatch d = { \"k\" -> h from f }\n"
+    )["ok"]["modules"][0]
+    surface_faults = (
+        validate(read_hd('module m\n\n  surfaces S = [\n    "a" as div,\n    "a" as main\n  ]\n')["ok"]["modules"][0])
+        + validate(read_hd('module m\n\n  surfaces S = [\n  ]\n')["ok"]["modules"][0])
+    )
+    every = validate(projected) + validate(mismatched) + surface_faults + faults + [byte_result["err"]]
+    for f in every:
+        for field in ("code", "message", "category"):
+            if not f[field]:
+                bad.append(f"a fault carried an empty {field}: {f}")
+    if {f["code"] for f in every} < {"unknown_projection", "projection_mismatch", "not_a_module", "hd_source_not_text", "duplicate_surface", "empty_surfaces"}:
+        bad.append(f"the law must cover every code it claims: {sorted({f['code'] for f in every})}")
+    return bad
+
+
 def _probe_validate():
     """The validator raises nothing on a valid module and pins each fault it does raise."""
     bad = []
@@ -233,6 +367,29 @@ def _probe_public_surface():
     return []
 
 
+def _probe_projection():
+    """`from` reads back, stays optional, and is checked rather than decorative."""
+    bad = []
+    src = ("module m\n  type P = { a: str  b: int }\n  fn f : (a: str) -> bool\n"
+           "  fn g : (b: int) -> bool\n  orchestrator fn r : (p: P) -> bool invokes D\n"
+           "  dispatch D = { \"one\" -> f from a, \"two\" -> g from b }\n")
+    entries = _module(src)["dispatches"][0]["entries"]
+    if entries != [{"key": "one", "handler": "f", "projection": "a"}, {"key": "two", "handler": "g", "projection": "b"}]:
+        bad.append(f"projection did not read back: {entries}")
+    if validate(_module(src)) != []:
+        bad.append(f"a matching projection should validate clean: {validate(_module(src))}")
+    absent = _module("module m\n  fn f : (a: str) -> bool\n  dispatch D = { \"one\" -> f }\n")["dispatches"][0]["entries"]
+    if absent != [{"key": "one", "handler": "f", "projection": ""}]:
+        bad.append(f"an entry without `from` must still parse, projection empty: {absent}")
+    ghost = validate(_module(src.replace("from a", "from zz")))
+    if [f["code"] for f in ghost] != ["unknown_projection"]:
+        bad.append(f"a projection naming no field must fault: {ghost}")
+    mismatch = validate(_module(src.replace("fn g : (b: int)", "fn g : (b: str)")))
+    if [f["code"] for f in mismatch] != ["projection_mismatch"]:
+        bad.append(f"a handler that does not take the projected field must fault: {mismatch}")
+    return bad
+
+
 def run():
     probes = {
         "module": _probe_module(),
@@ -243,7 +400,10 @@ def run():
         "malformed": _probe_malformed(),
         "determinism": _probe_determinism(),
         "result": _probe_result(),
+        "surfaces": _probe_surfaces(),
+        "entry_boundaries": _probe_entry_boundaries(),
         "validate": _probe_validate(),
+        "projection": _probe_projection(),
         "render": _probe_render(),
         "public_surface": _probe_public_surface(),
     }

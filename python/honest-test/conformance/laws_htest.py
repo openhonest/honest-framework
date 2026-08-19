@@ -1517,6 +1517,64 @@ def _probe_pytest_plugin():
     return bad
 
 
+def _probe_plugin_import_cost():
+    """The plugin is loaded by pytest in EVERY process where honest-test is installed, so importing
+    it must not drag the package's whole surface in with it. A heavy import here does not break our
+    tests, it breaks collection for every unrelated project sharing that environment: one missing
+    dependency anywhere under honest_test takes pytest down for all of them. The probe imports the
+    plugin in a fresh interpreter and asks which of our modules came along."""
+    import subprocess
+    import sys
+
+    bad = []
+    script = (
+        "import sys\n"
+        "import honest_test.pytest_plugin\n"
+        "print(','.join(sorted(m for m in sys.modules if m.startswith(('honest_type', 'honest_gherkin', 'honest_check')))))\n"
+    )
+    run = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    if run.returncode != 0:
+        return [f"importing honest_test.pytest_plugin failed: {run.stderr.strip().splitlines()[-1:]}"]
+    dragged = [m for m in run.stdout.strip().split(",") if m]
+    if dragged:
+        bad.append(
+            "importing the plugin pulled in sibling packages, so a missing one fails collection "
+            f"for every project in the environment: {sorted(set(m.split('.')[0] for m in dragged))}"
+        )
+
+    # The lazy surface itself: __dir__ lists every public name without importing one, and
+    # __getattr__ resolves a real name and refuses an absent one by name.
+    from importlib import import_module
+
+    import honest_test
+    from honest_test import _EXPORTS
+
+    # The count is the anchor. A key swapped to a sibling's makes a duplicate, Python keeps the
+    # last, and the table quietly loses a name — invisible to any check that iterates the table
+    # itself. Same bijection idiom the feature gate uses: the number IS the measure.
+    if len(_EXPORTS) != 72:
+        bad.append(f"the export table holds {len(_EXPORTS)} names, expected 72")
+
+    listed = honest_test.__dir__()
+    if listed != sorted(honest_test.__all__):
+        bad.append("__dir__ must list exactly the public names")
+    # Every row of the table, not a sample: a key pointing at a sibling module would still
+    # import cleanly and hand back the wrong object, or none at all.
+    for name in honest_test.__all__:
+        defining = import_module(_EXPORTS[name])
+        if not hasattr(defining, name):
+            bad.append(f"_EXPORTS maps {name!r} to {_EXPORTS[name]!r}, which does not define it")
+        elif getattr(honest_test, name) is not getattr(defining, name):
+            bad.append(f"__getattr__({name!r}) did not return the object {_EXPORTS[name]} defines")
+    try:
+        honest_test.no_such_export
+        bad.append("an absent name must raise AttributeError")
+    except AttributeError as exc:
+        if "no_such_export" not in str(exc):
+            bad.append(f"the AttributeError must name the attribute: {exc}")
+    return bad
+
+
 def _probe_suite_runner():
     """The §11 orchestrating runner (honest_test.runner): run_chain wires enumeration -> execution ->
     adversarial -> honesty -> chain contracts over live objects into one result record; run_state_machine
@@ -2368,6 +2426,7 @@ def run():
         "supplied": _probe_supplied(),
         "statemachine": _probe_statemachine(),
         "runner": _probe_runner(),
+        "plugin_import_cost": _probe_plugin_import_cost(),
         "suite_runner": _probe_suite_runner(),
         "runner_discovery": _probe_runner_discovery(),
         "cli": _probe_cli(),

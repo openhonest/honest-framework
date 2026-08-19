@@ -1516,6 +1516,28 @@ def _probe_hc_st001():
         qualified = f"import honest_persist\ndef save(rows, conn):\n    honest_persist.{name}(rows, conn)\n"
         if "HC-ST001" not in [d["rule"] for d in check_source(qualified, "app/orders.py")]:
             bad.append(f"HC-ST001 should fire on honest_persist.{name}() outside a boundary")
+    # The message a rule hands the reader is the whole product of the rule firing, and nothing
+    # asserted it. Three fragments of this one had been set aside as unkillable on the stated
+    # ground that no law asserts message wording, which is a gap saying so rather than an
+    # equivalence. Each fragment carries content a reader needs: what was written, that it
+    # happened off a boundary, what a boundary is, and where the law is written down.
+    reported = [d for d in check_source(
+        "from honest_persist import transaction\ndef save(rows, conn):\n    transaction(rows, conn)\n",
+        "app/orders.py") if d["rule"] == "HC-ST001"]
+    if not reported:
+        bad.append("HC-ST001 must fire for the message assertions below to mean anything")
+    else:
+        message = reported[0]["message"]
+        for needed, why in (
+            ("transaction", "the message must name the write it caught"),
+            ("outside an I/O-boundary function", "the message must say the write was off a boundary"),
+            ("single mutator", "the message must state the law it enforces, not only the breach"),
+            ("@link(boundary=True)", "the message must say how to declare one"),
+            ("honest-state", "the message must cite where the law is written"),
+        ):
+            if needed not in message:
+                bad.append(f"{why}: {message!r}")
+
     at_boundary = "from honest_persist import transaction\n@boundary\ndef save(rows, conn):\n    transaction(rows, conn)\n"
     if [d for d in check_source(at_boundary, "app/orders.py") if d["rule"] == "HC-ST001"]:
         bad.append("HC-ST001 should not fire inside a boundary function")
@@ -1531,8 +1553,134 @@ def _probe_hc_st001():
     return bad
 
 
+def _probe_diagnostic_messages():
+    """Every diagnostic carries a message, and the message names its subject.
+
+    Nothing asserted this. Three HC-ST001 message strings were set aside as unkillable mutants
+    on the stated ground that no conformance case or law asserts message wording — which is not
+    equivalence, it is a gap saying so out loud. A blanked message is what the reader is left
+    with when a rule fires, so it is the part of a diagnostic that matters most to them and the
+    part nothing was checking. Asserted as one law over every rule rather than per message, so a
+    rule added tomorrow inherits it."""
+    from honest_check.rules import check_source
+
+    bad = []
+    # One source that trips a spread of rules at once, so the law covers more than one message.
+    source = (
+        "import redis\n"
+        "class Thing:\n"
+        "    def go(self):\n"
+        "        return 1\n"
+        "def dispatch(kind, arg):\n"
+        "    if kind == 'a':\n"
+        "        return 1\n"
+        "    elif kind == 'b':\n"
+        "        return 2\n"
+        "    elif kind == 'c':\n"
+        "        return 3\n"
+        "def swallow():\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except ValueError:\n"
+        "        pass\n"
+    )
+    diagnostics = check_source(source, "app/thing.py")
+    if not diagnostics:
+        bad.append("the fixture must trip at least one rule for the law to say anything")
+    for d in diagnostics:
+        if not d["message"].strip():
+            bad.append(f"{d['rule']} emitted an empty message at line {d['line']}")
+        elif len(d["message"].split()) < 3:
+            bad.append(f"{d['rule']}'s message is too short to tell a reader anything: {d['message']!r}")
+        if not d["rule"].strip():
+            bad.append(f"a diagnostic at line {d['line']} carries no rule id")
+    return bad
+
+
+def _probe_declared_roles():
+    """honest-check has never opened a .hd. It reconstructs a function's role from the Python
+    decorator, which carries one boolean, while the declaration distinguishes boundary_in from
+    boundary_out and names the resource each touches. So the gate enforces a coarser role than
+    the author declared, and no rule about arrow direction can be written from Python alone."""
+    from honest_check.declared import declared_column, declared_roles
+
+    bad = []
+    source = (
+        "module m\n\n"
+        "  boundary_in fn intake : (p: str) -> str side_effect reads \"filesystem\"\n"
+        "  fn pure_one : (p: str) -> str\n"
+        "  boundary_out fn emit : (p: str) -> str side_effect writes \"network\"\n"
+    )
+    result = declared_roles(source)
+    expected = {"intake": "boundary_in", "pure_one": "fn", "emit": "boundary_out"}
+    if result.get("ok") != expected:
+        bad.append(f"declared_roles must return each function's declared role: {result}")
+    roles = result.get("ok", {})
+
+    # A declaration of nothing and a declaration that would not parse are different facts, and
+    # returning {} for both made them one value no caller could tell apart. That is how a gate
+    # comes to be satisfied by deleting the file it reads.
+    if declared_roles("module m\n").get("ok") != {}:
+        bad.append("a module declaring no function is ok with an empty mapping")
+    unparsable = declared_roles("module m\n  fn (((\n")
+    if "err" not in unparsable:
+        bad.append(f"source that does not parse must be a named failure, not an empty mapping: {unparsable}")
+    elif unparsable["err"]["code"] != "hd_unreadable":
+        bad.append(f"the failure must name itself: {unparsable['err']['code']}")
+    else:
+        for field in ("message", "category"):
+            if not unparsable["err"][field]:
+                bad.append(f"the failure carries an empty {field}, which tells the reader nothing")
+
+    # Membership: a member expected to carry a declaration and carrying none is a finding, and an
+    # exemption is written down rather than inferred from the file being absent.
+    from honest_check.declared import EXEMPT_FROM_DECLARATION, undeclared_members
+    # Names chosen so the assertion does not couple to whatever the real exemption table holds:
+    # one member that declares itself, one that does not, one that is exempt by name.
+    missing = undeclared_members({"declares-itself", "declares-nothing", "tree-sitter-honest-hd"}, {"declares-itself"})
+    if missing != ["declares-nothing"]:
+        bad.append(f"a member with no declaration and no exemption is a finding: {missing}")
+    if "tree-sitter-honest-hd" not in EXEMPT_FROM_DECLARATION:
+        bad.append("a generated-grammar package must be exempt by declaration, with its reason")
+    # Every exemption, not a sample. A key swapped for a sibling's would apply one member's
+    # exemption to another and leave the first unexcused, and the count is what catches it,
+    # because Python keeps the last of a duplicated key.
+    # The names themselves, not just how many. Emptying a key leaves the count intact and
+    # quietly un-exempts the member it belonged to. Coupled to the table on purpose: changing
+    # who is exempt should require saying so here, which is the visibility this rule is for.
+    if set(EXEMPT_FROM_DECLARATION) != {"tree-sitter-honest-hd", "tree-sitter-honest-jinja"}:
+        bad.append(f"the exemption table names: {sorted(EXEMPT_FROM_DECLARATION)}")
+    for member, reason in EXEMPT_FROM_DECLARATION.items():
+        if not reason.strip():
+            bad.append(f"the exemption for {member} carries no reason, which is the whole point of it")
+        if len(reason.split()) < 5:
+            bad.append(f"the reason for {member} says too little to argue with: {reason!r}")
+
+    # The column each role names, and the refusal for one the model does not name. A default
+    # column here would put a function the grammar grew into whichever column happened to be
+    # first, which is the silent-miss the closed table exists to prevent.
+    # Every row of the table, orchestrator included. Three of four rows left the fourth free to
+    # be blanked or swapped with nothing noticing.
+    placed = {role: declared_column(role) for role in ("boundary_in", "orchestrator", "fn", "boundary_out")}
+    if placed != {"boundary_in": 1, "orchestrator": 2, "fn": 3, "boundary_out": 4}:
+        bad.append(f"declared_column must place each of the four roles: {placed}")
+    if {name: declared_column(role) for name, role in roles.items()} != {"intake": 1, "pure_one": 3, "emit": 4}:
+        bad.append("declared_column must place a role read from a real declaration")
+    try:
+        declared_column("boundary_sideways")
+        bad.append("a role the four-column model does not name must raise")
+    except KeyError as exc:
+        # The bare subscript would raise KeyError too, so asserting the type proves nothing
+        # about the guard. The named refusal is what has to survive.
+        if "no column for role" not in str(exc) or "boundary_sideways" not in str(exc):
+            bad.append(f"the refusal must say what it did not recognise and why: {exc}")
+    return bad
+
+
 def run():
     probes = {
+        "diagnostic_messages": _probe_diagnostic_messages(),
+        "declared_roles": _probe_declared_roles(),
         "hc_st001": _probe_hc_st001(),
         "exports": _probe_exports(),
         "routes": _probe_routes(),

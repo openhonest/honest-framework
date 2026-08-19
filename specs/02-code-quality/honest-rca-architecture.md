@@ -1,8 +1,6 @@
 # honest-rca: Architecture Specification
 
-**Date:** July 2026
-**Status:** Active
-**Author:** Adam Zachary Wasserman
+**Date:** July 2026 **Status:** Active **Author:** Adam Zachary Wasserman
 
 ---
 

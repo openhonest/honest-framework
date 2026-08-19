@@ -68,10 +68,7 @@ honest-state shrinks to its own unique job: **state the law and enforce it.** It
 
 - **The law (kept).** There is no "the state": a taxonomy of state *kinds*, each with one store and exactly one mutator (a second mutator of a store is allowed only when it is honest and disjoint — never touches state another mutator owns).
 - **The taxonomy names each kind's home and single mutator, and points there:**
-  - **user / on-screen state → DATAOS** (DOM-as-state), in honest-DOM. The user is the single mutator; the screen is the store. **DATAOS is canonical and normative for every language and framework** — not a Python/HTMX detail.
-  - **server-push state →** honest-alerts (the alert source is the single mutator).
-  - **session / login state →** a shared store visible to all instances, with one authoritative writer.
-  - **domain state →** the database (honest-persist) holds the value; a **honest-type state machine** owns its transitions, with `transition()` as the single mutator. **The type module's state machine is canonical and normative for every language and framework.**
+  - **user / on-screen state → DATAOS** (DOM-as-state), in honest-DOM. The user is the single mutator; the screen is the store. **DATAOS is canonical and normative for every language and framework** — not a Python/HTMX detail.   - **server-push state →** honest-alerts (the alert source is the single mutator).   - **session / login state →** a shared store visible to all instances, with one authoritative writer.   - **domain state →** the database (honest-persist) holds the value; a **honest-type state machine** owns its transitions, with `transition()` as the single mutator. **The type module's state machine is canonical and normative for every language and framework.**
 - **The enforcement (kept).** The honest-check rules and honest-test integration that make every declared piece of state obey one-mutator — tying together HC-P016 (closures), the HC-P004 module-read clause, the boundary-write rule, and DOM-as-single-store. This is the part with no other home and the real reason honest-state is a module.
 - **DATAOS detail moves to honest-DOM; state-machine mechanics are referenced from honest-type (already built), not re-specified.**
 

@@ -1,9 +1,6 @@
 # honest-test: Architecture Specification
 
-**Version:** 0.1 (Draft)
-**Date:** March 15, 2026
-**Status:** Active
-**Author:** Adam Zachary Wasserman
+**Version:** 0.1 (Draft) **Date:** March 15, 2026 **Status:** Active **Author:** Adam Zachary Wasserman
 
 ---
 
@@ -530,6 +527,42 @@ FUNCTION check_test_body_honesty(test_module):
 **Carve-out: the framework's own boundary instrumentation is not monkeypatching.** honest-test's `io_monitor` (§4.4) and `call_monitor` (§4.5) patch watched I/O and non-deterministic symbols to **record that a call happened and then restore the original** — they observe a declared watch-list symbol, they do not substitute a collaborator of the unit under test, and they change no result. That record-and-restore monitoring is honest by construction and is not what this rule forbids. Two properties separate it from a rejected rebind: it lives in framework code (the reference implementation's `isolation.py` / `determinism.py`), not in a user test body, so it is outside the collection-time scope; and it restores the original rather than leaving a behaviour-changing stand-in in place. The rule fires only on a **test body** that installs a stand-in which alters behaviour.
 
 **The collection-time boundary.** The decision is the pure `test_body_violations(source)`; running it against real test modules is a thin boundary — a pytest plugin (entry point `pytest11`). At collection time the plugin hook reads each collected Python test module's source, runs `test_body_violations`, and fails that module's collection when the list is non-empty, naming each rebinding site. Only the source read and the collection-failure signal live in the hook; the verdict is pure, so the hook is exercised through an injected collector (a stand-in carrying a `path` whose `read_text` returns the source) rather than a live pytest run. A conformant implementation may site the boundary at whatever its test runner's equivalent collection hook is; the invariant is that a test body which rebinds a call target does not run.
+
+### 4.9 Gate Honesty — Every Gate Must Be Shown to Fail
+
+A **gate** is any check whose purpose is to stop the run: a fixture precondition, a session guard, a marker selection, a required-resource assertion, a lint rule, a build step. A gate whose failing arm has never executed is not a gate. Its error is one-sided by construction — it can only ever be wrong in the passing direction — so a green run carries no information about whether it works. This is the verification counterpart of §4.8: that rule rejects a test that exercises a call graph other than production's, and this one rejects a check that has never been observed doing its job.
+
+**The recurring mechanism is a check written against a proxy, asserting a necessary condition and treating it as sufficient.** A driver import stands in for a reachable database; a non-empty connection string stands in for a usable one; a marker's name stands in for tests carrying it; a reference to a symbol stands in for that symbol being used. Each proxy is genuinely necessary and none is sufficient, and the gap always falls the same way, because the cheap thing to evaluate is whatever can be observed without leaving the process while the real condition is outside it. The gravity is structural, so the rule has to be structural too.
+
+**The mechanical signature is a failing branch that cannot execute**, and an implicit default is the usual way it is manufactured: `url ← environment(NAME, default="postgresql://localhost/app")` makes the guard `IF url is empty` false by construction, so the only arm that could report trouble is unreachable. That is the input-side of silent failure (honest-code principle on implicit defaults) disabling a check rather than merely swallowing an omission. The two principles are one principle seen from two ends.
+
+**A gate declares itself, and the pairing is then mechanical.** Inferring which checks are gates is undecidable in the same way inferring entry points or call targets is, so honest-test does not guess. A gate is marked, and every marked gate must name a proof-of-failure test that supplies a known-bad input and requires the specific failure.
+
+```
+FUNCTION check_gate_honesty(module):
+    FOR EACH gate IN declared_gates(module):
+        proof ← proof_of_failure_for(gate)
+
+        IF proof is absent:
+            EMIT rejection("gate_unverified", gate.location,
+                f"Gate '{gate.name}' has no proof-of-failure. Supply a test that gives "
+                f"it a known-bad input and requires the failure. A check that has only "
+                f"ever been observed passing is unverified.")
+
+        ELSE IF proof asserts only that some exception was raised:
+            EMIT rejection("gate_proof_unbound", proof.location,
+                f"The proof for '{gate.name}' does not bind the failure it expects. "
+                f"Require the specific failure type and message, or the proof can pass "
+                f"on an unrelated error and on a failure it cannot observe.")
+```
+
+**The proof must bind the failure it expects, and this is where the defect reproduces one level up.** A proof written as "some exception is raised" can pass for the wrong reason, and worse, it can fail while the gate is correct: a runner's own `fail` primitive commonly raises from the root exception type rather than the ordinary one, so a proof that catches only ordinary exceptions cannot see the failure it was written to observe. That proof is itself a check whose observing arm is unreachable. A defect that reappears inside the correction is the signal that the shape permits it, not that someone was careless, which is precisely why the requirement is a named artifact rather than a review habit.
+
+**A gate that skips instead of failing is not exempt; it changes who is misled.** A false green misleads whoever reads the result. A silent skip misleads whoever reads the coverage: the run still reports success, with a quietly smaller denominator, and nothing names what went unmeasured. The obligation for a skipping gate is therefore the coverage obligation, not the failure obligation — it must surface the skip and its reason in the run's output, on the same principle that governs the meter's mandatory decomposable disclosure (`../finite-testability.md` §7). An unreported skip is an undisclosed blind spot.
+
+**This is not covered by mutation adequacy (§9.6).** Mutation runs against production code, and gates characteristically live where those runs do not reach: fixtures, session-scoped setup, marker selection, packaging metadata, build configuration. The required artifact is different too — a named test carrying a known-bad input, not a surviving-mutant count — because the point is to demonstrate the failure path once, explicitly, in a form a reader can check.
+
+**Carve-out: a cheap proxy as a pre-check is honest.** Importing the driver first to give a clearer message and then connecting is good practice, and the import is not the defect. The defect is only ever the proxy standing *in place of* the real check. The rule fires on a gate with no proof of failure, never on a gate that happens to test something cheap on the way to testing something real.
 
 ---
 

@@ -14,7 +14,7 @@ Language-agnostic framework specification for code that is correct by design. Th
 
 The linter is the operational definition of Honest Code. Code that passes cannot represent the bug categories the framework eliminates: hidden state via classes, if/elif/else value-dispatch, I/O off the boundary, catching exceptions in business logic, indiscriminate mutable state, recognizer reuse, and the rest. There is no "mostly honest." Code passes the gate, or it is rejected as dishonest.
 
-This is enforced at commit time: a pre-commit hook runs `honest-check` over every module, so **no dishonest Python can land**. Enable it once per clone:
+This is enforced at commit time: a pre-commit hook runs `honest-check` over every module, so **no dishonest code can land**. Enable it once per clone:
 
 ```sh
 ./bootstrap.sh
@@ -27,13 +27,10 @@ It points git at the in-repo hooks, verifies `uv`, and syncs the workspace. Idem
 ## What's here
 
 - `specs/` — Honest Framework specifications, tiered:
-  - `specs/01-framework/` — core framework spec + conformance suite
-  - `specs/02-code-quality/` — code-quality dimension
-  - `specs/03-application-production/` — application-production dimension
+  - `specs/01-framework/` — core framework spec + conformance suite   - `specs/02-code-quality/` — code-quality dimension   - `specs/03-application-production/` — application-production dimension
 - `articles/` — three canonical articles (honest-advantages, honest-testing, honest-type-magic)
 - `principles/` — foundational philosophy
-  - `poka-yoke.md` — velocity-multiplier manifesto: which categories of bug each design decision eliminates structurally
-  - `honest-code-principles.md` — sixteen Honest Code practices
+  - `poka-yoke.md` — velocity-multiplier manifesto: which categories of bug each design decision eliminates structurally   - `honest-code-principles.md` — nineteen Honest Code practices
 - `methodology/` — verification approach
   - `contract-testing.md` — user-journey-to-function contract mapping methodology
 - `python/` — Python reference implementation (in active development)
@@ -52,8 +49,10 @@ The architectural-diagram renderer (honest-design) is out of scope for this repo
 ## Companion standards under the Foundation
 
 - [Slop Audit](https://github.com/openhonest/slop-audit) — measurement instrument for software quality
-- [MÉTRON Framework](https://github.com/openhonest/metron-framework) — model family for cross-linguistic AI research (forthcoming)
-- [Honest Pen-Test](https://github.com/openhonest/honest-pentest) — symmetric counterpart to the Slop Audit (license pending)
+
+**The Slop Audit is the same idea pointed the other way.** This framework governs how code is written. The audit measures whether code can be exhaustively verified, which is a property of construction: it is fixed at the moment of writing, and no amount of later review repairs it. Can this be verified and has this been verified are different questions, and the audit answers the first. It reads that off the commit history, so the same panel also measures the development practice that produced the code, not only the artifact it produced. The link is mechanical, not thematic. Three of the audit's twenty Layer 1 indicators measure finite testability. The tightest is L1.18, the mutable-state ratio: the share of functions whose behavior depends on state outside their parameter list. That is the direct measure of what the no-Big-State and no-hidden-state rules forbid here. L1.19 measures the decision space those rules keep finite. L1.20 measures whether a test suite is order-independent, which pure functions are by construction. A codebase built to this framework scores well on the audit because the audit measures what the framework eliminates.
+
+The audit's 200-repository study puts the median mutable-state ratio at 61.1% for Python, 53.0% for Java, 40.0% for C# and 14.8% for TypeScript. That spread is the case for the discipline. The default sits a long way from it, and the distance differs by language. Layer 1 ships as a tool covering nine languages. You can run it against a public repository at [try.slopaudit.org](https://try.slopaudit.org) without installing anything. Read this framework first if you are writing a codebase and want to avoid needing the audit; read the audit first if you inherited one and need to know what you have.
 
 ## Documentation site
 

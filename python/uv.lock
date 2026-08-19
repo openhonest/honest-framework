@@ -155,11 +155,15 @@ name = "honest-check"
 version = "0.1.0"
 source = { editable = "honest-check" }
 dependencies = [
+    { name = "honest-design" },
     { name = "honest-parse" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "honest-parse", editable = "honest-parse" }]
+requires-dist = [
+    { name = "honest-design", editable = "honest-design" },
+    { name = "honest-parse", editable = "honest-parse" },
+]
 
 [[package]]
 name = "honest-design"

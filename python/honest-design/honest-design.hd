@@ -44,6 +44,9 @@ module honest-design
 
   fn read_hd : (source: str) -> Result
 
+  fn _read_surface_member : (node: any, source: bytes) -> SurfaceMember
+  fn _read_surfaces : (node: any, source: bytes) -> Surfaces
+  fn _bad_surfaces : (module: Module) -> list<Fault>
   fn validate : (module: Module) -> list<Fault>
 
   fn render : (module: Module) -> Diagram

@@ -2,9 +2,7 @@
 
 ## Specification Document
 
-**Version:** 0.1 (Draft)
-**Date:** March 10, 2026
-**Author:** Adam Zachary Wasserman
+**Version:** 0.1 (Draft) **Date:** March 10, 2026 **Author:** Adam Zachary Wasserman
 
 ---
 
@@ -116,7 +114,7 @@ The following is the authoritative list of skills the framework ships. Each is d
 
 0. **Customize from capabilities** — the foundational meta-skill. Invoked implicitly by every other skill when operating in application-developer view. Composes the application developer's module from framework capabilities (persistence, alerts, forms, auth, components, etc.) without exposing her to the framework's internal structure. Declares capability dependencies in her `.hd` as named surface references (e.g., `uses persistence.table(Location)`), resolves them to framework-module calls at emission time, and enforces that her application code never reaches past the capability surface into framework internals. Every other skill in the registry routes through this one when called from application-developer view.
 1. **DATAOS classification** — the manifest skill for state location. Every new piece of stateful data in a module is routed to exactly one of the six DATAOS owners (DOM-resident, session, user_prefs, tenant storage, configuration, derived) without the developer having to name the owner herself. Axes: scope (request/session/user/tenant/global), lifecycle (ephemeral/persistent/configured/derived), writer (user/system/external), coherence (source-of-truth/cache/view). Guardrails via honest-check: no localStorage / sessionStorage / IndexedDB in client JS; no Redux / Zustand / Recoil / Jotai / MobX / Context imports; no two-writers-to-one-state; derived state must declare its source-of-truth recognizer; DOM-resident state must use declared `hb-*`/`ha-*` attribute vocabulary not hand-rolled `data-*`.
-2. **Persistence** — default Turso for low-write/high-read data; Postgres via queue for high-write; placeholder for the queue implementation until honest-queue is finalized. Redis is NOT a default anywhere. Session caching and cross-service common data go to Turso. (Measured finding: Turso is lower-latency than Redis for this class of work.)
+2. **Persistence** — default Turso for low-write/high-read data; Postgres via queue for high-write; placeholder for the queue implementation until honest-queue is finalized. Redis is not a persistence store and honest-persist carries no Redis backend. It is permitted for one job: operational state shared across horizontally scaled instances, such as sessions, where losing the store logs somebody out rather than losing a record and where every write is a single atomic command. The skill classifies on the durable properties in honest-persist §3.2.1, never on a vendor's current release.
 3. **Multi-tenancy** — tenant identity propagation without polluting signatures; row-level vs. schema-per-tenant vs. database-per-tenant decision tree; honest-check enforcement that no query lacks a tenant filter.
 4. **State machines** — when a recognizer set is a state machine in disguise; a `transitions` primitive in the `.hd` grammar; honest-check enforcement of valid transitions; automatic event emission on transition.
 5. **Forms (genX pattern)** — validation rules declared as `hf-*` attributes on inputs; submission produces a manifest; rejections are data; invalid-state rendering is a pure function of the rejection. No form class, no validator-as-method, no ModelForm.
@@ -493,10 +491,9 @@ Every request in an honest-framework application passes through three instrument
 
 ---
 
-**Layer 1: Frontend (outbound)**
-*Governed by: honest-DOM-architecture.md, honest-page-architecture.md*
+**Layer 1: Frontend (outbound)** *Governed by: honest-DOM-architecture.md, honest-page-architecture.md*
 
-The user interacts with the page. DOM state changes. domx detects the change via its MutationObserver and emits `hf.dom.changed` to honest-observe via `sendBeacon()`. The changed manifest slots are recorded: which keys changed, from what, to what.
+The user interacts with the page. DOM state changes. domx detects the change via its MutationObserver and emits `hf.dom.changed` to honest-observe via `sendBeacon()`. The changed manifest slots are recorded: which keys changed and their new values. The browser keeps no copy of prior state, so honest-observe supplies the previous value as a projection over the log.
 
 The interaction triggers an HTMX request. Before the request fires, domx calls `collect(appManifest)` and merges the current DOM state into the request body as `_state`. domx emits `hf.browser.request` to honest-observe: method, URL, trigger, target, manifest keys.
 
@@ -504,7 +501,7 @@ The `h*-` attributes on the triggering element declare the presentation intent. 
 
 ```
 User interaction
-  → domx: hf.dom.changed emitted  (keys changed, from/to values)
+  → domx: hf.dom.changed emitted  (keys changed, new values)
   → domx: collect(appManifest)    (DOM state merged into request body as _state)
   → HTMX: hf.browser.request emitted  (method, url, trigger, target)
   → HTTP request leaves browser
@@ -512,8 +509,7 @@ User interaction
 
 ---
 
-**Layer 2: Middleware (server boundary)**
-*Governed by: honest-framework-spec.md, honest-type-architecture.md, honest-check-architecture.md, honest-test-architecture.md*
+**Layer 2: Middleware (server boundary)** *Governed by: honest-framework-spec.md, honest-type-architecture.md, honest-check-architecture.md, honest-test-architecture.md*
 
 The request arrives at the server. The intake middleware intercepts it before any route handler runs. It extracts all tokens from three sources: path parameters, query parameters, and `_state` from the request body. Token priority on collision: `_state` wins over query parameters; query parameters win over path parameters. This ordering reflects specificity of intent.
 
@@ -538,8 +534,7 @@ HTTP request arrives
 
 ---
 
-**Layer 3: Database**
-*Governed by: honest-persist-architecture.md*
+**Layer 3: Database** *Governed by: honest-persist-architecture.md*
 
 Boundary links in the chain call honest-persist `execute()` to read or write. `execute()` is the only place SQL runs. It emits `hf.persist.query` to honest-observe from inside the call, after execution, without blocking the result: table, operation, row count, duration, `sql_hash` (always), full SQL (development mode only), `request_id` (join key to the canonical event).
 
@@ -561,8 +556,7 @@ Boundary link calls execute():
 
 ---
 
-**Layer 1: Frontend (inbound)**
-*Governed by: honest-DOM-architecture.md*
+**Layer 1: Frontend (inbound)** *Governed by: honest-DOM-architecture.md*
 
 The HTTP response arrives in the browser. HTMX swaps the fragment into the target element. domx emits `hf.browser.response` to honest-observe: status, target, round-trip duration, `request_id` (joins to the server's canonical event, completing the full trace).
 
@@ -1446,7 +1440,7 @@ The following documents extend and distill the framework specification. They are
 
 ### Code Quality Axis
 
-- **`honest-code-principles.md`:** Sixteen practices that describe what correct code looks like at the level of daily programming decisions. The distillation of the code quality axis.
+- **`honest-code-principles.md`:** Nineteen practices that describe what correct code looks like at the level of daily programming decisions. The distillation of the code quality axis.
 - **`honest-persist-architecture.md`:** Language-agnostic architecture specification for honest-persist. Defines exact algorithms, data structures, and conformance requirements. An implementor can build a conformant honest-persist from this document alone.
 - **`honest-type-architecture.md`:** Architecture specification for honest-type. Includes the classify() algorithm, composed types, maybe bindings, chain execution model, fault semantics, and conformance suite.
 - **`honest-check-architecture.md`:** Complete rule set for the static linter. CLI, LSP, startup integration, and all HC and HC-P rules with algorithms.

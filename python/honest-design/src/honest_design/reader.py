@@ -88,7 +88,16 @@ def _read_vocab(node, source) -> ir.Vocabulary:
 
 
 def _read_dispatch_entry(node, source) -> ir.DispatchEntry:
-    return {"key": _unquote(_field_text(node, "key", source)), "handler": _field_text(node, "handler", source)}
+    """An entry, and the slice of the input its handler is fed when one is declared.
+
+    `projection` is "" rather than absent when the entry does not declare one: a reader that
+    sometimes omits a key makes every consumer branch on its presence, and the two cases mean
+    different things only to whoever remembers which.
+    """
+    projection = _field(node, "projection")
+    return {"key": _unquote(_field_text(node, "key", source)),
+            "handler": _field_text(node, "handler", source),
+            "projection": _text(projection, source) if projection is not None else ""}
 
 
 def _read_dispatch(node, source) -> ir.Dispatch:
@@ -161,6 +170,20 @@ def _read_layer(node, source):
     return _field_text(node, "name", source)
 
 
+def _read_surface_member(node, source) -> ir.SurfaceMember:
+    """One surface: the id a rendered element must carry, and the element it lives in."""
+    return {"id": _unquote(_field_text(node, "id", source)),
+            "element": _field_text(node, "element", source)}
+
+
+def _read_surfaces(node, source) -> ir.Surfaces:
+    """A surfaces block. The members keep their declared order because that order is the
+    contract: the page must render them in the sequence written here."""
+    return {"name": _field_text(node, "name", source),
+            "members": [_read_surface_member(c, source)
+                        for c in node.named_children if c.type == "surface_member"]}
+
+
 # body declaration -> (Module field, handler). Each handler is a function of (node, source).
 _BODY = {
     "layer_decl": ("layer", _read_layer),
@@ -168,6 +191,7 @@ _BODY = {
     "set_decl": ("sets", _read_set),
     "vocabulary_decl": ("vocabularies", _read_vocab),
     "dispatch_decl": ("dispatches", _read_dispatch),
+    "surfaces_decl": ("surfaces", _read_surfaces),
     "example_decl": ("examples", _read_example),
     "function_decl": ("functions", _read_function),
     "chain_decl": ("chains", _read_chain),
@@ -189,6 +213,7 @@ def _read_module(node, source) -> ir.Module:
         "sets": groups.get("sets", []),
         "vocabularies": groups.get("vocabularies", []),
         "dispatches": groups.get("dispatches", []),
+        "surfaces": groups.get("surfaces", []),
         "examples": groups.get("examples", []),
         "functions": groups.get("functions", []),
         "chains": groups.get("chains", []),
@@ -239,7 +264,13 @@ def _document(groups) -> ir.Document:
 
 
 def read_hd(source):
-    """Read `.hd` source text into a Document IR, or a fault if the source is malformed."""
+    """Read `.hd` source text into a Document IR, or a fault if the source is malformed.
+
+    This is a boundary: the source arrives from outside and its type is not something the
+    module can assume. A non-text source is refused by name here rather than allowed to fail
+    as an AttributeError from inside the parse, which is what the promise above means."""
+    if not isinstance(source, str):
+        return err(fault("hd_source_not_text", f"read_hd takes .hd source as text, not {type(source).__name__}", "client", {}))
     source = source.encode("utf-8")
     root = honest_parse.parse(source, "hd").root_node
     error = honest_parse.first_error_node(root)

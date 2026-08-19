@@ -1,9 +1,6 @@
 # honest-format: Architecture Specification
 
-**Version:** 0.1 (Draft)
-**Date:** July 12, 2026
-**Status:** Active
-**Author:** Adam Zachary Wasserman
+**Version:** 0.1 (Draft) **Date:** July 12, 2026 **Status:** Active **Author:** Adam Zachary Wasserman
 
 ---
 

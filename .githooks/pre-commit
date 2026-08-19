@@ -26,7 +26,15 @@ if [ -n "$py" ]; then
     l1="$root/../slop-audit/tools/l1_analyzer"
     if [ -d "$l1" ]; then
         echo "slop-audit gate (no god-file, finitely testable)…"
-        uv run --project "$l1" l1-analyzer "$root/python" --gate --lang python || exit 1
+        # The console script has been renamed once already (l1-analyzer -> slop-audit-l1), so
+        # resolve it rather than hardcoding a name that can silently stop existing. A rename
+        # must skip with its reason, never hard-fail a commit it has nothing to say about.
+        l1_bin=$(grep -oE '^[a-z0-9-]+(?= = "l1_analyzer\.cli:main")' "$l1/pyproject.toml" | head -1)
+        if [ -n "$l1_bin" ]; then
+            uv run --project "$l1" "$l1_bin" "$root/python" --gate --lang python || exit 1
+        else
+            echo "slop-audit gate skipped: no console script for l1_analyzer.cli:main in $l1/pyproject.toml." >&2
+        fi
     else
         echo "slop-audit gate skipped: l1_analyzer not found at $l1 (clone slop-audit beside honest-framework to enable it)." >&2
     fi
