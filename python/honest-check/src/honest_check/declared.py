@@ -31,6 +31,10 @@ COLUMNS = {"boundary_in": 1, "orchestrator": 2, "fn": 3, "boundary_out": 4}
 EXEMPT_FROM_DECLARATION = {
     "tree-sitter-honest-hd": "a tree-sitter grammar package: generated C and a grammar.js, no honest functions to declare",
     "tree-sitter-honest-jinja": "a tree-sitter grammar package: generated C and a grammar.js, no honest functions to declare",
+    "honest-boot": "declaration owed: 14 exports, each needing a role a person assigns. Inferring boundary from a watch-list would infer what the framework says must be declared. Tracked as honest-framework-jb7",
+    "honest-dom": "declaration owed: 27 exports, same reason as honest-boot. Tracked as honest-framework-jb7",
+    "honest-components": "declaration owed and blocked: it already declares its behaviour vocabulary in manifest.json, which honest-check reads for HC-REF004, so a .hd added now would be a second copy. Blocked on whether the manifest becomes generated or disappears. Tracked as honest-framework-jb7",
+    "honest-format": "declaration owed and blocked: same manifest.json conflict as honest-components. Tracked as honest-framework-jb7",
 }
 
 
