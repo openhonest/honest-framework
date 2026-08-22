@@ -1096,6 +1096,35 @@ FUNCTION check_HC_P018(ast):
 
 **Relationship to the research program.** The corresponding Slop Audit measurement — a finite-testability *indicator* over the call graph, parallel to the L1.18 mutable-state indicator — is a separate instrument that requires its own pre-registration before any data collection and must not be folded into the frozen L1.18–L1.20. HC-P018 here is the framework's structural gate rule; the indicator is the measured artifact. They share the classifier but are governed separately.
 
+#### HC-R002 — Output boundary invoking inward
+
+The four columns are ordered and the arrows run one way: work enters at column 1, is composed in column 2, is computed in column 3, and leaves at column 4. An output boundary is the terminus. It may call pure functions and other output boundaries, and it may not invoke an orchestrator, a chain, or an input boundary. The claim and its reason are stated in `honest-design-architecture.md` §3.1; this rule is what enforces it.
+
+Why a backward arrow is not merely untidy: an output that re-enters the interior turns the graph into a loop. The pipeline stops being something that runs once between an arrival and a departure, an emit can trigger work that emits again, and the interior is no longer reachable only from column 1. That last property is what the finite-testability argument rests on, so column 4 calling inward removes the thing the layout exists to show.
+
+**This rule cannot be written from Python alone, which is why it did not exist.** The role decorators are `link`, `recognizer`, `boundary`, `helper` and `orchestrator`, and `boundary` carries no direction: `@link(boundary=True)` is one boolean and reads the same for an intake and an emit. The declaration separates them, so the rule reads the role the author declared, through `declared_roles`, and crosses it with the call graph the source gives.
+
+```
+FUNCTION check_HC_R002(source_tree, declaration):
+    roles ← declared_roles(declaration)          // name -> boundary_in | boundary_out | orchestrator | fn
+    IF roles is a failure: RETURN []             // an unreadable .hd is honest-design's fault to report
+
+    FOR EACH function IN source_tree.all_functions:
+        IF roles[function.name] ≠ "boundary_out": CONTINUE
+        FOR EACH callee IN function_calls(function):
+            IF callee NOT IN roles: CONTINUE      // not a declared function of this module
+            IF roles[callee] IN {"orchestrator", "boundary_in"}:
+                EMIT error(HC-R002, function.location,
+                    f"'{function.name}' is declared boundary_out and invokes '{callee}', "
+                    f"declared {roles[callee]}. An output boundary is a terminus: it may call "
+                    "pure functions and other output boundaries. Return a value the caller acts "
+                    "on, or move the work upstream of the boundary.")
+```
+
+A callee the declaration does not name is skipped rather than assumed. It may be a helper in another module, a host-language builtin, or a function the declaration is missing, and the last of those is `HC-REF005`'s finding rather than this rule's.
+
+**The declaration is named, not found.** The rule runs only where a module's `.hd` is configured, exactly as `HC-REF001` runs only where templates are configured and `HC-REF004` only where a format manifest is. Walking up from a source file to guess which `.hd` governs it would infer what the framework says must be declared.
+
 #### HC-R001 — Orphan function (no role, not reachable from any role)
 
 Every function in source must have exactly one of the declared roles — `@link`, `@recognizer`, `@boundary`, `@helper` — or must be reachable by static call analysis from a function that does. Auto-generation exercises all roled functions through vocabulary enumeration; helpers are exercised transitively via call graphs. A function with no role and no reachable-from-roled caller is an orphan — auto-generation does not reach it, so it has no test coverage, so the code is dishonest.
@@ -1517,6 +1546,7 @@ src/pipelines/user.py:42: info
 | HC-P016 | Error | Static | — | Nonlocal closure over mutable state |
 | HC-P017 | Error | Static | — | Serializer not declared as chain link |
 | HC-R001 | Error | Static | — | Orphan function (no role, not reachable) |
+| HC-R002 | Error | Static | — | Output boundary invokes an orchestrator or an input boundary |
 | HC-OR001 | Error | Static | — | Orchestrator calls another orchestrator |
 | HC-OR003 | Warning | Static | — | Suspected duplication between orchestrators |
 | HC-A001 | Warning | Static | — | No AuthProvider registered |
