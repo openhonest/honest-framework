@@ -22,6 +22,14 @@ if ! uv run --package honest-check python membership-check.py; then
     exit 1
 fi
 
+# Catalogue: the rule list the specs publish and the rules the linter emits must be the same list.
+# A rule documented but never written reads as protection that is not there, which is the direction
+# that misleads; three of them (HC-P008/P009/P012) sat in the tables unnoticed until this ran.
+echo "lint-all: the rule catalogue matches the linter…"
+if ! uv run --package honest-check python rules-check.py; then
+    exit 1
+fi
+
 echo "lint-all: ${srcdirs[*]}"
 if uv run --package honest-check python -m honest_check.cli "${srcdirs[@]}"; then
     echo "lint-all: all modules pass honest-check."
