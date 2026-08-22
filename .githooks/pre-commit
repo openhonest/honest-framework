@@ -2,7 +2,12 @@
 # pre-commit — Verification First: no commit lands while the framework fails its own linter,
 # its conformance suites, its 100% dogfooding bar, or its function-point invariant (one gherkin
 # scenario per function). Each gate fires only when its inputs are staged; a commit that touches
-# neither Python nor a feature file is never blocked. Enabled via `core.hooksPath=.githooks`.
+# neither Python nor a feature file is never blocked.
+#
+# This file is the tracked source of the gate, not necessarily the file git runs: git runs
+# whatever `core.hooksPath` points at, and a hook-managing tool may have copied this one
+# elsewhere and repointed the path. `./bootstrap.sh` verifies the hook git will actually
+# execute invokes the gate. Re-run it after editing this file.
 set -uo pipefail
 root=$(git rev-parse --show-toplevel)
 
