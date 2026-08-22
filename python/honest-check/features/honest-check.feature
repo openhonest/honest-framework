@@ -1026,3 +1026,10 @@ Feature: honest-check — Python supplement
     When undeclared_members compares them
     Then it names every member with neither a declaration nor an exemption
     But a member exempt by name is subtracted by that name, never by its file being absent
+
+  Scenario: check_hc_r002 faults an output boundary that invokes inward
+    Given a parsed module and the roles its .hd declares
+    When check_hc_r002 walks the functions declared boundary_out
+    Then it faults each one that invokes an orchestrator or an input boundary
+    But calling a pure function or another output boundary is permitted
+    And a callee the declaration does not name is skipped, being HC-REF005's finding

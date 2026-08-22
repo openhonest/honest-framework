@@ -40,6 +40,45 @@ from honest_check._rule_helpers import (
 )
 
 
+def check_hc_r002(root, source: bytes, path: str, roles) -> list[Diagnostic]:
+    """HC-R002 — an output boundary invoking inward.
+
+    The four columns are ordered and the arrows run one way. A `boundary_out` is the terminus:
+    it may call pure functions and other output boundaries, and it may not invoke an
+    orchestrator or an input boundary. An output that re-enters the interior turns the graph
+    into a loop, so the interior stops being reachable only from column 1, which is the property
+    the finite-testability argument rests on (honest-design section 3.1).
+
+    `roles` is the map the author declared, read from the module's `.hd`. It has to come from
+    there: the Python role decorators carry `boundary` as one boolean, which reads the same for
+    an intake and an emit, so this rule cannot be written from source alone.
+    """
+    out: list[Diagnostic] = []
+    inward = {"orchestrator", "boundary_in"}
+    for name, node in functions_by_name(root, source).items():
+        # Membership tested outright, not through a default: a function the declaration
+        # does not name is a different fact from one declared with another role, and
+        # .get collapses the two into None.
+        if name not in roles or roles[name] != "boundary_out":
+            continue
+        for callee in sorted(function_calls(node, source)):
+            # A callee the declaration does not name may be another module's helper or a host
+            # builtin. A missing declaration is HC-REF005's finding, not this rule's.
+            if callee not in roles or roles[callee] not in inward:
+                continue
+            line, col = line_col(node)
+            out.append(
+                diagnostic(
+                    "HC-R002", "error", path, line, col,
+                    f"'{name}' is declared boundary_out and invokes '{callee}', declared "
+                    f"{roles[callee]}. An output boundary is a terminus: it may call pure "
+                    "functions and other output boundaries. Return a value the caller acts on, "
+                    "or move the work upstream of the boundary.",
+                )
+            )
+    return out
+
+
 def check_hc_r001(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC-R001 — orphan function: no declared role and not reachable from a roled one.
 

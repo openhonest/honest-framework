@@ -49,7 +49,7 @@ module honest-persist
 
   boundary_out fn transaction : (writes: list<Query>, conn: any) -> any side_effect writes "database"
 
-  boundary_out fn migrate : (schema: Schema, conn: any, dialect: str) -> any side_effect writes "database"
+  orchestrator fn migrate : (schema: Schema, conn: any, dialect: str) -> any invokes inspect, expand_schema, validate_checks, diff, apply
 
   boundary_in fn inspect : (conn: any, dialect: str) -> Schema side_effect reads "database"
 

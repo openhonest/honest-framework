@@ -15,6 +15,7 @@ module honest-check
 
   fn check_source : (source: str, path: str, language: str) -> list<Diagnostic>
 
+  fn check_hc_r002 : (root: any, source: bytes, path: str, roles: dict<str, str>) -> list<Diagnostic>
   fn declared_roles : (source: str) -> Result
   fn undeclared_members : (members: set<str>, with_declaration: set<str>) -> list<str>
   fn declared_column : (role: str) -> int

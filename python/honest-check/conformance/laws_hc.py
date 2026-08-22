@@ -1459,6 +1459,67 @@ def _probe_determinism():
     return bad
 
 
+def _probe_hc_r002():
+    """HC-R002: an output boundary is a terminus. It may call pure functions and other output
+    boundaries, and may not invoke an orchestrator or an input boundary. An output that
+    re-enters the interior makes the graph a loop, so the interior stops being reachable only
+    from column 1, which is what the finite-testability argument rests on.
+
+    The rule reads the role the author declared, because the Python decorators cannot carry it:
+    boundary is one boolean and reads the same for an intake and an emit."""
+    from honest_parse import parse_python
+
+    from honest_check.integration_rules import check_hc_r002
+
+    bad = []
+    roles = {"emit": "boundary_out", "run_pipeline": "orchestrator", "intake": "boundary_in",
+             "shape": "fn", "deliver": "boundary_out"}
+    source = (
+        b"def emit(msg):\n"
+        b"    return run_pipeline(shape(msg))\n"
+    )
+    root = parse_python(source).root_node
+    found = check_hc_r002(root, source, "app/out.py", roles)
+    if len(found) != 1 or found[0]["rule"] != "HC-R002":
+        bad.append(f"an output boundary invoking an orchestrator must fault: {found}")
+    else:
+        # Severity is pinned, not assumed. It is what decides whether the gate stops a commit:
+        # the same finding at "info" is a rule that reports and lets the breach land. A suite.json
+        # case would have pinned this for free (the runner matches severity on every case), but
+        # HC-R002 reads the declared roles and a suite case carries only source, so the assertion
+        # has to be written here.
+        if found[0]["severity"] != "error":
+            bad.append(f'HC-R002 must be an error, not {found[0]["severity"]!r}')
+        message = found[0]["message"]
+        # The breach, and the remedy. A diagnostic that names what is wrong and not what to do
+        # about it leaves the reader to guess, and the remedy half is what nothing was reading.
+        for needed in ("emit", "run_pipeline", "orchestrator", "terminus",
+                       "Return a value the caller acts on", "upstream of the boundary"):
+            if needed not in message:
+                bad.append(f"the message must say {needed!r}: {message}")
+
+    inward = parse_python(b"def emit(msg):\n    return intake(msg)\n").root_node
+    if not [d for d in check_hc_r002(inward, b"def emit(msg):\n    return intake(msg)\n", "app/out.py", roles) if d["rule"] == "HC-R002"]:
+        bad.append("an output boundary invoking an input boundary must fault too")
+
+    allowed = b"def emit(msg):\n    return deliver(shape(msg))\n"
+    if check_hc_r002(parse_python(allowed).root_node, allowed, "app/out.py", roles):
+        bad.append("calling a pure function and another output boundary is permitted")
+
+    # A callee the declaration does not name belongs to HC-REF005, not here.
+    unknown = b"def emit(msg):\n    return json.dumps(msg)\n"
+    if check_hc_r002(parse_python(unknown).root_node, unknown, "app/out.py", roles):
+        bad.append("a callee the declaration does not name is skipped, not assumed")
+
+    # Nothing declared boundary_out: the rule has nothing to say. The caller is a plain
+    # function and the callee IS an orchestrator, so a rule that skipped the role test would
+    # fault a pure function for composing one, which is what column 3 is allowed to do.
+    plain = dict(roles, emit="fn")
+    if check_hc_r002(parse_python(source).root_node, source, "app/out.py", plain):
+        bad.append("a function that is not an output boundary is not this rule's business")
+    return bad
+
+
 def _probe_routes():
     """The route-map reader (honest-page §9): extract_routes reads a declared ROUTES mapping into a list
     of {method, path, chain}, skipping any entry whose key is not a two-string tuple or whose value is
@@ -1684,6 +1745,7 @@ def run():
         "declared_roles": _probe_declared_roles(),
         "hc_st001": _probe_hc_st001(),
         "exports": _probe_exports(),
+        "hc_r002": _probe_hc_r002(),
         "routes": _probe_routes(),
         "formats": _probe_formats(),
         "config": _probe_config(),
