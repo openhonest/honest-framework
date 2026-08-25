@@ -22,18 +22,32 @@ IO_WATCH_LIST = {
             "pathlib.Path.write_bytes", "os.open", "os.read", "os.write",
             "os.remove", "os.rename", "os.mkdir", "os.rmdir", "os.listdir",
             "os.walk", "shutil.copy", "shutil.move", "shutil.rmtree",
-            "tempfile.*", "mmap.mmap",
+            "tempfile.NamedTemporaryFile", "tempfile.TemporaryFile",
+            "tempfile.SpooledTemporaryFile", "tempfile.TemporaryDirectory",
+            "tempfile.mkstemp", "tempfile.mkdtemp", "tempfile.mktemp", "mmap.mmap",
             # Process / shell
             "subprocess.run", "subprocess.Popen", "subprocess.call",
             "subprocess.check_output", "os.system", "os.popen", "os.execvp",
             "os.spawn*", "os.fork",
             # Network
-            "socket.*", "http.client.*", "urllib.request.*", "urllib.urlopen",
+            # socket, tempfile and logging are named one call at a time, not as whole modules. Each
+            # holds calls that reach nothing: socket.inet_aton and socket.htons convert bytes,
+            # tempfile.gettempdir returns a path string, and logging.getLogger returns an object from
+            # a registry. Flagging those forced a boundary declaration onto pure functions, and a
+            # declaration demanded where none is due is the same defect as one missing — it just
+            # fails the other way. Measured on a sister tool, whole-module entries more than doubled
+            # its findings and every added one was false.
+            "socket.socket", "socket.create_connection", "socket.create_server",
+            "socket.gethostbyname", "socket.gethostbyaddr", "socket.getaddrinfo",
+            "socket.gethostname", "socket.getfqdn",
+            "http.client.*", "urllib.request.*", "urllib.urlopen",
             "requests.*", "httpx.*", "aiohttp.*", "urllib3.*", "smtplib.*",
             "ftplib.*", "poplib.*", "imaplib.*", "telnetlib.*", "ssl.*",
             # Process state / stdio
             "print", "input", "sys.stdout.write", "sys.stderr.write",
-            "sys.stdin.read", "logging.*",
+            "sys.stdin.read",
+            "logging.debug", "logging.info", "logging.warning", "logging.warn", "logging.error",
+            "logging.critical", "logging.exception", "logging.log", "logging.basicConfig",
             # Database drivers
             "psycopg2.connect", "psycopg.connect", "asyncpg.connect",
             "sqlite3.connect", "aiosqlite.connect", "pymongo.MongoClient",
