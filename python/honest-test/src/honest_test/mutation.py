@@ -327,16 +327,35 @@ def run_mutants(mutants, run_suite) -> list:
     return [mutant for mutant in mutants if run_suite(mutant["source"])]
 
 
-def mutation_adequacy(mutants, survivors, set_aside) -> dict:
-    """The adequacy report for a module (section 9.6): caught + set_aside == total. A survivor whose label
-    appears in `set_aside` (a `{label: reason}` map of mutants that cannot change the result) is declared
-    equivalent; any other survivor is undeclared and fails the gate. Pure. Returns the totals and the
-    undeclared survivors, with `adequate` true only when none are undeclared."""
+def mutation_adequacy(mutants, survivors, undecided, set_aside) -> dict:
+    """The adequacy report for a module (section 9.6). A change has three possible outcomes, not two:
+    the suite FAILED on it (caught), the suite PASSED on it (survived), or the run did not finish
+    (undecided). Adequacy requires caught + set_aside == total AND nothing left undecided.
+
+    `undecided` carries the changes whose run hit the time or memory bound, each with the `reason` it
+    hit. Such a run produced no verdict, so nothing may be claimed about it: recording it as caught
+    asserts a detection that did not happen, and it fails in the direction that hides the defect,
+    because a loaded machine drives more runs into the bound and reports more real survivors as
+    caught. The bound belongs to the harness and the machine, not to the change; elapsed time cannot
+    tell a change that stopped the program from a machine that was busy.
+
+    `set_aside` (a `{label: reason}` map) declares a change a person has looked at and accounted for:
+    one that cannot alter the result, or one that genuinely does not halt. A declared undecided change
+    stops blocking adequacy but is still reported as undecided rather than folded into the caught
+    count, because it was never caught and the report must not say it was. An undeclared one fails the
+    gate exactly as an undeclared survivor does, since a change nothing judged is not evidence.
+
+    `undecided` is required rather than defaulted: a caller that omits it is a caller whose harness
+    has no third outcome, and defaulting it to empty would let that harness keep reporting timeouts
+    as catches under a signature that looks correct. Pure."""
     undeclared = [{"operator": mutant["operator"], "label": mutant["label"]} for mutant in survivors if mutant["label"] not in set_aside]
+    unjudged = [{"operator": m["operator"], "label": m["label"], "reason": m["reason"],
+                 "declared": m["label"] in set_aside} for m in undecided]
     return {
         "total": len(mutants),
-        "caught": len(mutants) - len(survivors),
+        "caught": len(mutants) - len(survivors) - len(undecided),
         "set_aside": len(survivors) - len(undeclared),
+        "undecided": unjudged,
         "undeclared": undeclared,
-        "adequate": not undeclared,
+        "adequate": not undeclared and not [u for u in unjudged if not u["declared"]],
     }

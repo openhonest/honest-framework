@@ -39,8 +39,17 @@ ROOT = Path(__file__).resolve().parent
 # fires, so a long timeout times that runaway by the worker count in resident memory. The run-to-run
 # flap that tempted a longer window was warm-worker state leakage, fixed by the stdlib snapshot below,
 # not by waiting longer.
-_TIMEOUT_SECONDS = 2
-_DEADLINE_SECONDS = 4
+# How long a single mutant's suite run may take before this harness stops waiting. These bound a
+# NON-TERMINATING mutant, and nothing else, so they must sit far above the honest cost of one run: the
+# suites here take roughly one second alone, and fifteen workers share the machine, so a run that is
+# merely slow can take many times its solo cost. At 2s and 4s that headroom did not exist, and ordinary
+# mutants — a replaced string constant, a flipped condition — were being stopped by the clock. Every
+# one of those was then recorded as caught, which credited a detection that never happened and hid real
+# survivors on exactly the runs where the machine was busiest. Raise these rather than declaring a slow
+# mutant non-terminating: a declaration is a claim a person has to stand behind, and "the machine was
+# loaded" is not that claim.
+_TIMEOUT_SECONDS = 30
+_DEADLINE_SECONDS = 45
 
 # Total resident memory ceiling for the whole run (parent + every worker). A legitimate conformance run
 # peaks around 50 MB; a pathological mutant (a removed loop increment that grows a list, a size constant
@@ -135,10 +144,23 @@ def _restore_stdlib(snapshot):
         module.__dict__.update(saved)
 
 
-def _suite_passes(fqmn, path, source):
-    """True iff the conformance __main__ exits 0 with `path` overridden by `source`. A non-terminating
-    mutant trips the alarm and counts as caught (returns False). Stdlib state is snapshotted and restored
-    around the run so a mutant that leaks a patch cannot poison the next mutant in this warm worker."""
+def _suite_verdict(fqmn, path, source):
+    """The outcome of running the conformance __main__ with `path` overridden by `source`, as one of
+    ("caught", None), ("survived", None) or ("undecided", reason).
+
+    Three outcomes, not two (section 9.6). The suite failing is a detected change and is caught. The
+    suite passing is a change nothing noticed and is a survivor. A run that hits the alarm produced no
+    verdict at all, so it is undecided: the alarm belongs to this harness and the machine it runs on,
+    not to the change, and elapsed time cannot tell a change that stopped the program from a machine
+    that was busy. Counting it as caught asserts a detection that did not happen, and it fails in the
+    direction that hides the defect, because a loaded machine drives more runs into the alarm and
+    reports more real survivors as caught.
+
+    A crash is different from a timeout and stays caught: the mutant made the suite raise, which is a
+    behaviour change the suite observed.
+
+    Stdlib state is snapshotted and restored around the run so a mutant that leaks a patch cannot
+    poison the next mutant in this warm worker."""
     _FINDER.fqmn, _FINDER.path, _FINDER.source = fqmn, path, source
     _purge()
     snapshot = _snapshot_stdlib()
@@ -147,13 +169,15 @@ def _suite_passes(fqmn, path, source):
     try:
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             exec(_RUNNER_CODE, {"__name__": "__main__", "__file__": str(_RUNNER_PATH)})
-        return True  # ran to the end without SystemExit (no failure path taken)
+        return ("survived", None)  # ran to the end without SystemExit (no failure path taken)
     except SystemExit as exc:
-        return (exc.code or 0) == 0
+        return ("survived", None) if (exc.code or 0) == 0 else ("caught", None)
+    except TimeoutError:
+        # The alarm, not the suite. Nothing observed this mutant, so nothing may be claimed about it.
+        return ("undecided", f"did not finish within {_TIMEOUT_SECONDS}s")
     except Exception:
-        # The suite crashed on this mutant (or the alarm fired) — that is a detected behaviour change,
-        # exactly as a non-zero subprocess exit was. Caught.
-        return False
+        # The suite crashed on this mutant: a behaviour change it observed. Caught.
+        return ("caught", None)
     finally:
         signal.alarm(0)
         _restore_stdlib(snapshot)
@@ -169,10 +193,10 @@ def _worker_main(module, task_conn, result_conn):
         if mutant is None:
             return
         try:
-            survived = _suite_passes(mutant["fqmn"], mutant["path"], mutant["source"])
+            verdict = _suite_verdict(mutant["fqmn"], mutant["path"], mutant["source"])
         except BaseException:
-            survived = False
-        result_conn.send(survived)
+            verdict = ("caught", None)
+        result_conn.send(verdict)
 
 
 class _Worker:
@@ -200,16 +224,17 @@ class _Worker:
         return self.current is not None and self._result_recv.poll()
 
     def take(self):
-        survived = self._result_recv.recv()
+        verdict = self._result_recv.recv()
         mutant, self.current, self.since = self.current, None, None
-        return mutant, survived
+        return mutant, verdict
 
     def overdue(self):
         return self.since is not None and time.monotonic() - self.since > _DEADLINE_SECONDS
 
     def kill_and_respawn(self):
-        """A mutant that no signal could stop — kill the worker and start a fresh one. The mutant it was
-        running is caught (a program that does not halt is a detected behaviour change)."""
+        """A mutant no signal could stop — kill the worker and start a fresh one. The mutant it was
+        running is UNDECIDED, not caught: the deadline and the memory ceiling are this harness's
+        limits, and a run stopped by them produced no verdict to record."""
         mutant = self.current
         self.proc.kill()
         self.proc.join()
@@ -257,16 +282,35 @@ def _set_aside(module):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
-def _baseline_passes(module):
-    """The conformance suite must pass on the UNMUTATED source before adequacy is meaningful (§9.6).
-    A suite that is red for any other reason registers every mutant as caught — the line ran against a
-    failing oracle — and reports false adequacy. Run the runner once on the real source first."""
-    conf = ROOT / f"honest-{module}" / "conformance"
-    result = subprocess.run(
-        [sys.executable, str(conf / "run_conformance.py")],
-        cwd=str(conf), capture_output=True, text=True,
-    )
-    return result.returncode == 0
+def _baseline_verdict(module, only=None):
+    """The suite must pass on the UNMUTATED source before adequacy means anything (§9.6), and the check
+    runs through the SAME path that judges every mutant.
+
+    A suite red for any other reason registers every mutant as caught — the line ran against a failing
+    oracle — and reports false adequacy. Checking that through a subprocess instead would leave the one
+    measurement the rest of the gate rests on blind to any fault in the route that does the judging: a
+    subprocess has no alarm, so it cannot report that the real source does not finish inside the alarm
+    the mutants are held to. If the unmutated source comes back undecided, every mutant verdict in the
+    run is decided by the clock rather than by the suite, and the run says so instead of proceeding.
+
+    Runs in a worker, one dispatch, so the finder, the purge and the alarm are all the mutants' own."""
+    original = _src_files(module, only)
+    if not original:
+        return ("survived", None)
+    path = original[0]
+    worker = _Worker(module)
+    try:
+        worker.dispatch({"fqmn": _fqmn(path, module), "path": str(path),
+                         "source": path.read_text(encoding="utf-8"),
+                         "operator": "baseline", "label": "unmutated source"})
+        deadline = time.monotonic() + _DEADLINE_SECONDS
+        while not worker.ready():
+            if time.monotonic() > deadline:
+                return ("undecided", f"the unmutated source did not finish within {_DEADLINE_SECONDS}s")
+            time.sleep(0.002)
+        return worker.take()[1]
+    finally:
+        worker.stop()
 
 
 def _mutants(module, only=None):
@@ -290,6 +334,7 @@ def _run_module(module, only=None):
     pending = list(reversed(mutants))  # pop() from the end
     workers = [_Worker(module) for _ in range(min(_WORKERS, len(mutants) or 1))]
     survivors = []
+    undecided = []
     done = 0
     last_memory_poll = 0.0
     while done < len(mutants):
@@ -299,13 +344,18 @@ def _run_module(module, only=None):
         progressed = False
         for worker in workers:
             if worker.ready():
-                mutant, survived = worker.take()
-                if survived:
+                mutant, (outcome, reason) = worker.take()
+                if outcome == "survived":
                     survivors.append({"operator": mutant["operator"], "label": mutant["label"]})
+                elif outcome == "undecided":
+                    undecided.append({"operator": mutant["operator"], "label": mutant["label"], "reason": reason})
                 done += 1
                 progressed = True
             elif worker.overdue():
-                worker.kill_and_respawn()  # the hung mutant is caught; nothing to record
+                stalled = worker.current
+                worker.kill_and_respawn()
+                undecided.append({"operator": stalled["operator"], "label": stalled["label"],
+                                  "reason": f"killed at the {_DEADLINE_SECONDS}s deadline"})
                 done += 1
                 progressed = True
         # Cap resident memory: a mutant whose run grows past the per-worker cap has its worker SIGKILLed
@@ -318,14 +368,17 @@ def _run_module(module, only=None):
             rss = _rss_bytes([worker.proc.pid for worker in busy])
             for worker in busy:
                 if rss.get(worker.proc.pid, 0) > _WORKER_RSS_CAP_BYTES:
+                    stalled = worker.current
                     worker.kill_and_respawn()
+                    undecided.append({"operator": stalled["operator"], "label": stalled["label"],
+                                      "reason": "killed at the worker memory ceiling"})
                     done += 1
                     progressed = True
         if not progressed:
             time.sleep(0.002)
     for worker in workers:
         worker.stop()
-    return mutation_adequacy(mutants, survivors, _set_aside(module))
+    return mutation_adequacy(mutants, survivors, undecided, _set_aside(module))
 
 
 def main(modules):
@@ -339,21 +392,34 @@ def main(modules):
     for module in modules:
         # `module:filename-substring` narrows mutation to matching source files for fast iteration.
         module, _, only = module.partition(":")
-        if not _baseline_passes(module):
+        baseline, why = _baseline_verdict(module, only)
+        if baseline == "undecided":
+            print(f"mutate: honest-{module} — the unmutated source is UNDECIDED ({why}). Every mutant "
+                  f"would be judged by the clock rather than by the suite, so no verdict in this run "
+                  f"would mean anything. Raise the bound, or make the suite finish inside it.", file=sys.stderr)
+            status = 1
+            continue
+        if baseline != "survived":
             print(f"mutate: honest-{module} — the conformance suite does not pass on the unmutated source; "
                   f"adequacy is undefined until it is green (fix the suite first).", file=sys.stderr)
             status = 1
             continue
         report = _run_module(module, only or None)
-        print(f"mutate: honest-{module} — {report['caught']} caught, {report['set_aside']} set aside, {len(report['undeclared'])} undeclared of {report['total']} mutants")
+        print(f"mutate: honest-{module} — {report['caught']} caught, {report['set_aside']} set aside, "
+              f"{len(report['undeclared'])} undeclared, {len(report['undecided'])} undecided of {report['total']} mutants")
         for survivor in report["undeclared"]:
             print(f"  SURVIVED  {survivor['operator']}  {survivor['label']}")
+        for stalled in report["undecided"]:
+            print(f"  UNDECIDED {stalled['operator']}  {stalled['label']} — {stalled['reason']}")
         if not report["adequate"]:
             status = 1
     if status == 0:
         print("mutate: every mutant is caught or declared equivalent — the suite is mutation-adequate.")
     else:
-        print("mutate: undeclared survivors above — add a conformance case that catches each, or declare it equivalent with a reason in conformance/mutants_setaside.json.", file=sys.stderr)
+        print("mutate: add a conformance case that catches each survivor above, or declare it equivalent "
+              "with a reason in conformance/mutants_setaside.json. An UNDECIDED mutant is not a survivor "
+              "and not a catch: its run never finished, so nothing judged it. Give it room to finish, or "
+              "declare it non-terminating with that reason once someone has looked.", file=sys.stderr)
     return status
 
 

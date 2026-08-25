@@ -974,18 +974,42 @@ def _probe_mutation_runner():
         bad.append(f"a suite that passes on every mutant leaves all as survivors: {survivors}")
 
     # An undeclared survivor is not adequate; total/caught/set_aside accounting holds.
-    report = mutation_adequacy(mutants, survivors, {})
-    if report != {"total": 1, "caught": 0, "set_aside": 0, "undeclared": [{"operator": "comparison_swap", "label": "==->!=@a == b"}], "adequate": False}:
+    report = mutation_adequacy(mutants, survivors, [], {})
+    if report != {"total": 1, "caught": 0, "set_aside": 0, "undecided": [], "undeclared": [{"operator": "comparison_swap", "label": "==->!=@a == b"}], "adequate": False}:
         bad.append(f"an undeclared survivor must be reported as inadequate: {report}")
 
     # A survivor declared equivalent (by label, with a reason) is set aside -> adequate.
-    declared = mutation_adequacy(mutants, survivors, {"==->!=@a == b": "equivalent: the suite asserts only the other arm"})
+    declared = mutation_adequacy(mutants, survivors, [], {"==->!=@a == b": "equivalent: the suite asserts only the other arm"})
     if not declared["adequate"] or declared["set_aside"] != 1 or declared["undeclared"]:
         bad.append(f"a declared-equivalent survivor must be adequate: {declared}")
 
     # No survivors is adequate (every mutant caught).
-    if not mutation_adequacy(mutants, [], {})["adequate"]:
+    if not mutation_adequacy(mutants, [], [], {})["adequate"]:
         bad.append("no survivors is adequate")
+
+    # A mutant whose run did not finish is UNDECIDED, and undecided is not caught (section 9.6).
+    # The bound is a property of the harness and the machine, not of the change, so a run that hit
+    # it produced no verdict and nothing may be claimed about it. Recording it as caught asserts a
+    # detection that did not happen, and it fails in the direction that hides the defect.
+    undecided = [{"operator": "comparison_swap", "label": "==->!=@a == b", "reason": "timeout"}]
+    stalled = mutation_adequacy(mutants, [], undecided, {})
+    if stalled["adequate"]:
+        bad.append("a mutant nothing judged is not evidence the suite would catch it")
+    if stalled["caught"] != 0:
+        bad.append(f"an undecided mutant must not be counted as caught: {stalled}")
+    if [u["label"] for u in stalled["undecided"]] != ["==->!=@a == b"]:
+        bad.append(f"an undecided mutant is disclosed by name, with the bound it hit: {stalled}")
+    if stalled["undecided"][0]["reason"] != "timeout":
+        bad.append(f"the reason it went undecided is carried, not dropped: {stalled}")
+
+    # A person who has looked can account for it, and that is what set_aside records. The mutant here
+    # deletes a loop's advance, so it genuinely never halts; declaring that clears the gate. It is
+    # still reported as undecided rather than folded into caught, because it was never caught.
+    excused = mutation_adequacy(mutants, [], undecided, {"==->!=@a == b": "does not terminate"})
+    if not excused["adequate"]:
+        bad.append("a declared non-terminating mutant is accounted for, not left blocking")
+    if excused["caught"] != 0 or not excused["undecided"][0]["declared"]:
+        bad.append(f"a declared undecided mutant stays undecided in the report: {excused}")
     return bad
 
 
