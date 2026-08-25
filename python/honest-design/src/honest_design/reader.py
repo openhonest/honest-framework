@@ -269,8 +269,8 @@ def read_hd(source):
     This is a boundary: the source arrives from outside and its type is not something the
     module can assume. A non-text source is refused by name here rather than allowed to fail
     as an AttributeError from inside the parse, which is what the promise above means."""
-    if not isinstance(source, str):
-        return err(fault("hd_source_not_text", f"read_hd takes .hd source as text, not {type(source).__name__}", "client", {}))
+    if not isinstance(source, str):  # honest: ignore HC-P005: this line is the boundary the docstring describes
+        return err(fault("hd_source_not_text", f"read_hd takes .hd source as text, not {type(source).__name__}", "client", {}))  # honest: ignore HC-P005: the fault names the type it refused (honest-type 9.5)
     source = source.encode("utf-8")
     root = honest_parse.parse(source, "hd").root_node
     error = honest_parse.first_error_node(root)

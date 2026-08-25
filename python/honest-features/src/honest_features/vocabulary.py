@@ -20,7 +20,10 @@ def _flag_wellformed(spec):
     if set(spec) != _FLAG_KEYS:
         return False
     states = spec["states"]
-    if not isinstance(states, (list, set, tuple, frozenset)) or len(set(states)) < 2:
+    # A flag declaration arrives from application code, so this predicate is deciding whether an
+    # unknown value is a well-formed declaration at all. It answers False rather than raising, which
+    # is what the docstring above promises, and it cannot answer without looking at the type.
+    if not isinstance(states, (list, set, tuple, frozenset)) or len(set(states)) < 2:  # honest: ignore HC-P005: validating an incoming declaration
         return False
     return spec["initial_value"] in states
 

@@ -22,7 +22,11 @@ _DEFAULT_USERS = {"dev": ""}
 
 def _dev_recognizer(token):
     """The dev token wire format (section 2.2): a non-empty username, a colon, then the password. Pure."""
-    return isinstance(token, str) and ":" in token and token.partition(":")[0] != ""
+    # A recognizer is the boundary deciding whether an unknown input is the shape it claims, and
+    # the type is part of that shape: honest-type faults a non-string token by name, so a token
+    # arriving as an int is a real case this has to answer rather than assume away. HC-P005 is
+    # right about the interior and this is not the interior.
+    return isinstance(token, str) and ":" in token and token.partition(":")[0] != ""  # honest: ignore HC-P005: a wire-format recognizer at the boundary
 
 
 def _dev_resolver(users):
