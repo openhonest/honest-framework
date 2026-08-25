@@ -137,7 +137,18 @@ def classify(tokens, vocab, bind=None):
             rejections.append(rejection(None, "null_token"))
             continue
         if not isinstance(token, str):  # honest: ignore HC-P005: primitive input-contract guard, not domain dispatch
-            return {"err": fault("non_string_token", f"classify() requires string tokens. Got: {token!r}", "server", {"token": token})}
+            # Section 9.5: the type is carried in the detail and named in the message. A recognizer's
+            # contract is String to Boolean, so this is a server bug and the reader needs to know which
+            # extraction produced it. The value alone does not say: 42 and "42" read the same once repr
+            # is gone from a log, and 42, 42.0 and True are three different boundary faults that print
+            # the same way.
+            # Reading the type here is not a discriminant: nothing branches on the result, it is
+            # only reported. HC-P005 is right in general and section 9.5 overrides it here, since
+            # a fault that must name the type it received has to read one.
+            received_type = type(token).__name__  # honest: ignore HC-P005: section 9.5 requires the received type
+            return {"err": fault("non_string_token",
+                                 f"classify() requires string tokens. Got: {received_type} {token!r}",
+                                 "server", {"token": token, "received_type": received_type})}
         if token == "":
             rejections.append(rejection("", "empty_token"))
             continue

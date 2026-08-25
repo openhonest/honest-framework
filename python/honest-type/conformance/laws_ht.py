@@ -447,6 +447,31 @@ def _reservation_layer_law():
     return bad
 
 
+def _non_string_token_names_the_type():
+    """Section 9.5: the non_string_token fault carries the type it received, in the detail and in the
+    message.
+
+    A recognizer's contract is String to Boolean, so a non-string token is a server bug: the boundary
+    failed to extract tokens as strings. What the reader needs is which boundary and what it sent, and
+    the value alone does not say — 42 and "42" print the same in a log once repr is gone, and 42 versus
+    42.0 versus True are three different extraction faults with the same printed value. The type is the
+    part that names the bug."""
+    from honest_type import classify, vocabulary
+
+    messages = []
+    for token, expected in ((42, "int"), (4.5, "float"), (True, "bool"), ({"a": 1}, "dict")):
+        result = classify([token], vocabulary({"a": {"x"}}))
+        fault = result.get("err", {})
+        detail = fault.get("detail", {})
+        if detail.get("received_type") != expected:
+            messages.append(f"detail.received_type for {token!r} must be {expected!r}: {detail}")
+        if expected not in fault.get("message", ""):
+            messages.append(f"the message for {token!r} must name the type {expected!r}: {fault.get('message')!r}")
+        if "token" not in detail:
+            messages.append(f"detail must keep the token beside its type: {detail}")
+    return messages
+
+
 def run():
     groups = [
         verify_laws(RUNTIME_LAWS, RUNTIME_SUBJECTS),
@@ -456,7 +481,9 @@ def run():
         verify_laws(SM_VOCAB_LAWS, [("vocabulary_states", {})]),
         verify_laws(SM_IMMUTABLE_LAWS, [("machine", {})]),
     ]
-    directs = [("HT-4", "reservation_layer total", _reservation_layer_law()), ("HT-engine", "catch-all admits a discriminating predicate", _catch_all_admits_discriminating())]
+    directs = [("HT-4", "reservation_layer total", _reservation_layer_law()),
+               ("HT-engine", "catch-all admits a discriminating predicate", _catch_all_admits_discriminating()),
+               ("HT-9.5", "non_string_token names the received type", _non_string_token_names_the_type())]
 
     passed = sum(g["passed"] for g in groups) + sum(1 for _, _, messages in directs if not messages)
     violations = [v for g in groups for v in g["violations"]]
