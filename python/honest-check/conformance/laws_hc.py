@@ -25,6 +25,7 @@ from honest_check import HonestCheckError, check_source, startup_check
 from honest_check.cli import _discover_css, _discover_files, _discover_js, _discover_templates, _find_config, _load_config, _load_manifest, _template_roots, main as cli_main, watch
 from honest_check.rules import is_fixable
 from honest_check.config import (
+    resolve_rule_config,
     empty_config,
     is_excluded,
     normalize_config,
@@ -75,6 +76,17 @@ _SYNTAX_ERROR = "def (:\n    pass\n"  # HC-SYN: unparseable — a startup-eligib
 
 # --------------------------------------------------------------------------- formats
 
+
+
+# The documented per-rule settings, stated once and explicitly. check_source requires them, so a case
+# that varies nothing is still a case handed the documented values, not one where a rule fell back to
+# a constant of its own. A case that varies a setting calls check_source directly with its own.
+_DOCUMENTED = resolve_rule_config({})
+
+
+def _check(source, path):
+    """check_source at the documented settings."""
+    return check_source(source, path, _DOCUMENTED)
 
 def _probe_formats():
     bad = []
@@ -1126,7 +1138,7 @@ def _probe_suppression():
         "bare_verb": "# honest: disable\nclass A:\n    pass\n",
     }
     for label, source in snippets.items():
-        diags = check_source(source, label)
+        diags = _check(source, label)
         # A suppressed class violation is downgraded to info, not dropped (section 7.4).
         if label in ("ignore", "disable_block", "disable_to_eof", "multi_rule"):
             if not any(d["rule"] in ("HC-P003", "HC003") and d["severity"] == "info" for d in diags):
@@ -1462,8 +1474,54 @@ def _probe_determinism():
     sources = [_CLEAN, _VIOLATION, "if x == 1:\n    y = 1\nelif x == 2:\n    y = 2\nelse:\n    y = 3\n"]
     bad = []
     for source in sources:
-        if check_source(source, "d.py") != check_source(source, "d.py"):
+        if _check(source, "d.py") != _check(source, "d.py"):
             bad.append("check_source is not deterministic")
+    return bad
+
+
+def _probe_or003_min_run_is_configured():
+    """HC-OR003's N reaches the rule from the project's configuration, and cannot be omitted.
+
+    The setting was parsed into rule_config and then never threaded, so a project could declare
+    min_run and honest-check would go on using 3 without saying otherwise. A configuration nothing
+    reads is worse than none: it reports a setting that has no effect.
+
+    min_run is required rather than defaulted. A defaulted parameter cannot tell a caller that chose
+    the documented 3 from one that never knew the setting existed, and those need different answers."""
+    import inspect
+
+    from honest_check import check_source
+    from honest_check.config import resolve_rule_config
+    from honest_check.integration_rules import check_hc_or003
+
+    bad = []
+    if "min_run" not in inspect.signature(check_hc_or003).parameters:
+        bad.append("check_hc_or003 must take min_run as an argument, not read a module constant")
+    elif inspect.signature(check_hc_or003).parameters["min_run"].default is not inspect.Parameter.empty:
+        bad.append("min_run must be required: a default cannot tell a choice from an omission")
+
+    # Two orchestrators sharing a run of exactly three calls: a warning at the documented N, silence
+    # at a project that raised the bar to four.
+    source = (
+        "@orchestrator\n"
+        "def run_one(m):\n    a(m)\n    b(m)\n    c(m)\n"
+        "@orchestrator\n"
+        "def run_two(m):\n    a(m)\n    b(m)\n    c(m)\n"
+    )
+    at_three = [d for d in check_source(source, "app/o.py", resolve_rule_config({})) if d["rule"] == "HC-OR003"]
+    if not at_three:
+        bad.append("three shared calls must warn at the documented N")
+    raised = resolve_rule_config({"HC-OR003": {"min_run": 4}})
+    at_four = [d for d in check_source(source, "app/o.py", raised) if d["rule"] == "HC-OR003"]
+    if at_four:
+        bad.append(f"a project that raised min_run to 4 must not be warned about a run of 3: {at_four}")
+    lowered = resolve_rule_config({"HC-OR003": {"min_run": 2}})
+    if not [d for d in check_source(source, "app/o.py", lowered) if d["rule"] == "HC-OR003"]:
+        bad.append("a project that lowered min_run to 2 must still be warned")
+
+    # The resolver states the documented value rather than leaving it implicit somewhere downstream.
+    if resolve_rule_config({})["HC-OR003"]["min_run"] != 3:
+        bad.append("the documented N is 3, and the resolver is where that is written down")
     return bad
 
 
@@ -1580,17 +1638,17 @@ def _probe_hc_st001():
     bad = []
     for name in ("transaction", "apply", "execute", "execute_many"):
         bare = f"from honest_persist import {name}\ndef save(rows, conn):\n    {name}(rows, conn)\n"
-        if "HC-ST001" not in [d["rule"] for d in check_source(bare, "app/orders.py")]:
+        if "HC-ST001" not in [d["rule"] for d in _check(bare, "app/orders.py")]:
             bad.append(f"HC-ST001 should fire on {name}() outside a boundary")
         qualified = f"import honest_persist\ndef save(rows, conn):\n    honest_persist.{name}(rows, conn)\n"
-        if "HC-ST001" not in [d["rule"] for d in check_source(qualified, "app/orders.py")]:
+        if "HC-ST001" not in [d["rule"] for d in _check(qualified, "app/orders.py")]:
             bad.append(f"HC-ST001 should fire on honest_persist.{name}() outside a boundary")
     # The message a rule hands the reader is the whole product of the rule firing, and nothing
     # asserted it. Three fragments of this one had been set aside as unkillable on the stated
     # ground that no law asserts message wording, which is a gap saying so rather than an
     # equivalence. Each fragment carries content a reader needs: what was written, that it
     # happened off a boundary, what a boundary is, and where the law is written down.
-    reported = [d for d in check_source(
+    reported = [d for d in _check(
         "from honest_persist import transaction\ndef save(rows, conn):\n    transaction(rows, conn)\n",
         "app/orders.py") if d["rule"] == "HC-ST001"]
     if not reported:
@@ -1608,16 +1666,16 @@ def _probe_hc_st001():
                 bad.append(f"{why}: {message!r}")
 
     at_boundary = "from honest_persist import transaction\n@boundary\ndef save(rows, conn):\n    transaction(rows, conn)\n"
-    if [d for d in check_source(at_boundary, "app/orders.py") if d["rule"] == "HC-ST001"]:
+    if [d for d in _check(at_boundary, "app/orders.py") if d["rule"] == "HC-ST001"]:
         bad.append("HC-ST001 should not fire inside a boundary function")
     non_write = "def total(rows):\n    return sum(rows)\n"
-    if [d for d in check_source(non_write, "app/orders.py") if d["rule"] == "HC-ST001"]:
+    if [d for d in _check(non_write, "app/orders.py") if d["rule"] == "HC-ST001"]:
         bad.append("HC-ST001 should not fire on a call that is not a persisted-state write")
     write = "from honest_persist import transaction\ndef save(rows, conn):\n    transaction(rows, conn)\n"
-    if [d for d in check_source(write, "honest_persist/instrumented.py") if d["rule"] == "HC-ST001"]:
+    if [d for d in _check(write, "honest_persist/instrumented.py") if d["rule"] == "HC-ST001"]:
         bad.append("HC-ST001 must not police honest-persist's own boundary layer")
     top_level = "from honest_persist import transaction\ntransaction(rows, conn)\n"
-    if [d for d in check_source(top_level, "app/x.py") if d["rule"] == "HC-ST001"]:
+    if [d for d in _check(top_level, "app/x.py") if d["rule"] == "HC-ST001"]:
         bad.append("HC-ST001 should skip a module-level call with no enclosing function")
     return bad
 
@@ -1653,7 +1711,7 @@ def _probe_diagnostic_messages():
         "    except ValueError:\n"
         "        pass\n"
     )
-    diagnostics = check_source(source, "app/thing.py")
+    diagnostics = _check(source, "app/thing.py")
     if not diagnostics:
         bad.append("the fixture must trip at least one rule for the law to say anything")
     for d in diagnostics:
@@ -1753,6 +1811,7 @@ def run():
         "declared_roles": _probe_declared_roles(),
         "hc_st001": _probe_hc_st001(),
         "exports": _probe_exports(),
+        "or003_min_run_is_configured": _probe_or003_min_run_is_configured(),
         "hc_r002": _probe_hc_r002(),
         "routes": _probe_routes(),
         "formats": _probe_formats(),

@@ -1033,3 +1033,16 @@ Feature: honest-check — Python supplement
     Then it faults each one that invokes an orchestrator or an input boundary
     But calling a pure function or another output boundary is permitted
     And a callee the declaration does not name is skipped, being HC-REF005's finding
+
+  Scenario: resolve_rule_config states the settings each configurable rule will run with
+    Given the per-rule settings a project declared, which may be none
+    When resolve_rule_config merges them over the documented values
+    Then each configurable rule has every setting it takes, with a value
+    But a key the rule does not take is dropped rather than carried through
+    And a project that declared nothing is handed the documented values explicitly
+
+  Scenario: _bind applies a rule's configured settings before it runs
+    Given a check function and the resolved per-rule settings
+    When _bind looks the check up among the configurable rules
+    Then a configurable check comes back with its settings already applied
+    But a check that takes no settings comes back unchanged, not wrapped

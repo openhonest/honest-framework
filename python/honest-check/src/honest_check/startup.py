@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from honest_check.diagnostics import Diagnostic
+from honest_check.config import resolve_rule_config
 from honest_check.rules import check_source
 
 # Section 2.3 — only the fast construction-time rules run at startup. (HC-SYN is always
@@ -24,6 +25,12 @@ _STARTUP_ELIGIBLE = frozenset(
 class HonestCheckError(Exception):
     """Raised by startup_check when on_error='raise' and dishonest code is found."""
 
+
+
+# The documented per-rule settings. check_source requires them, so this boundary states them rather
+# than letting a rule fall back to a constant of its own. A project's honest-check.toml is read by the
+# CLI, which resolves its own; these two surfaces run at the documented values.
+_DOCUMENTED_RULES = resolve_rule_config({})
 
 def _format_report(diagnostics: list[Diagnostic]) -> str:
     return "\n".join(
@@ -54,7 +61,7 @@ def _collect(paths: list[str], severity: str) -> list[Diagnostic]:
         path = Path(raw)
         files = sorted(path.rglob("*.py")) if path.is_dir() else [path]
         for file in files:
-            for d in check_source(file.read_text(encoding="utf-8"), str(file)):
+            for d in check_source(file.read_text(encoding="utf-8"), str(file), _DOCUMENTED_RULES):
                 if d["rule"] in _STARTUP_ELIGIBLE and d["severity"] == severity:
                     out.append(d)
     return out

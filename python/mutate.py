@@ -410,7 +410,11 @@ def main(modules):
         for survivor in report["undeclared"]:
             print(f"  SURVIVED  {survivor['operator']}  {survivor['label']}")
         for stalled in report["undecided"]:
-            print(f"  UNDECIDED {stalled['operator']}  {stalled['label']} — {stalled['reason']}")
+            # Declared and undeclared print differently. Both are undecided, but only one of them
+            # blocks, and a reader looking at three identical lines cannot tell which is the fault.
+            standing = "declared" if stalled["declared"] else "UNDECLARED — this is what fails the gate"
+            print(f"  UNDECIDED {stalled['operator']}  {stalled['label']}\n"
+                  f"              {stalled['reason']}; {standing}")
         if not report["adequate"]:
             status = 1
     if status == 0:

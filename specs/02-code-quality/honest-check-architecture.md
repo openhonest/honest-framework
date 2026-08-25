@@ -1179,10 +1179,14 @@ FUNCTION check_HC_OR001(ast):
 
 #### HC-OR003 — Suspected duplication between orchestrators
 
-Soft rule. Static AST-based duplication detection across orchestrator bodies. When two or more orchestrators share a run of N or more consecutive equivalent call expressions (N configurable, default 3), emit a warning suggesting extraction.
+Soft rule. Static AST-based duplication detection across orchestrator bodies. When two or more orchestrators share a run of N or more consecutive equivalent call expressions, emit a warning suggesting extraction. N is configurable; the value reaches the rule as an argument it cannot omit.
+
+`min_run` is a required parameter with no built-in value. A parameter that defaults cannot distinguish a caller that chose the documented N from one that never knew the setting existed, and the two need different answers: the first is a decision and the second is a bug in the wiring. The setting sat in the configuration file unread for exactly this reason — nothing could thread it without writing the default twice.
+
+The documented N is 3, and the resolution happens at the boundary. `load_config` returns what the project declared, the boundary merges that over the documented values, and `check_source` takes the result as a required argument. A run configured with nothing is therefore a run that was handed the documented values explicitly, and it says so.
 
 ```
-FUNCTION check_HC_OR003(ast, min_run: int = 3):
+FUNCTION check_HC_OR003(ast, min_run):        # required: see above
     orchestrators ← [fn FOR fn IN ast.all_functions IF fn.role = "orchestrator"]
     normalized ← { orch.name: normalize_ast(orch.body) FOR orch IN orchestrators }
 
@@ -1196,6 +1200,8 @@ FUNCTION check_HC_OR003(ast, min_run: int = 3):
                 f"involved). Orchestrators are not composable (HC-OR001); "
                 f"reusable orchestration logic belongs in helpers or chains.")
 ```
+
+**Threading the configuration.** Only some rules read configuration, and the shape must not tax the ones that do not. A registry names each configurable rule beside the settings it takes, and `check_source` binds those settings to the named rules before running the set; every other rule is run unchanged. The alternative — passing the whole configuration to all rules — makes one uniform signature at the cost of a parameter most of them never read, and an argument a function ignores is indistinguishable from one it forgot to use.
 
 **Soft rule, not error.** A developer may have legitimate reasons to keep two similar orchestrators distinct (e.g., different fault-mapping strategies). HC-OR003 surfaces the pattern without forcing the refactor. Developers suppress per-case with `# honest: ignore HC-OR003` when the duplication is intentional.
 

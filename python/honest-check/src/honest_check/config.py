@@ -41,6 +41,27 @@ def normalize_config(raw: dict) -> dict:
     }
 
 
+# The documented per-rule settings, written down once. A rule's value is resolved here at the
+# boundary and handed to the rule as an argument it cannot omit, rather than defaulted inside the
+# rule: a defaulted parameter cannot tell a caller that chose the documented value from one that
+# never knew the setting existed, and those are a decision and a wiring bug respectively.
+DOCUMENTED_RULE_CONFIG = {
+    "HC-OR003": {"min_run": 3},
+}
+
+
+def resolve_rule_config(declared: dict) -> dict:
+    """The settings each configurable rule will run with: what the project declared, over the
+    documented values. Pure. A project that declares nothing gets the documented values explicitly,
+    which is a different fact from a rule quietly falling back to a constant inside itself."""
+    resolved = {}
+    for rule, documented in DOCUMENTED_RULE_CONFIG.items():
+        settings = dict(documented)
+        settings.update({k: v for k, v in declared.get(rule, {}).items() if k in documented})
+        resolved[rule] = settings
+    return resolved
+
+
 def empty_config() -> dict:
     """The config when no honest-check.toml is found."""
     return normalize_config({})

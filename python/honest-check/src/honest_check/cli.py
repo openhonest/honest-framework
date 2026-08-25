@@ -24,6 +24,7 @@ from honest_check.config import (
     empty_config,
     is_excluded,
     normalize_config,
+    resolve_rule_config,
     resolve_paths,
     resolve_severity,
 )
@@ -136,7 +137,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str, templates_dir: str, format_manifest: str, component_manifest: str, level: str, report: bool) -> int:
+def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str, templates_dir: str, format_manifest: str, component_manifest: str, level: str, report: bool, rule_settings: dict) -> int:
     """Check the paths once and print the rendered report; return the exit code (1 on errors, 2 on a
     read failure, else 0). The single-pass core that both a plain run and --watch repeat. When a
     template directory is configured, its templates are scanned once and every checked file also runs
@@ -157,7 +158,7 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
         all_routes: list = []
         for file in _discover_files(paths, exclude):
             source = file.read_text(encoding="utf-8")
-            diagnostics.extend(check_source(source, str(file)))
+            diagnostics.extend(check_source(source, str(file), rule_settings))
             if scanned:
                 src_bytes = source.encode("utf-8")
                 root = parse(src_bytes, language_for_path(str(file))).root_node
@@ -238,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     def run() -> int:
-        return _run_once(paths, config["exclude"], severity, suppress, only, args.format, config["templates"], config["format_manifest"], config["component_manifest"], level, args.report)
+        return _run_once(paths, config["exclude"], severity, suppress, only, args.format, config["templates"], config["format_manifest"], config["component_manifest"], level, args.report, resolve_rule_config(config["rule_config"]))
 
     if args.watch:
         return watch(run)

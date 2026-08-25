@@ -31,7 +31,6 @@ from honest_parse import (
     walk,
 )
 from honest_check._rule_helpers import (
-    _OR003_MIN_RUN,
     _enclosing_function,
     _is_boundary_function,
     _longest_common_run,
@@ -268,8 +267,12 @@ def check_hc_hf002(root, source: bytes, path: str) -> list[Diagnostic]:
     return out
 
 
-def check_hc_or003(root, source: bytes, path: str) -> list[Diagnostic]:
-    """HC-OR003 — two orchestrators share a run of consecutive operations (warning, soft)."""
+def check_hc_or003(root, source: bytes, path: str, min_run: int) -> list[Diagnostic]:
+    """HC-OR003 — two orchestrators share a run of consecutive operations (warning, soft).
+
+    `min_run` is required and has no built-in value. The documented N is 3 and lives in
+    config.DOCUMENTED_RULE_CONFIG, resolved at the boundary: a default here could not distinguish a
+    caller that chose 3 from one that never knew the setting existed."""
     functions = functions_by_name(root, source)
     orchestrators = {
         name: node for name, node in functions.items() if function_role(node, source) == "orchestrator"
@@ -280,7 +283,7 @@ def check_hc_or003(root, source: bytes, path: str) -> list[Diagnostic]:
     out: list[Diagnostic] = []
     for first, second in combinations(sorted(orchestrators), 2):
         run = _longest_common_run(sequences[first], sequences[second])
-        if run < _OR003_MIN_RUN:
+        if run < min_run:
             continue
         line, col = line_col(orchestrators[first])
         out.append(

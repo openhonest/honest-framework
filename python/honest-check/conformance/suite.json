@@ -894,7 +894,12 @@
         "function": "check_source",
         "args": [
           "x = 1\n",
-          "f.py"
+          "f.py",
+          {
+            "HC-OR003": {
+              "min_run": 3
+            }
+          }
         ],
         "expected": []
       }
@@ -905,7 +910,12 @@
         "function": "check_source",
         "args": [
           "class Foo: pass\n",
-          "f.py"
+          "f.py",
+          {
+            "HC-OR003": {
+              "min_run": 3
+            }
+          }
         ],
         "expected": [
           {

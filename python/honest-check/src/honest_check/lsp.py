@@ -20,11 +20,18 @@ import sys
 from honest_parse import node_text, parse_python, walk
 
 from honest_check.diagnostics import Diagnostic
+from honest_check.config import resolve_rule_config
 from honest_check.rules import check_source
 
 # honest-check severity -> LSP DiagnosticSeverity (1 error, 2 warning, 3 information).
 _LSP_SEVERITY = {"error": 1, "warning": 2, "info": 3}
 
+
+
+# The documented per-rule settings. check_source requires them, so this boundary states them rather
+# than letting a rule fall back to a constant of its own. A project's honest-check.toml is read by the
+# CLI, which resolves its own; these two surfaces run at the documented values.
+_DOCUMENTED_RULES = resolve_rule_config({})
 
 def to_lsp_diagnostic(d: Diagnostic) -> dict:
     """Convert a honest-check Diagnostic (1-based) to an LSP Diagnostic (0-based)."""
@@ -44,7 +51,7 @@ def to_lsp_diagnostic(d: Diagnostic) -> dict:
 
 def _publish(uri: str, text: str) -> dict:
     """A textDocument/publishDiagnostics notification for a document's current text."""
-    diagnostics = [to_lsp_diagnostic(d) for d in check_source(text, uri)]
+    diagnostics = [to_lsp_diagnostic(d) for d in check_source(text, uri, _DOCUMENTED_RULES)]
     return {
         "jsonrpc": "2.0",
         "method": "textDocument/publishDiagnostics",
@@ -107,7 +114,7 @@ def _hover_contents(text: str, uri: str, position: dict):
     on that line, or None when nothing is flagged there. The diagnostic message is the rule's
     documentation. Pure."""
     line = position.get("line", 0) + 1  # LSP is 0-based, honest-check diagnostics 1-based
-    for d in check_source(text, uri):
+    for d in check_source(text, uri, _DOCUMENTED_RULES):
         if d["line"] == line:
             return {"kind": "markdown", "value": f"**{d['rule']}**: {d['message']}"}
     return None
@@ -225,7 +232,7 @@ def _code_actions(text: str, uri: str, lsp_range: dict) -> list:
     start_line = lsp_range.get("start", {}).get("line", 0)
     end_line = lsp_range.get("end", {}).get("line", start_line)
     actions = []
-    for d in check_source(text, uri):
+    for d in check_source(text, uri, _DOCUMENTED_RULES):
         diagnostic_line = d["line"] - 1  # honest-check is 1-based, LSP 0-based
         if start_line <= diagnostic_line <= end_line:
             end_char = len(lines[diagnostic_line])

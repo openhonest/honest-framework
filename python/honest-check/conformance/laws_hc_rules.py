@@ -56,6 +56,7 @@ check_source and cannot be reached by any honest crafted input either, so they a
 """
 
 from honest_check import check_source
+from honest_check.config import resolve_rule_config
 from honest_check.rules import (
     _call_name,
     _check_global_reads,
@@ -113,8 +114,19 @@ from honest_check.templates import js_module_bindings, _js_callee_name, _attr, _
 from honest_check.boundary import check_hc_st002, _normalize_path, _path_params, boundary_diagnostics, check_boundary, check_class_references, check_hc_references, check_hf_references, check_references, check_template_references, hc_vocabulary, hf_vocabulary, route_boundary
 
 
+
+# The documented per-rule settings, stated once and explicitly. check_source requires them, so a case
+# that varies nothing is still a case handed the documented values, not one where a rule fell back to
+# a constant of its own. A case that varies a setting calls check_source directly with its own.
+_DOCUMENTED = resolve_rule_config({})
+
+
+def _check(source, path):
+    """check_source at the documented settings."""
+    return check_source(source, path, _DOCUMENTED)
+
 def _rules(source: str) -> list[str]:
-    return [d["rule"] for d in check_source(source, "f.py")]
+    return [d["rule"] for d in _check(source, "f.py")]
 
 
 # Each case: (label, source, must_fire, must_not_fire).
@@ -128,7 +140,7 @@ def _case(label, source, must_fire=(), must_not_fire=()):
 
 
 def _js_rules(source: str) -> list[str]:
-    return [d["rule"] for d in check_source(source, "f.js")]
+    return [d["rule"] for d in _check(source, "f.js")]
 
 
 # JavaScript cases run through check_source with a .js path, exercising the JavaScript grammar and
@@ -1614,7 +1626,7 @@ def _probe_javascript() -> list[str]:
     bad: list[str] = []
 
     def js(src):
-        return [d for d in check_source(src, "f.js") if d["rule"] == "HC-P003"]
+        return [d for d in _check(src, "f.js") if d["rule"] == "HC-P003"]
 
     bare = js("class Widget {}")
     if not bare or bare[0]["message"] != "Class 'Widget' has no declared base. Honest Code permits a JavaScript class only as a subclass of Error. Use a plain object for data or a pure function.":
@@ -1648,7 +1660,7 @@ def _probe_javascript() -> list[str]:
         bad.append("_class_base of a class with no heritage should be None")
 
     # HC-P011: a lifecycle hook (plain call and member call) fires as an error; a plain method does not.
-    hook = [d for d in check_source("el.addEventListener('click', h);", "f.js") if d["rule"] == "HC-P011"]
+    hook = [d for d in _check("el.addEventListener('click', h);", "f.js") if d["rule"] == "HC-P011"]
     if not hook or hook[0]["message"] != "Lifecycle hook 'addEventListener'. Use HTMX attributes or server-rendered HTML.":
         bad.append(f"JS HC-P011 message drifted: {hook}")
     if not hook or hook[0]["severity"] != "error":
@@ -1670,14 +1682,14 @@ def _probe_javascript() -> list[str]:
         "useEffect", "useLayoutEffect", "componentDidMount", "componentDidUpdate",
         "componentWillUnmount", "ngOnInit", "ngOnDestroy", "addEventListener", "removeEventListener",
     ):
-        if "HC-P011" not in [d["rule"] for d in check_source(f"obj.{hook}(a);", "f.js")]:
+        if "HC-P011" not in [d["rule"] for d in _check(f"obj.{hook}(a);", "f.js")]:
             bad.append(f"HC-P011 should fire for lifecycle hook {hook!r}")
 
     # HC-P005: typeof and instanceof each report their kind as a warning.
-    tof = [d for d in check_source("const t = typeof x === 'string';", "f.js") if d["rule"] == "HC-P005"]
+    tof = [d for d in _check("const t = typeof x === 'string';", "f.js") if d["rule"] == "HC-P005"]
     if not tof or tof[0]["severity"] != "warning" or tof[0]["message"] != "typeof check in business logic. Consider a vocabulary declaration instead.":
         bad.append(f"JS HC-P005 typeof message/severity drifted: {tof}")
-    iof = [d for d in check_source("const t = x instanceof Widget;", "f.js") if d["rule"] == "HC-P005"]
+    iof = [d for d in _check("const t = x instanceof Widget;", "f.js") if d["rule"] == "HC-P005"]
     if not iof or iof[0]["message"] != "instanceof check in business logic. Consider a vocabulary declaration instead.":
         bad.append(f"JS HC-P005 instanceof message drifted: {iof}")
     # _js_type_check returns None for a node with no operator and for a non-type operator.
@@ -1686,7 +1698,7 @@ def _probe_javascript() -> list[str]:
         bad.append("_js_type_check of a node without an operator should be None")
 
     # HC-P001: the dispatch chain reports as an error with the dict-lookup message.
-    disp = [d for d in check_source(_JS_DISPATCH, "f.js") if d["rule"] == "HC-P001"]
+    disp = [d for d in _check(_JS_DISPATCH, "f.js") if d["rule"] == "HC-P001"]
     if not disp or disp[0]["severity"] != "error" or disp[0]["message"] != "if/else-if chain dispatches on value — use dict lookup. See honest-code-principles.md §3.":
         bad.append(f"JS HC-P001 message/severity drifted: {disp}")
     # A four-branch chain fires exactly once: the nested else-if if_statements are not counted as their
@@ -1695,7 +1707,7 @@ def _probe_javascript() -> list[str]:
         'function f(r) {\n    if (r === "a") { return 1; }\n    else if (r === "b") { return 2; }\n'
         '    else if (r === "c") { return 3; }\n    else if (r === "d") { return 4; }\n}\n'
     )
-    if len([d for d in check_source(four_branch, "f.js") if d["rule"] == "HC-P001"]) != 1:
+    if len([d for d in _check(four_branch, "f.js") if d["rule"] == "HC-P001"]) != 1:
         bad.append("HC-P001 should fire exactly once on a four-branch chain, not per nested else-if")
     # _js_equality_target: a None condition, a non-binary condition, a non-equality operator, and a
     # non-identifier left all return None; a plain `IDENT === value` returns the identifier.
@@ -1728,15 +1740,15 @@ def _probe_javascript() -> list[str]:
         bad.append("_js_else_if of an else-if should be the nested if_statement")
 
     # HC-P006: a WeakMap and a memoize call each report as a warning; a plain Map does not.
-    wm = [d for d in check_source("const c = new WeakMap();", "f.js") if d["rule"] == "HC-P006"]
+    wm = [d for d in _check("const c = new WeakMap();", "f.js") if d["rule"] == "HC-P006"]
     if not wm or wm[0]["severity"] != "warning" or wm[0]["message"] != "Cache 'WeakMap' detected without profiling evidence. Profile the path it optimises, or dismiss with '// honest: ignore HC-P006'.":
         bad.append(f"JS HC-P006 message/severity drifted: {wm}")
-    mz = [d for d in check_source("const f = memoize(g);", "f.js") if d["rule"] == "HC-P006"]
+    mz = [d for d in _check("const f = memoize(g);", "f.js") if d["rule"] == "HC-P006"]
     if not mz or mz[0]["message"] != "Cache 'memoize' detected without profiling evidence. Profile the path it optimises, or dismiss with '// honest: ignore HC-P006'.":
         bad.append(f"JS HC-P006 memoize message drifted: {mz}")
 
     # HC-P016: a nested function reassigning an enclosing let reports as an error naming the captured name.
-    clo = [d for d in check_source("function outer() {\n    let x = 0;\n    return () => { x = x + 1; };\n}\n", "f.js") if d["rule"] == "HC-P016"]
+    clo = [d for d in _check("function outer() {\n    let x = 0;\n    return () => { x = x + 1; };\n}\n", "f.js") if d["rule"] == "HC-P016"]
     if not clo or clo[0]["severity"] != "error" or clo[0]["message"] != "Inner function captures ['x'] via closure and mutates it. Closures may not carry mutable state — use pure parameters or move state into persist.":
         bad.append(f"JS HC-P016 message/severity drifted: {clo}")
     # _js_scope_lets and _js_reassigned_names return an empty set for a node with no body (defensive;
@@ -1764,7 +1776,7 @@ def _probe_javascript() -> list[str]:
         bad.append("_js_reassigned_names should ignore a member update")
 
     # HC-P004: an I/O call and a nondeterministic constructor each report as an error.
-    io = [d for d in check_source("function f() { return fetch(u); }", "f.js") if d["rule"] == "HC-P004"]
+    io = [d for d in _check("function f() { return fetch(u); }", "f.js") if d["rule"] == "HC-P004"]
     if not io or io[0]["severity"] != "error" or io[0]["message"] != "'fetch' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity.":
         bad.append(f"JS HC-P004 message/severity drifted: {io}")
     # _js_qualified_name: identifier, member chain, and '' for a non-name callee.
@@ -1777,16 +1789,16 @@ def _probe_javascript() -> list[str]:
     if _js_qualified_name(computed, b"o[k](u);") != "":
         bad.append("_js_qualified_name of a computed callee should be empty")
     # A watched constructor reports as 'new X()' (pins the constructor-name format).
-    ctor = [d for d in check_source("function f() { return new WebSocket(u); }", "f.js") if d["rule"] == "HC-P004"]
+    ctor = [d for d in _check("function f() { return new WebSocket(u); }", "f.js") if d["rule"] == "HC-P004"]
     if not ctor or ctor[0]["message"] != "'new WebSocket()' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity.":
         bad.append(f"JS HC-P004 constructor name format drifted: {ctor}")
     # An argument-less clock constructor reports the same way; the argument form is not flagged at all.
-    clock = [d for d in check_source("function f() { return new Date(); }", "f.js") if d["rule"] == "HC-P004"]
+    clock = [d for d in _check("function f() { return new Date(); }", "f.js") if d["rule"] == "HC-P004"]
     if not clock or clock[0]["message"] != "'new Date()' performs I/O or non-deterministic work inside a non-boundary function. Mark the function '// honest: boundary', or it cannot be verified for purity.":
         bad.append(f"JS HC-P004 clock constructor name format drifted: {clock}")
     # navigator.sendBeacon() is a watched call whose callee also matches the nondeterministic-read
     # family; it must be flagged once (the call), not a second time as a member read.
-    beacon = [d for d in check_source("function f() { navigator.sendBeacon(u); }", "f.js") if d["rule"] == "HC-P004"]
+    beacon = [d for d in _check("function f() { navigator.sendBeacon(u); }", "f.js") if d["rule"] == "HC-P004"]
     if len(beacon) != 1:
         bad.append(f"JS HC-P004 should flag navigator.sendBeacon() once, not once per node: {beacon}")
     # _js_impure_name: a non-watched call and a non-watched constructor are not impure.
@@ -1802,11 +1814,11 @@ def _probe_javascript() -> list[str]:
         bad.append("_js_enclosing_function at module level should be None")
 
     # HC-P002: a caught exception in a non-boundary function reports as an error.
-    tc = [d for d in check_source("function f() { try { g(); } catch (e) { h(); } }", "f.js") if d["rule"] == "HC-P002"]
+    tc = [d for d in _check("function f() { try { g(); } catch (e) { h(); } }", "f.js") if d["rule"] == "HC-P002"]
     if not tc or tc[0]["severity"] != "error" or tc[0]["message"] != "Function 'f' catches an exception in business logic. Let it raise and catch at the boundary (a '// honest: boundary' function), or return a fault as data.":
         bad.append(f"JS HC-P002 message/severity drifted: {tc}")
     # An anonymous function's catch names it '<anonymous>'.
-    anon = [d for d in check_source("const f = () => { try { g(); } catch (e) { h(); } };", "f.js") if d["rule"] == "HC-P002"]
+    anon = [d for d in _check("const f = () => { try { g(); } catch (e) { h(); } };", "f.js") if d["rule"] == "HC-P002"]
     if not anon or "'<anonymous>'" not in anon[0]["message"]:
         bad.append(f"JS HC-P002 anonymous function label drifted: {anon}")
     return bad
@@ -2066,7 +2078,7 @@ def _probe_dedup() -> list[str]:
     """Each duplicate-prone finding is reported exactly once (the rule's `seen` dedup is load-bearing)."""
     bad = []
     for rule, source in _DEDUP_CASES:
-        n = sum(1 for d in check_source(source, "f.py") if d["rule"] == rule)
+        n = sum(1 for d in _check(source, "f.py") if d["rule"] == rule)
         if n != 1:
             bad.append(f"{rule} should be deduplicated to one diagnostic, got {n}")
     return bad
@@ -2466,7 +2478,7 @@ def _probe_rule_messages() -> list[str]:
     asserts the full message text, so emptying any message fragment is caught."""
     bad = []
     for rule, source, message in _RULE_MESSAGES:
-        msgs = [d["message"] for d in check_source(source, "f.py") if d["rule"] == rule]
+        msgs = [d["message"] for d in _check(source, "f.py") if d["rule"] == rule]
         if message not in msgs:
             bad.append(f"{rule} message drifted: expected {message!r}, got {msgs}")
     return bad
@@ -2606,7 +2618,7 @@ def _probe_rule_severities() -> list[str]:
     """Pin each diagnostic's severity literal (info downgrade, warning, error)."""
     bad = []
     for rule, severity, source in _RULE_SEVERITIES:
-        sevs = [d["severity"] for d in check_source(source, "f.py") if d["rule"] == rule]
+        sevs = [d["severity"] for d in _check(source, "f.py") if d["rule"] == rule]
         if severity not in sevs:
             bad.append(f"{rule} should emit severity {severity!r}, got {sevs}")
     return bad
@@ -2626,11 +2638,11 @@ _COUNT_CASES = [
 def _probe_counts() -> list[str]:
     bad = []
     for rule, source, expected in _COUNT_CASES:
-        n = sum(1 for d in check_source(source, "f.py") if d["rule"] == rule)
+        n = sum(1 for d in _check(source, "f.py") if d["rule"] == rule)
         if n != expected:
             bad.append(f"{rule} should fire {expected} time(s), got {n}")
     # HC-SYN reports the error node's own location, not a (1, 1) fallback.
-    syn = [(d["line"], d["col"]) for d in check_source("def f(x):\n    if (x ==):\n        pass\n", "f.py") if d["rule"] == "HC-SYN"]
+    syn = [(d["line"], d["col"]) for d in _check("def f(x):\n    if (x ==):\n        pass\n", "f.py") if d["rule"] == "HC-SYN"]
     if syn != [(2, 11)]:
         bad.append(f"HC-SYN should report the error-node location (2, 11), got {syn}")
     return bad

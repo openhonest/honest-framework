@@ -11,6 +11,8 @@ This module also re-exports the shared helpers external tooling imports from
 `honest_check.rules` so the public import surface is unchanged.
 """
 
+from functools import partial
+
 from honest_check.diagnostics import (
     Diagnostic,
     diagnostic,
@@ -168,9 +170,31 @@ def is_fixable(rule: str) -> bool:
     return rule in FIXABLE_RULES
 
 
-def check_source(source: str, path: str) -> list[Diagnostic]:
+# The rules that read configuration, each named beside the settings it takes. Only these are bound;
+# every other rule runs unchanged. Passing the whole configuration to all 53 would make one uniform
+# signature at the cost of a parameter most of them never read, and an argument a function ignores
+# cannot be told from one it forgot to use.
+_CONFIGURABLE_CHECKS = {
+    check_hc_or003: ("HC-OR003", ("min_run",)),
+}
+
+
+def _bind(check, rule_config):
+    """The check with its declared settings applied, or the check itself when it takes none. Pure."""
+    if check not in _CONFIGURABLE_CHECKS:
+        return check
+    rule, keys = _CONFIGURABLE_CHECKS[check]
+    settings = {key: rule_config[rule][key] for key in keys}
+    return partial(check, **settings)
+
+
+def check_source(source: str, path: str, rule_config: dict) -> list[Diagnostic]:
     """Parse `source` in its path's language, run that language's rules, then apply suppressions
-    (section 1, 5, 7)."""
+    (section 1, 5, 7).
+
+    `rule_config` is required: it is the resolved per-rule settings from config.resolve_rule_config,
+    so a caller declaring nothing still passes the documented values explicitly rather than letting a
+    rule fall back to a constant of its own."""
     language = language_for_path(path)
     src_bytes = source.encode("utf-8")
     root = parse(src_bytes, language).root_node
@@ -180,7 +204,7 @@ def check_source(source: str, path: str) -> list[Diagnostic]:
 
     raw: list[Diagnostic] = []
     for check in _CHECKS_BY_LANGUAGE[language]:
-        raw.extend(check(root, src_bytes, path))
+        raw.extend(_bind(check, rule_config)(root, src_bytes, path))
 
     max_line = root.end_point[0] + 1
     inline, ranges = build_suppressions(root, src_bytes, max_line)

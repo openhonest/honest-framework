@@ -15,7 +15,19 @@ import sys
 from pathlib import Path
 
 from honest_check import check_source
+from honest_check.config import resolve_rule_config
 
+
+
+# The documented per-rule settings, stated once and explicitly. check_source requires them, so a case
+# that varies nothing is still a case handed the documented values, not one where a rule fell back to
+# a constant of its own. A case that varies a setting calls check_source directly with its own.
+_DOCUMENTED = resolve_rule_config({})
+
+
+def _check(source, path):
+    """check_source at the documented settings."""
+    return check_source(source, path, _DOCUMENTED)
 
 def _triples(diagnostics):
     return [{"rule": d["rule"], "severity": d["severity"], "line": d["line"], "col": d["col"], "message": d["message"]} for d in diagnostics]
@@ -48,7 +60,7 @@ def run(suite_path):
     for case in suite["cases"]:
         if "value_case" in case:
             continue  # value cases are checked centrally by value-check.py; a module cannot run the oracle on itself
-        actual = _triples(check_source(case["input"]["source"], case["id"]))
+        actual = _triples(_check(case["input"]["source"], case["id"]))
         expected = case["expected"]["diagnostics"]
         if _case_passes(expected, actual):
             passed += 1

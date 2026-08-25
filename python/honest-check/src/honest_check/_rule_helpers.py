@@ -470,9 +470,6 @@ def _recognizer_identity(recognizer):
 _ROUTING_KEYS = frozenset({"db_id", "tenant_id", "credential"})
 
 
-# Minimum shared consecutive-call run before HC-OR003 fires (section 4.2, default 3).
-_OR003_MIN_RUN = 3
-
 
 def _orchestrator_call_sequence(func_node, source: bytes) -> list[str]:
     """The orchestrator body normalized to its ordered sequence of qualified call names."""
