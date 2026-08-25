@@ -59,7 +59,7 @@ def _law_exports():
     import honest_auth
 
     bad = []
-    expected = ["AuthProvider", "Registry", "empty_registry", "register_auth_provider", "registered_provider", "validate_provider", "authenticate", "fault_status", "authentication_honesty", "resolve_actor_deterministic", "dev_auth_provider"]
+    expected = ["AuthProvider", "Registry", "empty_registry", "register_auth_provider", "registered_provider", "validate_provider", "authenticate", "fault_status", "authentication_honesty", "resolve_actor_deterministic", "resolve_actor_touches_no_domain", "dev_auth_provider"]
     if sorted(getattr(honest_auth, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_auth, '__all__', None)}")
     missing = [name for name in expected if not hasattr(honest_auth, name)]
@@ -221,6 +221,46 @@ def _law_authentication_honesty():
     return bad
 
 
+def _law_resolve_actor_touches_no_domain():
+    """Section 4.3: resolution reads what identifies the actor and changes nothing else.
+
+    Until this existed a provider could reach the Full level on determinism alone, and a resolver that
+    mutates on every call is perfectly deterministic — it can return the same actor each time while
+    writing a row, bumping a counter, or expiring a session as a side effect of being asked who
+    someone is. Determinism and no-mutation are independent claims and the level asserted both while
+    checking one.
+
+    The caller hands in the same state the provider's resolver reads, so the check observes the real
+    effect rather than asking the provider to describe itself (section 4.6: internals stay private)."""
+    from honest_auth import resolve_actor_touches_no_domain
+
+    bad = []
+    quiet_state = {"sessions": {"good": "u1"}, "hits": 0}
+    quiet = {"name": "quiet", "actor_recognizer": lambda t: isinstance(t, str) and bool(t),
+             "resolve_actor": lambda t: {"ok": {"id": quiet_state["sessions"][t]}} if t in quiet_state["sessions"]
+                              else {"err": {"category": "unauthenticated"}},
+             "test_token_generator": lambda c: "good", "fault_mapping": {"unauthenticated": 401}}
+    if not resolve_actor_touches_no_domain(quiet, "good", quiet_state):
+        bad.append("a resolver that only reads must be reported as touching no domain state")
+
+    counting_state = {"sessions": {"good": "u1"}, "hits": 0}
+
+    def _counting_resolve(token):
+        counting_state["hits"] += 1          # the mutation section 4.3 forbids
+        return {"ok": {"id": "u1"}}
+
+    counting = dict(quiet, name="counting", resolve_actor=_counting_resolve)
+    if resolve_actor_touches_no_domain(counting, "good", counting_state):
+        bad.append("a resolver that bumps a counter while resolving must be reported as mutating")
+
+    # The two claims are independent, and this is the case the Full level was missing: the counting
+    # resolver returns the same answer every time, so determinism passes while 4.3 fails.
+    from honest_auth import resolve_actor_deterministic
+    if not resolve_actor_deterministic(counting, "good"):
+        bad.append("the mutating resolver is still deterministic, which is why one check cannot stand in for the other")
+    return bad
+
+
 def _law_resolve_actor_deterministic():
     from honest_auth import resolve_actor_deterministic
 
@@ -287,6 +327,7 @@ _LAWS = {
     "fault_status": _law_fault_status,
     "authentication_honesty": _law_authentication_honesty,
     "resolve_actor_deterministic": _law_resolve_actor_deterministic,
+    "resolve_actor_touches_no_domain": _law_resolve_actor_touches_no_domain,
     "actor_reaches_interior_as_data": _law_actor_reaches_interior_as_data,
     "dev_provider": _law_dev_provider,
 }

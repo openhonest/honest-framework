@@ -64,3 +64,10 @@ Feature: honest-auth — authentication is validated at the boundary and passed 
     Given a dev user table
     When _dev_token_generator is asked for a token class
     Then it yields a valid token for the first user, a colonless malformed token, a missing None credential, and unknown-user tokens for the revoked, expired, and forged classes
+
+  Scenario: resolve_actor_touches_no_domain reports whether resolution changed the state it read
+    Given a provider and the same domain state its resolver reads
+    When resolve_actor_touches_no_domain resolves a token against a copy taken beforehand
+    Then a resolver that only reads is reported as touching nothing
+    But a resolver that writes while resolving is reported as mutating
+    And the answer is independent of determinism, which a mutating resolver can still satisfy

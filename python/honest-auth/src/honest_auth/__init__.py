@@ -8,7 +8,7 @@ I/O. Everything honest-auth itself ships is pure.
 
 from honest_auth.authenticate import authenticate, fault_status
 from honest_auth.dev_provider import dev_auth_provider
-from honest_auth.honesty import authentication_honesty, resolve_actor_deterministic
+from honest_auth.honesty import authentication_honesty, resolve_actor_deterministic, resolve_actor_touches_no_domain
 from honest_auth.registry import (
     empty_registry,
     register_auth_provider,
@@ -28,5 +28,6 @@ __all__ = [
     "fault_status",
     "authentication_honesty",
     "resolve_actor_deterministic",
+    "resolve_actor_touches_no_domain",
     "dev_auth_provider",
 ]

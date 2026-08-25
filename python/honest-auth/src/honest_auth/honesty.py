@@ -8,6 +8,8 @@ confirms a token resolves the same way twice (section 4.4). Pure over the provid
 and resolver — no mocks, the provider proves itself.
 """
 
+from copy import deepcopy
+
 from honest_type import err, fault, ok
 
 from honest_auth.authenticate import authenticate
@@ -51,6 +53,22 @@ def authentication_honesty(provider, context):
     if violations:
         return err(fault("authentication_dishonest", "the provider does not honour the token-class contract", "server", detail=violations))
     return ok(provider)
+
+
+def resolve_actor_touches_no_domain(provider, token, domain):
+    """Whether resolution left the domain state it reads unchanged (section 4.3).
+
+    The caller hands in the same value the provider's resolver reads, and this compares it against a
+    copy taken beforehand. Observing the state rather than asking the provider about itself keeps
+    section 4.6 intact: internals stay private, and the check still sees the effect.
+
+    This is a claim the determinism check cannot make. A resolver that writes a row or bumps a counter
+    on every call is perfectly deterministic, returning the same actor each time, so a Full level
+    resting on determinism alone asserted something it never tested. Pure over the injected resolver.
+    """
+    before = deepcopy(domain)
+    authenticate(provider, token)
+    return domain == before
 
 
 def resolve_actor_deterministic(provider, token):
