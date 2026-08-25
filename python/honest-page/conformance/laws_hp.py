@@ -19,6 +19,121 @@ from jinja2 import Environment, FileSystemLoader
 from app import extract_tokens
 
 _TEMPLATES = _PYTHON_ROOT / "templates"
+_THEME_CSS = _PYTHON_ROOT / "static" / "theme.css"
+
+# Section 7.1, the whole required token set. Colour tokens are separated from the rest because the
+# contract differs: section 7.2 requires every colour token to carry both values through light-dark(),
+# and forbids it on the others, since light-dark() resolves to a <color> and wrapping a length in it is
+# invalid CSS that silently fails to resolve.
+_COLOR_TOKENS = [
+    "--ht-color-bg-primary", "--ht-color-bg-secondary", "--ht-color-bg-surface",
+    "--ht-color-text-primary", "--ht-color-text-secondary", "--ht-color-text-muted",
+    "--ht-color-border", "--ht-color-border-strong",
+    "--ht-color-accent", "--ht-color-accent-text",
+    "--ht-color-success", "--ht-color-warning", "--ht-color-danger", "--ht-color-info",
+]
+_PLAIN_TOKENS = [
+    "--ht-space-xs", "--ht-space-sm", "--ht-space-md", "--ht-space-lg", "--ht-space-xl", "--ht-space-2xl",
+    "--ht-font-sans", "--ht-font-mono",
+    "--ht-font-size-sm", "--ht-font-size-md", "--ht-font-size-lg", "--ht-font-size-xl", "--ht-font-size-2xl",
+    "--ht-radius-sm", "--ht-radius-md", "--ht-radius-lg", "--ht-radius-pill",
+]
+
+
+def _root_block(css):
+    """The declarations inside the first `:root { ... }` rule, as {token: value}. Pure."""
+    # Comments come out first. Splitting on ";" leaves a preceding /* ... */ glued to the front of the
+    # next declaration, so its name no longer starts with "--ht-" and the token reads as absent. That
+    # dropped the first token of every category here and reported four present tokens as missing.
+    match = re.search(r":root\s*\{([^}]*)\}", re.sub(r"/\*.*?\*/", "", css, flags=re.S))
+    if not match:
+        return {}
+    return {name.strip(): value.strip()
+            for name, _, value in (line.partition(":") for line in match.group(1).split(";"))
+            if name.strip().startswith("--ht-")}
+
+
+def _token_faults(css):
+    """Section 11.2 CSS, as a pure decision over the stylesheet text.
+
+    Checked here rather than in a browser because it is decidable from the source: the tokens are
+    declared text, so a missing one is the same kind of fact as an undeclared name."""
+    faults = []
+    declared = _root_block(css)
+    for token in _COLOR_TOKENS + _PLAIN_TOKENS:
+        if token not in declared:
+            faults.append(f"section 7.1 requires {token} on :root")
+    for token in _COLOR_TOKENS:
+        if token in declared and "light-dark(" not in declared[token]:
+            faults.append(f"{token} is a colour token and must carry both values via light-dark()")
+    for token in _PLAIN_TOKENS:
+        if token in declared and "light-dark(" in declared[token]:
+            faults.append(f"{token} is not a colour, and light-dark() around a length is invalid CSS")
+    if not re.search(r":root\s*\{[^}]*color-scheme\s*:\s*light\s+dark", css):
+        faults.append("section 7.2 requires `color-scheme: light dark` on :root, or light-dark() "
+                      "does not resolve in all browsers")
+    for forced in ('[data-theme="dark"]', '[data-theme="light"]'):
+        if forced not in css:
+            faults.append(f"section 7.3 requires a {forced} rule, so a choice can override the OS")
+    return faults
+
+
+def _law_html_element_and_theme_restoration():
+    """Section 11.2 structural and bootstrap, the two facts that live on `<html>` and in `<head>`.
+
+    `lang` is asserted because it is the one attribute a screen reader needs before anything renders,
+    and it defaults rather than being required of every caller. The theme script must run in `<head>`,
+    before `<body>` exists: run any later and the page paints in the OS theme first and then swaps,
+    which is the flash the attribute exists to prevent. Order is the whole of that requirement, so the
+    check is a position comparison and not the mere presence of the script."""
+    faults = []
+    html = _render("page.html", app_name="A", page_title="P", theme="auto")
+    if not re.search(r"<html[^>]*\blang=", html):
+        faults.append("section 11.2 structural: <html> must carry lang")
+
+    head_end, body_start = html.find("</head>"), html.find("<body")
+    restore = html.find("localStorage.getItem")
+    if restore == -1:
+        faults.append("section 11.2 bootstrap: the theme preference restoration script must be present")
+    elif not (restore < head_end < body_start):
+        faults.append("section 11.2 bootstrap: theme restoration must run inside <head>, before <body>, "
+                      "or the page paints in the OS theme and then swaps")
+
+    # Section 7.3 sets data-theme from script at load, not from the server into the markup, so the
+    # attribute is absent from the served HTML by design and asserting it there would be asserting
+    # something the spec does not say. What IS decidable from the source is that the server's choice
+    # reaches the script that sets it: a template that renders the branch but drops the value leaves
+    # an explicit theme with no way to take effect.
+    for choice in ("dark", "light", "auto"):
+        rendered = _render("page.html", app_name="A", page_title="P", theme=choice)
+        script = rendered[:rendered.find("</head>")]
+        if f'"{choice}"' not in script and f"'{choice}'" not in script:
+            faults.append(f"theme {choice!r} must reach the restoration script, or it cannot take effect")
+    return faults
+
+
+def _law_request_is_the_first_context_variable():
+    """Section 11.2 server: every TemplateResponse passes `request` first.
+
+    Starlette reads the request out of the context by that key, and a template rendered without it
+    raises only when something in the page happens to use `url_for`. So a route that omits it can
+    serve correctly for as long as nobody adds a link, then break on an unrelated edit. Checked by
+    reading the source rather than by calling the routes, because the fault is the absence of a key
+    and absence is what a passing request cannot show."""
+    source = (_PYTHON_ROOT / "app.py").read_text(encoding="utf-8")
+    faults = []
+    for call in re.finditer(r"TemplateResponse\(\s*\"([^\"]+)\"\s*,\s*\{\s*([^,:]*)", source):
+        template, first_key = call.group(1), call.group(2).strip()
+        if first_key != '"request"':
+            faults.append(f"the context for {template} must pass \"request\" first, not {first_key or 'nothing'}")
+    if not faults and "TemplateResponse(" not in source:
+        faults.append("no TemplateResponse call found, so this law checked nothing")
+    return faults
+
+
+def _law_token_contract():
+    """Section 11.2 CSS: every required token declared, colours through light-dark(), lengths not."""
+    return _token_faults(_THEME_CSS.read_text(encoding="utf-8"))
 
 # The six surfaces, in the document order section 2.2 requires.
 _SURFACES = [
@@ -124,6 +239,9 @@ _LAWS = {
     "fragment_does_not_extend_base": _law_fragment_does_not_extend_base,
     "intake_precedence": _law_intake_precedence,
     "context_variables_default": _law_context_variables_default,
+    "html_element_and_theme_restoration": _law_html_element_and_theme_restoration,
+    "request_is_the_first_context_variable": _law_request_is_the_first_context_variable,
+    "token_contract": _law_token_contract,
 }
 
 
