@@ -63,6 +63,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "env_decl"
+        },
+        {
+          "type": "SYMBOL",
           "name": "type_decl"
         },
         {
@@ -120,6 +124,35 @@
           "content": {
             "type": "SYMBOL",
             "name": "identifier"
+          }
+        }
+      ]
+    },
+    "env_decl": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "env"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": ":"
+        },
+        {
+          "type": "FIELD",
+          "name": "type",
+          "content": {
+            "type": "SYMBOL",
+            "name": "type"
           }
         }
       ]

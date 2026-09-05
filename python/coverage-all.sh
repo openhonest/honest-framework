@@ -11,7 +11,11 @@ set -uo pipefail
 cd "$(dirname "$0")"            # -> python/
 
 SRC=honest_alerts,honest_auth,honest_check,honest_design,honest_estimate,honest_state,honest_errors,honest_features,honest_gherkin,honest_observe,honest_parse,honest_persist,honest_rca,honest_test,honest_type
-COV="uv run --with coverage coverage"
+# The whole workspace, every time. A `uv run --package X` anywhere before this trims the shared
+# environment to X's closure, and then thirteen suites here failed on a missing import that had
+# nothing to do with the staged change (2026-09-05). The gate must not depend on what the last
+# command left installed.
+COV="uv run --all-packages --with coverage coverage"
 
 $COV erase
 status=0
@@ -60,7 +64,7 @@ echo "coverage-all: 100% line+branch coverage — every line is dogfooded."
 # The value-oracle gate (honest-test §8.6): every module's suite.json value cases must prove. A
 # module cannot run the oracle on itself (it would import its own dependant), so this is checked
 # centrally here, where honest-test is available.
-if ! uv run python value-check.py; then
+if ! uv run --all-packages python value-check.py; then
     echo "coverage-all: value-oracle gate failed — a value case asserts the wrong output." >&2
     exit 1
 fi

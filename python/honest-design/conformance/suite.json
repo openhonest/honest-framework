@@ -35,6 +35,7 @@
               {
                 "name": "x",
                 "layer": "foundation",
+                "envs": [],
                 "types": [],
                 "sets": [],
                 "vocabularies": [],
@@ -123,7 +124,8 @@
           "layer": "",
           "surfaces": [],
           "examples": [],
-          "html_attrs": []
+          "html_attrs": [],
+          "envs": []
         },
         "expected": []
       }
@@ -157,7 +159,8 @@
           "layer": "",
           "surfaces": [],
           "examples": [],
-          "html_attrs": []
+          "html_attrs": [],
+          "envs": []
         },
         "expected": [
           {
@@ -308,6 +311,81 @@
             "k": 1
           }
         }
+      }
+    },
+    {
+      "id": "read-env-ok",
+      "read": {
+        "source": "module m\n  layer data\n  env DATABASE_URL : str\n  env POOL_SIZE : int | Absent\n  boundary_in fn configure : () -> str side_effect reads \"env:DATABASE_URL\" side_effect reads \"env:POOL_SIZE\"\n"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "value-validate-unknown-env",
+      "value_case": {
+        "function": "validate",
+        "input": {
+          "name": "m",
+          "layer": "",
+          "envs": [
+            {
+              "name": "A",
+              "type": [
+                {
+                  "name": "str",
+                  "args": []
+                }
+              ]
+            }
+          ],
+          "types": [],
+          "sets": [],
+          "vocabularies": [],
+          "dispatches": [],
+          "surfaces": [],
+          "examples": [],
+          "functions": [
+            {
+              "name": "c",
+              "role": "boundary_in",
+              "column": 1,
+              "params": [],
+              "ret": [
+                {
+                  "name": "str",
+                  "args": []
+                }
+              ],
+              "invokes": [],
+              "raises": [],
+              "side_effects": [
+                {
+                  "direction": "reads",
+                  "target": "env:A"
+                },
+                {
+                  "direction": "reads",
+                  "target": "env:GHOST"
+                }
+              ]
+            }
+          ],
+          "chains": [],
+          "routes": [],
+          "entries": [],
+          "html_attrs": []
+        },
+        "expected": [
+          {
+            "code": "unknown_env",
+            "message": "Function 'c' reads environment variable 'GHOST', which no env declares",
+            "category": "client",
+            "detail": {
+              "function": "c",
+              "env": "GHOST"
+            }
+          }
+        ]
       }
     }
   ],

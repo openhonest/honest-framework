@@ -53,7 +53,7 @@ def _unknown_targets(module):
     return routes + entries
 
 
-_UNIQUE_KINDS = ("functions", "types", "sets", "chains", "vocabularies")
+_UNIQUE_KINDS = ("functions", "types", "sets", "chains", "vocabularies", "envs")
 
 
 def _duplicate_names(module):
@@ -65,6 +65,31 @@ def _duplicate_names(module):
             faults += [fault("duplicate_name", f"Duplicate {kind[:-1]} name '{name}'", "client", {"kind": kind, "name": name})] if name in seen else []
             seen.add(name)
     return faults
+
+
+# A side effect reads the environment by name when its target carries this prefix.
+ENV_TARGET = "env:"
+
+
+def _env_reads(module):
+    """Every (function, variable name) pair where a side effect reads the environment by name."""
+    return [(f, se["target"][len(ENV_TARGET):])
+            for f in module["functions"] for se in f["side_effects"]
+            if se["target"].startswith(ENV_TARGET)]
+
+
+def _unknown_envs(module):
+    """Every environment read names a declared `env` (the configuration dual of unknown_link).
+
+    A read that names no declaration is configuration nobody wrote down: the deployment must
+    supply it and nothing in the file says so.
+    """
+    declared = {e["name"] for e in module["envs"]}
+    return [
+        fault("unknown_env", f"Function '{f['name']}' reads environment variable '{name}', which no env declares", "client", {"function": f["name"], "env": name})
+        for f, name in _env_reads(module)
+        if name not in declared
+    ]
 
 
 def _impure_pure_functions(module):
@@ -138,6 +163,7 @@ _CHECKS = (
     _bad_surfaces,
     _unknown_links,
     _unknown_targets,
+    _unknown_envs,
     _duplicate_names,
     _impure_pure_functions,
     _bad_projections,

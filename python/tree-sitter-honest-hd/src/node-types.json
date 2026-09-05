@@ -145,6 +145,32 @@
     }
   },
   {
+    "type": "env_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "example_decl",
     "named": true,
     "fields": {
@@ -406,6 +432,10 @@
         },
         {
           "type": "entry_decl",
+          "named": true
+        },
+        {
+          "type": "env_decl",
           "named": true
         },
         {
@@ -949,6 +979,10 @@
   },
   {
     "type": "entry",
+    "named": false
+  },
+  {
+    "type": "env",
     "named": false
   },
   {

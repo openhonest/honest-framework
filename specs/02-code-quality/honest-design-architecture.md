@@ -128,6 +128,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 |---|---|
 | `module <name>` | The module — one per file, the unit of editing and of the diagram. |
 | `layer <name>` | The module's tier: `foundation`, `tooling`, `domain`, ... |
+| `env <NAME> : <type>` | An environment variable the module reads: the name the deployment must supply, and its type. Write the type as a union with `Absent` when the variable may be missing, so the boundary that reads it has to handle that case; a bare type means required. The function that reads it declares `side_effect reads "env:<NAME>"`. |
 | `type <Name> = <expr>` | A type. `<expr>` is a scalar (`str`, `int`, `bool`, `void`, `any`), a generic (`list<T>`, `dict<K,V>`, `set<T>`, `Callable<...>`), or a record (`{ field: type ... }`); a return or field type may be a union (`Manifest \| Fault`). Types from other modules are referenced by name, not redeclared. |
 | `set <name> = { "a", ... }` | A bounded recognizer set of string literals; each member may be written `"member" : "description"`. |
 | `surfaces <name> = [ "id" as <element>, ... ]` | The surfaces a module renders, in the order the page requires. Each member names the `id` it is identified by and the element it lives in. Square brackets, not braces: the order is the contract, and a `set` is unordered. |
@@ -144,7 +145,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `entry "<callsite>" -> fn` | An entry point whose call-site shape is a string — a decorator, a context manager, a middleware registration — dispatching to a function. |
 | `html_attr "attr" "desc"` | A declared client-side attribute. |
 
-A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes it can return, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). A dispatch entry may add `from <field>`, naming the slice of the caller's input that entry's handler is fed; the handler then declares that field's type instead of the whole record, so a predicate reading one field of sixteen says so in its signature rather than in a comment. There is exactly one way to say each thing.
+A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, an environment variable by name as `env:<NAME>`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes it can return, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). A dispatch entry may add `from <field>`, naming the slice of the caller's input that entry's handler is fed; the handler then declares that field's type instead of the whole record, so a predicate reading one field of sixteen says so in its signature rather than in a comment. There is exactly one way to say each thing.
 
 ### 3.3 Workspace files
 
@@ -160,8 +161,9 @@ Two file kinds sit above the modules and describe the workspace as a whole:
 The reader produces a normalized, language-agnostic IR — plain data, the single value every downstream consumer (validator, renderer, honest-check conformance tier) reads. It is not tied to tree-sitter node shapes; the reader folds the parse tree into it so no consumer touches the grammar.
 
 ```
-Module   = { name, layer, types, sets, vocabularies, dispatches,
+Module   = { name, layer, envs, types, sets, vocabularies, dispatches,
              functions, chains, examples, routes, entries, html_attrs }
+Env      = { name, type }         # type: a union with Absent when the variable may be missing
 Function = { name, role, params, ret, side_effects, invokes, raises, column }
              # role: "boundary_in" | "orchestrator" | "fn" | "boundary_out"
              # params: [ { name, type } ] ; ret: type (possibly a union)
@@ -196,7 +198,8 @@ The validator is a pure function `Module (IR) → [fault]`. An empty list is a v
 
 - Every chain link names a declared function (else `unknown_link`; dual of HC001).
 - Every `route` and `entry` targets a declared function (else `unknown_target`; the input-boundary dual of HC001).
-- Names are unique within each declaration kind — functions, types, sets, chains, vocabularies (else `duplicate_name`; duals of HC004/HC005/HC006).
+- Names are unique within each declaration kind — functions, types, sets, chains, vocabularies, envs (else `duplicate_name`; duals of HC004/HC005/HC006).
+- Every `side_effect reads "env:<NAME>"` names a declared `env` (else `unknown_env`; the configuration dual of `unknown_link`). A read nobody declared is configuration the deployment must supply that the file does not admit to.
 - A plain `fn` declares no `side_effect` (else `impure_pure_function`) — only `boundary_in`/`boundary_out` may.
 - The two public entry points check their own input, because both are boundaries and the caller's type is not
   something the module may assume. `read_hd` refuses a non-text source (`hd_source_not_text`) rather than

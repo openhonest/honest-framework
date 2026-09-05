@@ -127,6 +127,11 @@ Feature: honest-design — the .hd architecture-declaration read path
     When _read_html_attr folds it
     Then it returns the attribute and its description
 
+  Scenario: _read_env folds an environment variable declaration
+    Given an env_decl node naming a variable and its type
+    When _read_env folds it
+    Then it returns the name the deployment must supply and the type as a union of atoms
+
   Scenario: _read_layer folds a layer declaration
     Given a layer_decl node
     When _read_layer folds it
@@ -176,6 +181,16 @@ Feature: honest-design — the .hd architecture-declaration read path
     Given a module IR with routes and entries
     When _unknown_targets checks them
     Then it returns an unknown_target fault for each route or entry whose target is not declared
+
+  Scenario: _env_reads lists every environment variable a function reads by name
+    Given a module whose functions declare side effects
+    When _env_reads walks them
+    Then it returns each (function, variable) pair whose target carries the env: prefix and nothing else
+
+  Scenario: _unknown_envs flags an environment read that no env declares
+    Given a function reading "env:GHOST" in a module declaring no env GHOST
+    When _unknown_envs checks the module
+    Then it returns an unknown_env fault naming the function and the variable, and none for a declared one
 
   Scenario: _duplicate_names flags a name declared twice within a kind
     Given a module IR with declarations

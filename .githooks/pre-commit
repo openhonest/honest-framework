@@ -14,8 +14,16 @@ root=$(git rev-parse --show-toplevel)
 staged=$(git diff --cached --name-only --diff-filter=ACM)
 py=$(printf '%s\n' "$staged" | grep -E '^python/.*\.py$' || true)
 feat=$(printf '%s\n' "$staged" | grep -E '\.feature$' || true)
+gram=$(printf '%s\n' "$staged" | grep -E '^python/tree-sitter-[a-z-]+/grammar\.js$' || true)
 
-[ -z "$py" ] && [ -z "$feat" ] && exit 0
+[ -z "$py" ] && [ -z "$feat" ] && [ -z "$gram" ] && exit 0
+
+# The grammar gate fires on a staged tree-sitter grammar: its generated parser must be staged
+# with it and must be what the CLI generates, or the old parser keeps parsing under a new grammar.
+if [ -n "$gram" ]; then
+    echo "grammar gate (generated parser follows grammar.js)…"
+    "$root/python/grammar-gate.sh" || exit 1
+fi
 
 if [ -n "$py" ]; then
     echo "honest-check gate (staged Python detected)…"

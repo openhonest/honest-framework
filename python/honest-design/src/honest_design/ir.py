@@ -43,6 +43,11 @@ class Function(TypedDict):
     column: int
 
 
+class Env(TypedDict):
+    name: str
+    type: list  # Type = list[Atom]; a union with Absent says the variable may be missing
+
+
 class TypeDecl(TypedDict):
     name: str
     record: list  # list[Field]; empty when the type is an alias
@@ -115,6 +120,7 @@ class HtmlAttr(TypedDict):
 class Module(TypedDict):
     name: str
     layer: str
+    envs: list  # list[Env]
     types: list
     sets: list
     vocabularies: list

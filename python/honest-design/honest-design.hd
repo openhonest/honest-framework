@@ -19,9 +19,15 @@ module honest-design
     err: Fault
   }
 
+  type Env = {
+    name: str
+    type: list<any>
+  }
+
   type Module = {
     name: str
     layer: str
+    envs: list<Env>
     types: list<any>
     functions: list<any>
     chains: list<any>
@@ -44,6 +50,9 @@ module honest-design
 
   fn read_hd : (source: str) -> Result
 
+  fn _read_env : (node: any, source: bytes) -> Env
+  fn _env_reads : (module: Module) -> list<any>
+  fn _unknown_envs : (module: Module) -> list<Fault>
   fn _read_surface_member : (node: any, source: bytes) -> SurfaceMember
   fn _read_surfaces : (node: any, source: bytes) -> Surfaces
   fn _bad_surfaces : (module: Module) -> list<Fault>

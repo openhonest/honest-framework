@@ -170,6 +170,11 @@ def _read_layer(node, source):
     return _field_text(node, "name", source)
 
 
+def _read_env(node, source) -> ir.Env:
+    """An environment variable the module reads: the name the deployment must supply, and its type."""
+    return {"name": _field_text(node, "name", source), "type": _read_type(_field(node, "type"), source)}
+
+
 def _read_surface_member(node, source) -> ir.SurfaceMember:
     """One surface: the id a rendered element must carry, and the element it lives in."""
     return {"id": _unquote(_field_text(node, "id", source)),
@@ -187,6 +192,7 @@ def _read_surfaces(node, source) -> ir.Surfaces:
 # body declaration -> (Module field, handler). Each handler is a function of (node, source).
 _BODY = {
     "layer_decl": ("layer", _read_layer),
+    "env_decl": ("envs", _read_env),
     "type_decl": ("types", _read_type_decl),
     "set_decl": ("sets", _read_set),
     "vocabulary_decl": ("vocabularies", _read_vocab),
@@ -209,6 +215,7 @@ def _read_module(node, source) -> ir.Module:
     return {
         "name": _field_text(node, "name", source),
         "layer": (groups.get("layer") or [""])[0],
+        "envs": groups.get("envs", []),
         "types": groups.get("types", []),
         "sets": groups.get("sets", []),
         "vocabularies": groups.get("vocabularies", []),

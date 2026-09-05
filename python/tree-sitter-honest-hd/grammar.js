@@ -37,6 +37,7 @@ module.exports = grammar({
 
     _body_decl: $ => choice(
       $.layer_decl,
+      $.env_decl,
       $.type_decl,
       $.set_decl,
       $.surfaces_decl,
@@ -51,6 +52,11 @@ module.exports = grammar({
     ),
 
     layer_decl: $ => seq('layer', field('name', $.identifier)),
+
+    // An environment variable the module reads: the name the deployment must supply and its
+    // type. A union with Absent says the variable may be missing and the boundary that reads
+    // it must handle that case; a bare type means required.
+    env_decl: $ => seq('env', field('name', $.identifier), ':', field('type', $.type)),
 
     // --- Types ---------------------------------------------------------------
 

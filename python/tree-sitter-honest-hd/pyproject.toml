@@ -8,3 +8,16 @@ version = "0.1.0"
 description = "Honest Framework .hd architecture-declaration grammar for tree-sitter — the parse boundary honest-design's reader folds into the IR."
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
+
+# uv rebuilds this package's compiled binding only when a file it is told to watch changes. By
+# default that is the packaging metadata alone, so a regenerated src/parser.c left the old binding
+# in place and the old grammar kept parsing, with every gate green (2026-09-02). These are the
+# files the binding is built from.
+[tool.uv]
+cache-keys = [
+  { file = "pyproject.toml" },
+  { file = "setup.py" },
+  { file = "src/parser.c" },
+  { file = "src/grammar.json" },
+  { file = "bindings/python/**/*.c" },
+]

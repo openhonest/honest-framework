@@ -20,6 +20,8 @@ def _module(src):
 
 _MODULE = """module m
   layer foundation
+  env DATABASE_URL : str
+  env POOL_SIZE : int | Absent
   type Rec = { a: str
  b: dict<str, set<str>> }
   type Alias = list<Ticket>
@@ -319,6 +321,25 @@ def _probe_entry_boundaries():
     return bad
 
 
+def _probe_envs():
+    """Environment variables fold to (name, type), a declared read is clean, an undeclared read is a fault."""
+    bad = []
+    m = _module(_MODULE)
+    clean = validate(_module("module m\n  env A : str\n  boundary_in fn c : () -> str side_effect reads \"env:A\"\n"))
+    if clean != []:
+        bad.append(f"a declared env read should validate clean: {clean}")
+    if m["envs"] != [{"name": "DATABASE_URL", "type": [{"name": "str", "args": []}]},
+                     {"name": "POOL_SIZE", "type": [{"name": "int", "args": []}, {"name": "Absent", "args": []}]}]:
+        bad.append(f"envs wrong: {m['envs']}")
+    ghost = validate(_module("module m\n  env A : str\n  boundary_in fn c : () -> str side_effect reads \"env:A\" side_effect reads \"env:GHOST\"\n"))
+    if ghost != [{"code": "unknown_env", "message": "Function 'c' reads environment variable 'GHOST', which no env declares", "category": "client", "detail": {"function": "c", "env": "GHOST"}}]:
+        bad.append(f"unknown_env wrong: {ghost}")
+    dup = validate(_module("module m\n  env A : str\n  env A : int\n"))
+    if dup != [{"code": "duplicate_name", "message": "Duplicate env name 'A'", "category": "client", "detail": {"kind": "envs", "name": "A"}}]:
+        bad.append(f"duplicate env wrong: {dup}")
+    return bad
+
+
 def _probe_validate():
     """The validator raises nothing on a valid module and pins each fault it does raise."""
     bad = []
@@ -403,6 +424,7 @@ def run():
         "surfaces": _probe_surfaces(),
         "entry_boundaries": _probe_entry_boundaries(),
         "validate": _probe_validate(),
+        "envs": _probe_envs(),
         "projection": _probe_projection(),
         "render": _probe_render(),
         "public_surface": _probe_public_surface(),
