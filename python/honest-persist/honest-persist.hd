@@ -51,6 +51,6 @@ module honest-persist
 
   orchestrator fn migrate : (schema: Schema, conn: any, dialect: str) -> any invokes inspect, expand_schema, validate_checks, diff, apply
 
-  boundary_in fn inspect : (conn: any, dialect: str) -> Schema side_effect reads "database"
+  reader fn inspect : (conn: any, dialect: str) -> Schema side_effect reads "database"
 
   boundary_in fn open_pool : (db_id: str, connect: Callable, classify: Callable, close: Callable, size: int) -> any side_effect reads "database"

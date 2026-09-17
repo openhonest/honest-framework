@@ -192,6 +192,56 @@ Feature: honest-design — the .hd architecture-declaration read path
     When _unknown_envs checks the module
     Then it returns an unknown_env fault naming the function and the variable, and none for a declared one
 
+  Scenario: _type_names collects every type name an expression mentions at any depth
+    Given a type expression with generics such as list<Connection>
+    When _type_names walks it
+    Then it returns every atom name at every depth
+
+  Scenario: _reaches_handle follows an alias toward handle within a budget of steps
+    Given a name, the module's aliases and a budget equal to their number
+    When _reaches_handle follows the alias chain
+    Then it answers true for handle and for an alias that leads to it, and false for a dead end or a cycle once the budget is spent
+
+  Scenario: _handles collects the names that mean a handle
+    Given a module with aliases resolving to handle, through one step or several
+    When _handles resolves them
+    Then it returns the scalar handle and every alias that reaches it
+
+  Scenario: _held_not_read flags a pure function that names a handle in its signature
+    Given a pure fn whose parameter or return names handle or an alias of it
+    When _held_not_read checks the module
+    Then it returns a handle_read fault naming the function and the handle, and none for a boundary or for a record that carries one
+
+  Scenario: _can_fault collects the functions whose return names Fault
+    Given a module's functions and their return types
+    When _can_fault reads them
+    Then it returns the names whose return type names Fault at any depth
+
+  Scenario: _callees lists every call whose answer comes back to the caller
+    Given invokes, invoked dispatch tables and chains
+    When _callees walks them
+    Then it returns each (caller, callee) pair once, with a table expanded to its handlers and a chain to its links
+
+  Scenario: _fault_swallowed flags a caller that cannot return the fault its callee can
+    Given a callee whose return names Fault and a caller whose return does not
+    When _fault_swallowed checks the module
+    Then it returns a fault_swallowed fault naming the caller and callee, through an invoke, a table or a chain, and none when the caller's return names Fault
+
+  Scenario: _fault_shape flags a Fault declared without fields to say what went wrong
+    Given a module whose functions can fault and whose Fault is an alias or a record with fewer than two fields
+    When _fault_shape checks it
+    Then it returns a fault_shape fault, and none for a two-field record or a Fault declared elsewhere
+
+  Scenario: _door_called flags a call to a door from inside the module
+    Given a boundary_in that an invokes names or that follows another link in a chain
+    When _door_called checks the module
+    Then it returns a door_called fault naming the caller and the door, and none for a door that heads a chain
+
+  Scenario: _reader_calls flags a reader that invokes anything or heads a chain
+    Given a reader with an invokes, or standing first in a chain
+    When _reader_calls checks the module
+    Then it returns a reader_calls fault naming the reader and what it calls, and none for a reader an orchestrator invokes
+
   Scenario: _duplicate_names flags a name declared twice within a kind
     Given a module IR with declarations
     When _duplicate_names checks each kind

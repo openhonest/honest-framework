@@ -129,14 +129,15 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `module <name>` | The module — one per file, the unit of editing and of the diagram. |
 | `layer <name>` | The module's tier: `foundation`, `tooling`, `domain`, ... |
 | `env <NAME> : <type>` | An environment variable the module reads: the name the deployment must supply, and its type. Write the type as a union with `Absent` when the variable may be missing, so the boundary that reads it has to handle that case; a bare type means required. The function that reads it declares `side_effect reads "env:<NAME>"`. |
-| `type <Name> = <expr>` | A type. `<expr>` is a scalar (`str`, `int`, `bool`, `void`, `any`), a generic (`list<T>`, `dict<K,V>`, `set<T>`, `Callable<...>`), or a record (`{ field: type ... }`); a return or field type may be a union (`Manifest \| Fault`). Types from other modules are referenced by name, not redeclared. |
+| `type <Name> = <expr>` | A type. `<expr>` is a scalar (`str`, `int`, `bool`, `void`, `any`, `handle`), a generic (`list<T>`, `dict<K,V>`, `set<T>`, `Callable<...>`), or a record (`{ field: type ... }`); a return or field type may be a union (`Manifest \| Fault`). Types from other modules are referenced by name, not redeclared. `handle` is an opaque reference to something outside the process, a driver connection or a file: obtained from a boundary, carried in records, handed back to boundaries, never read. `any` is a type nobody has decided yet; the two used to share a spelling and looked alike. |
 | `set <name> = { "a", ... }` | A bounded recognizer set of string literals; each member may be written `"member" : "description"`. |
 | `surfaces <name> = [ "id" as <element>, ... ]` | The surfaces a module renders, in the order the page requires. Each member names the `id` it is identified by and the element it lives in. Square brackets, not braces: the order is the contract, and a `set` is unordered. |
 | `vocabulary <name> = { set, ... }` | A vocabulary composed of sets (its Cartesian product is the exhaustive test space). |
 | `dispatch <name> = { "k" -> handler, ... }` | A dict-dispatch table — the honest replacement for `if/elif`. |
 | `dispatch <name> = { "k" -> handler from <field>, ... }` | The same, where each entry names the slice of the caller's input its handler is fed. `from` is optional per entry. Without it every handler in a table must declare the same wide input, which hides which field each one actually reads. |
 | `example <name> of <chain> = "..."` | A living-spec example bound to a chain. |
-| `boundary_in fn <name> : (args) -> ret side_effect reads "<source>"` | Column 1. Input boundary; declares what it reads. |
+| `boundary_in fn <name> : (args) -> ret side_effect reads "<source>"` | Column 1. A door: the world calls in here, and nothing inside the module calls it. It invokes the orchestrator that owns the sequence, or heads a chain to it. |
+| `reader fn <name> : (args) -> ret side_effect reads "<source>"` | Column 1. A read the program initiates, a clock, a file it chose to open, the environment mid-run. An orchestrator invokes it; it invokes nothing and heads no chain. It stands on the input side with the doors because it reads the world and writes nothing, and it differs from a door in who asks. |
 | `orchestrator fn <name> : (args) -> ret invokes <list> [raises <faults>]` | Column 2. Runs chains; names what it invokes and the faults it may raise. |
 | `fn <name> : (args) -> ret [raises <faults>]` | Column 3. A pure function. |
 | `boundary_out fn <name> : (args) -> ret side_effect writes "<sink>"` | Column 4. Output boundary; declares what it writes. |
@@ -176,7 +177,7 @@ Example  = { name, chain, text }
 
 Two workspace files fold into their own IR: `Rule = { id, module, statement }` (module is null for a global rule) and `Flow = { name, group, steps }` with `Actor = { name }` for the non-module participants.
 
-`column` is derived from the role keyword, not authored: `boundary_in → 1`, `orchestrator → 2`, `fn → 3`, `boundary_out → 4`. Deriving it in the reader keeps the diagram and the checks reading one field, so they cannot disagree about where a function sits. The IR is byte-stable for a given `.hd` file across every language target.
+`column` is derived from the role keyword, not authored: `boundary_in → 1`, `reader → 1`, `orchestrator → 2`, `fn → 3`, `boundary_out → 4`. Deriving it in the reader keeps the diagram and the checks reading one field, so they cannot disagree about where a function sits. The IR is byte-stable for a given `.hd` file across every language target.
 
 ---
 
@@ -199,6 +200,10 @@ The validator is a pure function `Module (IR) → [fault]`. An empty list is a v
 - Every chain link names a declared function (else `unknown_link`; dual of HC001).
 - Every `route` and `entry` targets a declared function (else `unknown_target`; the input-boundary dual of HC001).
 - Names are unique within each declaration kind — functions, types, sets, chains, vocabularies, envs (else `duplicate_name`; duals of HC004/HC005/HC006).
+- A fault bubbles up through returns. Along every call whose answer comes back, an `invokes`, each handler of an invoked dispatch table, each link of a chain to the next, a callee whose return names `Fault` makes its caller's return name `Fault` too (else `fault_swallowed`). Never a log line, never an exception thrown past the signatures, never a flag on something shared. A caller invoking a table inherits every handler's answer, because it cannot know which ran.
+- A fault is never cryptic: it tells the programmer what went wrong and what to do instead. The words cannot be checked; the shape can. A module whose functions can fault and that declares `Fault` declares it as a record with at least two fields to say so in (else `fault_shape`).
+- No pure `fn` names `handle`, or an alias of it, in its own signature (else `handle_read`). Carrying a handle inside a record it takes is holding; naming it is reading, and a handle is held and passed to a boundary, never read.
+- Nothing inside the module calls a door: no `invokes` names a `boundary_in` and none is a chain link after the first (else `door_called`). A `reader` invokes nothing and heads no chain (else `reader_calls`).
 - Every `side_effect reads "env:<NAME>"` names a declared `env` (else `unknown_env`; the configuration dual of `unknown_link`). A read nobody declared is configuration the deployment must supply that the file does not admit to.
 - A plain `fn` declares no `side_effect` (else `impure_pure_function`) — only `boundary_in`/`boundary_out` may.
 - The two public entry points check their own input, because both are boundaries and the caller's type is not

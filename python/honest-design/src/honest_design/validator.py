@@ -92,6 +92,129 @@ def _unknown_envs(module):
     ]
 
 
+# The scalar that means "held, never read": an opaque reference to something outside the
+# process, a driver connection or a file, obtained from a boundary and handed back to boundaries.
+HANDLE = "handle"
+
+
+def _type_names(parts):
+    """Every type name an expression mentions, at any depth: list<Connection> names both."""
+    names = set()
+    for part in parts:
+        names.add(part["name"])
+        for arg in part["args"]:
+            names |= _type_names(arg)
+    return names
+
+
+def _reaches_handle(name, aliases, budget):
+    """Whether a name is the handle scalar, or an alias that leads to it within `budget` steps.
+
+    The budget is the number of aliases in the module, so a chain can be as long as the module
+    allows and a cycle of aliases, which leads nowhere, ends when the budget does."""
+    if name == HANDLE:
+        return True
+    if budget == 0 or name not in aliases:
+        return False
+    return any(_reaches_handle(a["name"], aliases, budget - 1) for a in aliases[name])
+
+
+def _handles(module):
+    """The names that mean a handle: the scalar, and every alias that resolves to it."""
+    aliases = {t["name"]: t["alias"] for t in module["types"] if t["alias"]}
+    return {HANDLE} | {name for name in aliases if _reaches_handle(name, aliases, len(aliases))}
+
+
+def _held_not_read(module):
+    """A handle is held and passed to a boundary, never read.
+
+    `any` used to carry this meaning beside its other one, a type nobody has decided, and the two
+    looked alike. A pure function that names a handle in its own signature has opened it; carrying
+    one inside a record it takes is holding, and is allowed.
+    """
+    handles = _handles(module)
+    faults = []
+    for f in module["functions"]:
+        if f["role"] != "fn":
+            continue
+        named = _type_names(f["ret"])
+        for p in f["params"]:
+            named |= _type_names(p["type"])
+        for h in sorted(named & handles):
+            faults.append(fault("handle_read", f"Pure function '{f['name']}' names the handle '{h}' in its signature; a handle is held and passed to a boundary, never read", "server", {"function": f["name"], "handle": h}))
+    return faults
+
+
+# The name of the value a function returns when it cannot do what it was asked.
+FAULT = "Fault"
+
+
+def _can_fault(module):
+    """The functions whose return type says they can fail."""
+    return {f["name"] for f in module["functions"] if FAULT in _type_names(f["ret"])}
+
+
+def _callees(module):
+    """Every (caller, callee) pair whose answer comes back to the caller: an invoke, each handler
+    of an invoked dispatch table, and each link of a chain to the next. A pair that is both invoked
+    and chained is one call, so it appears once."""
+    tables = {d["name"]: [e["handler"] for e in d["entries"]] for d in module["dispatches"]}
+    pairs = []
+    for f in module["functions"]:
+        for target in f["invokes"]:
+            pairs += [(f["name"], callee) for callee in tables.get(target, [target])]
+    for c in module["chains"]:
+        pairs += list(zip(c["links"], c["links"][1:]))
+    return list(dict.fromkeys(pairs))
+
+
+def _fault_swallowed(module):
+    """A fault bubbles up through returns: as the return value of each function, back through
+    its callers, out to the boundary. Never a log line, never an exception past the signatures,
+    never a flag on something shared. So if a callee's return says it can fault, its caller's
+    return must say so too. A caller invoking a dispatch table inherits every handler's answer,
+    because it cannot know which one ran."""
+    fails = _can_fault(module)
+    return [
+        fault("fault_swallowed", f"Function '{caller}' calls '{callee}', which can fault, and cannot return one", "server", {"function": caller, "callee": callee})
+        for caller, callee in _callees(module)
+        if callee in fails and caller not in fails
+    ]
+
+
+def _fault_shape(module):
+    """A fault is never cryptic: it tells the programmer what went wrong and what to do instead.
+    The words are not checkable, but the shape is: a module whose functions can fault declares
+    Fault as a record with fields to say it in, not as an alias or a bare name."""
+    declared = {t["name"]: t for t in module["types"]}
+    # A Fault declared elsewhere has its shape checked there.
+    thin = bool(_can_fault(module)) and FAULT in declared and len(declared[FAULT]["record"]) < 2
+    return [fault("fault_shape", "Fault is declared without the fields to say what went wrong and what to do instead", "server", {"type": FAULT})] if thin else []
+
+
+def _door_called(module):
+    """A door is where the world calls in, and nothing inside the module calls one: no invokes
+    names it, and it is never a chain link after the first. A read the program initiates, a clock,
+    a file it chose to open, is a reader, and declaring it a door tells the truth about the column
+    and a lie about the arrows."""
+    doors = {f["name"] for f in module["functions"] if f["role"] == "boundary_in"}
+    return [
+        fault("door_called", f"Function '{caller}' calls '{callee}', a door; the world calls a door, nothing inside does. A read the program asks for is a reader", "server", {"function": caller, "callee": callee})
+        for caller, callee in _callees(module)
+        if callee in doors
+    ]
+
+
+def _reader_calls(module):
+    """A reader answers the program and asks nothing of it: it invokes nothing and heads no chain."""
+    readers = {f["name"] for f in module["functions"] if f["role"] == "reader"}
+    return [
+        fault("reader_calls", f"Reader '{caller}' calls '{callee}'; a reader answers the program and asks nothing of it", "server", {"function": caller, "callee": callee})
+        for caller, callee in _callees(module)
+        if caller in readers
+    ]
+
+
 def _impure_pure_functions(module):
     """A pure `fn` declares no side effect — only a boundary may."""
     return [
@@ -166,6 +289,11 @@ _CHECKS = (
     _unknown_envs,
     _duplicate_names,
     _impure_pure_functions,
+    _held_not_read,
+    _fault_swallowed,
+    _fault_shape,
+    _door_called,
+    _reader_calls,
     _bad_projections,
 )
 

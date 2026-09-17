@@ -30,7 +30,7 @@ _MODULE = """module m
   dispatch d = { "k" -> h, "j" -> g }
   example e of c = "does a thing"
   boundary_in fn read_it : (r: Request) -> list<str> side_effect reads "HTTP"
-  orchestrator fn run : (t: T) -> M invokes c, classify raises bad_input
+  orchestrator fn run : (t: T) -> M | Fault invokes c, classify raises bad_input
   fn classify : (t: str) -> T | Fault
   boundary_out fn write_it : (t: T) -> Resp raises "io.failed" side_effect reads_writes "database" side_effect writes "network"
   chain c = classify -> write_it
@@ -334,9 +334,90 @@ def _probe_envs():
     ghost = validate(_module("module m\n  env A : str\n  boundary_in fn c : () -> str side_effect reads \"env:A\" side_effect reads \"env:GHOST\"\n"))
     if ghost != [{"code": "unknown_env", "message": "Function 'c' reads environment variable 'GHOST', which no env declares", "category": "client", "detail": {"function": "c", "env": "GHOST"}}]:
         bad.append(f"unknown_env wrong: {ghost}")
+    cycle = validate(_module("module m\n  type A = B\n  type B = A\n  type C = str\n  fn f : (a: A, c: C) -> str\n"))
+    if cycle != []:
+        bad.append(f"an alias cycle leads to no handle and must not fault or hang: {cycle}")
     dup = validate(_module("module m\n  env A : str\n  env A : int\n"))
     if dup != [{"code": "duplicate_name", "message": "Duplicate env name 'A'", "category": "client", "detail": {"kind": "envs", "name": "A"}}]:
         bad.append(f"duplicate env wrong: {dup}")
+    return bad
+
+
+def _probe_handles():
+    """A handle is held and passed, never read: the scalar and its aliases, through records and generics."""
+    bad = []
+    src = ("module m\n  type Connection = handle\n  type Conn2 = Connection\n  type Database = { conn: Connection }\n"
+           "  boundary_out fn open_it : (target: str) -> Connection side_effect writes \"network\"\n"
+           "  boundary_out fn close_it : (c: Conn2) -> bool side_effect writes \"network\"\n"
+           "  fn carry : (db: Database) -> Database\n"
+           "  fn peek : (c: Connection) -> str\n"
+           "  fn peek_all : (cs: list<Conn2>) -> handle\n")
+    got = validate(_module(src))
+    want = [
+        {"code": "handle_read", "message": "Pure function 'peek' names the handle 'Connection' in its signature; a handle is held and passed to a boundary, never read", "category": "server", "detail": {"function": "peek", "handle": "Connection"}},
+        {"code": "handle_read", "message": "Pure function 'peek_all' names the handle 'Conn2' in its signature; a handle is held and passed to a boundary, never read", "category": "server", "detail": {"function": "peek_all", "handle": "Conn2"}},
+        {"code": "handle_read", "message": "Pure function 'peek_all' names the handle 'handle' in its signature; a handle is held and passed to a boundary, never read", "category": "server", "detail": {"function": "peek_all", "handle": "handle"}},
+    ]
+    if got != want:
+        bad.append(f"handle_read wrong: {got}")
+    return bad
+
+
+def _probe_faults():
+    """A fault bubbles up through returns, along invokes, dispatch tables and chains; and Fault has a shape."""
+    bad = []
+    src = ("module m\n  type Fault = { what_went_wrong: str\n what_to_do_instead: str }\n"
+           "  dispatch by_kind = { \"a\" -> fine, \"b\" -> fails }\n"
+           "  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\"\n"
+           "  orchestrator fn run : (r: str) -> str invokes by_kind\n"
+           "  orchestrator fn run_ok : (r: str) -> str | Fault invokes fails\n"
+           "  fn fine : (r: str) -> str\n"
+           "  fn fails : (r: str) -> str | Fault\n"
+           "  boundary_out fn sink : (s: str) -> bool | Fault side_effect writes \"stdout\"\n"
+           "  chain c = door -> run_ok -> sink\n")
+    got = validate(_module(src))
+    want = [{"code": "fault_swallowed", "message": "Function 'run' calls 'fails', which can fault, and cannot return one", "category": "server", "detail": {"function": "run", "callee": "fails"}},
+            {"code": "fault_swallowed", "message": "Function 'door' calls 'run_ok', which can fault, and cannot return one", "category": "server", "detail": {"function": "door", "callee": "run_ok"}}]
+    if got != want:
+        bad.append(f"fault_swallowed wrong: {got}")
+    shape_fault = {"code": "fault_shape", "message": "Fault is declared without the fields to say what went wrong and what to do instead", "category": "server", "detail": {"type": "Fault"}}
+    thin = validate(_module("module m\n  type Fault = str\n  fn f : (a: str) -> str | Fault\n"))
+    if thin != [shape_fault]:
+        bad.append(f"fault_shape (alias) wrong: {thin}")
+    one = validate(_module("module m\n  type Fault = { what_went_wrong: str }\n  fn f : (a: str) -> str | Fault\n"))
+    if one != [shape_fault]:
+        bad.append(f"fault_shape (one field) wrong: {one}")
+    unused = validate(_module("module m\n  type Fault = str\n  fn f : (a: str) -> str\n"))
+    if unused != []:
+        bad.append(f"a thin Fault nobody returns is not checked: {unused}")
+    elsewhere = validate(_module("module m\n  fn f : (a: str) -> str | Fault\n"))
+    if elsewhere != []:
+        bad.append(f"a Fault declared elsewhere should not fault the shape: {elsewhere}")
+    return bad
+
+
+def _probe_readers():
+    """A door is called by the world only; a reader is called by the program and calls nothing."""
+    bad = []
+    src = ("module m\n"
+           "  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\"\n"
+           "  boundary_in fn side_door : (r: str) -> str side_effect reads \"HTTP\"\n"
+           "  reader fn read_clock : () -> float side_effect reads \"clock\"\n"
+           "  reader fn read_dir : (p: str) -> list<str> side_effect reads \"filesystem\" invokes shape\n"
+           "  orchestrator fn run : (r: str) -> str invokes read_clock, side_door, shape\n"
+           "  fn shape : (r: str) -> str\n"
+           "  boundary_out fn sink : (s: str) -> bool side_effect writes \"stdout\"\n"
+           "  chain c = door -> run -> sink\n"
+           "  chain d = read_clock -> run\n")
+    m = _module(src)
+    if m["functions"][2]["column"] != 1:
+        bad.append(f"a reader stands in column 1: {m['functions'][2]}")
+    got = validate(m)
+    want = [{"code": "door_called", "message": "Function 'run' calls 'side_door', a door; the world calls a door, nothing inside does. A read the program asks for is a reader", "category": "server", "detail": {"function": "run", "callee": "side_door"}},
+            {"code": "reader_calls", "message": "Reader 'read_dir' calls 'shape'; a reader answers the program and asks nothing of it", "category": "server", "detail": {"function": "read_dir", "callee": "shape"}},
+            {"code": "reader_calls", "message": "Reader 'read_clock' calls 'run'; a reader answers the program and asks nothing of it", "category": "server", "detail": {"function": "read_clock", "callee": "run"}}]
+    if got != want:
+        bad.append(f"door/reader faults wrong: {got}")
     return bad
 
 
@@ -425,6 +506,9 @@ def run():
         "entry_boundaries": _probe_entry_boundaries(),
         "validate": _probe_validate(),
         "envs": _probe_envs(),
+        "handles": _probe_handles(),
+        "faults": _probe_faults(),
+        "readers": _probe_readers(),
         "projection": _probe_projection(),
         "render": _probe_render(),
         "public_surface": _probe_public_surface(),

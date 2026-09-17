@@ -110,7 +110,16 @@
               "name": "a",
               "role": "fn",
               "side_effects": [],
-              "invokes": []
+              "invokes": [],
+              "params": [],
+              "ret": [
+                {
+                  "name": "str",
+                  "args": []
+                }
+              ],
+              "column": 3,
+              "raises": []
             }
           ],
           "types": [],
@@ -145,7 +154,16 @@
                   "target": "X"
                 }
               ],
-              "invokes": []
+              "invokes": [],
+              "params": [],
+              "ret": [
+                {
+                  "name": "str",
+                  "args": []
+                }
+              ],
+              "column": 3,
+              "raises": []
             }
           ],
           "types": [],
@@ -383,6 +401,249 @@
             "detail": {
               "function": "c",
               "env": "GHOST"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "value-validate-handle-read",
+      "value_case": {
+        "function": "validate",
+        "input": {
+          "name": "m",
+          "layer": "",
+          "envs": [],
+          "types": [
+            {
+              "name": "Connection",
+              "record": [],
+              "alias": [
+                {
+                  "name": "handle",
+                  "args": []
+                }
+              ]
+            }
+          ],
+          "sets": [],
+          "vocabularies": [],
+          "dispatches": [],
+          "surfaces": [],
+          "examples": [],
+          "functions": [
+            {
+              "name": "peek",
+              "role": "fn",
+              "column": 3,
+              "params": [
+                {
+                  "name": "c",
+                  "type": [
+                    {
+                      "name": "Connection",
+                      "args": []
+                    }
+                  ]
+                }
+              ],
+              "ret": [
+                {
+                  "name": "str",
+                  "args": []
+                }
+              ],
+              "side_effects": [],
+              "invokes": [],
+              "raises": []
+            }
+          ],
+          "chains": [],
+          "routes": [],
+          "entries": [],
+          "html_attrs": []
+        },
+        "expected": [
+          {
+            "code": "handle_read",
+            "message": "Pure function 'peek' names the handle 'Connection' in its signature; a handle is held and passed to a boundary, never read",
+            "category": "server",
+            "detail": {
+              "function": "peek",
+              "handle": "Connection"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "value-validate-fault-swallowed",
+      "value_case": {
+        "function": "validate",
+        "input": {
+          "name": "m",
+          "layer": "",
+          "envs": [],
+          "types": [
+            {
+              "name": "Fault",
+              "record": [
+                {
+                  "name": "what_went_wrong",
+                  "type": [
+                    {
+                      "name": "str",
+                      "args": []
+                    }
+                  ]
+                },
+                {
+                  "name": "what_to_do_instead",
+                  "type": [
+                    {
+                      "name": "str",
+                      "args": []
+                    }
+                  ]
+                }
+              ],
+              "alias": []
+            }
+          ],
+          "sets": [],
+          "vocabularies": [],
+          "dispatches": [],
+          "surfaces": [],
+          "examples": [],
+          "functions": [
+            {
+              "name": "run",
+              "role": "orchestrator",
+              "column": 2,
+              "params": [],
+              "ret": [
+                {
+                  "name": "str",
+                  "args": []
+                }
+              ],
+              "side_effects": [],
+              "invokes": [
+                "fails"
+              ],
+              "raises": []
+            },
+            {
+              "name": "fails",
+              "role": "fn",
+              "column": 3,
+              "params": [],
+              "ret": [
+                {
+                  "name": "str",
+                  "args": []
+                },
+                {
+                  "name": "Fault",
+                  "args": []
+                }
+              ],
+              "side_effects": [],
+              "invokes": [],
+              "raises": []
+            }
+          ],
+          "chains": [],
+          "routes": [],
+          "entries": [],
+          "html_attrs": []
+        },
+        "expected": [
+          {
+            "code": "fault_swallowed",
+            "message": "Function 'run' calls 'fails', which can fault, and cannot return one",
+            "category": "server",
+            "detail": {
+              "function": "run",
+              "callee": "fails"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "read-reader-ok",
+      "read": {
+        "source": "module m\n  reader fn read_clock : () -> float side_effect reads \"clock\"\n  orchestrator fn run : (r: str) -> str invokes read_clock\n"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "value-validate-door-called",
+      "value_case": {
+        "function": "validate",
+        "input": {
+          "name": "m",
+          "layer": "",
+          "envs": [],
+          "types": [],
+          "sets": [],
+          "vocabularies": [],
+          "dispatches": [],
+          "surfaces": [],
+          "examples": [],
+          "functions": [
+            {
+              "name": "run",
+              "role": "orchestrator",
+              "column": 2,
+              "params": [],
+              "ret": [
+                {
+                  "name": "str",
+                  "args": []
+                }
+              ],
+              "side_effects": [],
+              "invokes": [
+                "door"
+              ],
+              "raises": []
+            },
+            {
+              "name": "door",
+              "role": "boundary_in",
+              "column": 1,
+              "params": [],
+              "ret": [
+                {
+                  "name": "str",
+                  "args": []
+                }
+              ],
+              "side_effects": [
+                {
+                  "direction": "reads",
+                  "target": "HTTP"
+                }
+              ],
+              "invokes": [],
+              "raises": []
+            }
+          ],
+          "chains": [],
+          "routes": [],
+          "entries": [],
+          "html_attrs": []
+        },
+        "expected": [
+          {
+            "code": "door_called",
+            "message": "Function 'run' calls 'door', a door; the world calls a door, nothing inside does. A read the program asks for is a reader",
+            "category": "server",
+            "detail": {
+              "function": "run",
+              "callee": "door"
             }
           }
         ]

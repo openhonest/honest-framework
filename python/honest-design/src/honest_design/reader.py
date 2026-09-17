@@ -114,7 +114,7 @@ def _read_example(node, source) -> ir.Example:
 
 # --- functions -----------------------------------------------------------------
 
-_ROLE_COLUMN = {"boundary_in": 1, "orchestrator": 2, "boundary_out": 4}
+_ROLE_COLUMN = {"boundary_in": 1, "reader": 1, "orchestrator": 2, "boundary_out": 4}
 
 
 def _read_param(node, source) -> ir.Param:

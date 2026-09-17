@@ -128,7 +128,10 @@ module.exports = grammar({
       repeat($._annotation),
     ),
 
-    role: $ => choice('boundary_in', 'boundary_out', 'orchestrator'),
+    // Four roles. boundary_in is a door: the world calls in and nothing inside calls it. reader is
+    // the program asking the world for something, a clock, a file it chose to open: an orchestrator
+    // invokes it, it invokes nothing. Both stand on the input side; they differ in who initiates.
+    role: $ => choice('boundary_in', 'reader', 'boundary_out', 'orchestrator'),
 
     signature: $ => seq(':', $.params, '->', field('ret', $.type)),
 

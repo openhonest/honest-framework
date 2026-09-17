@@ -53,6 +53,16 @@ module honest-design
   fn _read_env : (node: any, source: bytes) -> Env
   fn _env_reads : (module: Module) -> list<any>
   fn _unknown_envs : (module: Module) -> list<Fault>
+  fn _type_names : (parts: list<any>) -> set<str>
+  fn _reaches_handle : (name: str, aliases: dict<str, any>, budget: int) -> bool
+  fn _handles : (module: Module) -> set<str>
+  fn _held_not_read : (module: Module) -> list<Fault>
+  fn _can_fault : (module: Module) -> set<str>
+  fn _callees : (module: Module) -> list<any>
+  fn _fault_swallowed : (module: Module) -> list<Fault>
+  fn _fault_shape : (module: Module) -> list<Fault>
+  fn _door_called : (module: Module) -> list<Fault>
+  fn _reader_calls : (module: Module) -> list<Fault>
   fn _read_surface_member : (node: any, source: bytes) -> SurfaceMember
   fn _read_surfaces : (node: any, source: bytes) -> Surfaces
   fn _bad_surfaces : (module: Module) -> list<Fault>
