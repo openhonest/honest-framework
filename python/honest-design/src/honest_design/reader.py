@@ -170,6 +170,12 @@ def _read_layer(node, source):
     return _field_text(node, "name", source)
 
 
+def _read_store(node, source) -> ir.Store:
+    """State held between calls: one pure function's answers by its arguments, and why."""
+    return {"name": _field_text(node, "name", source), "fn": _field_text(node, "fn", source),
+            "why": _unquote(_field_text(node, "why", source))}
+
+
 def _read_env(node, source) -> ir.Env:
     """An environment variable the module reads: the name the deployment must supply, and its type."""
     return {"name": _field_text(node, "name", source), "type": _read_type(_field(node, "type"), source)}
@@ -193,6 +199,7 @@ def _read_surfaces(node, source) -> ir.Surfaces:
 _BODY = {
     "layer_decl": ("layer", _read_layer),
     "env_decl": ("envs", _read_env),
+    "store_decl": ("stores", _read_store),
     "type_decl": ("types", _read_type_decl),
     "set_decl": ("sets", _read_set),
     "vocabulary_decl": ("vocabularies", _read_vocab),
@@ -216,6 +223,7 @@ def _read_module(node, source) -> ir.Module:
         "name": _field_text(node, "name", source),
         "layer": (groups.get("layer") or [""])[0],
         "envs": groups.get("envs", []),
+        "stores": groups.get("stores", []),
         "types": groups.get("types", []),
         "sets": groups.get("sets", []),
         "vocabularies": groups.get("vocabularies", []),

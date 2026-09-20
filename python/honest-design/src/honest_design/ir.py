@@ -48,6 +48,12 @@ class Env(TypedDict):
     type: list  # Type = list[Atom]; a union with Absent says the variable may be missing
 
 
+class Store(TypedDict):
+    name: str
+    fn: str  # the pure function whose answers it holds, keyed by that function's arguments
+    why: str  # the measurement or reason it exists
+
+
 class TypeDecl(TypedDict):
     name: str
     record: list  # list[Field]; empty when the type is an alias
@@ -121,6 +127,7 @@ class Module(TypedDict):
     name: str
     layer: str
     envs: list  # list[Env]
+    stores: list  # list[Store]
     types: list
     sets: list
     vocabularies: list

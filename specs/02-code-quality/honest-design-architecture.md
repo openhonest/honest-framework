@@ -129,6 +129,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `module <name>` | The module — one per file, the unit of editing and of the diagram. |
 | `layer <name>` | The module's tier: `foundation`, `tooling`, `domain`, ... |
 | `env <NAME> : <type>` | An environment variable the module reads: the name the deployment must supply, and its type. Write the type as a union with `Absent` when the variable may be missing, so the boundary that reads it has to handle that case; a bare type means required. The function that reads it declares `side_effect reads "env:<NAME>"`. |
+| `store <name> = <fn> "<why>"` | State the module holds between calls: the answers of the pure function `<fn>`, keyed by its arguments, so what the store is keyed by and what it holds are read from that function's signature and never declared twice. Holding anything else makes staleness possible, so `<fn>` must be a plain `fn`. The string is the reason the store exists, because a cache follows a measurement. The orchestrator that keeps the answers declares `side_effect reads_writes "store:<name>"`; only an orchestrator may, since it is the thing that keeps what each step returned. |
 | `type <Name> = <expr>` | A type. `<expr>` is a scalar (`str`, `int`, `bool`, `void`, `any`, `handle`), a generic (`list<T>`, `dict<K,V>`, `set<T>`, `Callable<...>`), or a record (`{ field: type ... }`); a return or field type may be a union (`Manifest \| Fault`). Types from other modules are referenced by name, not redeclared. `handle` is an opaque reference to something outside the process, a driver connection or a file: obtained from a boundary, carried in records, handed back to boundaries, never read. `any` is a type nobody has decided yet; the two used to share a spelling and looked alike. |
 | `set <name> = { "a", ... }` | A bounded recognizer set of string literals; each member may be written `"member" : "description"`. |
 | `surfaces <name> = [ "id" as <element>, ... ]` | The surfaces a module renders, in the order the page requires. Each member names the `id` it is identified by and the element it lives in. Square brackets, not braces: the order is the contract, and a `set` is unordered. |
@@ -146,7 +147,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `entry "<callsite>" -> fn` | An entry point whose call-site shape is a string — a decorator, a context manager, a middleware registration — dispatching to a function. |
 | `html_attr "attr" "desc"` | A declared client-side attribute. |
 
-A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, an environment variable by name as `env:<NAME>`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes it can return, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). A dispatch entry may add `from <field>`, naming the slice of the caller's input that entry's handler is fed; the handler then declares that field's type instead of the whole record, so a predicate reading one field of sixteen says so in its signature rather than in a comment. There is exactly one way to say each thing.
+A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, an environment variable by name as `env:<NAME>`, a store by name as `store:<name>`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes it can return, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). A dispatch entry may add `from <field>`, naming the slice of the caller's input that entry's handler is fed; the handler then declares that field's type instead of the whole record, so a predicate reading one field of sixteen says so in its signature rather than in a comment. There is exactly one way to say each thing.
 
 ### 3.3 Workspace files
 
@@ -162,9 +163,10 @@ Two file kinds sit above the modules and describe the workspace as a whole:
 The reader produces a normalized, language-agnostic IR — plain data, the single value every downstream consumer (validator, renderer, honest-check conformance tier) reads. It is not tied to tree-sitter node shapes; the reader folds the parse tree into it so no consumer touches the grammar.
 
 ```
-Module   = { name, layer, envs, types, sets, vocabularies, dispatches,
+Module   = { name, layer, envs, stores, types, sets, vocabularies, dispatches,
              functions, chains, examples, routes, entries, html_attrs }
 Env      = { name, type }         # type: a union with Absent when the variable may be missing
+Store    = { name, fn, why }      # fn: the pure function whose answers are held, by its arguments
 Function = { name, role, params, ret, side_effects, invokes, raises, column }
              # role: "boundary_in" | "orchestrator" | "fn" | "boundary_out"
              # params: [ { name, type } ] ; ret: type (possibly a union)
@@ -203,6 +205,7 @@ The validator is a pure function `Module (IR) → [fault]`. An empty list is a v
 - A fault bubbles up through returns. Along every call whose answer comes back, an `invokes`, each handler of an invoked dispatch table, each link of a chain to the next, a callee whose return names `Fault` makes its caller's return name `Fault` too (else `fault_swallowed`). Never a log line, never an exception thrown past the signatures, never a flag on something shared. A caller invoking a table inherits every handler's answer, because it cannot know which ran.
 - A fault is never cryptic: it tells the programmer what went wrong and what to do instead. The words cannot be checked; the shape can. A module whose functions can fault and that declares `Fault` declares it as a record with at least two fields to say so in (else `fault_shape`).
 - No pure `fn` names `handle`, or an alias of it, in its own signature (else `handle_read`). Carrying a handle inside a record it takes is holding; naming it is reading, and a handle is held and passed to a boundary, never read.
+- A `store` holds the answers of a plain `fn` (else `store_of_impure`); every `side_effect` naming `store:<name>` names a declared store (else `unknown_store`); and only an orchestrator reaches one (else `store_not_orchestrator`; a pure fn reaching one is already `impure_pure_function`).
 - Nothing inside the module calls a door: no `invokes` names a `boundary_in` and none is a chain link after the first (else `door_called`). A `reader` invokes nothing and heads no chain (else `reader_calls`).
 - Every `side_effect reads "env:<NAME>"` names a declared `env` (else `unknown_env`; the configuration dual of `unknown_link`). A read nobody declared is configuration the deployment must supply that the file does not admit to.
 - A plain `fn` declares no `side_effect` (else `impure_pure_function`) — only `boundary_in`/`boundary_out` may.

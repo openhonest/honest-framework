@@ -53,7 +53,7 @@ def _unknown_targets(module):
     return routes + entries
 
 
-_UNIQUE_KINDS = ("functions", "types", "sets", "chains", "vocabularies", "envs")
+_UNIQUE_KINDS = ("functions", "types", "sets", "chains", "vocabularies", "envs", "stores")
 
 
 def _duplicate_names(module):
@@ -215,6 +215,49 @@ def _reader_calls(module):
     ]
 
 
+# A side effect reaches a store by name when its target carries this prefix.
+STORE_TARGET = "store:"
+
+
+def _store_reads(module):
+    """Every (function, store name) pair where a side effect names a store."""
+    return [(f, se["target"][len(STORE_TARGET):])
+            for f in module["functions"] for se in f["side_effects"]
+            if se["target"].startswith(STORE_TARGET)]
+
+
+def _store_of_impure(module):
+    """A store holds the answers of a pure fn and nothing else. A boundary's answer comes from
+    the world and can go stale; an orchestrator's answer is a sequence, not a value to keep."""
+    roles = {f["name"]: f["role"] for f in module["functions"]}
+    return [
+        fault("store_of_impure", f"Store '{st['name']}' holds the answers of '{st['fn']}', which is not a pure fn; only a pure function's answer can be held without going stale", "server", {"store": st["name"], "fn": st["fn"]})
+        for st in module["stores"]
+        if roles.get(st["fn"]) != "fn"
+    ]
+
+
+def _unknown_stores(module):
+    """Every side effect naming a store names a declared one (the dual of unknown_env)."""
+    declared = {st["name"] for st in module["stores"]}
+    return [
+        fault("unknown_store", f"Function '{f['name']}' reaches store '{name}', which no store declares", "client", {"function": f["name"], "store": name})
+        for f, name in _store_reads(module)
+        if name not in declared
+    ]
+
+
+def _store_not_orchestrator(module):
+    """Only an orchestrator reaches a store: it is the thing that keeps what each step returned.
+    A pure fn reaching one is already impure; a boundary reaching one has confused the world
+    with the process's own memory."""
+    return [
+        fault("store_not_orchestrator", f"Function '{f['name']}' reaches store '{name}', and it is a {f['role']}; only an orchestrator keeps what a step returned", "server", {"function": f["name"], "store": name})
+        for f, name in _store_reads(module)
+        if f["role"] not in ("orchestrator", "fn")
+    ]
+
+
 def _impure_pure_functions(module):
     """A pure `fn` declares no side effect — only a boundary may."""
     return [
@@ -294,6 +337,9 @@ _CHECKS = (
     _fault_shape,
     _door_called,
     _reader_calls,
+    _store_of_impure,
+    _unknown_stores,
+    _store_not_orchestrator,
     _bad_projections,
 )
 

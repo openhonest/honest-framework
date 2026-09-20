@@ -132,6 +132,11 @@ Feature: honest-design — the .hd architecture-declaration read path
     When _read_env folds it
     Then it returns the name the deployment must supply and the type as a union of atoms
 
+  Scenario: _read_store folds a store declaration
+    Given a store_decl node naming a store, the pure function whose answers it holds, and why
+    When _read_store folds it
+    Then it returns the name, the function and the unquoted reason
+
   Scenario: _read_layer folds a layer declaration
     Given a layer_decl node
     When _read_layer folds it
@@ -241,6 +246,26 @@ Feature: honest-design — the .hd architecture-declaration read path
     Given a reader with an invokes, or standing first in a chain
     When _reader_calls checks the module
     Then it returns a reader_calls fault naming the reader and what it calls, and none for a reader an orchestrator invokes
+
+  Scenario: _store_reads lists every store a function reaches by name
+    Given a module whose functions declare side effects
+    When _store_reads walks them
+    Then it returns each (function, store) pair whose target carries the store: prefix and nothing else
+
+  Scenario: _store_of_impure flags a store holding anything but a pure function's answers
+    Given a store whose fn is a boundary, an orchestrator or undeclared
+    When _store_of_impure checks the module
+    Then it returns a store_of_impure fault naming the store and the function, and none for a plain fn
+
+  Scenario: _unknown_stores flags a store reached that no store declares
+    Given a function reaching "store:GHOST" in a module declaring no store GHOST
+    When _unknown_stores checks the module
+    Then it returns an unknown_store fault naming the function and the store, and none for a declared one
+
+  Scenario: _store_not_orchestrator flags a boundary that reaches a store
+    Given a boundary_in, reader or boundary_out whose side effect names a store
+    When _store_not_orchestrator checks the module
+    Then it returns a store_not_orchestrator fault naming the function and the store, and none for an orchestrator
 
   Scenario: _duplicate_names flags a name declared twice within a kind
     Given a module IR with declarations

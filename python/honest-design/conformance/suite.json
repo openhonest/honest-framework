@@ -36,6 +36,7 @@
                 "name": "x",
                 "layer": "foundation",
                 "envs": [],
+                "stores": [],
                 "types": [],
                 "sets": [],
                 "vocabularies": [],
@@ -134,7 +135,8 @@
           "surfaces": [],
           "examples": [],
           "html_attrs": [],
-          "envs": []
+          "envs": [],
+          "stores": []
         },
         "expected": []
       }
@@ -178,7 +180,8 @@
           "surfaces": [],
           "examples": [],
           "html_attrs": [],
-          "envs": []
+          "envs": [],
+          "stores": []
         },
         "expected": [
           {
@@ -391,7 +394,8 @@
           "chains": [],
           "routes": [],
           "entries": [],
-          "html_attrs": []
+          "html_attrs": [],
+          "stores": []
         },
         "expected": [
           {
@@ -461,7 +465,8 @@
           "chains": [],
           "routes": [],
           "entries": [],
-          "html_attrs": []
+          "html_attrs": [],
+          "stores": []
         },
         "expected": [
           {
@@ -556,7 +561,8 @@
           "chains": [],
           "routes": [],
           "entries": [],
-          "html_attrs": []
+          "html_attrs": [],
+          "stores": []
         },
         "expected": [
           {
@@ -634,7 +640,8 @@
           "chains": [],
           "routes": [],
           "entries": [],
-          "html_attrs": []
+          "html_attrs": [],
+          "stores": []
         },
         "expected": [
           {
@@ -648,6 +655,13 @@
           }
         ]
       }
+    },
+    {
+      "id": "read-store-ok",
+      "read": {
+        "source": "module m\n  store compiled = compile_it \"built once\"\n  orchestrator fn run : (r: str) -> str invokes compile_it side_effect reads_writes \"store:compiled\"\n  fn compile_it : (r: str) -> str\n"
+      },
+      "expect": "ok"
     }
   ],
   "value_oracle_exempt": []

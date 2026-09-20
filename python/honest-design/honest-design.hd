@@ -24,10 +24,17 @@ module honest-design
     type: list<any>
   }
 
+  type Store = {
+    name: str
+    fn: str
+    why: str
+  }
+
   type Module = {
     name: str
     layer: str
     envs: list<Env>
+    stores: list<Store>
     types: list<any>
     functions: list<any>
     chains: list<any>
@@ -51,6 +58,11 @@ module honest-design
   fn read_hd : (source: str) -> Result
 
   fn _read_env : (node: any, source: bytes) -> Env
+  fn _read_store : (node: any, source: bytes) -> Store
+  fn _store_reads : (module: Module) -> list<any>
+  fn _store_of_impure : (module: Module) -> list<Fault>
+  fn _unknown_stores : (module: Module) -> list<Fault>
+  fn _store_not_orchestrator : (module: Module) -> list<Fault>
   fn _env_reads : (module: Module) -> list<any>
   fn _unknown_envs : (module: Module) -> list<Fault>
   fn _type_names : (parts: list<any>) -> set<str>

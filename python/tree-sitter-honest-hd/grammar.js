@@ -38,6 +38,7 @@ module.exports = grammar({
     _body_decl: $ => choice(
       $.layer_decl,
       $.env_decl,
+      $.store_decl,
       $.type_decl,
       $.set_decl,
       $.surfaces_decl,
@@ -57,6 +58,12 @@ module.exports = grammar({
     // type. A union with Absent says the variable may be missing and the boundary that reads
     // it must handle that case; a bare type means required.
     env_decl: $ => seq('env', field('name', $.identifier), ':', field('type', $.type)),
+
+    // State the module holds between calls: the answers of one pure function, by its arguments.
+    // Holding anything else makes staleness possible, so the function is the whole of what a
+    // store may hold, and its signature says what the store is keyed by and what it holds. The
+    // string is the reason the store exists; a cache follows a measurement, never precedes it.
+    store_decl: $ => seq('store', field('name', $.identifier), '=', field('fn', $.identifier), field('why', $.string)),
 
     // --- Types ---------------------------------------------------------------
 

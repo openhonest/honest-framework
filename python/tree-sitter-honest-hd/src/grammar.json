@@ -67,6 +67,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "store_decl"
+        },
+        {
+          "type": "SYMBOL",
           "name": "type_decl"
         },
         {
@@ -153,6 +157,43 @@
           "content": {
             "type": "SYMBOL",
             "name": "type"
+          }
+        }
+      ]
+    },
+    "store_decl": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "store"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "="
+        },
+        {
+          "type": "FIELD",
+          "name": "fn",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "why",
+          "content": {
+            "type": "SYMBOL",
+            "name": "string"
           }
         }
       ]

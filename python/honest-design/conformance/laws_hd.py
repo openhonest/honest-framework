@@ -421,6 +421,42 @@ def _probe_readers():
     return bad
 
 
+def _probe_stores():
+    """A store holds one pure function's answers, is named by the orchestrator that keeps them, and by nothing else."""
+    bad = []
+    src = ("module m\n"
+           "  store compiled = compile_it \"a statement is built once; render.feature\"\n"
+           "  store wrong = door \"held from the world\"\n"
+           "  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\" side_effect reads_writes \"store:compiled\"\n"
+           "  orchestrator fn run : (r: str) -> str invokes compile_it side_effect reads_writes \"store:compiled\" side_effect reads \"store:GHOST\"\n"
+           "  fn compile_it : (r: str) -> str\n"
+           "  boundary_out fn sink : (s: str) -> bool side_effect writes \"stdout\"\n"
+           "  chain c = door -> run -> sink\n")
+    m = _module(src)
+    if m["stores"] != [{"name": "compiled", "fn": "compile_it", "why": "a statement is built once; render.feature"},
+                       {"name": "wrong", "fn": "door", "why": "held from the world"}]:
+        bad.append(f"stores wrong: {m['stores']}")
+    got = validate(m)
+    want = [{"code": "store_of_impure", "message": "Store 'wrong' holds the answers of 'door', which is not a pure fn; only a pure function's answer can be held without going stale", "category": "server", "detail": {"store": "wrong", "fn": "door"}},
+            {"code": "unknown_store", "message": "Function 'run' reaches store 'GHOST', which no store declares", "category": "client", "detail": {"function": "run", "store": "GHOST"}},
+            {"code": "store_not_orchestrator", "message": "Function 'door' reaches store 'compiled', and it is a boundary_in; only an orchestrator keeps what a step returned", "category": "server", "detail": {"function": "door", "store": "compiled"}}]
+    if got != want:
+        bad.append(f"store faults wrong: {got}")
+    clean = validate(_module("module m\n  store s = f \"why\"\n  orchestrator fn run : (r: str) -> str invokes f side_effect reads_writes \"store:s\"\n  fn f : (r: str) -> str\n"))
+    if clean != []:
+        bad.append(f"a well-formed store should validate clean: {clean}")
+    pure = validate(_module("module m\n  store s = f \"why\"\n  fn f : (r: str) -> str side_effect reads_writes \"store:s\"\n"))
+    if pure != [{"code": "impure_pure_function", "message": "Pure function 'f' declares a side effect", "category": "server", "detail": {"function": "f"}}]:
+        bad.append(f"a pure fn reaching a store is impure and nothing else: {pure}")
+    out = validate(_module("module m\n  store s = f \"why\"\n  fn f : (r: str) -> str\n  boundary_out fn sink : (s: str) -> bool side_effect writes \"stdout\" side_effect reads_writes \"store:s\"\n"))
+    if [(x["code"], x["detail"]["function"]) for x in out] != [("store_not_orchestrator", "sink")]:
+        bad.append(f"an output boundary reaching a store: {out}")
+    dup = validate(_module("module m\n  store s = f \"a\"\n  store s = f \"b\"\n  fn f : (r: str) -> str\n"))
+    if dup != [{"code": "duplicate_name", "message": "Duplicate store name 's'", "category": "client", "detail": {"kind": "stores", "name": "s"}}]:
+        bad.append(f"duplicate store wrong: {dup}")
+    return bad
+
+
 def _probe_validate():
     """The validator raises nothing on a valid module and pins each fault it does raise."""
     bad = []
@@ -509,6 +545,7 @@ def run():
         "handles": _probe_handles(),
         "faults": _probe_faults(),
         "readers": _probe_readers(),
+        "stores": _probe_stores(),
         "projection": _probe_projection(),
         "render": _probe_render(),
         "public_surface": _probe_public_surface(),
