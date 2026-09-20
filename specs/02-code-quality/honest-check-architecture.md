@@ -430,11 +430,11 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-SM04 | Warning | ✓ | Dead state (no outgoing transitions) |
 | HC-P001 | Error | ✓ | if/elif/else dispatch chain |
 | HC-P002 | Error | ✓ | Exception caught in non-boundary function |
-| HC-P003 | Error | ✓ | Inheritance from non-framework base |
+| HC-P003 | Error | ✓ | Class declaration (inheritance or bare class) |
 | HC-P004 | Error | ✓ | I/O inside non-boundary function |
-| HC-P005 | Warning | ✓ | isinstance() / type() in business logic |
+| HC-P005 | Warning | ✓ | isinstance() or type() in business logic |
 | HC-P006 | Warning | ✓ | Cache without profiling annotation |
-| HC-P007 | Warning | ✓ | Instance state in constructor |
+| HC-P007 | Warning | ✓ | Instance state in a constructor |
 | HC-P010 | Error | ✓ | Non-serializable return value |
 | HC-P011 | Error | ✓ | Framework lifecycle hook |
 | HC-P013 | Error | ✓ | Unbounded database routing key |
@@ -875,7 +875,7 @@ FUNCTION check_HC_P003(ast):
 
 Same detection as HC008, elevated from warning to error for the principle tier. A function not declared as a boundary that performs I/O is a structural violation of Honest Code principle 4.
 
-#### HC-P005 — isinstance() / type() in business logic
+#### HC-P005 — isinstance() or type() in business logic
 
 ```
 FUNCTION check_HC_P005(ast):
@@ -904,7 +904,7 @@ FUNCTION check_HC_P006(ast):
                 "Add @profiled annotation or # honest: profiled comment.")
 ```
 
-#### HC-P007 — Instance state in constructor
+#### HC-P007 — Instance state in a constructor
 
 ```
 FUNCTION check_HC_P007(ast):
@@ -1271,8 +1271,8 @@ These rules cannot be verified statically. honest-check emits an `info` diagnost
 | HC003 (predicate × predicate) | honest-test | Predicate overlap requires empirical testing |
 | HC011 (predicate sampling) | honest-test | Catch-all predicate detection via sampling |
 | HC-P008 | honest-test | Gherkin step too long |
-| HC-P009 | honest-test | Chain missing .feature file |
-| HC-P012 | honest-test | Excessive mocks in test |
+| HC-P009 | honest-test | Roled function without a gherkin |
+| HC-P012 | honest-test | Excessive test doubles in test |
 
 ### 4.4 Link Declaration
 
@@ -1540,11 +1540,11 @@ src/pipelines/user.py:42: info
 | HC-P002 | Error | Static | — | Exception caught in non-boundary function |
 | HC-P003 | Error | Static | — | Class declaration (inheritance or bare class) |
 | HC-P004 | Error | Static | — | I/O inside non-boundary function |
-| HC-P005 | Warning | Static | — | isinstance() in business logic |
+| HC-P005 | Warning | Static | — | isinstance() or type() in business logic |
 | HC-P006 | Warning | Static | — | Cache without profiling annotation |
-| HC-P007 | Warning | Static | — | Instance state in constructor |
+| HC-P007 | Warning | Static | — | Instance state in a constructor |
 | HC-P008 | Warning | Test | — | Gherkin step too long (honest-test) |
-| HC-P009 | Warning | Test | — | Chain missing .feature file (honest-test) |
+| HC-P009 | Warning | Test | — | Roled function without a gherkin (honest-test) |
 | HC-P010 | Error | Static | — | Non-serializable return value |
 | HC-P011 | Error | Static | — | Framework lifecycle hook |
 | HC-P013 | Error | Static | — | Unbounded database routing key |

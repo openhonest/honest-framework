@@ -1764,7 +1764,7 @@ Promoted from HC008 (Warning → Error for principle tier). I/O inside a functio
 
 *(See HC008 algorithm — same detection, elevated severity.)*
 
-#### HC-P005 — isinstance() / type() in business logic
+#### HC-P005 — isinstance() or type() in business logic
 
 **Severity: Warning**
 
@@ -1801,7 +1801,7 @@ FUNCTION check_HC_P006(ast):
 
 Suppressed with `# honest: profiled` comment or `@profiled` decorator.
 
-#### HC-P007 — Instance state in __init__
+#### HC-P007 — Instance state in a constructor
 
 **Severity: Warning**
 
@@ -1833,7 +1833,7 @@ FUNCTION check_HC_P008(step_files):
                     f"Step '{step_def.name}' is {line_count} lines — honest functions need 1-3 line steps")
 ```
 
-#### HC-P009 — Chain missing .feature file
+#### HC-P009 — Roled function without a gherkin
 
 **Severity: Warning**
 
@@ -1929,16 +1929,16 @@ FUNCTION check_HC_P012(test_files):
 | HC-SM05 | Error | Initial state not in vocabulary | State machine |
 | HC-P001 | Error | if/elif/else dispatch chain | Application AST |
 | HC-P002 | Error | Exception caught in non-boundary function | Application AST |
-| HC-P003 | Error | Class declaration | Application AST |
+| HC-P003 | Error | Class declaration (inheritance or bare class) | Application AST |
 | HC-P004 | Error | I/O inside non-boundary function | Application AST |
-| HC-P005 | Warning | isinstance() in business logic | Application AST |
+| HC-P005 | Warning | isinstance() or type() in business logic | Application AST |
 | HC-P006 | Warning | Cache without profiling annotation | Application AST |
-| HC-P007 | Warning | Instance state in __init__ | Application AST |
+| HC-P007 | Warning | Instance state in a constructor | Application AST |
 | HC-P008 | Warning | Gherkin step too long | Test files |
-| HC-P009 | Warning | Chain missing .feature file | Coverage |
+| HC-P009 | Warning | Roled function without a gherkin | Coverage |
 | HC-P010 | Error | Non-serializable return value | Application AST |
 | HC-P011 | Error | Framework lifecycle hook | Application AST |
-| HC-P012 | Warning | Excessive mocks in test | Test files |
+| HC-P012 | Warning | Excessive test doubles in test | Test files |
 
 ---
 
