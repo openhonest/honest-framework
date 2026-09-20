@@ -6,6 +6,9 @@ module honest-check
 
   layer tooling
 
+  # The surface, closed: every side of the world a boundary here touches, and no other.
+  inputs = { "filesystem" }
+
   type Diagnostic = {
     rule_id: str
     severity: str

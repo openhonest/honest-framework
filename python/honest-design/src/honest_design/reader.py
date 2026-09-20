@@ -184,6 +184,12 @@ def _read_store(node, source) -> ir.Store:
             "why": _unquote(_field_text(node, "why", source))}
 
 
+def _read_surface(node, source):
+    """One side list, inputs or outputs: set members, each a side of the world with an optional
+    description. Several blocks read as one list."""
+    return [_read_member(m, source) for m in _children(node, "set_member")]
+
+
 def _read_env(node, source) -> ir.Env:
     """An environment variable the module reads: the name the deployment must supply, and its type."""
     return {"name": _field_text(node, "name", source), "type": _read_type(_field(node, "type"), source), "note": _note(node, source)}
@@ -208,6 +214,8 @@ _BODY = {
     "layer_decl": ("layer", _read_layer),
     "env_decl": ("envs", _read_env),
     "store_decl": ("stores", _read_store),
+    "inputs_decl": ("inputs", _read_surface),
+    "outputs_decl": ("outputs", _read_surface),
     "type_decl": ("types", _read_type_decl),
     "set_decl": ("sets", _read_set),
     "vocabulary_decl": ("vocabularies", _read_vocab),
@@ -232,6 +240,9 @@ def _read_module(node, source) -> ir.Module:
         "layer": (groups.get("layer") or [""])[0],
         "envs": groups.get("envs", []),
         "stores": groups.get("stores", []),
+        "inputs": [m for block in groups.get("inputs", []) for m in block],
+        "outputs": [m for block in groups.get("outputs", []) for m in block],
+        "surface_declared": "inputs" in groups or "outputs" in groups,
         "types": groups.get("types", []),
         "sets": groups.get("sets", []),
         "vocabularies": groups.get("vocabularies", []),

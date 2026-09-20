@@ -5,6 +5,10 @@ module honest-persist
 
   layer data
 
+  # The surface, closed: every side of the world a boundary here touches, and no other.
+  inputs = { "database" }
+  outputs = { "database" }
+
   type Schema = {
     tables: list<any>
   }

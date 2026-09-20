@@ -35,6 +35,9 @@ module honest-design
     layer: str
     envs: list<Env>
     stores: list<Store>
+    inputs: list<any>
+    outputs: list<any>
+    surface_declared: bool
     types: list<any>
     functions: list<any>
     chains: list<any>
@@ -60,6 +63,14 @@ module honest-design
 
   fn _read_env : (node: any, source: bytes) -> Env
   fn _read_store : (node: any, source: bytes) -> Store
+  fn _read_surface : (node: any, source: bytes) -> list<any>
+  fn _world_targets : (f: any, directions: any) -> list<str>
+  fn _boundaries : (module: Module) -> list<any>
+  fn _surface_undeclared : (module: Module) -> list<Fault>
+  fn _surface_unknown : (module: Module) -> list<Fault>
+  fn _surface_unused : (module: Module) -> list<Fault>
+  fn _boundary_without_surface : (module: Module) -> list<Fault>
+  fn _door_takes_readable : (module: Module) -> list<Fault>
   fn _store_reads : (module: Module) -> list<any>
   fn _store_of_impure : (module: Module) -> list<Fault>
   fn _unknown_stores : (module: Module) -> list<Fault>

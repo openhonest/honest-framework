@@ -5,6 +5,9 @@ module honest-observe
 
   layer tooling
 
+  # The surface, closed: every side of the world a boundary here touches, and no other.
+  outputs = { "honest-persist" }
+
   type Event = {
     event_type: str
     aggregate_id: str

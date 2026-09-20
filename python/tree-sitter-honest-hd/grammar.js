@@ -39,6 +39,8 @@ module.exports = grammar({
       $.layer_decl,
       $.env_decl,
       $.store_decl,
+      $.inputs_decl,
+      $.outputs_decl,
       $.type_decl,
       $.set_decl,
       $.surfaces_decl,
@@ -62,6 +64,15 @@ module.exports = grammar({
     // type. A union with Absent says the variable may be missing and the boundary that reads
     // it must handle that case; a bare type means required.
     env_decl: $ => seq('env', field('name', $.identifier), ':', field('type', $.type), optional($.note)),
+
+    // The module's I/O surface, closed. inputs names every side of the world the module reads,
+    // outputs every side it writes, each a set member with an optional description. A boundary
+    // that names a side off the list is a fault, so the surface has one source of truth and a
+    // wrong boundary cannot be declared. env: and store: targets are closed by their own
+    // declarations and stay outside these lists; the DOM appears in outputs once and a
+    // surfaces block enumerates what sits behind it.
+    inputs_decl: $ => seq('inputs', '=', '{', commaSep($.set_member), '}'),
+    outputs_decl: $ => seq('outputs', '=', '{', commaSep($.set_member), '}'),
 
     // State the module holds between calls: the answers of one pure function, by its arguments.
     // Holding anything else makes staleness possible, so the function is the whole of what a

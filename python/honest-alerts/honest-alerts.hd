@@ -6,6 +6,9 @@ module honest-alerts
 
   layer domain
 
+  # The surface, closed: every side of the world a boundary here touches, and no other.
+  outputs = { "network" }
+
   type ActorRef = {
     actor_type: str
     actor_id: str

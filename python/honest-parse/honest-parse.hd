@@ -5,6 +5,9 @@ module honest-parse
 
   layer foundation
 
+  # The surface, closed: every side of the world a boundary here touches, and no other.
+  inputs = { "tree-sitter" }
+
   type Node = {
     type: str
     start_byte: int

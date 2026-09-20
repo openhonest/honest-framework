@@ -135,6 +135,9 @@ class Module(TypedDict):
     layer: str
     envs: list  # list[Env]
     stores: list  # list[Store]
+    inputs: list  # list[SetMember]: every side of the world the module reads
+    outputs: list  # list[SetMember]: every side of the world the module writes
+    surface_declared: bool  # an inputs or outputs block is present, even empty; silence is an open surface
     types: list
     sets: list
     vocabularies: list

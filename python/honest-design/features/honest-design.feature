@@ -142,6 +142,11 @@ Feature: honest-design — the .hd architecture-declaration read path
     When _read_store folds it
     Then it returns the name, the function and the unquoted reason
 
+  Scenario: _read_surface folds an inputs or outputs block into its set members
+    Given an inputs_decl or outputs_decl node
+    When _read_surface folds it
+    Then it returns each side of the world as a set member with its description or ""
+
   Scenario: _read_layer folds a layer declaration
     Given a layer_decl node
     When _read_layer folds it
@@ -271,6 +276,41 @@ Feature: honest-design — the .hd architecture-declaration read path
     Given a boundary_in, reader or boundary_out whose side effect names a store
     When _store_not_orchestrator checks the module
     Then it returns a store_not_orchestrator fault naming the function and the store, and none for an orchestrator
+
+  Scenario: _world_targets lists the sides of the world a function touches in given directions
+    Given a function's side effects, some naming env: or store: targets
+    When _world_targets reads them for reads or writes
+    Then it returns the targets in those directions and leaves out env: and store:
+
+  Scenario: _boundaries collects a module's doors, readers and output boundaries
+    Given a module's functions
+    When _boundaries filters them
+    Then it returns those whose role is boundary_in, reader or boundary_out
+
+  Scenario: _surface_undeclared flags a module with boundaries and no surface lists
+    Given a module with a boundary and neither inputs nor outputs
+    When _surface_undeclared checks it
+    Then it returns one surface_undeclared fault for the module, and none once either list exists
+
+  Scenario: _surface_unknown flags a boundary touching a side its list does not carry
+    Given a module with surface lists and a boundary reading or writing an unlisted side
+    When _surface_unknown checks it
+    Then it returns a surface_unknown fault per unlisted side, with reads_writes checked on both lists, and none when the module declares no surface
+
+  Scenario: _surface_unused flags a listed side no boundary touches
+    Given a module with at least one boundary and a listed side nothing reads or writes
+    When _surface_unused checks it
+    Then it returns a surface_unused fault for that side, and none for a module with no boundary yet
+
+  Scenario: _boundary_without_surface flags a boundary that touches nothing
+    Given a door or reader with no reads, or a boundary_out with no writes
+    When _boundary_without_surface checks the module
+    Then it returns a boundary_without_surface fault naming the function, and none for a boundary that names a side
+
+  Scenario: _door_takes_readable flags a door taking what a reader returns
+    Given a door with a parameter whose declared type a reader in the module returns
+    When _door_takes_readable checks the module
+    Then it returns a door_takes_readable fault naming the door and the type, and none for a primitive or a type no reader returns
 
   Scenario: _duplicate_names flags a name declared twice within a kind
     Given a module IR with declarations

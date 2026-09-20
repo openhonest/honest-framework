@@ -7,6 +7,10 @@ module honest-page
 
   layer application
 
+  # The surface, closed: every side of the world a boundary here touches, and no other.
+  inputs = { "HTTP" }
+  outputs = { "HTTP" }
+
   # The six required surfaces, in the document order section 2.2 requires. The order is the
   # contract, not a rendering preference: banners sit above the header because a page-level alert
   # supersedes chrome, toasts sit below it so they do not occlude navigation, and the modal is

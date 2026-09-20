@@ -395,6 +395,21 @@
     }
   },
   {
+    "type": "inputs_decl",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "set_member",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "invokes",
     "named": true,
     "fields": {},
@@ -473,7 +488,15 @@
           "named": true
         },
         {
+          "type": "inputs_decl",
+          "named": true
+        },
+        {
           "type": "layer_decl",
+          "named": true
+        },
+        {
+          "type": "outputs_decl",
           "named": true
         },
         {
@@ -517,6 +540,21 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "outputs_decl",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "set_member",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -1110,6 +1148,10 @@
     "named": false
   },
   {
+    "type": "inputs",
+    "named": false
+  },
+  {
     "type": "invokes",
     "named": false
   },
@@ -1135,6 +1177,10 @@
   },
   {
     "type": "orchestrator",
+    "named": false
+  },
+  {
+    "type": "outputs",
     "named": false
   },
   {

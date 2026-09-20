@@ -37,6 +37,9 @@
                 "layer": "foundation",
                 "envs": [],
                 "stores": [],
+                "inputs": [],
+                "outputs": [],
+                "surface_declared": false,
                 "types": [],
                 "sets": [],
                 "vocabularies": [],
@@ -137,7 +140,10 @@
           "examples": [],
           "html_attrs": [],
           "envs": [],
-          "stores": []
+          "stores": [],
+          "inputs": [],
+          "outputs": [],
+          "surface_declared": false
         },
         "expected": []
       }
@@ -182,7 +188,10 @@
           "examples": [],
           "html_attrs": [],
           "envs": [],
-          "stores": []
+          "stores": [],
+          "inputs": [],
+          "outputs": [],
+          "surface_declared": false
         },
         "expected": [
           {
@@ -396,7 +405,10 @@
           "routes": [],
           "entries": [],
           "html_attrs": [],
-          "stores": []
+          "stores": [],
+          "inputs": [],
+          "outputs": [],
+          "surface_declared": true
         },
         "expected": [
           {
@@ -467,7 +479,10 @@
           "routes": [],
           "entries": [],
           "html_attrs": [],
-          "stores": []
+          "stores": [],
+          "inputs": [],
+          "outputs": [],
+          "surface_declared": false
         },
         "expected": [
           {
@@ -563,7 +578,10 @@
           "routes": [],
           "entries": [],
           "html_attrs": [],
-          "stores": []
+          "stores": [],
+          "inputs": [],
+          "outputs": [],
+          "surface_declared": false
         },
         "expected": [
           {
@@ -642,7 +660,15 @@
           "routes": [],
           "entries": [],
           "html_attrs": [],
-          "stores": []
+          "stores": [],
+          "inputs": [
+            {
+              "value": "HTTP",
+              "description": ""
+            }
+          ],
+          "outputs": [],
+          "surface_declared": true
         },
         "expected": [
           {
@@ -668,6 +694,13 @@
       "id": "read-note-ok",
       "read": {
         "source": "module m\n  type T = { a: str } note \"a record\"\n  fn f : (t: T) -> str note \"explains f\"\n"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "read-surface-ok",
+      "read": {
+        "source": "module m\n  inputs = { \"HTTP\" : \"the request\" }\n  outputs = { \"stdout\" }\n  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\"\n  boundary_out fn sink : (s: str) -> bool side_effect writes \"stdout\"\n"
       },
       "expect": "ok"
     }

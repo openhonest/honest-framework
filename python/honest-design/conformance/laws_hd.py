@@ -20,6 +20,8 @@ def _module(src):
 
 _MODULE = """module m
   layer foundation
+  inputs = { "HTTP", "database" }
+  outputs = { "database", "network" }
   env DATABASE_URL : str
   env POOL_SIZE : int | Absent
   type Rec = { a: str
@@ -325,13 +327,13 @@ def _probe_envs():
     """Environment variables fold to (name, type), a declared read is clean, an undeclared read is a fault."""
     bad = []
     m = _module(_MODULE)
-    clean = validate(_module("module m\n  env A : str\n  boundary_in fn c : () -> str side_effect reads \"env:A\"\n"))
+    clean = validate(_module("module m\n  inputs = { }\n  env A : str\n  boundary_in fn c : () -> str side_effect reads \"env:A\"\n"))
     if clean != []:
         bad.append(f"a declared env read should validate clean: {clean}")
     if m["envs"] != [{"name": "DATABASE_URL", "type": [{"name": "str", "args": []}], "note": ""},
                      {"name": "POOL_SIZE", "type": [{"name": "int", "args": []}, {"name": "Absent", "args": []}], "note": ""}]:
         bad.append(f"envs wrong: {m['envs']}")
-    ghost = validate(_module("module m\n  env A : str\n  boundary_in fn c : () -> str side_effect reads \"env:A\" side_effect reads \"env:GHOST\"\n"))
+    ghost = validate(_module("module m\n  inputs = { }\n  env A : str\n  boundary_in fn c : () -> str side_effect reads \"env:A\" side_effect reads \"env:GHOST\"\n"))
     if ghost != [{"code": "unknown_env", "message": "Function 'c' reads environment variable 'GHOST', which no env declares", "category": "client", "detail": {"function": "c", "env": "GHOST"}}]:
         bad.append(f"unknown_env wrong: {ghost}")
     cycle = validate(_module("module m\n  type A = B\n  type B = A\n  type C = str\n  fn f : (a: A, c: C) -> str\n"))
@@ -346,7 +348,7 @@ def _probe_envs():
 def _probe_handles():
     """A handle is held and passed, never read: the scalar and its aliases, through records and generics."""
     bad = []
-    src = ("module m\n  type Connection = handle\n  type Conn2 = Connection\n  type Database = { conn: Connection }\n"
+    src = ("module m\n  outputs = { \"network\" }\n  type Connection = handle\n  type Conn2 = Connection\n  type Database = { conn: Connection }\n"
            "  boundary_out fn open_it : (target: str) -> Connection side_effect writes \"network\"\n"
            "  boundary_out fn close_it : (c: Conn2) -> bool side_effect writes \"network\"\n"
            "  fn carry : (db: Database) -> Database\n"
@@ -366,7 +368,7 @@ def _probe_handles():
 def _probe_faults():
     """A fault bubbles up through returns, along invokes, dispatch tables and chains; and Fault has a shape."""
     bad = []
-    src = ("module m\n  type Fault = { what_went_wrong: str\n what_to_do_instead: str }\n"
+    src = ("module m\n  inputs = { \"HTTP\" }\n  outputs = { \"stdout\" }\n  type Fault = { what_went_wrong: str\n what_to_do_instead: str }\n"
            "  dispatch by_kind = { \"a\" -> fine, \"b\" -> fails }\n"
            "  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\"\n"
            "  orchestrator fn run : (r: str) -> str invokes by_kind\n"
@@ -399,7 +401,7 @@ def _probe_faults():
 def _probe_readers():
     """A door is called by the world only; a reader is called by the program and calls nothing."""
     bad = []
-    src = ("module m\n"
+    src = ("module m\n  inputs = { \"HTTP\", \"clock\", \"filesystem\" }\n  outputs = { \"stdout\" }\n"
            "  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\"\n"
            "  boundary_in fn side_door : (r: str) -> str side_effect reads \"HTTP\"\n"
            "  reader fn read_clock : () -> float side_effect reads \"clock\"\n"
@@ -424,7 +426,7 @@ def _probe_readers():
 def _probe_stores():
     """A store holds one pure function's answers, is named by the orchestrator that keeps them, and by nothing else."""
     bad = []
-    src = ("module m\n"
+    src = ("module m\n  inputs = { \"HTTP\" }\n  outputs = { \"stdout\" }\n"
            "  store compiled = compile_it \"a statement is built once; render.feature\"\n"
            "  store wrong = door \"held from the world\"\n"
            "  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\" side_effect reads_writes \"store:compiled\"\n"
@@ -436,7 +438,7 @@ def _probe_stores():
     if m["stores"] != [{"name": "compiled", "fn": "compile_it", "why": "a statement is built once; render.feature"},
                        {"name": "wrong", "fn": "door", "why": "held from the world"}]:
         bad.append(f"stores wrong: {m['stores']}")
-    got = validate(m)
+    got = [f for f in validate(m) if "store" in f["code"]]
     want = [{"code": "store_of_impure", "message": "Store 'wrong' holds the answers of 'door', which is not a pure fn; only a pure function's answer can be held without going stale", "category": "server", "detail": {"store": "wrong", "fn": "door"}},
             {"code": "unknown_store", "message": "Function 'run' reaches store 'GHOST', which no store declares", "category": "client", "detail": {"function": "run", "store": "GHOST"}},
             {"code": "store_not_orchestrator", "message": "Function 'door' reaches store 'compiled', and it is a boundary_in; only an orchestrator keeps what a step returned", "category": "server", "detail": {"function": "door", "store": "compiled"}}]
@@ -449,7 +451,7 @@ def _probe_stores():
     if pure != [{"code": "impure_pure_function", "message": "Pure function 'f' declares a side effect", "category": "server", "detail": {"function": "f"}}]:
         bad.append(f"a pure fn reaching a store is impure and nothing else: {pure}")
     out = validate(_module("module m\n  store s = f \"why\"\n  fn f : (r: str) -> str\n  boundary_out fn sink : (s: str) -> bool side_effect writes \"stdout\" side_effect reads_writes \"store:s\"\n"))
-    if [(x["code"], x["detail"]["function"]) for x in out] != [("store_not_orchestrator", "sink")]:
+    if [(x["code"], x["detail"]["function"]) for x in out if x["code"] == "store_not_orchestrator"] != [("store_not_orchestrator", "sink")]:
         bad.append(f"an output boundary reaching a store: {out}")
     dup = validate(_module("module m\n  store s = f \"a\"\n  store s = f \"b\"\n  fn f : (r: str) -> str\n"))
     if dup != [{"code": "duplicate_name", "message": "Duplicate store name 's'", "category": "client", "detail": {"kind": "stores", "name": "s"}}]:
@@ -475,6 +477,59 @@ def _probe_notes():
         bad.append(f"notes wrong: {got}")
     if m["functions"][0]["invokes"] != ["d"] or m["functions"][0]["raises"] != ["bad_input"]:
         bad.append("a note among the annotations disturbed its neighbours")
+    return bad
+
+
+def _probe_surface():
+    """The surface is closed: every side a boundary touches is listed, every listed side is touched, and a door takes nothing a reader returns."""
+    bad = []
+    src = ("module m\n"
+           "  inputs = { \"caller\" : \"a library call\", \"clock\", \"idle\" }\n"
+           "  outputs = { \"database\", \"stdout\" }\n"
+           "  env A : str\n  store s = shape \"kept\"\n"
+           "  type Models = list<str>\n"
+           "  boundary_in fn door : (r: str, models: Models) -> str side_effect reads \"caller\" side_effect reads \"env:A\"\n"
+           "  boundary_in fn mute : (r: str) -> str\n"
+           "  reader fn read_models : () -> Models side_effect reads \"filesystem\"\n"
+           "  reader fn read_clock : () -> float side_effect reads \"clock\"\n"
+           "  orchestrator fn run : (r: str) -> str invokes shape, read_clock, read_models, sink, peek side_effect reads_writes \"store:s\"\n"
+           "  fn shape : (r: str) -> str\n"
+           "  boundary_out fn sink : (s: str) -> bool side_effect reads_writes \"database\"\n"
+           "  boundary_out fn peek : (s: str) -> bool side_effect reads \"stdout\"\n"
+           "  boundary_out fn spill : (s: str) -> bool side_effect writes \"network\"\n"
+           "  boundary_in fn back : (r: str) -> str side_effect writes \"database\"\n"
+           "  chain c = door -> run -> sink\n")
+    m = _module(src)
+    if m["inputs"] != [{"value": "caller", "description": "a library call"}, {"value": "clock", "description": ""}, {"value": "idle", "description": ""}] or m["outputs"] != [{"value": "database", "description": ""}, {"value": "stdout", "description": ""}]:
+        bad.append(f"surface lists wrong: {m['inputs']} {m['outputs']}")
+    got = [f for f in validate(m) if f["code"].startswith(("surface", "boundary_without", "door_takes"))]
+    want = [{"code": "surface_unknown", "message": "Function 'read_models' reads 'filesystem', which inputs does not list", "category": "client", "detail": {"function": "read_models", "target": "filesystem", "side": "inputs"}},
+            {"code": "surface_unknown", "message": "Function 'sink' reads 'database', which inputs does not list", "category": "client", "detail": {"function": "sink", "target": "database", "side": "inputs"}},
+            {"code": "surface_unknown", "message": "Function 'peek' reads 'stdout', which inputs does not list", "category": "client", "detail": {"function": "peek", "target": "stdout", "side": "inputs"}},
+            {"code": "surface_unknown", "message": "Function 'spill' writes 'network', which outputs does not list", "category": "client", "detail": {"function": "spill", "target": "network", "side": "outputs"}},
+            {"code": "surface_unused", "message": "inputs lists 'idle', which no boundary reads", "category": "client", "detail": {"side": "inputs", "target": "idle"}},
+            {"code": "surface_unused", "message": "outputs lists 'stdout', which no boundary writes", "category": "client", "detail": {"side": "outputs", "target": "stdout"}},
+            {"code": "boundary_without_surface", "message": "Function 'mute' is a boundary_in that reads nothing; a boundary touches a side of the world", "category": "server", "detail": {"function": "mute"}},
+            {"code": "boundary_without_surface", "message": "Function 'peek' is a boundary_out that writes nothing; a boundary that only reads is a reader", "category": "server", "detail": {"function": "peek"}},
+            {"code": "boundary_without_surface", "message": "Function 'back' is a boundary_in that reads nothing; a boundary touches a side of the world", "category": "server", "detail": {"function": "back"}},
+            {"code": "door_takes_readable", "message": "Door 'door' takes a Models, which a reader in this module returns; the module can read it for itself", "category": "server", "detail": {"function": "door", "type": "Models"}}]
+    if got != want:
+        bad.append(f"surface faults wrong: {got}")
+    open_ = validate(_module("module m\n  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\"\n"))
+    if open_ != [{"code": "surface_undeclared", "message": "Module 'm' has 1 boundary and declares no inputs or outputs, so its surface is open", "category": "client", "detail": {"module": "m"}}]:
+        bad.append(f"an open surface is one fault: {open_}")
+    open2 = validate(_module("module m\n  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\"\n  boundary_out fn sink : (s: str) -> bool side_effect writes \"stdout\"\n"))
+    if [f["message"] for f in open2] != ["Module 'm' has 2 boundaries and declares no inputs or outputs, so its surface is open"]:
+        bad.append(f"an open surface with two boundaries: {open2}")
+    skeleton = validate(_module("module m\n  inputs = { \"HTTP\" }\n  outputs = { \"stdout\" }\n  fn f : (r: str) -> str\n"))
+    if skeleton != []:
+        bad.append(f"a surface declared before its boundaries is not a fault: {skeleton}")
+    empty = validate(_module("module m\n  inputs = { }\n  env A : str\n  boundary_in fn c : () -> str side_effect reads \"env:A\" invokes run\n  orchestrator fn run : (r: str) -> str\n"))
+    if empty != []:
+        bad.append(f"an empty surface is declared, and reading the environment is reading: {empty}")
+    clean = validate(_module("module m\n  inputs = { \"HTTP\" }\n  outputs = { \"stdout\" }\n  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\" invokes run\n  orchestrator fn run : (r: str) -> str invokes sink\n  boundary_out fn sink : (s: str) -> bool side_effect writes \"stdout\"\n"))
+    if clean != []:
+        bad.append(f"a closed surface should validate clean: {clean}")
     return bad
 
 
@@ -568,6 +623,7 @@ def run():
         "readers": _probe_readers(),
         "stores": _probe_stores(),
         "notes": _probe_notes(),
+        "surface": _probe_surface(),
         "projection": _probe_projection(),
         "render": _probe_render(),
         "public_surface": _probe_public_surface(),

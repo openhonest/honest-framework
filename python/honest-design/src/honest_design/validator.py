@@ -258,6 +258,93 @@ def _store_not_orchestrator(module):
     ]
 
 
+# --- the I/O surface: every side of the world a boundary touches is on a declared list ---------
+
+_INPUT_ROLES = ("boundary_in", "reader")
+_READS = ("reads", "reads_writes")
+_WRITES = ("writes", "reads_writes")
+# Targets closed by their own declarations, outside the inputs and outputs lists.
+_OWN = (ENV_TARGET, STORE_TARGET)
+
+
+def _world_targets(f, directions):
+    """The sides of the world a function's side effects touch in the given directions, leaving
+    out env: and store: targets, which their own declarations close."""
+    return [se["target"] for se in f["side_effects"]
+            if se["direction"] in directions and not se["target"].startswith(_OWN)]
+
+
+def _boundaries(module):
+    return [f for f in module["functions"] if f["role"] in _INPUT_ROLES + ("boundary_out",)]
+
+
+def _surface_undeclared(module):
+    """A module with boundaries and no inputs or outputs list has an open surface: one fault for
+    the module, not one per boundary, because the fix is one declaration."""
+    if _boundaries(module) and not module["surface_declared"]:
+        n = len(_boundaries(module))
+        return [fault("surface_undeclared", f"Module '{module['name']}' has {n} boundar{'y' if n == 1 else 'ies'} and declares no inputs or outputs, so its surface is open", "client", {"module": module["name"]})]
+    return []
+
+
+def _surface_unknown(module):
+    """Every side a boundary reads is in inputs and every side it writes is in outputs; a
+    reads_writes side is in both. Only checked once the module declares a surface at all."""
+    if not module["surface_declared"]:
+        return []
+    ins = {m["value"] for m in module["inputs"]}
+    outs = {m["value"] for m in module["outputs"]}
+    faults = []
+    for f in _boundaries(module):
+        for t in _world_targets(f, _READS):
+            if t not in ins:
+                faults.append(fault("surface_unknown", f"Function '{f['name']}' reads '{t}', which inputs does not list", "client", {"function": f["name"], "target": t, "side": "inputs"}))
+        for t in _world_targets(f, _WRITES):
+            if t not in outs:
+                faults.append(fault("surface_unknown", f"Function '{f['name']}' writes '{t}', which outputs does not list", "client", {"function": f["name"], "target": t, "side": "outputs"}))
+    return faults
+
+
+def _surface_unused(module):
+    """A listed side no boundary touches is a stale declaration. Only once the module has a
+    boundary, so a skeleton written surface-first is not a fault while its boundaries arrive."""
+    if not _boundaries(module):
+        return []
+    read = {t for f in _boundaries(module) for t in _world_targets(f, _READS)}
+    written = {t for f in _boundaries(module) for t in _world_targets(f, _WRITES)}
+    faults = [fault("surface_unused", f"inputs lists '{m['value']}', which no boundary reads", "client", {"side": "inputs", "target": m["value"]})
+              for m in module["inputs"] if m["value"] not in read]
+    faults += [fault("surface_unused", f"outputs lists '{m['value']}', which no boundary writes", "client", {"side": "outputs", "target": m["value"]})
+               for m in module["outputs"] if m["value"] not in written]
+    return faults
+
+
+def _boundary_without_surface(module):
+    """A boundary touches a side of the world, or it is not a boundary: a door or reader reads
+    something, an output boundary writes something. The environment is the world, so a reader
+    of nothing but env: variables reads."""
+    faults = []
+    for f in _boundaries(module):
+        reads = [se for se in f["side_effects"] if se["direction"] in _READS and not se["target"].startswith(STORE_TARGET)]
+        if f["role"] in _INPUT_ROLES and not reads:
+            faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a {f['role']} that reads nothing; a boundary touches a side of the world", "server", {"function": f["name"]}))
+        if f["role"] == "boundary_out" and not _world_targets(f, _WRITES):
+            faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a boundary_out that writes nothing; a boundary that only reads is a reader", "server", {"function": f["name"]}))
+    return faults
+
+
+def _door_takes_readable(module):
+    """A door does not take what the module can read for itself: a parameter whose declared type
+    a reader in the module returns lets a caller hand the module a second truth."""
+    declared = {t["name"] for t in module["types"]} | {v["name"] for v in module["vocabularies"]}
+    readable = {a["name"] for f in module["functions"] if f["role"] == "reader" for a in f["ret"]} & declared
+    return [
+        fault("door_takes_readable", f"Door '{f['name']}' takes a {a['name']}, which a reader in this module returns; the module can read it for itself", "server", {"function": f["name"], "type": a["name"]})
+        for f in module["functions"] if f["role"] == "boundary_in"
+        for p in f["params"] for a in p["type"] if a["name"] in readable
+    ]
+
+
 def _impure_pure_functions(module):
     """A pure `fn` declares no side effect — only a boundary may."""
     return [
@@ -340,6 +427,11 @@ _CHECKS = (
     _store_of_impure,
     _unknown_stores,
     _store_not_orchestrator,
+    _surface_undeclared,
+    _surface_unknown,
+    _surface_unused,
+    _boundary_without_surface,
+    _door_takes_readable,
     _bad_projections,
 )
 
