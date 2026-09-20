@@ -46,11 +46,15 @@
       }
     },
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": true,
       "types": [
         {
           "type": "chain_body",
+          "named": true
+        },
+        {
+          "type": "note",
           "named": true
         }
       ]
@@ -77,6 +81,10 @@
       "types": [
         {
           "type": "dispatch_entry",
+          "named": true
+        },
+        {
+          "type": "note",
           "named": true
         }
       ]
@@ -168,6 +176,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "note",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -314,6 +332,10 @@
       "types": [
         {
           "type": "invokes",
+          "named": true
+        },
+        {
+          "type": "note",
           "named": true
         },
         {
@@ -482,6 +504,22 @@
     }
   },
   {
+    "type": "note",
+    "named": true,
+    "fields": {
+      "text": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "param",
     "named": true,
     "fields": {
@@ -642,6 +680,10 @@
       "multiple": true,
       "required": false,
       "types": [
+        {
+          "type": "note",
+          "named": true
+        },
         {
           "type": "set_member",
           "named": true
@@ -920,6 +962,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "note",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -943,6 +995,10 @@
       "types": [
         {
           "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "note",
           "named": true
         }
       ]
@@ -1063,6 +1119,10 @@
   },
   {
     "type": "module",
+    "named": false
+  },
+  {
+    "type": "note",
     "named": false
   },
   {

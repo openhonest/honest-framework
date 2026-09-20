@@ -146,6 +146,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `route "METHOD /path" -> fn` | An input-boundary route binding. |
 | `entry "<callsite>" -> fn` | An entry point whose call-site shape is a string — a decorator, a context manager, a middleware registration — dispatching to a function. |
 | `html_attr "attr" "desc"` | A declared client-side attribute. |
+| `note "..."` | The one comment the reader keeps. It trails a `type`, `env`, `set`, `vocabulary`, `dispatch` or `chain`, or sits among a function's annotations, and it is drawn on that declaration's card. A `#` comment is for the file and never reaches the IR. |
 
 A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, an environment variable by name as `env:<NAME>`, a store by name as `store:<name>`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes it can return, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). A dispatch entry may add `from <field>`, naming the slice of the caller's input that entry's handler is fed; the handler then declares that field's type instead of the whole record, so a predicate reading one field of sixteen says so in its signature rather than in a comment. There is exactly one way to say each thing.
 
@@ -167,7 +168,8 @@ Module   = { name, layer, envs, stores, types, sets, vocabularies, dispatches,
              functions, chains, examples, routes, entries, html_attrs }
 Env      = { name, type }         # type: a union with Absent when the variable may be missing
 Store    = { name, fn, why }      # fn: the pure function whose answers are held, by its arguments
-Function = { name, role, params, ret, side_effects, invokes, raises, column }
+Function = { name, role, params, ret, side_effects, invokes, raises, column, note }
+             # note: the declaration's note, "" when it has none; also on TypeDecl, Env, SetDecl, Vocabulary, Dispatch, Chain
              # role: "boundary_in" | "orchestrator" | "fn" | "boundary_out"
              # params: [ { name, type } ] ; ret: type (possibly a union)
              # side_effects: [ { direction: "reads"|"writes"|"reads_writes", target } ]

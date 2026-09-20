@@ -42,6 +42,11 @@ Feature: honest-design — the .hd architecture-declaration read path
     When _unquote strips it
     Then it returns the text without the surrounding quotes
 
+  Scenario: _note returns a declaration's note or an empty string
+    Given a declaration node with a trailing note, or none
+    When _note reads it
+    Then it returns the unquoted text, or "" when the declaration has no note
+
   Scenario: _read_atom folds a type atom with its generic arguments
     Given a type_atom node
     When _read_atom folds it

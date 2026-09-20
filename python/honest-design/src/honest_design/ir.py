@@ -41,11 +41,13 @@ class Function(TypedDict):
     invokes: list  # list[str]
     raises: list  # list[str]
     column: int
+    note: str  # the one comment the parser keeps; "" when the declaration has none
 
 
 class Env(TypedDict):
     name: str
     type: list  # Type = list[Atom]; a union with Absent says the variable may be missing
+    note: str  # the one comment the parser keeps; "" when the declaration has none
 
 
 class Store(TypedDict):
@@ -58,6 +60,7 @@ class TypeDecl(TypedDict):
     name: str
     record: list  # list[Field]; empty when the type is an alias
     alias: list  # Type = list[Atom]; empty when the type is a record
+    note: str  # the one comment the parser keeps; "" when the declaration has none
 
 
 class SetMember(TypedDict):
@@ -68,11 +71,13 @@ class SetMember(TypedDict):
 class SetDecl(TypedDict):
     name: str
     members: list  # list[SetMember]
+    note: str  # the one comment the parser keeps; "" when the declaration has none
 
 
 class Vocabulary(TypedDict):
     name: str
     sets: list  # list[str]
+    note: str  # the one comment the parser keeps; "" when the declaration has none
 
 
 class DispatchEntry(TypedDict):
@@ -94,6 +99,7 @@ class Surfaces(TypedDict):
 class Dispatch(TypedDict):
     name: str
     entries: list  # list[DispatchEntry]
+    note: str  # the one comment the parser keeps; "" when the declaration has none
 
 
 class Example(TypedDict):
@@ -105,6 +111,7 @@ class Example(TypedDict):
 class Chain(TypedDict):
     name: str
     links: list  # list[str]
+    note: str  # the one comment the parser keeps; "" when the declaration has none
 
 
 class Route(TypedDict):

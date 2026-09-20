@@ -54,13 +54,13 @@ def _probe_module():
         bad.append(f"module name/layer wrong: {m['name']}/{m['layer']}")
     if [s["name"] for s in m["sets"]] != ["s"] or m["sets"][0]["members"] != [{"value": "x", "description": "an x"}, {"value": "y", "description": ""}]:
         bad.append(f"set members (with and without description) wrong: {m['sets']}")
-    if m["vocabularies"] != [{"name": "v", "sets": ["s", "s2"]}]:
+    if m["vocabularies"] != [{"name": "v", "sets": ["s", "s2"], "note": ""}]:
         bad.append(f"vocabulary wrong: {m['vocabularies']}")
-    if m["dispatches"] != [{"name": "d", "entries": [{"key": "k", "handler": "h", "projection": ""}, {"key": "j", "handler": "g", "projection": ""}]}]:
+    if m["dispatches"] != [{"name": "d", "entries": [{"key": "k", "handler": "h", "projection": ""}, {"key": "j", "handler": "g", "projection": ""}], "note": ""}]:
         bad.append(f"dispatch wrong: {m['dispatches']}")
     if m["examples"] != [{"name": "e", "chain": "c", "text": "does a thing"}]:
         bad.append(f"example wrong: {m['examples']}")
-    if m["chains"] != [{"name": "c", "links": ["classify", "write_it"]}]:
+    if m["chains"] != [{"name": "c", "links": ["classify", "write_it"], "note": ""}]:
         bad.append(f"chain wrong: {m['chains']}")
     if m["routes"] != [{"method": "POST", "path": "/orders", "target": "read_it"}]:
         bad.append(f"route wrong: {m['routes']}")
@@ -328,8 +328,8 @@ def _probe_envs():
     clean = validate(_module("module m\n  env A : str\n  boundary_in fn c : () -> str side_effect reads \"env:A\"\n"))
     if clean != []:
         bad.append(f"a declared env read should validate clean: {clean}")
-    if m["envs"] != [{"name": "DATABASE_URL", "type": [{"name": "str", "args": []}]},
-                     {"name": "POOL_SIZE", "type": [{"name": "int", "args": []}, {"name": "Absent", "args": []}]}]:
+    if m["envs"] != [{"name": "DATABASE_URL", "type": [{"name": "str", "args": []}], "note": ""},
+                     {"name": "POOL_SIZE", "type": [{"name": "int", "args": []}, {"name": "Absent", "args": []}], "note": ""}]:
         bad.append(f"envs wrong: {m['envs']}")
     ghost = validate(_module("module m\n  env A : str\n  boundary_in fn c : () -> str side_effect reads \"env:A\" side_effect reads \"env:GHOST\"\n"))
     if ghost != [{"code": "unknown_env", "message": "Function 'c' reads environment variable 'GHOST', which no env declares", "category": "client", "detail": {"function": "c", "env": "GHOST"}}]:
@@ -457,6 +457,27 @@ def _probe_stores():
     return bad
 
 
+def _probe_notes():
+    """A note rides on the declaration it explains and is "" when absent, on every kind that takes one."""
+    bad = []
+    src = ("module m\n  env A : str note \"the account\"\n  type T = { a: str } note \"a record\"\n  type U = list<str>\n"
+           "  set s = { \"x\" } note \"a set\"\n  vocabulary v = { s } note \"a vocabulary\"\n"
+           "  dispatch d = { \"x\" -> f } note \"a table\"\n"
+           "  orchestrator fn run : (t: T) -> str note \"runs\" invokes d note \"the sequence\" raises bad_input\n  fn f : (t: T) -> str\n"
+           "  chain c = run -> f note \"a chain\"\n")
+    m = _module(src)
+    got = {"env": m["envs"][0]["note"], "type": m["types"][0]["note"], "alias": m["types"][1]["note"],
+           "set": m["sets"][0]["note"], "vocab": m["vocabularies"][0]["note"], "dispatch": m["dispatches"][0]["note"],
+           "fn": m["functions"][0]["note"], "plain": m["functions"][1]["note"], "chain": m["chains"][0]["note"]}
+    want = {"env": "the account", "type": "a record", "alias": "", "set": "a set", "vocab": "a vocabulary",
+            "dispatch": "a table", "fn": "runs the sequence", "plain": "", "chain": "a chain"}
+    if got != want:
+        bad.append(f"notes wrong: {got}")
+    if m["functions"][0]["invokes"] != ["d"] or m["functions"][0]["raises"] != ["bad_input"]:
+        bad.append("a note among the annotations disturbed its neighbours")
+    return bad
+
+
 def _probe_validate():
     """The validator raises nothing on a valid module and pins each fault it does raise."""
     bad = []
@@ -546,6 +567,7 @@ def run():
         "faults": _probe_faults(),
         "readers": _probe_readers(),
         "stores": _probe_stores(),
+        "notes": _probe_notes(),
         "projection": _probe_projection(),
         "render": _probe_render(),
         "public_surface": _probe_public_surface(),

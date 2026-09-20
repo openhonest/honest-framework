@@ -56,6 +56,7 @@ module honest-design
   # --- The read path: pure functions over the parse tree -------------------
 
   fn read_hd : (source: str) -> Result
+  fn _note : (node: any, source: bytes) -> str
 
   fn _read_env : (node: any, source: bytes) -> Env
   fn _read_store : (node: any, source: bytes) -> Store

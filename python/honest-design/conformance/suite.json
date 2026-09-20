@@ -67,7 +67,8 @@
                     ],
                     "side_effects": [],
                     "invokes": [],
-                    "raises": []
+                    "raises": [],
+                    "note": ""
                   }
                 ],
                 "chains": [],
@@ -660,6 +661,13 @@
       "id": "read-store-ok",
       "read": {
         "source": "module m\n  store compiled = compile_it \"built once\"\n  orchestrator fn run : (r: str) -> str invokes compile_it side_effect reads_writes \"store:compiled\"\n  fn compile_it : (r: str) -> str\n"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "read-note-ok",
+      "read": {
+        "source": "module m\n  type T = { a: str } note \"a record\"\n  fn f : (t: T) -> str note \"explains f\"\n"
       },
       "expect": "ok"
     }

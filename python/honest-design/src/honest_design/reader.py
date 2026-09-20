@@ -42,6 +42,13 @@ _RAISES_TEXT = {"identifier": lambda t: t, "string": lambda t: t[1:-1]}
 # --- types ---------------------------------------------------------------------
 
 
+def _note(node, source):
+    """The declaration's note, or "" when it has none: a key that is sometimes absent makes every
+    consumer branch on its presence. A function may write its note in several clauses among the
+    annotations; they read as one note, joined by a space."""
+    return " ".join(_unquote(_field_text(n, "text", source)) for n in _children(node, "note"))
+
+
 def _read_atom(node, source) -> ir.Atom:
     args = [_read_type(t, source) for g in _children(node, "generic_args") for t in _children(g, "type")]
     return {"name": _field_text(node, "name", source), "args": args}
@@ -66,7 +73,7 @@ _TYPE_VALUE = {
 def _read_type_decl(node, source) -> ir.TypeDecl:
     value = _field(node, "value")
     record, alias = _TYPE_VALUE[value.type](value, source)
-    return {"name": _field_text(node, "name", source), "record": record, "alias": alias}
+    return {"name": _field_text(node, "name", source), "record": record, "alias": alias, "note": _note(node, source)}
 
 
 # --- sets, vocabularies, dispatch ---------------------------------------------
@@ -79,12 +86,12 @@ def _read_member(node, source) -> ir.SetMember:
 
 
 def _read_set(node, source) -> ir.SetDecl:
-    return {"name": _field_text(node, "name", source), "members": [_read_member(m, source) for m in _children(node, "set_member")]}
+    return {"name": _field_text(node, "name", source), "members": [_read_member(m, source) for m in _children(node, "set_member")], "note": _note(node, source)}
 
 
 def _read_vocab(node, source) -> ir.Vocabulary:
     idents = _children(node, "identifier")
-    return {"name": _text(idents[0], source), "sets": [_text(i, source) for i in idents[1:]]}
+    return {"name": _text(idents[0], source), "sets": [_text(i, source) for i in idents[1:]], "note": _note(node, source)}
 
 
 def _read_dispatch_entry(node, source) -> ir.DispatchEntry:
@@ -101,7 +108,7 @@ def _read_dispatch_entry(node, source) -> ir.DispatchEntry:
 
 
 def _read_dispatch(node, source) -> ir.Dispatch:
-    return {"name": _field_text(node, "name", source), "entries": [_read_dispatch_entry(e, source) for e in _children(node, "dispatch_entry")]}
+    return {"name": _field_text(node, "name", source), "entries": [_read_dispatch_entry(e, source) for e in _children(node, "dispatch_entry")], "note": _note(node, source)}
 
 
 def _read_example(node, source) -> ir.Example:
@@ -141,6 +148,7 @@ def _read_function(node, source) -> ir.Function:
         "side_effects": [_read_side_effect(se, source) for se in _children(node, "side_effect")],
         "invokes": invokes,
         "raises": raises,
+        "note": _note(node, source),
     }
 
 
@@ -149,7 +157,7 @@ def _read_function(node, source) -> ir.Function:
 
 def _read_chain(node, source) -> ir.Chain:
     body = _children(node, "chain_body")[0]
-    return {"name": _field_text(node, "name", source), "links": [_text(i, source) for i in _children(body, "identifier")]}
+    return {"name": _field_text(node, "name", source), "links": [_text(i, source) for i in _children(body, "identifier")], "note": _note(node, source)}
 
 
 def _read_route(node, source) -> ir.Route:
@@ -178,7 +186,7 @@ def _read_store(node, source) -> ir.Store:
 
 def _read_env(node, source) -> ir.Env:
     """An environment variable the module reads: the name the deployment must supply, and its type."""
-    return {"name": _field_text(node, "name", source), "type": _read_type(_field(node, "type"), source)}
+    return {"name": _field_text(node, "name", source), "type": _read_type(_field(node, "type"), source), "note": _note(node, source)}
 
 
 def _read_surface_member(node, source) -> ir.SurfaceMember:

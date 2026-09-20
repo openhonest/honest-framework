@@ -54,10 +54,14 @@ module.exports = grammar({
 
     layer_decl: $ => seq('layer', field('name', $.identifier)),
 
+    // A note is the one comment the parser keeps. It rides on the declaration it explains and is
+    // drawn on that card; a `#` comment is for the file's reader and never reaches the map.
+    note: $ => seq('note', field('text', $.string)),
+
     // An environment variable the module reads: the name the deployment must supply and its
     // type. A union with Absent says the variable may be missing and the boundary that reads
     // it must handle that case; a bare type means required.
-    env_decl: $ => seq('env', field('name', $.identifier), ':', field('type', $.type)),
+    env_decl: $ => seq('env', field('name', $.identifier), ':', field('type', $.type), optional($.note)),
 
     // State the module holds between calls: the answers of one pure function, by its arguments.
     // Holding anything else makes staleness possible, so the function is the whole of what a
@@ -67,7 +71,7 @@ module.exports = grammar({
 
     // --- Types ---------------------------------------------------------------
 
-    type_decl: $ => seq('type', field('name', $.identifier), '=', field('value', $._type_expr)),
+    type_decl: $ => seq('type', field('name', $.identifier), '=', field('value', $._type_expr), optional($.note)),
 
     _type_expr: $ => choice($.record_type, $.type),
 
@@ -86,7 +90,7 @@ module.exports = grammar({
 
     // --- Sets and vocabularies ----------------------------------------------
 
-    set_decl: $ => seq('set', field('name', $.identifier), '=', '{', commaSep($.set_member), '}'),
+    set_decl: $ => seq('set', field('name', $.identifier), '=', '{', commaSep($.set_member), '}', optional($.note)),
 
     // --- Surfaces ------------------------------------------------------------
 
@@ -105,11 +109,11 @@ module.exports = grammar({
 
     set_member: $ => seq(field('value', $.string), optional(seq(':', field('description', $.string)))),
 
-    vocabulary_decl: $ => seq('vocabulary', field('name', $.identifier), '=', '{', commaSep($.identifier), '}'),
+    vocabulary_decl: $ => seq('vocabulary', field('name', $.identifier), '=', '{', commaSep($.identifier), '}', optional($.note)),
 
     // --- Dispatch tables -----------------------------------------------------
 
-    dispatch_decl: $ => seq('dispatch', field('name', $.identifier), '=', '{', commaSep($.dispatch_entry), '}'),
+    dispatch_decl: $ => seq('dispatch', field('name', $.identifier), '=', '{', commaSep($.dispatch_entry), '}', optional($.note)),
 
     // A dispatch entry may name the slice of its input that the handler is fed. Without it every
     // handler in a table must declare the same wide input, which hides which field each one
@@ -146,7 +150,7 @@ module.exports = grammar({
 
     param: $ => seq(field('name', $.identifier), ':', field('type', $.type)),
 
-    _annotation: $ => choice($.invokes, $.raises, $.side_effect),
+    _annotation: $ => choice($.invokes, $.raises, $.side_effect, $.note),
 
     invokes: $ => seq('invokes', commaSep1($.identifier)),
 
@@ -157,7 +161,7 @@ module.exports = grammar({
 
     // --- Chains --------------------------------------------------------------
 
-    chain_decl: $ => seq('chain', field('name', $.identifier), '=', $.chain_body),
+    chain_decl: $ => seq('chain', field('name', $.identifier), '=', $.chain_body, optional($.note)),
 
     chain_body: $ => seq($.identifier, repeat(seq('->', $.identifier))),
 
