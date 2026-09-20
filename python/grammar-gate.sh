@@ -36,6 +36,21 @@ for g in $grammars; do
       fail=1
     fi
   done
+  # The version is pinned beside the grammar, because two CLI versions generate two different
+  # parser files from one grammar. Measured 2026-09-20: 0.26.12 reproduces the committed parser
+  # byte for byte and 0.25.10 does not. Without this check the gate silently regenerates with
+  # whatever the machine has and reports a version difference as a drift.
+  want=$(sed -n 's/^tree_sitter_cli = "\(.*\)"/\1/p' "$root/$g/pyproject.toml" | head -1)
+  have=$([ -n "$cli" ] && "$cli" --version 2>/dev/null | awk '{print $2}')
+  if [ -n "$cli" ] && [ -n "$want" ] && [ "$want" != "$have" ]; then
+    echo "grammar-gate: $g declares tree-sitter CLI $want and this machine resolved $have." >&2
+    echo "  A different CLI generates a different parser.c from the same grammar, so the diff below" >&2
+    echo "  would report a version difference as a drift. Install $want, or change the pin in" >&2
+    echo "  $g/pyproject.toml deliberately and regenerate with it." >&2
+    fail=1
+    continue
+  fi
+
   if [ -z "$cli" ]; then
     echo "grammar-gate: $g/grammar.js changed and no tree-sitter CLI was found on PATH or in the npx cache," >&2
     echo "  so the generated parser cannot be checked against it. Install the CLI (see $g/README.md) and retry." >&2

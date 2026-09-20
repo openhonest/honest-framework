@@ -21,3 +21,12 @@ cache-keys = [
   { file = "src/grammar.json" },
   { file = "bindings/python/**/*.c" },
 ]
+
+# The tree-sitter CLI that generated src/parser.c. Two CLI versions generate two different parser
+# files from one grammar: 0.26.12 reproduces the committed parser byte for byte and 0.25.10 does
+# not, measured on 2026-09-20. Without this, grammar-gate.sh picks the highest version the machine
+# happens to have, so the same grammar regenerates differently on two machines and the gate reports
+# a drift that is only a version difference. The gate reads this value and refuses any other.
+[tool.honest.grammar]
+tree_sitter_cli = "0.26.12"
+abi = 14
