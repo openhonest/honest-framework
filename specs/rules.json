@@ -1,150 +1,6 @@
 {
   "rules": [
     {
-      "id": "HC001",
-      "severity": "Error",
-      "firing_time": "Static",
-      "startup": true,
-      "lsp": true,
-      "description": "Link missing vocabulary",
-      "prevents": "Cannot generate chain contract tests — vocabulary missing or incompatible",
-      "enforced_by": "honest-check",
-      "deferred_cases": [],
-      "emitted_by_honest_check": true
-    },
-    {
-      "id": "HC002",
-      "severity": "Error",
-      "firing_time": "Static",
-      "startup": true,
-      "lsp": true,
-      "description": "Chain type mismatch",
-      "prevents": "Cannot generate chain contract tests — vocabulary missing or incompatible",
-      "enforced_by": "honest-check",
-      "deferred_cases": [],
-      "emitted_by_honest_check": true
-    },
-    {
-      "id": "HC003",
-      "severity": "Error/Warning/Info",
-      "firing_time": "Construction",
-      "startup": true,
-      "lsp": true,
-      "description": "Recognizer overlap",
-      "prevents": "Cannot generate unambiguous classification — recognizers overlap or are catch-all",
-      "enforced_by": "honest-check",
-      "deferred_cases": [
-        {
-          "case": "predicate × predicate",
-          "owner": "honest-test",
-          "description": "Predicate overlap requires empirical testing"
-        }
-      ],
-      "emitted_by_honest_check": true
-    },
-    {
-      "id": "HC004",
-      "severity": "Warning",
-      "firing_time": "Static",
-      "startup": false,
-      "lsp": true,
-      "description": "Dead vocabulary type",
-      "prevents": "",
-      "enforced_by": "honest-check",
-      "deferred_cases": [],
-      "emitted_by_honest_check": true
-    },
-    {
-      "id": "HC005",
-      "severity": "Warning",
-      "firing_time": "Static",
-      "startup": false,
-      "lsp": true,
-      "description": "Unused binding",
-      "prevents": "",
-      "enforced_by": "honest-check",
-      "deferred_cases": [],
-      "emitted_by_honest_check": true
-    },
-    {
-      "id": "HC006",
-      "severity": "Error",
-      "firing_time": "Construction",
-      "startup": true,
-      "lsp": true,
-      "description": "Composed type references unknown base",
-      "prevents": "Cannot generate composed-type or chain tests — references unresolved or chain empty",
-      "enforced_by": "honest-check",
-      "deferred_cases": [],
-      "emitted_by_honest_check": true
-    },
-    {
-      "id": "HC007",
-      "severity": "Error",
-      "firing_time": "Construction",
-      "startup": true,
-      "lsp": true,
-      "description": "Empty chain",
-      "prevents": "Cannot generate composed-type or chain tests — references unresolved or chain empty",
-      "enforced_by": "honest-check",
-      "deferred_cases": [],
-      "emitted_by_honest_check": true
-    },
-    {
-      "id": "HC008",
-      "severity": "Warning",
-      "firing_time": "Static",
-      "startup": false,
-      "lsp": true,
-      "description": "Impure link (framework tier)",
-      "prevents": "Cannot verify boundary isolation — I/O outside declared boundaries",
-      "enforced_by": "honest-check",
-      "deferred_cases": [],
-      "emitted_by_honest_check": true
-    },
-    {
-      "id": "HC009",
-      "severity": "Warning",
-      "firing_time": "Static",
-      "startup": false,
-      "lsp": true,
-      "description": "Predicate may throw",
-      "prevents": "",
-      "enforced_by": "honest-check",
-      "deferred_cases": [],
-      "emitted_by_honest_check": true
-    },
-    {
-      "id": "HC010",
-      "severity": "Warning",
-      "firing_time": "Static",
-      "startup": false,
-      "lsp": true,
-      "description": "Declared emission never produced",
-      "prevents": "",
-      "enforced_by": "honest-check",
-      "deferred_cases": [],
-      "emitted_by_honest_check": true
-    },
-    {
-      "id": "HC011",
-      "severity": "Error",
-      "firing_time": "Construction",
-      "startup": true,
-      "lsp": true,
-      "description": "Catch-all recognizer",
-      "prevents": "Cannot generate unambiguous classification — recognizers overlap or are catch-all",
-      "enforced_by": "honest-check",
-      "deferred_cases": [
-        {
-          "case": "predicate sampling",
-          "owner": "honest-test",
-          "description": "Catch-all predicate detection via sampling"
-        }
-      ],
-      "emitted_by_honest_check": true
-    },
-    {
       "id": "HC-A001",
       "severity": "Warning",
       "firing_time": "Static",
@@ -445,6 +301,18 @@
       "emitted_by_honest_check": true
     },
     {
+      "id": "HC-R003",
+      "severity": "Error",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": false,
+      "description": "Declared awaited disagrees with the implementation",
+      "prevents": "",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
       "id": "HC-REF001",
       "severity": "Error",
       "firing_time": "Static",
@@ -502,7 +370,7 @@
       "prevents": "",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-SM01",
@@ -622,6 +490,150 @@
       "prevents": "",
       "enforced_by": "honest-check",
       "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC001",
+      "severity": "Error",
+      "firing_time": "Static",
+      "startup": true,
+      "lsp": true,
+      "description": "Link missing vocabulary",
+      "prevents": "Cannot generate chain contract tests — vocabulary missing or incompatible",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC002",
+      "severity": "Error",
+      "firing_time": "Static",
+      "startup": true,
+      "lsp": true,
+      "description": "Chain type mismatch",
+      "prevents": "Cannot generate chain contract tests — vocabulary missing or incompatible",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC003",
+      "severity": "Error/Warning/Info",
+      "firing_time": "Construction",
+      "startup": true,
+      "lsp": true,
+      "description": "Recognizer overlap",
+      "prevents": "Cannot generate unambiguous classification — recognizers overlap or are catch-all",
+      "enforced_by": "honest-check",
+      "deferred_cases": [
+        {
+          "case": "predicate × predicate",
+          "owner": "honest-test",
+          "description": "Predicate overlap requires empirical testing"
+        }
+      ],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC004",
+      "severity": "Warning",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": true,
+      "description": "Dead vocabulary type",
+      "prevents": "",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC005",
+      "severity": "Warning",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": true,
+      "description": "Unused binding",
+      "prevents": "",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC006",
+      "severity": "Error",
+      "firing_time": "Construction",
+      "startup": true,
+      "lsp": true,
+      "description": "Composed type references unknown base",
+      "prevents": "Cannot generate composed-type or chain tests — references unresolved or chain empty",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC007",
+      "severity": "Error",
+      "firing_time": "Construction",
+      "startup": true,
+      "lsp": true,
+      "description": "Empty chain",
+      "prevents": "Cannot generate composed-type or chain tests — references unresolved or chain empty",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC008",
+      "severity": "Warning",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": true,
+      "description": "Impure link (framework tier)",
+      "prevents": "Cannot verify boundary isolation — I/O outside declared boundaries",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC009",
+      "severity": "Warning",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": true,
+      "description": "Predicate may throw",
+      "prevents": "",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC010",
+      "severity": "Warning",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": true,
+      "description": "Declared emission never produced",
+      "prevents": "",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC011",
+      "severity": "Error",
+      "firing_time": "Construction",
+      "startup": true,
+      "lsp": true,
+      "description": "Catch-all recognizer",
+      "prevents": "Cannot generate unambiguous classification — recognizers overlap or are catch-all",
+      "enforced_by": "honest-check",
+      "deferred_cases": [
+        {
+          "case": "predicate sampling",
+          "owner": "honest-test",
+          "description": "Catch-all predicate detection via sampling"
+        }
+      ],
       "emitted_by_honest_check": true
     }
   ]

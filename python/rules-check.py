@@ -28,13 +28,22 @@ import sys
 # docstring text ("HC-P* rules", the "HC-XXXX" placeholder in the suppression example) and
 # reports it as an undeclared rule.
 ID = re.compile(r"HC-(?:[A-Z]{1,3}\d{2,3}|SYN)\b|HC\d{3}\b")
+QUOTED_ID = re.compile(r"['\"](HC-(?:[A-Z]{1,3}\d{2,3}|SYN)|HC\d{3})['\"]")
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def emitted_ids(sources: list[str]) -> set[str]:
-    """Pure: every rule id the linter's own source names. Takes the text, not the path, so the
-    extraction is exercised without a filesystem and the reading stays in main()."""
-    return set(ID.findall(" ".join(sources)))
+    """Pure: every rule id the linter's own source EMITS, read as a quoted string rather than as
+    text anywhere in the file.
+
+    Matching the bare id counted a comment as an implementation. HC-REF005 was named in two
+    comments, both saying a missing declaration is its finding, and in no code at all; the
+    catalogue recorded it as emitted and this check agreed, so a rule that has never existed
+    passed as implemented from August to September. A rule reaches a reader by being constructed,
+    and construction means the id is a string in the source.
+
+    Takes the text, not the path, so the extraction is exercised without a filesystem."""
+    return {m.group(1) for m in QUOTED_ID.finditer(" ".join(sources))}
 
 
 def disagreements(catalogue: list[dict], emitted: set[str]) -> list[str]:
@@ -62,9 +71,18 @@ def main() -> int:
         print("\n".join(problems), file=sys.stderr)
         print("  Fix the code, or amend specs/rules.json — whichever states the truth.", file=sys.stderr)
         return 1
-    enforced_elsewhere = [r["id"] for r in catalogue if not r["emitted_by_honest_check"]]
+    # Two different facts, kept apart. A rule another module owns is covered somewhere. A rule
+    # honest-check owns and has not written is covered nowhere, and calling both "enforced
+    # elsewhere" told a reader the second was handled.
+    elsewhere = [r["id"] for r in catalogue
+                 if not r["emitted_by_honest_check"] and r["enforced_by"] != "honest-check"]
+    unwritten = [r["id"] for r in catalogue
+                 if not r["emitted_by_honest_check"] and r["enforced_by"] == "honest-check"]
     print(f"rules-check: {len(catalogue)} rules declared, {len(emitted)} emitted by honest-check, "
-          f"{len(enforced_elsewhere)} enforced elsewhere ({', '.join(enforced_elsewhere)}).")
+          f"{len(elsewhere)} owned by another module ({', '.join(elsewhere)}).")
+    if unwritten:
+        print(f"  {len(unwritten)} declared by honest-check and NOT written: {', '.join(unwritten)}. "
+              f"Nothing enforces these.")
     return 0
 
 
