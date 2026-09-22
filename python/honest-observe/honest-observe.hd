@@ -25,7 +25,7 @@ module honest-observe
     value: any
   }
 
-  boundary_out fn emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, runtime: any) -> Event side_effect writes "honest-persist"
+  boundary_out fn emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, runtime: any) -> Event awaited side_effect writes "honest-persist"
 
   fn build_event : (event_type: str, event_version: int, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, event_id: str, timestamp: str, sequence: int) -> Event
 

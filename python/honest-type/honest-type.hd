@@ -102,7 +102,7 @@ module honest-type
 
   fn execute_chain : (links: list<Link>, initial_manifest: Manifest) -> Result
 
-  fn execute_chain_async : (links: list<Link>, initial_manifest: Manifest) -> Result
+  fn execute_chain_async : (links: list<Link>, initial_manifest: Manifest) -> Result awaited
 
   fn validate_all : (links: list<Link>) -> Chain
 

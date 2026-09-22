@@ -312,6 +312,11 @@ Feature: honest-design — the .hd architecture-declaration read path
     When _door_takes_readable checks the module
     Then it returns a door_takes_readable fault naming the door and the type, and none for a primitive or a type no reader returns
 
+  Scenario: _unawaited_caller flags a caller that does not await what it calls
+    Given an awaited callee and a caller not marked awaited, joined by an invokes, a dispatch handler or a chain link
+    When _unawaited_caller checks the module
+    Then it returns an unawaited_caller fault naming the caller and callee, and none when the caller is awaited too
+
   Scenario: _duplicate_names flags a name declared twice within a kind
     Given a module IR with declarations
     When _duplicate_names checks each kind

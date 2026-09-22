@@ -51,10 +51,10 @@ module honest-alerts
 
   fn resolve_config : (raw: dict<str, any>) -> dict<str, any>
 
-  boundary_out fn send : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, runtime: any) -> Message side_effect writes "network"
+  boundary_out fn send : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, runtime: any) -> Message awaited side_effect writes "network"
 
-  boundary_out fn send_and_wait : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, runtime: any) -> Message side_effect writes "network"
+  boundary_out fn send_and_wait : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, runtime: any) -> Message awaited side_effect writes "network"
 
-  boundary_out fn supervise : (message: Message, routing_table: list<Route>, runtime: any) -> DeliveryPlan side_effect writes "network"
+  boundary_out fn supervise : (message: Message, routing_table: list<Route>, runtime: any) -> DeliveryPlan awaited side_effect writes "network"
 
-  boundary_out fn handle_reply : (message_id: str, option_id: str, reply_payload: dict<str, any>, actor_id: str, runtime: any) -> any side_effect writes "network"
+  boundary_out fn handle_reply : (message_id: str, option_id: str, reply_payload: dict<str, any>, actor_id: str, runtime: any) -> any awaited side_effect writes "network"

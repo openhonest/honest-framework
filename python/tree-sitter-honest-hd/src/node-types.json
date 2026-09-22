@@ -331,6 +331,10 @@
       "required": true,
       "types": [
         {
+          "type": "awaited",
+          "named": true
+        },
+        {
           "type": "invokes",
           "named": true
         },
@@ -1089,6 +1093,10 @@
   {
     "type": "as",
     "named": false
+  },
+  {
+    "type": "awaited",
+    "named": true
   },
   {
     "type": "boundary_in",

@@ -41,6 +41,7 @@ class Function(TypedDict):
     invokes: list  # list[str]
     raises: list  # list[str]
     column: int
+    awaited: bool  # the caller must await the answer; False when the word is absent, which honest-check HC-R003 verifies against the code
     note: str  # the one comment the parser keeps; "" when the declaration has none
 
 

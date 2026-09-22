@@ -85,6 +85,7 @@ module honest-design
   fn _callees : (module: Module) -> list<any>
   fn _fault_swallowed : (module: Module) -> list<Fault>
   fn _fault_shape : (module: Module) -> list<Fault>
+  fn _unawaited_caller : (module: Module) -> list<Fault>
   fn _door_called : (module: Module) -> list<Fault>
   fn _reader_calls : (module: Module) -> list<Fault>
   fn _read_surface_member : (node: any, source: bytes) -> SurfaceMember

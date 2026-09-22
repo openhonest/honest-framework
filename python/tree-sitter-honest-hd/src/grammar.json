@@ -1147,8 +1147,16 @@
         {
           "type": "SYMBOL",
           "name": "note"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "awaited"
         }
       ]
+    },
+    "awaited": {
+      "type": "STRING",
+      "value": "awaited"
     },
     "invokes": {
       "type": "SEQ",

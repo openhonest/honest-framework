@@ -161,7 +161,11 @@ module.exports = grammar({
 
     param: $ => seq(field('name', $.identifier), ':', field('type', $.type)),
 
-    _annotation: $ => choice($.invokes, $.raises, $.side_effect, $.note),
+    // A function the caller must await: it hands back a promise of the answer, and a call site
+    // written without the word holds a coroutine that is truthy, is not a Fault, and is not the
+    // answer. The word states the caller's obligation; how the host waits is the host's business.
+    _annotation: $ => choice($.invokes, $.raises, $.side_effect, $.note, $.awaited),
+    awaited: $ => 'awaited',
 
     invokes: $ => seq('invokes', commaSep1($.identifier)),
 

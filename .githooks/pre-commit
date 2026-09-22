@@ -68,6 +68,13 @@ if [ -n "$py" ] || [ -n "$feat" ]; then
     "$root/python/feature-gate.sh" || exit 1
 fi
 
+# The declaration gate: every .hd parses and validates, and each package's declaration agrees with its
+# code (HC-R002, HC-R003). Fires on a staged .hd or staged Python, since either side can break the pact.
+if [ -n "$py" ] || printf '%s\n' "$staged" | grep -qE '\.hd$'; then
+    echo "hd-check (declarations against code)…"
+    "$root/python/hd-check.sh" || exit 1
+fi
+
 # The mutation gate fires on staged module source: every staged src file must be mutation-adequate
 # (each surviving mutant caught by a conformance case or declared equivalent in mutants_setaside.json).
 # File-scoped — it mutates only the changed files, not their whole module — so a single-file edit stays

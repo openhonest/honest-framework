@@ -461,6 +461,12 @@ Feature: honest-check — Python supplement
     When _load_manifest is asked
     Then it returns the parsed manifest, or nothing when no path is configured or the file is absent
 
+  Scenario: _load_declaration reads the module's declaration
+    Given a configured declaration path
+    When _load_declaration is asked
+    Then it returns the text of the .hd, or nothing when no path is configured
+    But a configured path that is not there raises, since absence is not permission
+
   Scenario: _load_config reads and normalizes the configuration file
     Given a configuration path
     When _load_config reads it
@@ -482,6 +488,7 @@ Feature: honest-check — Python supplement
     Given the resolved paths, severity, suppressed and selected rules, and format
     When _run_once runs the check once
     Then it discovers, checks, filters, and renders, returning one on errors, two on a read failure, else zero
+    And where a declaration is configured it runs HC-R002 and HC-R003 over every file against it, exiting two when the declaration does not read
 
   Scenario: watch re-runs the check on each trigger from the stream
     Given a run thunk and a trigger stream
@@ -1015,6 +1022,12 @@ Feature: honest-check — Python supplement
     Then it returns every declared function name mapped to its role keyword
     But source that does not parse yields no roles rather than raising
 
+  Scenario: declared_awaited reads which functions the .hd says a caller must await
+    Given the text of a module's .hd declaration
+    When declared_awaited reads it
+    Then it returns every declared function name mapped to whether it carries the awaited word
+    But source that does not parse is a named failure rather than an empty mapping
+
   Scenario: declared_column places a role in the four-column model
     Given a role keyword the author declared
     When declared_column is asked for its column
@@ -1033,6 +1046,12 @@ Feature: honest-check — Python supplement
     Then it faults each one that invokes an orchestrator or an input boundary
     But calling a pure function or another output boundary is permitted
     And a callee the declaration does not name is skipped, being HC-REF005's finding
+
+  Scenario: check_hc_r003 faults a declaration that disagrees with the async keyword
+    Given a parsed module and the awaited marks its .hd declares
+    When check_hc_r003 compares each declared function with its definition
+    Then it faults an async def whose card does not say awaited, and a plain def whose card does
+    But a function the declaration does not name is skipped, being HC-REF005's finding
 
   Scenario: resolve_rule_config states the settings each configurable rule will run with
     Given the per-rule settings a project declared, which may be none

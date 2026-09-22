@@ -10,6 +10,7 @@ touches the filesystem, so it stays exhaustively testable.
     severity  = "warning"
     adoption  = "Boundary"   # section 9.4; absent means the strictest level
     templates = "templates/"
+    declaration = "app.hd"   # the module's .hd; HC-R002 and HC-R003 run only where one is named
 
     [rules]
     disable  = ["HC-P006"]
@@ -35,6 +36,7 @@ def normalize_config(raw: dict) -> dict:
         "templates": check.get("templates", ""),
         "format_manifest": check.get("format_manifest", ""),
         "component_manifest": check.get("component_manifest", ""),
+        "declaration": check.get("declaration", ""),
         "disable": list(rules.get("disable", [])),
         "rule_config": {name: dict(value) for name, value in rules.items() if name != "disable" and hasattr(value, "items")},
         "startup_on_error": raw.get("startup", {}).get("on_error"),

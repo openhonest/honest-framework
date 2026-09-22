@@ -71,7 +71,8 @@
                     "side_effects": [],
                     "invokes": [],
                     "raises": [],
-                    "note": ""
+                    "note": "",
+                    "awaited": false
                   }
                 ],
                 "chains": [],
@@ -124,7 +125,8 @@
                 }
               ],
               "column": 3,
-              "raises": []
+              "raises": [],
+              "awaited": false
             }
           ],
           "types": [],
@@ -172,7 +174,8 @@
                 }
               ],
               "column": 3,
-              "raises": []
+              "raises": [],
+              "awaited": false
             }
           ],
           "types": [],
@@ -398,7 +401,8 @@
                   "direction": "reads",
                   "target": "env:GHOST"
                 }
-              ]
+              ],
+              "awaited": false
             }
           ],
           "chains": [],
@@ -472,7 +476,8 @@
               ],
               "side_effects": [],
               "invokes": [],
-              "raises": []
+              "raises": [],
+              "awaited": false
             }
           ],
           "chains": [],
@@ -552,7 +557,8 @@
               "invokes": [
                 "fails"
               ],
-              "raises": []
+              "raises": [],
+              "awaited": false
             },
             {
               "name": "fails",
@@ -571,7 +577,8 @@
               ],
               "side_effects": [],
               "invokes": [],
-              "raises": []
+              "raises": [],
+              "awaited": false
             }
           ],
           "chains": [],
@@ -633,7 +640,8 @@
               "invokes": [
                 "door"
               ],
-              "raises": []
+              "raises": [],
+              "awaited": false
             },
             {
               "name": "door",
@@ -653,7 +661,8 @@
                 }
               ],
               "invokes": [],
-              "raises": []
+              "raises": [],
+              "awaited": false
             }
           ],
           "chains": [],
@@ -701,6 +710,13 @@
       "id": "read-surface-ok",
       "read": {
         "source": "module m\n  inputs = { \"HTTP\" : \"the request\" }\n  outputs = { \"stdout\" }\n  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\"\n  boundary_out fn sink : (s: str) -> bool side_effect writes \"stdout\"\n"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "read-awaited-ok",
+      "read": {
+        "source": "module m\n  boundary_out fn sink : (s: str) -> bool awaited side_effect writes \"database\"\n"
       },
       "expect": "ok"
     }

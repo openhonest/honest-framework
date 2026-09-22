@@ -78,6 +78,41 @@ def check_hc_r002(root, source: bytes, path: str, roles) -> list[Diagnostic]:
     return out
 
 
+def check_hc_r003(root, source: bytes, path: str, awaited) -> list[Diagnostic]:
+    """HC-R003 — the declaration and the code disagree about awaiting.
+
+    honest-design's `unawaited_caller` carries the awaited word up the call graph, and it can
+    only carry what somebody set: a declaration that never says awaited is clean under that rule
+    whether the code is synchronous or not. So the root is verified here, against the one fact
+    the source states outright, the `async` keyword. A function written `async def` whose card
+    does not say awaited hands a caller a coroutine where the card promised the answer; a card
+    saying awaited over a plain `def` has a caller await a value that is not awaitable. Either
+    way the card lies, and the code written from the card fails on a later line that names
+    neither function.
+
+    `awaited` is the map declared_awaited read from the module's `.hd`. A function the
+    declaration does not name is HC-REF005's finding, not this rule's.
+    """
+    out: list[Diagnostic] = []
+    for name, node in functions_by_name(root, source).items():
+        if name not in awaited:
+            continue
+        is_async = node.children[0].type == "async"
+        if is_async == awaited[name]:
+            continue
+        line, col = line_col(node)
+        if is_async:
+            message = (f"'{name}' is async def and its declaration does not say awaited. A caller written "
+                       "from the card gets a coroutine, not the answer. Add awaited to the declaration, "
+                       "or make the function plain.")
+        else:
+            message = (f"'{name}' is declared awaited and is a plain def. A caller written from the card "
+                       "awaits a value that is not awaitable. Remove awaited from the declaration, or "
+                       "make the function async.")
+        out.append(diagnostic("HC-R003", "error", path, line, col, message))
+    return out
+
+
 def check_hc_r001(root, source: bytes, path: str) -> list[Diagnostic]:
     """HC-R001 — orphan function: no declared role and not reachable from a roled one.
 

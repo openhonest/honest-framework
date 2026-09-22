@@ -203,6 +203,7 @@ paths = ["src/pipelines/", "src/vocab/", "src/state/"]
 exclude = ["src/migrations/", "**/__pycache__/"]
 severity = "warning"
 adoption = "Boundary"   # section 9.4; absent means "Declared", the strictest level
+declaration = "src/app.hd"   # the module's .hd; HC-R002 and HC-R003 run only where one is named
 
 [rules]
 # Suppress specific rules globally
@@ -1123,7 +1124,26 @@ FUNCTION check_HC_R002(source_tree, declaration):
 
 A callee the declaration does not name is skipped rather than assumed. It may be a helper in another module, a host-language builtin, or a function the declaration is missing, and the last of those is `HC-REF005`'s finding rather than this rule's.
 
-**The declaration is named, not found.** The rule runs only where a module's `.hd` is configured, exactly as `HC-REF001` runs only where templates are configured and `HC-REF004` only where a format manifest is. Walking up from a source file to guess which `.hd` governs it would infer what the framework says must be declared.
+**The declaration is named, not found.** The rule runs only where a module's `.hd` is configured, as `[check] declaration` or `--declaration`, exactly as `HC-REF001` runs only where templates are configured and `HC-REF004` only where a format manifest is. Walking up from a source file to guess which `.hd` governs it would infer what the framework says must be declared. A configured declaration that is missing or does not parse is a read failure, exit 2: a gate that reports clean over a declaration it could not open is no gate.
+
+#### HC-R003 — Declaration and code disagree about awaiting
+
+The `.hd` word `awaited` says a caller gets a promise of the answer and must await it (honest-design §3.2). honest-design carries the word up the call graph: an awaited callee makes its caller awaited, along the edges a fault travels, out to the door (`unawaited_caller`). That rule can only carry what somebody set. A declaration that never says `awaited` is clean under it whether the code is synchronous or not, so without a check at the root the word is a flag nobody verifies, and a gate that reports green because nothing ever set it.
+
+This rule decides the root from the one fact the source states outright, the `async` keyword. A function written `async def` whose declaration does not say `awaited` hands a caller written from the card a coroutine where the card promised the answer: truthy, not a Fault, not the answer, and the failure lands on a later line that names neither function. A declaration saying `awaited` over a plain `def` has that caller await a value that is not awaitable. Either way the card lies, and the default (absent means false) is verified rather than assumed (P15).
+
+```
+FUNCTION check_HC_R003(source_tree, declaration):
+    awaited ← declared_awaited(declaration)      // name -> true | false
+    FOR EACH function IN source_tree.all_functions:
+        IF function.name NOT IN awaited: CONTINUE   // not a declared function of this module
+        IF function.is_async ≠ awaited[function.name]:
+            EMIT error(HC-R003, function.location,
+                is_async ? f"'{name}' is async def and its declaration does not say awaited. ..."
+                         : f"'{name}' is declared awaited and is a plain def. ...")
+```
+
+The rule reads the same named declaration as HC-R002 and runs under the same condition. A function the declaration does not name is `HC-REF005`'s finding. A host with blocking calls has no `async` keyword and no `awaited` word, and the rule finds nothing there, which is correct: there is nothing to disagree about.
 
 #### HC-R001 — Orphan function (no role, not reachable from any role)
 
@@ -1553,6 +1573,7 @@ src/pipelines/user.py:42: info
 | HC-P017 | Error | Static | — | Serializer not declared as chain link |
 | HC-R001 | Error | Static | — | Orphan function (no role, not reachable) |
 | HC-R002 | Error | Static | — | Output boundary invokes an orchestrator or an input boundary |
+| HC-R003 | Error | Static | — | Declaration and code disagree about awaiting (async def without `awaited`, or `awaited` over a plain def) |
 | HC-OR001 | Error | Static | — | Orchestrator calls another orchestrator |
 | HC-OR003 | Warning | Static | — | Suspected duplication between orchestrators |
 | HC-A001 | Warning | Static | — | No AuthProvider registered |
@@ -1637,7 +1658,7 @@ An adoption level is a named, closed set of rules. A codebase declares one; the 
 | **Structural** | The shape of the code: no classes, no dispatch chains, no hidden state in closures or constructors, no lifecycle hooks | HC-P001, HC-P003, HC-P007, HC-P011, HC-P016 |
 | **Boundary** | I/O, faults, persistence, and identity cross only at declared boundaries; the interior is pure | HC-P002, HC-P004, HC-P005, HC-P006, HC-P010, HC-P013, HC-ST001, HC-A001, HC-A002 |
 | **Typed** | The vocabulary, chain, and state-machine type system holds | HC001–HC011, HC-SM01–HC-SM05, HC-P014, HC-P017 |
-| **Declared** | Everything is declared rather than inferred: roles, orchestration, static references, and user state | HC-R001, HC-OR001, HC-OR003, HC-REF001–HC-REF004, HC-ST002, HC-HF001, HC-HF002 |
+| **Declared** | Everything is declared rather than inferred: roles, orchestration, static references, and user state | HC-R001, HC-R002, HC-R003, HC-OR001, HC-OR003, HC-REF001–HC-REF004, HC-ST002, HC-HF001, HC-HF002 |
 
 **Three rules hold at every level: HC-SYN, HC-SUP001, and HC-SUP002.** A codebase that does not parse has no level, and the suppression guarantee of section 7.4 cannot be level-dependent — if it were, a low level would silently buy the right to hide things, which is the dial problem again.
 

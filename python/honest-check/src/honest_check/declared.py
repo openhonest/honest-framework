@@ -54,6 +54,23 @@ def declared_roles(source):
     })
 
 
+def declared_awaited(source):
+    """Map each function name in `.hd` source to whether its author wrote `awaited`.
+
+    False is a claim, not a blank: it says a caller gets the answer without waiting. That claim
+    is only as good as the code, which is why HC-R003 crosses this map with the `async` keyword.
+    Same contract as declared_roles: ok(mapping) for source that parses, err(fault) otherwise.
+    """
+    document = read_hd(source)
+    if "ok" not in document:
+        return err(fault("hd_unreadable", "the .hd source could not be read, so its awaited marks are unknown", "client", {}))
+    return ok({
+        function["name"]: function["awaited"]
+        for module in document["ok"]["modules"]
+        for function in module["functions"]
+    })
+
+
 def declared_column(role):
     """The column a role keyword places its function in (honest-design section 3.1)."""
     if role not in COLUMNS:

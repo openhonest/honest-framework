@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 from honest_check import HonestCheckError, check_source, startup_check
-from honest_check.cli import _discover_css, _discover_files, _discover_js, _discover_templates, _find_config, _load_config, _load_manifest, _template_roots, main as cli_main, watch
+from honest_check.cli import _discover_css, _discover_files, _discover_js, _discover_templates, _find_config, _load_config, _load_declaration, _load_manifest, _template_roots, main as cli_main, watch
 from honest_check.rules import is_fixable
 from honest_check.config import (
     resolve_rule_config,
@@ -98,7 +98,7 @@ def _probe_formats():
 
     # Exact human output: a location+rule line plus an indented message line per diagnostic, then a summary.
     human_expected = (
-        "honest-check: adoption level Declared — 45 of 45 rules enforced.\n"
+        "honest-check: adoption level Declared — 47 of 47 rules enforced.\n"
         "f.py:1:1: error HC003\n"
         '  a class & <tag> "q"\n'
         "f.py:2:1: warning HC-P001\n"
@@ -142,7 +142,7 @@ def _probe_formats():
     json_text = render(diags, "json", "Declared")
     expected_payload = {
         "version": "0.1",
-        "summary": {"errors": 1, "warnings": 1, "infos": 1, "adoption": "Declared", "enforced_rules": 45},
+        "summary": {"errors": 1, "warnings": 1, "infos": 1, "adoption": "Declared", "enforced_rules": 47},
         "diagnostics": [
             {"rule": "HC003", "severity": "error", "file": "f.py", "line": 1, "col": 1, "message": 'a class & <tag> "q"', "fixable": False},
             {"rule": "HC-P001", "severity": "warning", "file": "f.py", "line": 2, "col": 1, "message": "branch", "fixable": False},
@@ -178,13 +178,13 @@ def _probe_formats():
 
     # The empty report still states its level and summarises — a passing run always says what it proved.
     empty_expected = (
-        "honest-check: adoption level Declared — 45 of 45 rules enforced.\n"
+        "honest-check: adoption level Declared — 47 of 47 rules enforced.\n"
         "Found 0 error(s), 0 warning(s), 0 info(s)."
     )
     if render([], "human", "Declared") != empty_expected:
         bad.append(f"empty human render should be the header and the summary: {render([], 'human', 'Declared')!r}")
     # A weaker level changes the header, and only the header, on an empty report.
-    if not render([], "human", "Structural").startswith("honest-check: adoption level Structural — 8 of 45"):
+    if not render([], "human", "Structural").startswith("honest-check: adoption level Structural — 8 of 47"):
         bad.append(f"the header must state the declared level: {render([], 'human', 'Structural')!r}")
     total = counts(diags)
     if (total["error"], total["warning"], total["info"]) != (1, 1, 1):
@@ -225,6 +225,8 @@ def _probe_config():
         bad.append(f"normalize_config wrong: {full}")
     if full["templates"] != "" or normalize_config({"check": {"templates": "tpl/"}})["templates"] != "tpl/":
         bad.append(f"normalize_config should read the templates directory, empty by default: {full['templates']!r}")
+    if full["declaration"] != "" or normalize_config({"check": {"declaration": "app.hd"}})["declaration"] != "app.hd":
+        bad.append(f"normalize_config should read the declaration path, empty by default: {full['declaration']!r}")
     # A per-rule value that is not a mapping (no .items) is not kept as rule_config; only dict configs are.
     nondict = normalize_config({"rules": {"disable": ["HC003"], "HC003": "notamapping", "HC-OR003": {"min_run": 4}}})
     if nondict["rule_config"] != {"HC-OR003": {"min_run": 4}}:
@@ -543,6 +545,48 @@ def _probe_cli():
         if code != 0:
             bad.append(f"a resolvable hc-* attribute should be clean, got {code}")
 
+    # HC-R002 and HC-R003 wired through the CLI: with a declaration named, every checked file is crossed
+    # with the roles and awaited marks its .hd states. --declaration wins over [check] declaration.
+    with tempfile.TemporaryDirectory() as tmp:
+        app = Path(tmp, "app.py")
+        app.write_text("async def send(msg):\n    return run(msg)\ndef run(msg):\n    return msg\n", encoding="utf-8")
+        hd = Path(tmp, "app.hd")
+        hd.write_text("module app\n  outputs = { \"network\" }\n  orchestrator fn run : (msg: str) -> str invokes send\n"
+                      "  boundary_out fn send : (msg: str) -> str side_effect writes \"network\"\n", encoding="utf-8")
+        cfg = Path(tmp, "honest-check.toml")
+        cfg.write_text(f'[check]\ndeclaration = "{hd}"\n', encoding="utf-8")
+        code, out, _ = _run_cli([str(app), "--config", str(cfg), "--format", "json"])
+        if code != 1 or "HC-R002" not in out or "HC-R003" not in out:
+            bad.append(f"an output boundary invoking inward, and async without awaited, must both fire through the CLI: {code} {out[:200]}")
+        # Without a declaration named, neither rule runs: the declaration is named, not found.
+        code, out, _ = _run_cli([str(app), "--format", "json"])
+        if code != 0 or "HC-R00" in out:
+            bad.append(f"with no declaration configured the declaration rules must not run: {code} {out[:200]}")
+        # Fix both: the card says awaited and the boundary no longer calls inward. Clean, via --declaration.
+        app.write_text("async def send(msg):\n    return msg\nasync def run(msg):\n    return await send(msg)\n", encoding="utf-8")
+        hd.write_text("module app\n  outputs = { \"network\" }\n  orchestrator fn run : (msg: str) -> str awaited invokes send\n"
+                      "  boundary_out fn send : (msg: str) -> str awaited side_effect writes \"network\"\n", encoding="utf-8")
+        code, out, _ = _run_cli([str(app), "--declaration", str(hd), "--format", "json"])
+        if code != 0:
+            bad.append(f"a declaration that agrees with the code should be clean: {code} {out[:200]}")
+        # _load_declaration returns the text, None when nothing is configured, and raises for a path
+        # that is not there: absence is not permission.
+        if _load_declaration(str(hd)) != hd.read_text(encoding="utf-8") or _load_declaration("") is not None:
+            bad.append("_load_declaration returns the configured text, or None when no path is configured")
+        try:
+            _load_declaration(str(Path(tmp, "nope.hd")))
+            bad.append("_load_declaration must raise for a configured path that is not there")
+        except OSError:
+            pass
+        # Through the CLI, a missing declaration is a read failure, exit 2, as is one that does not parse.
+        code, _, err = _run_cli([str(app), "--declaration", str(Path(tmp, "nope.hd"))])
+        if code != 2:
+            bad.append(f"a configured declaration that is not there should exit 2, got {code}")
+        hd.write_text("module app\n  fn (((\n", encoding="utf-8")
+        code, _, err = _run_cli([str(app), "--declaration", str(hd)])
+        if code != 2 or "cannot read declaration" not in err:
+            bad.append(f"a declaration that does not parse should exit 2 and say so, got {code} {err[:120]}")
+
     # HC-ST002 wired through the CLI: a client module that keeps a copy of a slot the templates declare
     # as user state is a second source of truth, and the run fails.
     with tempfile.TemporaryDirectory() as tmp:
@@ -664,6 +708,7 @@ def _probe_cli():
         "apply auto-fixable corrections",
         "re-run on each trigger line from stdin",
         "count every rule's findings and exit 0",
+        "path to the module's .hd",
     ):
         if phrase not in help_text:
             bad.append(f"--help should include {phrase!r}")
@@ -1333,7 +1378,7 @@ def _probe_adoption():
             "HC011", "HC-SM01", "HC-SM02", "HC-SM03", "HC-SM04", "HC-SM05", "HC-P014", "HC-P017",
         },
         "Declared": {
-            "HC-R001", "HC-OR001", "HC-OR003", "HC-REF001", "HC-REF002", "HC-REF003", "HC-REF004",
+            "HC-R001", "HC-R002", "HC-R003", "HC-OR001", "HC-OR003", "HC-REF001", "HC-REF002", "HC-REF003", "HC-REF004",
             "HC-ST002", "HC-HF001", "HC-HF002",
         },
     }
@@ -1455,7 +1500,7 @@ def _probe_adoption():
         {"rule": "HC-P003", "severity": "error", "findings": 1, "enforced": True, "introduced": "Structural"},
     ]
     report_expected = (
-        "honest-check: adoption level Structural — 8 of 45 rules enforced.\n"
+        "honest-check: adoption level Structural — 8 of 47 rules enforced.\n"
         "\n"
         "  rule        severity   findings  enforced\n"
         "  HC001       error             2  no (Typed)\n"
@@ -1583,6 +1628,75 @@ def _probe_hc_r002():
     plain = dict(roles, emit="fn")
     if check_hc_r002(parse_python(source).root_node, source, "app/out.py", plain):
         bad.append("a function that is not an output boundary is not this rule's business")
+    return bad
+
+
+def _probe_hc_r003():
+    """HC-R003: the declaration and the code must agree about awaiting. honest-design carries the
+    awaited word up the call graph, but it can only carry what somebody set, so a declaration that
+    never says awaited is clean there whether or not the code is async. The root is decided here,
+    from the async keyword, which is the one fact the source states outright."""
+    from honest_parse import parse_python
+
+    from honest_check.integration_rules import check_hc_r003
+
+    bad = []
+    awaited = {"send": True, "shape": False, "emit": False}
+    source = (
+        b"async def send(msg):\n"
+        b"    return await shape(msg)\n"
+        b"def shape(msg):\n"
+        b"    return msg\n"
+        b"async def emit(msg):\n"
+        b"    return msg\n"
+        b"def helper(msg):\n"
+        b"    return msg\n"
+    )
+    found = check_hc_r003(parse_python(source).root_node, source, "app/out.py", awaited)
+    if [(d["rule"], d["line"], d["severity"]) for d in found] != [("HC-R003", 5, "error")]:
+        bad.append(f"an async def declared without awaited must fault once, as an error, on its own line: {found}")
+    else:
+        message = found[0]["message"]
+        for needed in ("emit", "async def", "does not say awaited", "coroutine", "Add awaited", "or make the function plain"):
+            if needed not in message:
+                bad.append(f"the message must say {needed!r}: {message}")
+
+    plain = b"def send(msg):\n    return msg\n"
+    found = check_hc_r003(parse_python(plain).root_node, plain, "app/out.py", awaited)
+    if len(found) != 1 or found[0]["rule"] != "HC-R003" or found[0]["severity"] != "error":
+        bad.append(f"a plain def declared awaited must fault: {found}")
+    else:
+        for needed in ("send", "declared awaited", "plain def", "not awaitable", "Remove awaited", "make the function async"):
+            if needed not in found[0]["message"]:
+                bad.append(f"the message must say {needed!r}: {found[0]['message']}")
+
+    agree = b"async def send(msg):\n    return msg\ndef shape(msg):\n    return msg\n"
+    if check_hc_r003(parse_python(agree).root_node, agree, "app/out.py", awaited):
+        bad.append("a declaration that agrees with the code is clean")
+    return bad
+
+
+def _probe_declared_awaited():
+    """declared_awaited reads the awaited word per function, and false is a claim the code must
+    back, which is HC-R003's job. Unreadable source is a named failure, as for declared_roles."""
+    from honest_check.declared import declared_awaited
+
+    bad = []
+    source = (
+        "module m\n\n"
+        "  boundary_in fn intake : (p: str) -> str side_effect reads \"filesystem\"\n"
+        "  fn pure_one : (p: str) -> str\n"
+        "  boundary_out fn emit : (p: str) -> str awaited side_effect writes \"network\"\n"
+    )
+    if declared_awaited(source).get("ok") != {"intake": False, "pure_one": False, "emit": True}:
+        bad.append(f"declared_awaited must map each function to whether it carries the word: {declared_awaited(source)}")
+    if declared_awaited("module m\n").get("ok") != {}:
+        bad.append("a module declaring no function is ok with an empty mapping")
+    unparsable = declared_awaited("module m\n  fn (((\n")
+    if unparsable.get("err", {}).get("code") != "hd_unreadable":
+        bad.append(f"source that does not parse must be a named failure: {unparsable}")
+    elif not unparsable["err"]["message"] or not unparsable["err"]["category"]:
+        bad.append("the failure must carry a message and a category")
     return bad
 
 
@@ -1813,6 +1927,8 @@ def run():
         "exports": _probe_exports(),
         "or003_min_run_is_configured": _probe_or003_min_run_is_configured(),
         "hc_r002": _probe_hc_r002(),
+        "hc_r003": _probe_hc_r003(),
+        "declared_awaited": _probe_declared_awaited(),
         "routes": _probe_routes(),
         "formats": _probe_formats(),
         "config": _probe_config(),

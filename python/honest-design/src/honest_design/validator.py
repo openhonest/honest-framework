@@ -345,6 +345,25 @@ def _door_takes_readable(module):
     ]
 
 
+def _unawaited_caller(module):
+    """An awaited callee makes its caller awaited too, along every call whose answer comes back:
+    an invokes, each handler of an invoked dispatch table, each chain link to the next, out to
+    the door, whose caller is the world and awaits it. The same edges a fault travels, because
+    the promise carries the fault inside it. A caller left unmarked is a call somebody will
+    write wrong, and the sign is a warning on a later line naming neither function.
+
+    A pure fn may carry the word: it then awaits what it is handed, as honest-type's
+    execute_chain_async awaits the links it is given. Nothing about waiting touches the world,
+    so the word says nothing about purity, and whether the code is in fact async is
+    honest-check HC-R003's question, not this one's."""
+    awaited = {f["name"] for f in module["functions"] if f["awaited"]}
+    return [
+        fault("unawaited_caller", f"Function '{caller}' calls '{callee}', which must be awaited, and is not itself awaited", "server", {"function": caller, "callee": callee})
+        for caller, callee in _callees(module)
+        if callee in awaited and caller not in awaited
+    ]
+
+
 def _impure_pure_functions(module):
     """A pure `fn` declares no side effect — only a boundary may."""
     return [
@@ -422,6 +441,7 @@ _CHECKS = (
     _held_not_read,
     _fault_swallowed,
     _fault_shape,
+    _unawaited_caller,
     _door_called,
     _reader_calls,
     _store_of_impure,

@@ -23,6 +23,8 @@ _LEVEL_RULES = {
     "Declared": frozenset(
         {
             "HC-R001",
+            "HC-R002",
+            "HC-R003",
             "HC-OR001",
             "HC-OR003",
             "HC-REF001",

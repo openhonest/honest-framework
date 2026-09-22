@@ -22,3 +22,13 @@ for path in files:
 print(f"hd-check: {len(files)} .hd declaration(s), {bad} problem(s)")
 sys.exit(1 if bad else 0)
 PY
+status=$?
+# The declaration crossed with the code: HC-R002 (an output boundary calling inward) and HC-R003 (the
+# declaration and the async keyword disagreeing about awaiting) read each package's own .hd against its
+# source. Only these two rules here; the rest of honest-check runs in lint-affected.sh.
+for hd in honest-*/honest-*.hd; do
+    pkg=${hd%%/*}
+    [ -d "$pkg/src" ] || continue
+    out=$(uv run --package honest-check python -m honest_check.cli --declaration "$hd" --rule HC-R002 --rule HC-R003 "$pkg/src" 2>&1) || { status=1; printf '%s\n' "$out"; }
+done
+exit $status

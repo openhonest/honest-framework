@@ -533,6 +533,30 @@ def _probe_surface():
     return bad
 
 
+def _probe_awaited():
+    """The awaited word is read and propagates up every call whose answer comes back. A pure fn may carry it: it awaits what it is handed."""
+    bad = []
+    src = ("module m\n  inputs = { \"HTTP\" }\n  outputs = { \"database\" }\n"
+           "  dispatch d = { \"a\" -> fine, \"b\" -> waits }\n"
+           "  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\"\n"
+           "  orchestrator fn run : (r: str) -> str invokes d, sink\n"
+           "  orchestrator fn run_ok : (r: str) -> str awaited invokes sink\n"
+           "  fn fine : (r: str) -> str\n"
+           "  fn waits : (r: str) -> str awaited\n"
+           "  boundary_out fn sink : (s: str) -> bool awaited side_effect writes \"database\"\n"
+           "  chain c = door -> run_ok -> sink\n")
+    m = _module(src)
+    if [f["awaited"] for f in m["functions"]] != [False, False, True, False, True, True]:
+        bad.append(f"awaited read wrong: {[(f['name'], f['awaited']) for f in m['functions']]}")
+    got = [f for f in validate(m) if f["code"] in ("unawaited_caller", "awaited_pure")]  # awaited_pure never fires: a pure fn may await what it is handed
+    want = [{"code": "unawaited_caller", "message": "Function 'run' calls 'waits', which must be awaited, and is not itself awaited", "category": "server", "detail": {"function": "run", "callee": "waits"}},
+            {"code": "unawaited_caller", "message": "Function 'run' calls 'sink', which must be awaited, and is not itself awaited", "category": "server", "detail": {"function": "run", "callee": "sink"}},
+            {"code": "unawaited_caller", "message": "Function 'door' calls 'run_ok', which must be awaited, and is not itself awaited", "category": "server", "detail": {"function": "door", "callee": "run_ok"}}]
+    if got != want:
+        bad.append(f"awaited faults wrong: {got}")
+    return bad
+
+
 def _probe_validate():
     """The validator raises nothing on a valid module and pins each fault it does raise."""
     bad = []
@@ -623,6 +647,7 @@ def run():
         "readers": _probe_readers(),
         "stores": _probe_stores(),
         "notes": _probe_notes(),
+        "awaited": _probe_awaited(),
         "surface": _probe_surface(),
         "projection": _probe_projection(),
         "render": _probe_render(),

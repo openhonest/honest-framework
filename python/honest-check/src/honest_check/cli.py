@@ -41,6 +41,8 @@ from honest_check.formats import (
 )
 from honest_check.lsp import serve
 from honest_check.rules import check_source, language_for_path
+from honest_check.declared import declared_awaited, declared_roles
+from honest_check.integration_rules import check_hc_r002, check_hc_r003
 from honest_check.templates import js_class_references, js_module_bindings, scan_template, stylesheet_classes
 from honest_parse import parse
 
@@ -99,6 +101,17 @@ def _load_manifest(manifest_path: str) -> dict | None:
         return json.load(handle)
 
 
+def _load_declaration(declaration_path: str) -> str | None:
+    """The text of the module's `.hd` HC-R002 and HC-R003 read the declared roles and awaited marks
+    from, at the configured path (boundary I/O), or None when no declaration is configured. The
+    declaration is named, not found: walking up from a source file to guess which `.hd` governs it
+    would infer what the framework says must be declared. A configured path that is not there is an
+    OSError the caller reports, not a silent None: absence is not permission."""
+    if not declaration_path:
+        return None
+    return Path(declaration_path).read_text(encoding="utf-8")
+
+
 def _find_config(explicit: str | None) -> Path | None:
     """The honest-check.toml to use: --config if given, else the nearest ancestor's."""
     if explicit:
@@ -127,6 +140,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("paths", nargs="*", default=[], help="files or directories to check")
     parser.add_argument("--lsp", action="store_true", help="run as a Language Server over stdio")
     parser.add_argument("--config", default=None, help="path to honest-check.toml")
+    parser.add_argument("--declaration", default=None, help="path to the module's .hd; HC-R002 and HC-R003 run against it (wins over [check] declaration)")
     parser.add_argument("--format", choices=supported_formats(), default="human")
     parser.add_argument("--severity", choices=["error", "warning", "info"], default=None)
     parser.add_argument("--rule", action="append", default=[], help="run only this rule (repeatable)")
@@ -137,7 +151,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str, templates_dir: str, format_manifest: str, component_manifest: str, level: str, report: bool, rule_settings: dict) -> int:
+def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, only, fmt: str, templates_dir: str, format_manifest: str, component_manifest: str, declaration: str, level: str, report: bool, rule_settings: dict) -> int:
     """Check the paths once and print the rendered report; return the exit code (1 on errors, 2 on a
     read failure, else 0). The single-pass core that both a plain run and --watch repeat. When a
     template directory is configured, its templates are scanned once and every checked file also runs
@@ -156,14 +170,28 @@ def _run_once(paths: list[str], exclude: list[str], severity: str, suppress, onl
         defined_classes = frozenset(cls for troot in _template_roots(templates_dir) for f in _discover_css(str(troot)) for cls in stylesheet_classes(f.read_bytes()))
         js_scanned = [{"path": str(f), "class_refs": js_class_references(f.read_bytes()), "bindings": js_module_bindings(f.read_bytes())} for troot in _template_roots(templates_dir) for f in _discover_js(str(troot))]
         all_routes: list = []
+        # HC-R002 and HC-R003 cross the call graph and the async keyword with what the module's .hd
+        # declares. The declaration is read once here and handed to both rules; a configured .hd that
+        # does not read is a boundary failure, exit 2, because a gate that reports clean over a
+        # declaration it could not open is no gate.
+        declared_text = _load_declaration(declaration)
+        roles = declared_roles(declared_text) if declared_text is not None else None
+        awaited = declared_awaited(declared_text) if declared_text is not None else None
+        if roles is not None and "ok" not in roles:
+            print(f"honest-check: cannot read declaration {declaration}: {roles['err']['message']}", file=sys.stderr)
+            return 2
         for file in _discover_files(paths, exclude):
             source = file.read_text(encoding="utf-8")
             diagnostics.extend(check_source(source, str(file), rule_settings))
-            if scanned:
+            if scanned or roles is not None:
                 src_bytes = source.encode("utf-8")
                 root = parse(src_bytes, language_for_path(str(file))).root_node
+            if scanned:
                 diagnostics.extend(boundary_diagnostics(root, src_bytes, str(file), scanned))
                 all_routes.extend(extract_routes(root, src_bytes))
+            if roles is not None:
+                diagnostics.extend(check_hc_r002(root, src_bytes, str(file), roles["ok"]))
+                diagnostics.extend(check_hc_r003(root, src_bytes, str(file), awaited["ok"]))
         # HC-REF001 resolves every template action against the project-wide route union, so a target
         # mounted in a different file is not a false dead reference; HC-REF002 resolves every literal
         # include/extends target against the template search path. With no templates both yield nothing.
@@ -239,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     def run() -> int:
-        return _run_once(paths, config["exclude"], severity, suppress, only, args.format, config["templates"], config["format_manifest"], config["component_manifest"], level, args.report, resolve_rule_config(config["rule_config"]))
+        return _run_once(paths, config["exclude"], severity, suppress, only, args.format, config["templates"], config["format_manifest"], config["component_manifest"], args.declaration or config["declaration"], level, args.report, resolve_rule_config(config["rule_config"]))
 
     if args.watch:
         return watch(run)

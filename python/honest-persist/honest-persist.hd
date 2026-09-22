@@ -47,14 +47,14 @@ module honest-persist
 
   fn checked_select : (schema: Schema, table: str, columns: list<str>, where: dict<str, any>) -> Query
 
-  boundary_in fn execute : (query: Query, conn: any) -> list<any> side_effect reads "database"
+  boundary_in fn execute : (query: Query, conn: any) -> list<any> awaited side_effect reads "database"
 
-  boundary_out fn apply : (diff_result: DiffResult, target: Schema, conn: any, dialect: str) -> any side_effect writes "database"
+  boundary_out fn apply : (diff_result: DiffResult, target: Schema, conn: any, dialect: str) -> any awaited side_effect writes "database"
 
-  boundary_out fn transaction : (writes: list<Query>, conn: any) -> any side_effect writes "database"
+  boundary_out fn transaction : (writes: list<Query>, conn: any) -> any awaited side_effect writes "database"
 
-  orchestrator fn migrate : (schema: Schema, conn: any, dialect: str) -> any invokes inspect, expand_schema, validate_checks, diff, apply
+  orchestrator fn migrate : (schema: Schema, conn: any, dialect: str) -> any awaited invokes inspect, expand_schema, validate_checks, diff, apply
 
-  reader fn inspect : (conn: any, dialect: str) -> Schema side_effect reads "database"
+  reader fn inspect : (conn: any, dialect: str) -> Schema awaited side_effect reads "database"
 
-  boundary_in fn open_pool : (db_id: str, connect: Callable, classify: Callable, close: Callable, size: int) -> any side_effect reads "database"
+  boundary_in fn open_pool : (db_id: str, connect: Callable, classify: Callable, close: Callable, size: int) -> any awaited side_effect reads "database"

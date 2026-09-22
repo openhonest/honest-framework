@@ -149,6 +149,7 @@ def _read_function(node, source) -> ir.Function:
         "invokes": invokes,
         "raises": raises,
         "note": _note(node, source),
+        "awaited": bool(_children(node, "awaited")),
     }
 
 
