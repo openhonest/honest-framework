@@ -19,7 +19,7 @@ def _field(node, name):
 
 
 def _text(node, source):
-    return honest_parse.node_text(node, source)
+    return node.text.decode("utf-8", "replace")
 
 
 def _field_text(node, name, source):
@@ -63,17 +63,19 @@ def _read_field(node, source) -> ir.Field:
     return {"name": _field_text(node, "name", source), "type": _read_type(_field(node, "type"), source)}
 
 
-# a type declaration's value is either a record (fields) or an alias (a type).
+# a type declaration's value is a record (fields), an alias (a type), or foreign (a source it names
+# and no fields, because describing someone else's object is a copy that drifts).
 _TYPE_VALUE = {
-    "record_type": lambda n, s: ([_read_field(f, s) for f in _children(n, "field")], []),
-    "type": lambda n, s: ([], _read_type(n, s)),
+    "record_type": lambda n, s: ([_read_field(f, s) for f in _children(n, "field")], [], ""),
+    "type": lambda n, s: ([], _read_type(n, s), ""),
+    "foreign_type": lambda n, s: ([], [], _unquote(_field_text(n, "source", s))),
 }
 
 
 def _read_type_decl(node, source) -> ir.TypeDecl:
     value = _field(node, "value")
-    record, alias = _TYPE_VALUE[value.type](value, source)
-    return {"name": _field_text(node, "name", source), "record": record, "alias": alias, "note": _note(node, source)}
+    record, alias, foreign = _TYPE_VALUE[value.type](value, source)
+    return {"name": _field_text(node, "name", source), "record": record, "alias": alias, "foreign": foreign, "note": _note(node, source)}
 
 
 # --- sets, vocabularies, dispatch ---------------------------------------------
@@ -129,7 +131,21 @@ def _read_param(node, source) -> ir.Param:
 
 
 def _read_side_effect(node, source) -> ir.SideEffect:
-    return {"direction": _field_text(node, "direction", source), "target": _unquote(_field_text(node, "target", source))}
+    """One side of the world, with a dotted target split into the module and the door it enters.
+
+    The target keeps its whole text either way. A single dot splits it; no dot, or more than one,
+    leaves both halves "". A colon is the other qualifier and names a kind, not a path, so
+    `env:DATABASE_URL` splits into nothing here and is read by the rules that own that kind.
+    """
+    target = _unquote(_field_text(node, "target", source))
+    module, dot, door = target.partition(".")
+    qualified = bool(dot) and "." not in door
+    return {
+        "direction": _field_text(node, "direction", source),
+        "target": target,
+        "module": module if qualified else "",
+        "door": door if qualified else "",
+    }
 
 
 def _read_function(node, source) -> ir.Function:
@@ -164,7 +180,9 @@ def _read_chain(node, source) -> ir.Chain:
 def _read_route(node, source) -> ir.Route:
     parts = _unquote(_field_text(node, "path", source)).split(" ", 1)
     path = parts[1] if len(parts) > 1 else ""
-    return {"method": parts[0], "path": path, "target": _field_text(node, "target", source)}
+    label_node = node.child_by_field_name("label")
+    label = _unquote(label_node.text.decode()) if label_node else ""
+    return {"method": parts[0], "path": path, "target": _field_text(node, "target", source), "label": label}
 
 
 def _read_entry(node, source) -> ir.Entry:

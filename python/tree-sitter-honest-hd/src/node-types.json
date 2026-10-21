@@ -302,6 +302,22 @@
     }
   },
   {
+    "type": "foreign_type",
+    "named": true,
+    "fields": {
+      "source": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "function_decl",
     "named": true,
     "fields": {
@@ -645,6 +661,16 @@
     "type": "route_decl",
     "named": true,
     "fields": {
+      "label": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      },
       "path": {
         "multiple": false,
         "required": true,
@@ -995,6 +1021,10 @@
         "required": true,
         "types": [
           {
+            "type": "foreign_type",
+            "named": true
+          },
+          {
             "type": "record_type",
             "named": true
           },
@@ -1137,6 +1167,10 @@
   },
   {
     "type": "fn",
+    "named": false
+  },
+  {
+    "type": "foreign",
     "named": false
   },
   {

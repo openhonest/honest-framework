@@ -84,7 +84,11 @@ module.exports = grammar({
 
     type_decl: $ => seq('type', field('name', $.identifier), '=', field('value', $._type_expr), optional($.note)),
 
-    _type_expr: $ => choice($.record_type, $.type),
+    _type_expr: $ => choice($.foreign_type, $.record_type, $.type),
+
+    // A type the module does not own: it names its source and declares no fields, because
+    // describing someone else's object is a copy that drifts. tree-sitter's node is the case.
+    foreign_type: $ => seq('foreign', field('source', $.string)),
 
     record_type: $ => seq('{', repeat($.field), '}'),
 
@@ -182,7 +186,7 @@ module.exports = grammar({
 
     // --- Routes and declared client attributes -------------------------------
 
-    route_decl: $ => seq('route', field('path', $.string), '->', field('target', $.identifier)),
+    route_decl: $ => seq('route', field('path', $.string), optional(seq('as', field('label', $.string))), '->', field('target', $.identifier)),
 
     // An entry point whose call-site shape is described by a string (a decorator, a context
     // manager, a middleware registration), dispatching to a function.

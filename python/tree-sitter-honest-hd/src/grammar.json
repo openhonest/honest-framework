@@ -389,11 +389,32 @@
       "members": [
         {
           "type": "SYMBOL",
+          "name": "foreign_type"
+        },
+        {
+          "type": "SYMBOL",
           "name": "record_type"
         },
         {
           "type": "SYMBOL",
           "name": "type"
+        }
+      ]
+    },
+    "foreign_type": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "foreign"
+        },
+        {
+          "type": "FIELD",
+          "name": "source",
+          "content": {
+            "type": "SYMBOL",
+            "name": "string"
+          }
         }
       ]
     },
@@ -1358,6 +1379,31 @@
             "type": "SYMBOL",
             "name": "string"
           }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "as"
+                },
+                {
+                  "type": "FIELD",
+                  "name": "label",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "string"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         },
         {
           "type": "STRING",

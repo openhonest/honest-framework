@@ -30,6 +30,13 @@ class Param(TypedDict):
 class SideEffect(TypedDict):
     direction: str  # "reads" | "writes" | "reads_writes"
     target: str
+    # A side string may be qualified two ways that do not mean the same. A colon names a kind
+    # (env:NAME, store:name), each with its own rules. A dot names a path inside the thing: which
+    # door of another module this side enters. These two carry the dot's halves, and both are ""
+    # when the target has no dot, never None: a field that answers "" in one place and None in
+    # another makes every caller check twice.
+    module: str
+    door: str
 
 
 class Function(TypedDict):
@@ -61,6 +68,7 @@ class TypeDecl(TypedDict):
     name: str
     record: list  # list[Field]; empty when the type is an alias
     alias: list  # Type = list[Atom]; empty when the type is a record
+    foreign: str  # the source a foreign type names (e.g. "tree-sitter"); "" when the type is the module's own
     note: str  # the one comment the parser keeps; "" when the declaration has none
 
 
@@ -119,6 +127,7 @@ class Route(TypedDict):
     method: str
     path: str
     target: str
+    label: str
 
 
 class Entry(TypedDict):

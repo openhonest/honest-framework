@@ -11,7 +11,7 @@ failures; run() aggregates.
 
 from pathlib import Path
 
-from honest_design import err, fault, ok, read_hd, render, validate
+from honest_design import err, fault, ok, read_hd, reach, render, validate
 from honest_design import __all__ as PUBLIC
 
 
@@ -64,7 +64,7 @@ def _probe_module():
         bad.append(f"example wrong: {m['examples']}")
     if m["chains"] != [{"name": "c", "links": ["classify", "write_it"], "note": ""}]:
         bad.append(f"chain wrong: {m['chains']}")
-    if m["routes"] != [{"method": "POST", "path": "/orders", "target": "read_it"}]:
+    if m["routes"] != [{"method": "POST", "path": "/orders", "target": "read_it", "label": ""}]:
         bad.append(f"route wrong: {m['routes']}")
     if m["entries"] != [{"callsite": "decorator:@h", "target": "run"}]:
         bad.append(f"entry wrong: {m['entries']}")
@@ -87,6 +87,20 @@ def _probe_types():
     alias = types["Alias"]
     if alias["record"] or alias["alias"] != [{"name": "list", "args": [[{"name": "Ticket", "args": []}]]}]:
         bad.append(f"alias type wrong: {alias}")
+
+    # A foreign type names its source and declares no fields, because describing someone else's
+    # object is a copy that drifts. tree-sitter's node is the case it exists for.
+    foreign = read_hd('module m\n  type Node = foreign "tree-sitter"\n  fn f : (n: Node) -> str\n')
+    assert "ok" in foreign, foreign
+    node = {t["name"]: t for t in foreign["ok"]["modules"][0]["types"]}["Node"]
+    if node["foreign"] != "tree-sitter" or node["record"] or node["alias"]:
+        bad.append(f"a foreign type carries its source and no fields: {node}")
+    if validate(foreign["ok"]["modules"][0]):
+        bad.append(f"a function naming a foreign type validates clean: {validate(foreign['ok']['modules'][0])}")
+
+    # A record and an alias carry no foreign source, so the field tells the three apart.
+    if rec["foreign"] or alias["foreign"]:
+        bad.append(f"a record and an alias name no foreign source: rec={rec['foreign']!r} alias={alias['foreign']!r}")
     return bad
 
 
@@ -102,9 +116,9 @@ def _probe_functions():
         "write_it": ("boundary_out", 4),
     }:
         bad.append(f"role -> column mapping wrong: {columns}")
-    if fns["read_it"]["side_effects"] != [{"direction": "reads", "target": "HTTP"}]:
+    if fns["read_it"]["side_effects"] != [{"direction": "reads", "target": "HTTP", "module": "", "door": ""}]:
         bad.append(f"boundary_in side_effect wrong: {fns['read_it']['side_effects']}")
-    if fns["write_it"]["side_effects"] != [{"direction": "reads_writes", "target": "database"}, {"direction": "writes", "target": "network"}]:
+    if fns["write_it"]["side_effects"] != [{"direction": "reads_writes", "target": "database", "module": "", "door": ""}, {"direction": "writes", "target": "network", "module": "", "door": ""}]:
         bad.append(f"multiple side_effects / reads_writes wrong: {fns['write_it']['side_effects']}")
     if fns["run"]["invokes"] != ["c", "classify"] or fns["run"]["raises"] != ["bad_input"]:
         bad.append(f"invokes / bare raises wrong: {fns['run']}")
@@ -124,8 +138,11 @@ def _probe_edges():
     m = read_hd("module bare\n  route \"TICK\" -> f\n  fn pure_one : (x: str) -> str\n")["ok"]["modules"][0]
     if m["layer"] != "":
         bad.append(f"a module with no layer should have layer '': {m['layer']!r}")
-    if m["routes"] != [{"method": "TICK", "path": "", "target": "f"}]:
+    if m["routes"] != [{"method": "TICK", "path": "", "target": "f", "label": ""}]:
         bad.append(f"a route with no path should have path '': {m['routes']}")
+    labelled = read_hd('module labelled\n  route "GET /channels" as "Channel list" -> h\n  fn h : (r: str) -> str\n')["ok"]["modules"][0]
+    if labelled["routes"] != [{"method": "GET", "path": "/channels", "target": "h", "label": "Channel list"}]:
+        bad.append(f"a route with an as-label should carry it: {labelled['routes']}")
     pure = m["functions"][0]
     if pure["side_effects"] or pure["invokes"] or pure["raises"]:
         bad.append(f"a bare pure fn should have empty annotations: {pure}")
@@ -382,6 +399,26 @@ def _probe_faults():
             {"code": "fault_swallowed", "message": "Function 'door' calls 'run_ok', which can fault, and cannot return one", "category": "server", "detail": {"function": "door", "callee": "run_ok"}}]
     if got != want:
         bad.append(f"fault_swallowed wrong: {got}")
+    # A boundary discharges the last fault by raising it. The chain carries faults as data and the
+    # boundary is the one place an exception is permitted (framework spec: faults as data through
+    # chains, exceptions only at the boundary). Some failures cannot be carried by a return at all,
+    # because a caller is free to ignore one: a door that must stop a server starting has to raise,
+    # and a server that boots on an ignored return serves requests against nothing.
+    raising = ("module m\n  inputs = { \"HTTP\" }\n  type Fault = { what_went_wrong: str\n what_to_do_instead: str }\n"
+               "  boundary_in fn door : (r: str) -> str raises could_not_open side_effect reads \"HTTP\"\n"
+               "  orchestrator fn run : (r: str) -> str | Fault invokes fails\n"
+               "  fn fails : (r: str) -> str | Fault\n"
+               "  chain c = door -> run\n")
+    if [f for f in validate(_module(raising)) if f["code"] == "fault_swallowed"]:
+        bad.append(f"a door that declares what it raises has answered for its callee's fault: {validate(_module(raising))}")
+
+    # A pure function or an orchestrator is inside the chain, so no raises clause excuses it.
+    inside = ("module m\n  type Fault = { what_went_wrong: str\n what_to_do_instead: str }\n"
+              "  orchestrator fn run : (r: str) -> str raises could_not_open invokes fails\n"
+              "  fn fails : (r: str) -> str | Fault\n")
+    if not [f for f in validate(_module(inside)) if f["code"] == "fault_swallowed"]:
+        bad.append("an orchestrator inside the chain returns the fault or swallows it; raises does not excuse it")
+
     shape_fault = {"code": "fault_shape", "message": "Fault is declared without the fields to say what went wrong and what to do instead", "category": "server", "detail": {"type": "Fault"}}
     thin = validate(_module("module m\n  type Fault = str\n  fn f : (a: str) -> str | Fault\n"))
     if thin != [shape_fault]:
@@ -600,7 +637,7 @@ def _probe_render():
 
 
 def _probe_public_surface():
-    if set(PUBLIC) != {"read_hd", "validate", "render", "ok", "err", "fault"}:
+    if set(PUBLIC) != {"read_hd", "validate", "render", "reach", "ok", "err", "fault"}:
         return [f"public surface drifted: {PUBLIC}"]
     return []
 
@@ -628,6 +665,198 @@ def _probe_projection():
     return bad
 
 
+def _probe_layer():
+    """A module's layer comes from a closed set, because measures are keyed on it.
+
+    The word was free text and nothing read it, so six values were in use by convention and a
+    seventh was one keystroke away. Whether a module's seams run the way a layered system's seams
+    run, and whether a module holds a wider spread of the world than its level should, are both
+    counted against this word. A measure keyed on a word anyone may coin measures nothing.
+    """
+    bad = []
+    for name in ("foundation", "data", "domain", "application", "ui", "tooling"):
+        clean = validate(_module(f"module m\n  layer {name}\n  fn f : (a: str) -> str\n"))
+        if [f for f in clean if f["code"] == "unknown_layer"]:
+            bad.append(f"{name!r} is in the set and must pass: {clean}")
+
+    coined = validate(_module("module m\n  layer middleware\n  fn f : (a: str) -> str\n"))
+    named = [f for f in coined if f["code"] == "unknown_layer"]
+    if len(named) != 1:
+        bad.append(f"a layer the set does not carry must fault once: {coined}")
+    elif "middleware" not in named[0]["message"] or "foundation" not in named[0]["message"]:
+        bad.append(f"the fault must name the coined word and the set it is not in: {named[0]['message']}")
+
+    # A module declaring no layer at all is a different fact from one declaring a wrong word, and
+    # the existing corpus has modules without one. Silence is not a coined word.
+    if [f for f in validate(_module("module m\n  fn f : (a: str) -> str\n")) if f["code"] == "unknown_layer"]:
+        bad.append("a module declaring no layer is not declaring a layer the set does not carry")
+    return bad
+
+
+def _probe_reach():
+    """`reach` answers a question and holds no opinion.
+
+    For each door, the sides of the world its path touches: directly, where a function on that path
+    declares one, and through a seam, where the path crosses into another module's door. It returns
+    no verdict, compares nothing against a previous run, and has no threshold to breach. The seam is
+    the boundary of responsibility, so this is the information half of an I/O budget with the
+    obligation half dropped (ruled 6 October 2026).
+
+    It also says what it could not see. A count over declared seams counts what has been written
+    down, and 74 seams existed in the framework's code with one declared, so an answer that did not
+    carry its own blind spots would read as a small reach when it is a small declaration.
+    """
+    bad = []
+    callee = _module(
+        'module honest-persist\n  layer data\n  inputs = { "caller" }\n  outputs = { "database" }\n'
+        '  boundary_in fn open : (t: str) -> str invokes run side_effect reads "caller"\n'
+        '  orchestrator fn run : (t: str) -> str invokes write\n'
+        '  boundary_out fn write : (t: str) -> bool side_effect writes "database"\n'
+    )
+    caller = _module(
+        'module m\n  layer domain\n  inputs = { "HTTP", "honest-persist", "gone" }\n'
+        '  boundary_in fn door : (r: str) -> str side_effect reads "HTTP" invokes run\n'
+        '  orchestrator fn run : (r: str) -> str invokes store, far\n'
+        '  boundary_out fn store : (r: str) -> bool side_effect writes "honest-persist.open"\n'
+        '  boundary_out fn far : (r: str) -> bool side_effect writes "gone.somewhere"\n'
+    )
+    answer = reach(caller, {"honest-persist": callee})
+
+    if sorted(answer) != ["door"]:
+        bad.append(f"one answer per door, and nothing else is a door: {sorted(answer)}")
+        return bad
+    door = answer["door"]
+    if sorted(door["direct"]) != ["HTTP"]:
+        bad.append(f"a side on the path itself is direct: {door['direct']}")
+    if "caller" in door["direct"] or "caller" in door["through"]:
+        bad.append(f"'caller' is the direction a call came from, never a side reached: {door}")
+    if sorted(door["through"]) != ["database"]:
+        bad.append(f"what the path reaches past a seam is through, and it is the callee's: {door['through']}")
+    if door["unfollowed"] != 1:
+        bad.append(f"a seam into a module not in hand is counted, never silently dropped: {door}")
+
+    # The callee's own doors are missing from the caller's answer. A caller does not inherit what
+    # the callee does; it reaches it, which is why the two sets are kept apart and never summed.
+    if "open" in answer:
+        bad.append("reach answers for the module it was asked about, not for the ones it reaches")
+
+    # A door hands its input to one orchestrator as a chain or as an invokes; the method allows
+    # either, so a path written as a chain is a path. honest-parse writes its as a chain, and
+    # reading only invokes answered that its door touches nothing when it touches tree-sitter.
+    chained = _module(
+        'module c\n  layer foundation\n  inputs = { "tree-sitter" }\n'
+        '  boundary_in fn door : (s: bytes) -> str side_effect reads "caller"\n'
+        '  orchestrator fn place : (s: bytes) -> str invokes read_it\n'
+        '  reader fn read_it : (s: bytes) -> str side_effect reads "tree-sitter"\n'
+        '  chain path = door -> place\n'
+    )
+    if reach(chained, {})["door"]["direct"] != ["tree-sitter"]:
+        bad.append(f"a path declared as a chain is a path: {reach(chained, {})}")
+
+    # A side naming a module and no door is a seam at module granularity, and every seam declared
+    # before the dot existed is one. Counting the module name as a side of the world answered
+    # unfollowed = 0 for a seam nothing followed, which is the exact false comfort the unfollowed
+    # count exists to prevent. It is followed into every door of that module and counted apart.
+    coarse = _module(
+        'module k\n  layer domain\n  inputs = { "honest-persist" }\n'
+        '  boundary_in fn door : (r: str) -> str invokes store side_effect reads "caller"\n'
+        '  boundary_out fn store : (r: str) -> bool side_effect writes "honest-persist"\n'
+    )
+    wide = reach(coarse, {"honest-persist": callee})["door"]
+    if "honest-persist" in wide["direct"]:
+        bad.append(f"a module's name is not a side of the world: {wide}")
+    if wide["through"] != ["database"]:
+        bad.append(f"a seam with no door is followed into every door of that module: {wide}")
+    if wide["without_a_door"] != 1:
+        bad.append(f"a seam followed at module granularity is counted apart: {wide}")
+
+    # A bare name is a seam only when a declaration of that name is in hand. Nothing in the format
+    # tells a module's name from a side of the world's, so with nothing in hand the honest answer
+    # is that the path touches something called honest-persist. Declaring the door removes the
+    # ambiguity, which is the argument for the dot that a reader can act on.
+    blind_coarse = reach(coarse, {})["door"]
+    if blind_coarse["direct"] != ["honest-persist"] or blind_coarse["without_a_door"]:
+        bad.append(f"with nothing in hand a bare name cannot be known to be a module: {blind_coarse}")
+    dotted = _module(
+        'module k\n  layer domain\n  inputs = { "honest-persist" }\n'
+        '  boundary_in fn door : (r: str) -> str invokes store side_effect reads "caller"\n'
+        '  boundary_out fn store : (r: str) -> bool side_effect writes "honest-persist.open"\n'
+    )
+    named = reach(dotted, {})["door"]
+    if named["direct"] or named["unfollowed"] != 1:
+        bad.append(f"a side carrying a door is a seam whether or not the callee is in hand: {named}")
+
+    # A path that re-enters a function already walked answers once rather than forever, and a path
+    # that names a function the module does not declare stops there rather than raising. The first
+    # is a cycle, which a declaration may legitimately carry; the second is `unknown_link`, which
+    # the validator reports and this is not the place to report again.
+    looping = _module(
+        'module l\n  layer domain\n  inputs = { "network" }\n'
+        '  boundary_in fn door : (r: str) -> str invokes run side_effect reads "caller"\n'
+        '  orchestrator fn run : (r: str) -> str invokes emit, gone\n'
+        '  boundary_out fn emit : (r: str) -> bool invokes run side_effect writes "network"\n'
+    )
+    answered = reach(looping, {})["door"]
+    if answered["direct"] != ["network"]:
+        bad.append(f"a cycle is walked once and still answers: {answered}")
+
+    # With no declarations in hand every seam is unfollowed, and the answer says so rather than
+    # reporting a reach of one side of the world.
+    blind = reach(caller, {})["door"]
+    if blind["through"] or blind["unfollowed"] != 2:
+        bad.append(f"with nothing in hand, every seam is unfollowed and nothing is reached: {blind}")
+    return bad
+
+
+def _probe_seams():
+    """A side string names one thing outside the module, qualified two ways that differ.
+
+    A colon names a kind: env:NAME is an environment variable, store:name is held state, and each
+    kind has its own rules. A dot names a path inside the thing: which door of another module this
+    side enters. The reader splits on the single dot, and answers "" for both parts when there is
+    none, because a field that answers "" in one place and null in another makes a caller check
+    twice. A declaration never crosses a module boundary, so nothing here resolves the door; that
+    is honest-check's, where both sides are in view.
+    """
+    bad = []
+    src = ('module m\n  inputs = { "honest-parse" : "the parser" }\n  outputs = { "database" }\n'
+           '  env DATABASE_URL : str\n'
+           '  boundary_in fn door : (r: str) -> str side_effect reads "honest-parse.parse_source"\n'
+           '  reader fn pull : () -> str side_effect reads "env:DATABASE_URL"\n'
+           '  boundary_out fn sink : (s: str) -> bool side_effect writes "database"\n')
+    module = _module(src)
+    sides = {f["name"]: f["side_effects"][0] for f in module["functions"]}
+
+    dotted = sides["door"]
+    if dotted["target"] != "honest-parse.parse_source":
+        bad.append(f"the side keeps its whole text: {dotted}")
+    if dotted["module"] != "honest-parse" or dotted["door"] != "parse_source":
+        bad.append(f"a dotted target splits into the module and the door: {dotted}")
+
+    kind = sides["pull"]
+    if kind["module"] or kind["door"]:
+        bad.append(f"a colon names a kind and is not a path, so it splits into nothing: {kind}")
+
+    # The surface lists modules, the side names the door. Agreed 6 October: the door goes on the
+    # side effect and the surface stays at module granularity, so a dotted side is matched against
+    # the surface by its module half. Comparing the whole string made every seam unlistable: the
+    # surface could not name the door without holding the same fact twice.
+    seam = _module('module m\n  inputs = { "honest-parse" : "the parser" }\n'
+                   '  boundary_in fn door : (r: str) -> str side_effect reads "honest-parse.parse_source"\n')
+    if [f["code"] for f in validate(seam)]:
+        bad.append(f"a side naming a door is listed by its module, not its whole text: {validate(seam)}")
+
+    unlisted = _module('module m\n  inputs = { "filesystem" }\n'
+                       '  boundary_in fn door : (r: str) -> str side_effect reads "honest-parse.parse_source"\n')
+    if "surface_unknown" not in [f["code"] for f in validate(unlisted)]:
+        bad.append("a seam into a module the surface does not list is still a surface fault")
+
+    plain = sides["sink"]
+    if plain["module"] != "" or plain["door"] != "":
+        bad.append(f'an unqualified side answers "" for both, never null: {plain}')
+    return bad
+
+
 def run():
     probes = {
         "module": _probe_module(),
@@ -644,6 +873,9 @@ def run():
         "envs": _probe_envs(),
         "handles": _probe_handles(),
         "faults": _probe_faults(),
+    "seams": _probe_seams(),
+    "reach": _probe_reach(),
+    "layer": _probe_layer(),
         "readers": _probe_readers(),
         "stores": _probe_stores(),
         "notes": _probe_notes(),
