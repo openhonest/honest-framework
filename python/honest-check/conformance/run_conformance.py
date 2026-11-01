@@ -9,7 +9,9 @@ here:
     (rule_id, severity, line) it got against the triples the case expects. The
     comparison is exact: a case that expects one diagnostic fails if the checker
     also produces a second, so a false positive is caught as loudly as a missed
-    finding.
+    finding. The per-rule behaviour the rule engine folds over the graph is
+    pinned here, not by a function scenario (the engine is data inside
+    check_source).
 
   - probe_*.py: the honest tests derived one-per-function from the feature
     scenarios. Each is a function returning a list of failure strings, empty
@@ -40,7 +42,7 @@ _EXTENSION_BY_LANGUAGE = {
 
 def _path_for(case):
     """The synthetic path a case's source is checked under, carrying the
-    extension that selects its grammar. Fails loudly on a language the table
+    extension that selects its grammar. Returns None on a language the table
     does not carry rather than guessing a grammar."""
     language = case["input"]["language"]
     if language not in _EXTENSION_BY_LANGUAGE:

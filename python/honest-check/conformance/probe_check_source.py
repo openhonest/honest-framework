@@ -1,58 +1,46 @@
-from honest_check import check_source
+"""check_source folds the rule catalogue over one source's declaration graph and
+returns findings as data: a class declaration fires HC-P003, a clean source is [].
 
-# check_source(source, path, rule_config) -> list[Diagnostic]
-# A violating source comes back with a Diagnostic whose rule_id is the
-# catalogue id of the rule that fired; a clean source comes back empty.
-# The exact per-rule source-to-diagnostic mapping is the conformance
-# suite's job (section 9.2), so this probe pins only one rule: the bare
-# class declaration HC-P003, plus the explicit clean case.
+Pins the function contract, not the per-rule specifics (those are suite.json's job):
+findings come back as a list of Diagnostic, a class source carries an HC-P003
+finding, and a clean source returns the empty list. It never raises for a violation.
+"""
 
-_RULE_CONFIG = {
-    "HC-OR003": {"min_run": 3},
-    "HC-P008": {"max_lines": 10},
-    "HC-P012": {"max_mocks": 2},
-}
-
-_CLASS_SOURCE = "class Foo:\n    pass\n"
-_CLEAN_SOURCE = "x = 1\n"
-
+# A class declaration carries an HC-P003 finding; a clean assignment is clean.
+# want_rule None is the explicit clean (absence) case: the empty list, written out.
 _CASES = [
     {
-        "given": {
-            "source": _CLASS_SOURCE,
-            "path": "app.py",
-            "rule_config": _RULE_CONFIG,
-        },
-        # a bare class fires HC-P003; at least one diagnostic carries that id
-        "expect_rule": "HC-P003",
+        "given": {"source": "class Report:\n    pass\n", "path": "a.py", "rule_config": {}},
+        "want_rule": "HC-P003",
     },
     {
-        "given": {
-            "source": _CLEAN_SOURCE,
-            "path": "app.py",
-            "rule_config": _RULE_CONFIG,
-        },
-        # no violation: the returned list is empty
-        "expect_rule": None,
+        "given": {"source": "x = 1\n", "path": "a.py", "rule_config": {}},
+        "want_rule": None,
     },
 ]
 
 
 def probe_check_source():
-    """A violating source returns a Diagnostic carrying the fired rule's id; a clean source returns []."""
+    try:
+        from honest_check import check_source
+    except ImportError as exc:
+        return [f"cannot import check_source: {exc}"]
+
     bad = []
     for case in _CASES:
         got = check_source(**case["given"])
-        rule = case["expect_rule"]
-        if rule is None:
+        if not isinstance(got, list):
+            bad.append(f"check_source({case['given']}) -> {got!r}, expected a list")
+            continue
+        rule_ids = [d.get("rule_id") for d in got]
+        if case["want_rule"] is None:
             if got != []:
                 bad.append(
-                    f"check_source({case['given']}) -> {got}, expected [] (clean source)"
+                    f"check_source({case['given']}) -> {got!r}, expected [] (clean source)"
                 )
-            continue
-        fired = [d["rule_id"] for d in got]
-        if rule not in fired:
+        elif case["want_rule"] not in rule_ids:
             bad.append(
-                f"check_source({case['given']}) -> rule_ids {fired}, expected {rule} among them"
+                f"check_source({case['given']}) -> rule_ids {rule_ids}, "
+                f"expected one to be {case['want_rule']!r}"
             )
     return bad

@@ -1,344 +1,127 @@
-Feature: honest-check — the static honesty gate
-  One scenario per function. honest-check reads source, flags the dishonest patterns the
-  framework forbids, suppresses what a directive silences, and reports the result. Each
-  scenario names the single behaviour the gate stands on; the count of scenarios is the
-  module's directly-counted function-point size. Behaviour that can only be stated in
-  host-language terms (tree-sitter node mechanics, Python-specific watch lists) lives in
-  the python supplement and is counted there.
-
-  # diagnostics.py
-
-  Scenario: diagnostic assembles one reported violation
-    Given a rule id, a severity, a location, and a message
-    When diagnostic assembles them
-    Then it yields a single reported violation carrying every field
-    And it is the one place the shape of a violation is constructed
-
-  # config.py — honest-check.toml configuration
-
-  Scenario: normalize_config extracts the supported settings with defaults
-    Given a parsed configuration
-    When normalize_config reads it
-    Then it returns the paths, exclusions, severity, and disabled rules
-    And any setting that is absent falls back to its default
-
-  Scenario: empty_config supplies the settings used when no configuration is found
-    Given no configuration file
-    When empty_config is asked for settings
-    Then it returns the normalized defaults
-
-  Scenario: is_excluded decides whether a path is excluded
-    Given a path and a list of exclusion patterns
-    When is_excluded checks it
-    Then it reports true when the path matches any pattern
-    But false when it matches none
-
-  Scenario: resolve_severity settles the reporting threshold
-    Given a severity from the command line and one from the configuration
-    When resolve_severity settles them
-    Then the command-line severity wins when given
-    And otherwise the configured one, and otherwise the default
-
-  Scenario: resolve_paths settles which paths to check
-    Given paths from the command line and paths from the configuration
-    When resolve_paths settles them
-    Then the command-line paths win when given
-    And otherwise the configured ones, and otherwise the current directory
-
-  # formats.py — output formats
-
-  Scenario: counts tallies violations by severity
-    Given a list of violations
-    When counts tallies them
-    Then it returns how many are errors, warnings, and infos
-
-  Scenario: filter_by_severity keeps violations at or above a threshold
-    Given a list of violations and a minimum severity
-    When filter_by_severity applies the threshold
-    Then it keeps only the violations at or above that severity
-
-  Scenario: filter_by_rule keeps and drops violations by rule
-    Given a list of violations, a set to keep, and a set to suppress
-    When filter_by_rule applies them
-    Then it keeps only the rules requested and drops the suppressed ones
-    But an empty keep-set keeps every rule
-
-  Scenario: has_errors reports whether anything blocks
-    Given a list of violations
-    When has_errors inspects them
-    Then it reports true when any violation is an error
-    And this is what drives a failing exit code
-
-  Scenario: render_human renders violations for a person to read
-    Given a list of violations
-    When render_human renders them
-    Then each violation shows its location, severity, rule, and message
-    And a closing line summarizes the totals by severity
-
-  Scenario: render_json renders violations as a machine-readable document
-    Given a list of violations
-    When render_json renders them
-    Then it produces a document with a summary and one entry per violation
-
-  Scenario: render_github renders violations as continuous-integration annotations
-    Given a list of violations
-    When render_github renders them
-    Then each violation becomes one workflow annotation at its level and location
-
-  Scenario: render_junit renders violations as a test report
-    Given a list of violations
-    When render_junit renders them
-    Then errors and warnings appear as failing test cases in a test report
-
-  Scenario: render selects a renderer by name
-    Given a list of violations and a format name
-    When render is asked for that format
-    Then it dispatches to the matching renderer and returns its output
-
-  Scenario: supported_formats lists the available formats
-    Given the set of renderers
-    When supported_formats is asked
-    Then it returns the available format names, sorted
-
-  # suppression.py — directive suppression
-
-  Scenario: is_suppressed decides whether a rule is silenced at a line
-    Given a rule, a line, and the collected suppression directives
-    When is_suppressed checks them
-    Then it reports true when an inline ignore covers that line
-    Or when a disable block spans that line
-
-  # the startup door — framework startup integration
-
-  Scenario: startup_check hands the paths to the orchestrator and acts on the findings
-    Given paths to check and a chosen reaction to dishonest code
-    When startup_check hands them to the orchestrator
-    Then it returns the diagnostics the orchestrator folds back
-    But a blocking finding raises instead, per the chosen reaction
-
-  Scenario: check_paths reads each file and runs the checker over it
-    Given a list of file paths
-    When check_paths reads each one and checks it
-    Then every file's diagnostics are folded into a single list
-
-  Scenario: read_source reads one file's text from disk
-    Given a path to a file on disk
-    When read_source reads it
-    Then it returns the file's text
-
-  # rules.py — the rules and the entry point
-
-  Scenario: check_hc_syn flags source that does not parse
-    Given source that does not parse
-    When check_hc_syn inspects it
-    Then it flags the first broken place as HC-SYN
-    And this short-circuits every other rule
-
-  Scenario: check_hc_p003 flags a class declaration
-    Given a class declaration
-    When check_hc_p003 inspects it
-    Then it flags a class with no approved base as HC-P003
-    And a class that inherits from a non-approved base as HC-P003
-    But it permits the approved data and contract bases
-
-  Scenario: check_hc_p001 flags an if-chain that dispatches on one value
-    Given an if-chain whose branches each compare the same value for equality
-    When check_hc_p001 inspects it
-    Then once the branches reach the dispatch threshold it flags the chain as HC-P001
-    And it asks for a lookup table instead
-
-  Scenario: check_hc_p011 flags a framework lifecycle hook
-    Given a call to a framework lifecycle hook
-    When check_hc_p011 inspects it
-    Then it flags the hook as HC-P011
-    And it asks for server-rendered markup and HTMX attributes instead
-
-  Scenario: check_hc_p007 flags underscore-prefixed instance state set in a constructor
-    Given a constructor that assigns underscore-prefixed state on its instance
-    When check_hc_p007 inspects it
-    Then it flags that hidden instance state as HC-P007
-
-  Scenario: check_hc_p016 flags a closure that captures and mutates an enclosing name
-    Given an inner function that captures an enclosing name and rebinds it
-    When check_hc_p016 inspects it
-    Then it flags the mutable closure as HC-P016
-
-  Scenario: _default_is_empty tells an empty default from a real one
-    Given a parameter default value node
-    When _default_is_empty inspects it
-    Then it returns true for None, false, zero, empty text, or an empty collection or constructor, and false for a real value
-
-  Scenario: check_hc_p015 flags a parameter default that bakes in a real value
-    Given a function whose parameter defaults to a non-empty value, such as a number or a name
-    When check_hc_p015 inspects it
-    Then it warns on the baked-in default as HC-P015
-    And it leaves an empty default alone, such as None or an empty list, because empty is the honest way to say nothing was given
-
-  Scenario: check_hc_p019 flags a fallback lookup and allows a reported miss
-    Given a lookup written as a get or pop with a second argument, beside a lookup read without a fallback that returns a report when the key is unexpected
-    When check_hc_p019 inspects them
-    Then it warns on the fallback lookup as HC-P019
-    And it leaves the reported-miss lookup alone, because the unexpected value is returned and named rather than swallowed
-
-  Scenario: check_hc_p020 flags a dispatch read with no reported miss
-    Given a dispatch table read as a bare subscript with a variable key and no membership guard, beside the same read placed under an if-key-not-in-table arm that reports the miss
-    When check_hc_p020 inspects them
-    Then it warns on the unguarded dispatch read as HC-P020
-    And it leaves the guarded read and any constant-key read alone, because the miss is reported and named rather than left to a bare KeyError
-
-  Scenario: check_hc_p004 flags hidden side effects in a non-boundary function
-    Given a non-boundary function that performs input or output, draws on non-determinism, or reads mutable module-level state
-    When check_hc_p004 inspects it
-    Then it flags the hidden side effect as HC-P004
-    And it asks for the work to move to a declared boundary
-
-  Scenario: check_hc_p005 flags a runtime type check in business logic
-    Given a runtime type check outside a boundary function
-    When check_hc_p005 inspects it
-    Then it flags it as HC-P005 and suggests a vocabulary declaration instead
-
-  Scenario: check_hc_p006 flags a cache without profiling evidence
-    Given a cached function carrying no profiling evidence
-    When check_hc_p006 inspects it
-    Then it flags the unjustified cache as HC-P006
-
-  Scenario: check_hc007 flags a chain with no links
-    Given a chain declared with no links
-    When check_hc007 inspects it
-    Then it flags the empty chain as HC007 because it cannot be tested
-
-  Scenario: check_hc003 flags two types that match the same token
-    Given a vocabulary whose types could both match one token
-    When check_hc003 inspects it
-    Then it flags two bounded types that share a value as HC003
-    But a predicate paired with another predicate or with a bounded set may overlap and is routed to honest-test as information, the predicate never being evaluated statically
-
-  Scenario: check_state_machine_vocab flags transitions outside the declared vocabulary
-    Given a state machine whose transitions or initial state use undeclared states or events
-    When check_state_machine_vocab inspects it
-    Then it flags an undeclared transition state, event, or initial state against its vocabulary
-
-  Scenario: check_state_machine_reachability flags unreachable and dead states
-    Given a state machine with an initial state and transitions
-    When check_state_machine_reachability inspects it
-    Then it flags a state that cannot be reached
-    And a non-terminal state with no way out
-
-  Scenario: check_hc_r001 flags an orphan function with no role and no caller
-    Given a module that declares at least one function role
-    When check_hc_r001 inspects it
-    Then it flags any function that has no role and is not reachable from a roled one as HC-R001
-
-  Scenario: check_hc_or001 flags an orchestrator that calls another orchestrator
-    Given an orchestrator that calls another orchestrator
-    When check_hc_or001 inspects it
-    Then it flags the call as HC-OR001 because orchestrators do not compose
-
-  Scenario: check_hc_p002 flags an exception caught in business logic
-    Given a non-boundary function that catches an exception
-    When check_hc_p002 inspects it
-    Then it flags the caught fault as HC-P002
-    But cleanup without catching is allowed
-
-  Scenario: check_hc_a001 flags authorizing links with no registered provider
-    Given links that declare they authorize but no authorization provider is registered
-    When check_hc_a001 inspects them
-    Then it flags the unverifiable authorization as HC-A001
-
-  Scenario: check_hc_a002 flags an authorizing link that ignores the provider's derivation
-    Given a registered authorization provider with a derivation expression and an authorizing link
-    When check_hc_a002 inspects the link
-    Then it flags the link as HC-A002 when its guard never references that derivation
-
-  Scenario: check_hc010 flags a link that emits a type it never produces
-    Given a link that declares it emits a type its body never produces
-    When check_hc010 inspects it
-    Then it flags the phantom emission as HC010
-
-  Scenario: check_hc004 flags a vocabulary type that is never bound or composed
-    Given a vocabulary type that is neither bound nor used by a composed type
-    When check_hc004 inspects it
-    Then it flags the unused type as HC004
-
-  Scenario: check_hc005 flags a binding entry for a type outside its vocabulary
-    Given a binding entry naming a type absent from the paired vocabulary
-    When check_hc005 inspects it
-    Then it flags the stray binding as HC005
-
-  Scenario: check_hc_p013 flags a database routing key bound to a predicate recognizer
-    Given a binding where db_id, tenant_id, or credential is backed by a predicate recognizer rather than a bounded Set
-    When check_hc_p013 inspects it
-    Then it flags the routing key as HC-P013 because an unbounded predicate lets an arbitrary database identifier reach the pool
-
-  Scenario: _typeddict_names collects the TypedDict classes declared in a file
-    Given the parsed source of a file
-    When _typeddict_names scans its class declarations
-    Then it returns the names of the classes that subclass TypedDict, whose instances are dicts
-
-  Scenario: check_hc_p010 flags a return of a non-serializable class instance
-    Given a return statement whose value constructs a class
-    When check_hc_p010 inspects it
-    Then it flags the return as HC-P010 when the constructor is a class that is not an in-file TypedDict, leaving dicts, lowercase calls, method calls, and TypedDict instances alone
-
-  Scenario: check_hc_p014 flags one recognizer shared across distinct slots
-    Given a vocabulary where one recognizer is shared by types bound to different slots
-    When check_hc_p014 inspects it
-    Then it flags the shared recognizer as HC-P014 because a field swap would go uncaught
-
-  Scenario: check_hc_or003 flags orchestrators that share a run of operations
-    Given two orchestrators that share a run of consecutive operations
-    When check_hc_or003 inspects them
-    Then it flags the shared run as HC-OR003 and suggests extracting it
-
-  Scenario: check_hc008 flags an impure link that is not a boundary
-    Given a non-boundary link whose body performs input, output, or non-deterministic work
-    When check_hc008 inspects it
-    Then it flags the impure link as HC008 and suggests marking it a boundary
-
-  Scenario: check_hc_p017 flags HTTP output produced outside a declared link
-    Given a function that produces HTTP output without being a link that declares what it emits
-    When check_hc_p017 inspects it
-    Then it flags the undeclared output as HC-P017
-
-  Scenario: check_hc001 flags a chain step with no declared vocabulary
-    Given a chain that names a defined function carrying no link vocabulary
-    When check_hc001 inspects it
-    Then it flags the undeclared step as HC001
-
-  Scenario: check_hc002 flags a chain step that accepts what its predecessor never emits
-    Given a chain where one step accepts a type the previous step does not emit
-    When check_hc002 inspects it
-    Then it flags the broken contract as HC002
-
-  Scenario: check_hc006 flags a composed type that names an unknown base type
-    Given a composed type that requires or captures a base type absent from its vocabulary
-    When check_hc006 inspects it
-    Then it flags the unknown base type as HC006
-
-  Scenario: check_hc009 flags a recognizer that may throw on non-matching input
-    Given an open-ended recognizer whose body can throw on input it does not match
-    When check_hc009 inspects it
-    Then it flags the throwing recognizer as HC009
-
-  Scenario: check_hc011 routes catch-all recognizer detection to honest-test
-    Given an open-ended recognizer that bounded analysis cannot judge for catch-all behaviour
-    When check_hc011 inspects it
-    Then it records HC011 as information routing the check to honest-test
-    But a bounded recognizer can never be a catch-all and is left clean
-
-  Scenario: check_source parses once, runs every rule, then applies suppressions
-    Given source text and its path
-    When check_source checks it
-    Then unparseable source returns only the syntax fault
-    And otherwise it runs every registered rule and collects their violations
-    And a directive-silenced violation is downgraded to information rather than dropped
-
-  Scenario: extract_routes reads the declared route map
-    Given module source with a ROUTES mapping from method-and-path tuples to chains
-    When extract_routes reads it
-    Then it returns a list of method, path, and chain for each entry, skipping any non-ROUTES assignment, non-dictionary value, splat, or entry whose key is not a two-string tuple or whose value is not a chain identifier
-
-  Scenario: _route_key takes the method and path from a route-map key
-    Given a route-map key node
-    When _route_key reads it
-    Then it returns the method and path for a two-string tuple, and None otherwise
+Feature: honest-check — the static checker, the honesty gate
+  One scenario per declared function (18 total). One pure core folds the whole rule
+  catalogue over a declaration graph; two orchestrators pull files and share that core;
+  two doors reach the world (startup integration and the CLI); the rest read the
+  filesystem, parse the argument vector, or render the report.
+
+  Scenario: check_source runs the declared rule catalogue over one source's declaration graph
+    Given source: str and path: str and rule_config: RuleConfig
+    When check_source is called
+    Then it parses the source under the grammar honest-parse detects from path's extension, resolves the framework's construction call sites (vocabulary, binding, chain, composed, state_machine), and builds the declaration graph
+    And it runs every rule in the RuleId catalogue — both startup_rules and non_startup_rules — over that graph, not over raw ASTs, and returns the findings as a list of Diagnostic
+    And an empty list means the source is clean, and HC-OR003 fires only when rule_config carries a min_run for it
+    But it never opens a file, never executes the application code, never modifies anything, and raises nothing: a violation comes back as a Diagnostic
+
+  Scenario: read_source pulls one file's complete text from disk
+    Given path: str
+    When read_source is called
+    Then it reads that one concrete source file and returns its full contents as a string, and does nothing else — no parse, no check, no write
+    And its one side effect is reading the filesystem
+
+  Scenario: load_config resolves the project's per-rule settings into a RuleConfig
+    Given no arguments
+    When load_config is called
+    Then it finds honest-check.toml in the nearest ancestor directory of the working directory and resolves the [rules] per-rule settings into a RuleConfig map
+    And it returns {"HC-OR003": {"min_run": N}} when the project sets min_run = N, and the empty map when the file sets nothing or no honest-check.toml exists, because min_run has no default to fill in
+    And its one side effect is reading the filesystem
+
+  Scenario: check_paths folds every path's diagnostics under one resolved config
+    Given paths: list<str>
+    When check_paths is called
+    Then it pulls the project's rule_config once with load_config, then for each path reads that file's text with read_source and runs check_source over it under that same rule_config
+    And it returns one flat list of every Diagnostic across all files, in the order the paths were given, and an empty list means every file was clean
+
+  Scenario: startup_check is the development-mode startup door that runs only the startup rules
+    Given paths: list<str> and on_error: str and severity: str
+    When startup_check is called
+    Then it hands paths to check_paths, runs only the startup_rules subset with HC-SYN first, and returns the same diagnostic list check_paths produced
+    And it decides a block when a finding reaches severity, then acts per on_error: 'warn' prints the blocking violations to stderr and lets startup continue; 'halt' prints them to stderr and exits the process with code 1; 'raise' writes nothing and raises HonestCheckError carrying the full report
+    And it raises HonestCheckError only when on_error is 'raise' and at least one diagnostic reaches severity
+    And its one side effect is writing to stderr
+
+  Scenario: parse_args turns the raw argv into a resolved CliArgs
+    Given argv: list<str>
+    When parse_args is called
+    Then it reads the positional paths and the base-mode flags and returns a CliArgs: --config into config_path, --format into format, --severity into severity, repeatable --rule into include_rules, repeatable --no-rule into exclude_rules, and --report into report_mode
+    And it resolves absence to an explicit bounded value at the boundary: an omitted --format becomes 'human' and an omitted --severity becomes 'warning', so no downstream function tells 'chose' from 'forgot'
+    But it opens no file and performs no check, and it ignores --fix and --watch, which this layer does not carry
+
+  Scenario: enforced_rules_of returns the cumulative rules a level enforces
+    Given level: AdoptionLevel
+    When enforced_rules_of is called
+    Then it returns every HC rule enforced at that level per the cumulative section 9.4 membership: always_rules hold everywhere, Structural adds structural_rules, Boundary adds boundary_rules, Typed adds typed_rules, and Declared adds declared_rules to return the whole AdoptionRule set
+    And its length is the enforced_count the adoption line prints, and a rule not in the result is one prepare_report downgrades to info
+    And it reads nothing and returns pure data
+
+  Scenario: prepare_report turns the raw findings into the report formatters render
+    Given diagnostics: list<Diagnostic> and args: CliArgs and adoption: AdoptionLevel
+    When prepare_report is called
+    Then it applies, in order, the adoption downgrade — a diagnostic whose rule is not in enforced_rules_of(adoption) is downgraded to info — then the --severity threshold in args, then the --rule/--no-rule filters in args
+    And it counts the surviving findings into errors, warnings and infos, fills rule_counts with each rule's count only when args.report_mode is set and leaves it empty otherwise, and records adoption, enforced_count and total_count 50 for the adoption line
+    And it does not re-resolve suppression directives, which check_source resolved earlier, and it reads nothing and returns the CheckReport
+
+  Scenario: format_human renders the human-readable CLI default
+    Given report: CheckReport
+    When format_human is called
+    Then it opens with the adoption line, renders one block per diagnostic (a file:line:col header split from source_location, the message and reference line, and the quoted context lines), and closes with the 'Found N errors, M warnings.' tally
+    And when report.report_mode is set it instead renders the per-rule table from report.rule_counts, one row per rule with its severity, finding count and whether the declared level enforces it
+    And it returns the finished text and performs no I/O
+
+  Scenario: format_json renders the JSON machine format for CI and tooling
+    Given report: CheckReport
+    When format_json is called
+    Then it produces an object with version, timestamp, a summary carrying errors, warnings, infos, adoption and enforced_rules, and a diagnostics array whose entries split source_location into file, line and col and carry rule, severity, message, context and fixable
+    And when report.report_mode is set it carries the per-rule counts from report.rule_counts
+    And it returns the JSON text as a string and performs no I/O
+
+  Scenario: format_github renders GitHub Actions workflow-command annotations
+    Given report: CheckReport
+    When format_github is called
+    Then it emits one line per diagnostic, '::error' for an error-severity finding and '::warning' otherwise, each carrying file, line and col from source_location, title=<rule id>, and the message as the body, so findings surface inline on a pull request
+    And it emits the adoption line as a leading annotation or notice so every run still states its level
+    And it returns the annotation text and performs no I/O
+
+  Scenario: format_junit renders JUnit XML for CI systems that consume it
+    Given report: CheckReport
+    When format_junit is called
+    Then it produces a <testsuites name="honest-check"> document with one <testsuite> per file carrying that file's failure count, and within each a <testcase> holding a <failure> whose message is the finding and whose body quotes the offending source line
+    And it returns the XML text and performs no I/O
+
+  Scenario: resolve_exit_code decides the process exit code from the prepared report
+    Given report: CheckReport
+    When resolve_exit_code is called
+    Then when report.report_mode is true the code is '0' always, because --report reports and does not judge
+    And otherwise the code is '1' when report.errors is greater than zero and '0' when no error survived, because warnings and infos never block
+    But it never returns '2', which is reserved for a configuration error or internal failure the door applies, since no function on this path is declared to detect such a failure
+
+  Scenario: discover_files walks the paths and keeps only recognized, non-excluded files
+    Given paths: list<str> and exclude: list<str>
+    When discover_files is called
+    Then for each path it keeps a file when no exclude glob matches it, and recursively walks a directory keeping every file whose extension honest-parse recognizes and that no exclude glob matches, asking honest-parse rather than carrying its own extension table
+    And it returns the flat list of concrete source files, filtering out directories, nonexistent paths and files of unrecognized extension, so every path that reaches read_source is a concrete recognized source file
+    And its one side effect is reading the filesystem
+
+  Scenario: load_project_config reads the honest-check.toml [check] section
+    Given no arguments
+    When load_project_config is called
+    Then it finds honest-check.toml in the nearest ancestor directory of the working directory and returns the [check] settings: the exclude globs discover_files drops matches of and the adoption level section 9.4 grades against
+    And exclude is the empty list when [check] exclude is unset, and adoption is 'Declared' when [check] adoption is absent, distinct from load_config which returns only the [rules] RuleConfig
+    And its one side effect is reading the filesystem
+
+  Scenario: write_report prints the rendered report text to stdout
+    Given text: str
+    When write_report is called
+    Then it prints the already-rendered report text to standard output and returns whether the write completed, formatting and deciding nothing
+    And it is a terminus that calls nothing inward, and its one side effect is writing stdout
+
+  Scenario: run_check orchestrates the whole CLI path and returns the exit code
+    Given argv: list<str>
+    When run_check is called
+    Then it parses the arguments with parse_args, pulls the [check] settings with load_project_config and the per-rule settings with load_config each once, discovers the concrete source files with discover_files, and for each file pulls its text with read_source and runs check_source over it under the one resolved RuleConfig, folding every file's diagnostics into one list
+    And it prepares the combined findings with prepare_report, selects the renderer with the by_format dispatch on the resolved format and renders the report to text, writes that text to stdout through write_report, and returns the ExitCode resolve_exit_code decides
+
+  Scenario: main is the command-line door that hands argv to the orchestrator
+    Given argv: list<str>
+    When main is called
+    Then it receives the argument vector, hands it straight to run_check, and exits the process with the ExitCode run_check returns, holding no parsing, discovery or checking logic
+    And the process exit is the door's output to the shell: 0 means success, 1 means the gate failed with one or more errors at or below the declared adoption level, and 2 means the run could not complete

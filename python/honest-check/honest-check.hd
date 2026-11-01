@@ -14,7 +14,8 @@ module honest-check
 
   # The surface, closed: every side of the world a boundary here touches, and no other.
   inputs = { "filesystem" }
-  outputs = { "stderr" : "the standard-error stream startup_check prints violations to, in the 'warn' and 'halt' paths of section 2.3" }
+  outputs = { "stderr" : "the standard-error stream startup_check prints violations to, in the 'warn' and 'halt' paths of section 2.3",
+              "stdout" : "the standard-output stream the CLI door writes the formatted report to, through write_report, in every CLI run (section 2.1, section 6)" }
 
   type Diagnostic = {
     rule_id: RuleId
@@ -106,3 +107,132 @@ module honest-check
   # which pulls each file and runs the pure core (check_source) over it. A call-form entry, so the
   # entry-check reports it UNCHECKED rather than confirming it.
   entry "call:startup" -> startup_check
+
+  # ======================================================================================
+  # The command-line interface (section 2.1). The primary invocation surface: a door reads
+  # the argument vector, one orchestrator discovers the source files, pulls the config, runs
+  # the same pure core (check_source) over each file, prepares the report, renders it in the
+  # chosen format, writes it to stdout, and returns the process exit code. The pure core both
+  # the startup orchestrator (check_paths) and this orchestrator (run_check) share is
+  # check_source itself; the per-file read-and-check loop is each orchestrator's own pull, not
+  # a second copy of the checking logic. This layer carries the base-mode flags only — it does
+  # NOT carry --declaration / --exports or the declaration-crossing rules (HC-R002..R005,
+  # HC-REF005), which are a later layer.
+  # ======================================================================================
+
+  # ---- the bounded words of the CLI surface ----
+
+  # The four output formats section 6 defines. --format selects one; the default is human.
+  set formats = {
+    "human"  : "the human-readable CLI default (section 6.1): the adoption line, then one block per finding — 'file:line:col: severity rule_id', the message and a reference line, and the quoted source lines — closing with a 'Found N errors, M warnings.' tally",
+    "json"   : "the machine format for CI and tooling (section 6.2): an object with version, timestamp, a summary of error/warning/info counts carrying adoption and enforced_rules, and a diagnostics array whose entries split source_location into file, line and col and carry rule, severity, message, context and fixable",
+    "github" : "GitHub Actions workflow-command annotations (section 6.3): one '::error' or '::warning' line per finding with file, line, col and title=<rule id>, so findings surface inline on a pull request",
+    "junit"  : "JUnit XML (section 6.4): a <testsuites name=\"honest-check\"> document with one <testsuite> per file and a <testcase>/<failure> per finding, for CI systems that consume JUnit"
+  } note "the exact four --format words section 6 defines. parse_args resolves an absent or unrecognized --format to 'human', so the by_format dispatch only ever receives a declared member and 'human' is the no-match fallback."
+  vocabulary Format = { formats } note "the closed set of output-format words --format accepts (section 2.1); the default, and the no-match fallback the dispatch falls back to, is 'human' (section 6.1)."
+
+  set severities = {
+    "error"   : "the code is dishonest; the finding blocks the gate and, at or below the declared adoption level, drives exit code 1 (section 2.1, section 8)",
+    "warning" : "a smell reported without turning the module away (section 8)",
+    "info"    : "a finding honest-check defers to honest-test, or a suppressed or above-adoption-level diagnostic downgraded so it still reports but never blocks (section 8, section 9.4)"
+  } note "the three severity words (section 8). --severity names the minimum a finding must reach to appear in the output (section 2.1); the default is 'warning', so info findings are hidden unless --severity info is passed. This is the same three-word grading the frozen Diagnostic.severity field carries, declared here as a vocabulary for the --severity threshold the CLI applies."
+  vocabulary Severity = { severities } note "the closed severity grading the --severity reporting threshold uses (section 2.1); the default is 'warning'."
+
+  set adoption_levels = {
+    "Structural" : "the shape of the code holds: no classes, no dispatch chains, no hidden state in closures or constructors, no lifecycle hooks (section 9.4)",
+    "Boundary"   : "Structural plus: I/O, faults, persistence and identity cross only at declared boundaries; the interior is pure (section 9.4)",
+    "Typed"      : "Boundary plus: the vocabulary, chain and state-machine type system holds (section 9.4)",
+    "Declared"   : "Typed plus: everything is declared rather than inferred — roles, orchestration, static references and user state (section 9.4); the strictest level, and the level an absent declaration means"
+  } note "the four cumulative adoption levels of section 9.4. A codebase declares one in honest-check.toml [check] adoption; an absent declaration means 'Declared', the strictest, because silence never buys leniency. Each level enforces its own rules and every rule of the levels below it."
+  vocabulary AdoptionLevel = { adoption_levels } note "the closed set of adoption-level names a codebase may declare (section 9.4), carried through to the adoption line every run prints."
+
+  # The section 9.4 level-to-rule membership, declared as data so enforced_rules_of folds a named
+  # set, never a 'rules above the level' phrase. Four cumulative level sets plus the always-on three.
+  set structural_rules = { "HC-P001", "HC-P003", "HC-P007", "HC-P011", "HC-P016" } note "the five rules the Structural level adds (section 9.4): no dispatch chain, no class, no constructor state, no lifecycle hook, no mutable-closure state."
+  set boundary_rules = { "HC-P002", "HC-P004", "HC-P005", "HC-P006", "HC-P010", "HC-P013", "HC-ST001", "HC-A001", "HC-A002" } note "the nine rules the Boundary level adds (section 9.4): exception caught in the interior, I/O in the interior, isinstance/type in business logic, unprofiled cache, non-serializable return, unbounded routing key, state write outside an I/O boundary, and the two identity rules."
+  set typed_rules = { "HC001", "HC002", "HC003", "HC004", "HC005", "HC006", "HC007", "HC008", "HC009", "HC010", "HC011", "HC-SM01", "HC-SM02", "HC-SM03", "HC-SM04", "HC-SM05", "HC-P014", "HC-P017" } note "the eighteen rules the Typed level adds (section 9.4): the vocabulary and chain rules HC001-HC011, the state-machine rules HC-SM01-HC-SM05, HC-P014 (recognizer reused across slots) and HC-P017 (serializer not declared as a chain link)."
+  set declared_rules = { "HC-R001", "HC-R002", "HC-R003", "HC-OR001", "HC-OR003", "HC-REF001", "HC-REF002", "HC-REF003", "HC-REF004", "HC-REF006", "HC-REF007", "HC-REF008", "HC-ST002", "HC-HF001", "HC-HF002" } note "the fifteen rules the Declared level adds (section 9.4): the role rules HC-R001-HC-R003, the orchestration rules HC-OR001 and HC-OR003, the static-reference rules HC-REF001-HC-REF004 and HC-REF006-HC-REF008, shadow user state HC-ST002, and the two feature-flag rules."
+  set always_rules = { "HC-SYN", "HC-SUP001", "HC-SUP002" } note "the three rules that hold at every level (section 9.4): the parse gate HC-SYN and the two suppression guarantees. A codebase that does not parse has no level, and the suppression guarantee of section 7.4 cannot be level-dependent."
+  vocabulary AdoptionRule = { structural_rules, boundary_rules, typed_rules, declared_rules, always_rules } note "every HC rule that belongs to some adoption level: the union of the four cumulative level sets and the always-on three, 50 members in all. Its membership is exactly the section 9.4 table, and enforced_rules_of selects the enforced subset by level. The seven rules belonging to no level — HC-P008, HC-P009, HC-P012 (honest-test's, which honest-check does not run) and HC-REF009, HC-REF010, HC-P018, HC-REF005 (questions or unassigned) — are deliberately absent, which is why the adoption denominator is 50, not the 57 of the full catalogue (section 9.4)."
+
+  set exit_codes = {
+    "0" : "no errors: the run found nothing at a blocking severity (warnings and infos may be present), or the run was a --report run, which always exits 0 (section 2.1, section 2.1.1)",
+    "1" : "one or more errors at or below the declared adoption level: the gate fails (section 2.1)",
+    "2" : "a configuration error or an honest-check internal failure: the run could not complete (section 2.1)"
+  } note "the three process exit codes section 2.1 defines. resolve_exit_code decides 0 versus 1 from the prepared report; 2 is the catch-all the door exits with when the run cannot complete."
+  vocabulary ExitCode = { exit_codes } note "the closed set of process exit codes the CLI door returns to the shell (section 2.1)."
+
+  # ---- the CLI data dictionary ----
+
+  type CliArgs = {
+    paths: list<str>
+    format: Format
+    severity: Severity
+    include_rules: list<RuleId>
+    exclude_rules: list<RuleId>
+    config_path: str
+    report_mode: bool
+  } note "the resolved command-line arguments parse_args produces from the raw argv (section 2.1). paths are the positional source folders and files to check, each a filesystem path exactly as typed (for example 'src/'); discover_files later walks them. format is the resolved --format, a Format value, defaulted to 'human'. severity is the resolved --severity reporting threshold, a Severity value, defaulted to 'warning': a finding below it is not shown. include_rules is the list of rule ids named by --rule (repeatable); when non-empty the run reports only those rules, and empty means every rule runs. exclude_rules is the list of rule ids named by --no-rule (repeatable), suppressed from the output. Both lists hold RuleId catalogue ids. config_path is the --config value, the explicit path to honest-check.toml, or the empty string when --config was not given and the nearest-ancestor honest-check.toml is used (section 3.1). report_mode is true when --report was given: count every rule across the tree and exit 0 (section 2.1.1). --fix and --watch (section 2.1) are out of this layer and parse_args does not record them."
+
+  type ProjectConfig = {
+    exclude: list<str>
+    adoption: AdoptionLevel
+  } note "the honest-check.toml [check] settings this layer needs, read by load_project_config (section 3.1). exclude is the list of glob patterns [check] exclude declares, which discover_files drops matches of; it is the empty list when none is set. adoption is the [check] adoption value, the AdoptionLevel the codebase declares, resolved to 'Declared' (the strictest) when the key is absent (section 9.4). This is a different slice of the same honest-check.toml than load_config's RuleConfig: load_config returns only the [rules] per-rule integer settings, never the [check] section, so the [check] section is read here."
+
+  type RuleCount = dict<str, int> note "per-rule finding counts across the whole tree for --report (section 2.1.1): the outer key is a rule id as its catalogue string (a RuleId value), and the value is how many findings that rule produced over every discovered file. prepare_report fills it only for a --report run, and it is the empty map otherwise; --report prints one row per rule from it, marking which rules the declared adoption level enforces."
+
+  type CheckReport = {
+    diagnostics: list<Diagnostic>
+    errors: int
+    warnings: int
+    infos: int
+    rule_counts: RuleCount
+    adoption: AdoptionLevel
+    enforced_count: int
+    total_count: int
+    report_mode: bool
+  } note "the fully prepared result the formatters render and resolve_exit_code judges (section 6, section 2.1). diagnostics is the surviving findings after the adoption downgrade, the --severity threshold and the --rule/--no-rule filters have been applied, in the order the files were discovered. errors, warnings and infos are the counts of those surviving findings by severity, the tally the human format's 'Found N errors, M warnings.' line and the JSON summary report. rule_counts carries the per-rule counts for a --report run, and is the empty map otherwise. adoption is the declared AdoptionLevel; enforced_count is how many rules that level enforces (the size of enforced_rules_of(adoption)); total_count is 50, the rules the adoption levels cover (section 9.4); together they render the adoption line every run prints: 'adoption level <adoption> — <enforced_count> of <total_count> rules enforced.' report_mode is carried from the arguments so resolve_exit_code can force exit 0 and the formatters can render the per-rule table."
+
+  # ---- the format dispatch (section 6): the format word picks the renderer ----
+  dispatch by_format = { "human" -> format_human, "json" -> format_json, "github" -> format_github, "junit" -> format_junit } note "picks the output formatter by the resolved --format word (section 6). The key space is the Format vocabulary and parse_args resolves an absent or unrecognized --format to 'human' before dispatch, so the table is total over what it can receive and 'human' is its no-match fallback; there is no wildcard row because the key is bounded to a declared Format member before the dispatch runs, the same way honest-type's by_kind is bounded to its recognizer kinds."
+
+  # ---- the pure core of the CLI path ----
+
+  fn parse_args : (argv: list<str>) -> CliArgs note "turns the raw argument vector into the resolved CliArgs (section 2.1). It reads the positional paths and the base-mode flags: --config (the path to honest-check.toml, else nearest-ancestor), --format (human|json|github|junit, resolved to 'human' when absent or unrecognized so the dispatch is total), --severity (error|warning|info, the minimum a finding must reach to be reported, resolved to 'warning' when absent), --rule (restrict the run to the named rule ids, repeatable, collected into include_rules), --no-rule (suppress the named rule ids, repeatable, collected into exclude_rules), and --report (set report_mode true: count every rule across the tree and exit 0, section 2.1.1). Absence is resolved here, at the boundary, to an explicit bounded value — an omitted --format becomes 'human', an omitted --severity becomes 'warning' — so no downstream function has to tell 'chose' from 'forgot'. argv is the full argument vector the door read from the process, already in memory; parse_args opens no file (load_config and load_project_config do the filesystem reads) and performs no check. It ignores --fix and --watch, which this layer does not carry. It returns the CliArgs the orchestrator fans out to discover_files, prepare_report and the dispatch."
+
+  fn enforced_rules_of : (level: AdoptionLevel) -> list<AdoptionRule> note "returns every HC rule enforced at the given adoption level — the section 9.4 cumulative membership. Because the levels are cumulative, the result always includes always_rules (HC-SYN, HC-SUP001, HC-SUP002, which hold everywhere); Structural adds structural_rules; Boundary adds boundary_rules on top; Typed adds typed_rules on top of that; and Declared adds declared_rules, returning the whole AdoptionRule set. Its length is the enforced_count the adoption line prints, and a rule NOT in the result is one prepare_report downgrades to info because the declared level does not enforce it (section 9.4). level is the AdoptionLevel the codebase declared; it reads nothing and returns pure data."
+
+  fn prepare_report : (diagnostics: list<Diagnostic>, args: CliArgs, adoption: AdoptionLevel) -> CheckReport invokes enforced_rules_of note "turns the raw per-file findings into the report the formatters render and resolve_exit_code judges (section 2.1, section 6, section 9.4). It applies, in order: the adoption level — every diagnostic whose rule is not in enforced_rules_of(adoption) is downgraded to info, so an above-level finding still reports but never blocks (section 9.4); then the --severity threshold in args — a finding below the threshold is dropped from the output; then the --rule/--no-rule filters in args — keep only args.include_rules when that list is non-empty, and drop args.exclude_rules. It then counts the surviving findings into errors, warnings and infos; fills rule_counts with each rule's finding count when args.report_mode is set (section 2.1.1) and leaves it empty otherwise; and records adoption, enforced_count (the size of enforced_rules_of(adoption)) and total_count (50, the rules the levels cover, section 9.4) so the adoption line can be rendered. report_mode is carried from args. Suppression directives are resolved earlier, inside check_source, so prepare_report does not re-resolve them. diagnostics is the concatenation of every discovered file's check_source findings; args is the resolved CliArgs; adoption is the declared level from the project config. It reads nothing and returns the CheckReport."
+
+  fn format_human : (report: CheckReport) -> str note "renders the human-readable CLI default (section 6.1). It opens with the adoption line 'honest-check: adoption level <report.adoption> — <report.enforced_count> of <report.total_count> rules enforced.' (section 9.4), then one block per diagnostic: a 'file:line:col: severity rule_id' header split from the diagnostic's source_location, the message and any reference line, and the quoted context lines with their line numbers, blocks separated by a blank line; it closes with the 'Found N errors, M warnings.' tally from report.errors and report.warnings. When report.report_mode is set it instead renders the section 2.1.1 per-rule table from report.rule_counts — one row per rule with its severity, finding count, and whether the declared level enforces it. report is the prepared CheckReport. It returns the finished text and performs no I/O; write_report prints it."
+
+  fn format_json : (report: CheckReport) -> str note "renders the JSON machine format for CI and tooling (section 6.2). It produces an object with 'version', a 'timestamp', a 'summary' carrying errors, warnings and infos (and, per section 9.4, 'adoption' and 'enforced_rules'), and a 'diagnostics' array whose entries split each diagnostic's source_location into separate 'file', 'line' and 'col' fields and carry 'rule' (the rule_id), 'severity', 'message', 'context' and 'fixable'. When report.report_mode is set it carries the per-rule counts from report.rule_counts instead of (or alongside) the findings. report is the prepared CheckReport. It returns the JSON text as a string and performs no I/O."
+
+  fn format_github : (report: CheckReport) -> str note "renders GitHub Actions workflow-command annotations (section 6.3): one line per diagnostic, '::error' for an error-severity finding and '::warning' otherwise, each carrying file, line and col from the diagnostic's source_location, title=<rule id>, and the message as the line body, so findings surface inline on a pull request. The adoption line is emitted as a leading annotation or notice so every run still states its level (section 9.4). report is the prepared CheckReport. It returns the annotation text and performs no I/O."
+
+  fn format_junit : (report: CheckReport) -> str note "renders JUnit XML for CI systems that consume it (section 6.4): a <testsuites name=\"honest-check\"> document with one <testsuite> per file carrying that file's failure count, and within each a <testcase name=\"<rule id>:<line>\" classname=\"<file>\"> holding a <failure> whose message is the finding and whose body quotes the offending source line. report is the prepared CheckReport. It returns the XML text and performs no I/O."
+
+  fn resolve_exit_code : (report: CheckReport) -> ExitCode note "decides the process exit code from the prepared report (section 2.1). When report.report_mode is true the code is '0' always: --report reports, it does not judge, which is what keeps it from being a second quieter gate (section 2.1.1). Otherwise the code is '1' when report.errors is greater than zero — one or more findings at error severity survived the adoption downgrade, which means they are at or below the declared level — and '0' when no error survived, because warnings and infos never block. It never returns '2': exit code 2 is reserved for a configuration error or an internal failure the run could not complete, which the door applies, and no function on this path is declared to detect such a failure (load_config and load_project_config are not declared to fault), so '2' is documented in the exit_codes set but not produced in this layer. report is the prepared CheckReport."
+
+  # ---- the CLI boundaries ----
+
+  reader fn discover_files : (paths: list<str>, exclude: list<str>) -> list<str> side_effect reads "filesystem" note "the file-discovery reader (section 3.2). For each requested path: if the path is a file and no exclude glob matches it, keep it; if the path is a directory, recursively walk it and keep every file whose extension honest-parse recognizes and that no exclude glob matches. It returns the flat list of concrete source files to check. paths is the positional paths from the command line (CliArgs.paths); exclude is the glob patterns from honest-check.toml [check] exclude (ProjectConfig.exclude). honest-check names no language: it does not carry its own extension table but asks honest-parse whether each file's extension is recognized (.py, .js, .ts, .mjs, .cjs, .rb, .go — section 3.2), so a mixed tree is discovered in one walk. A directory, a nonexistent path, and a file of an unrecognized extension are filtered out here, so every path that reaches read_source is a concrete, recognized source file. Its one side effect is reading the filesystem."
+
+  reader fn load_project_config : () -> ProjectConfig side_effect reads "filesystem" note "the [check]-section config reader (section 3.1). It finds honest-check.toml in the nearest ancestor directory of the working directory and returns the [check] settings this layer needs: the exclude globs discover_files drops matches of, and the adoption level section 9.4 grades against. It is distinct from load_config, which reads the same file but returns only the [rules] per-rule RuleConfig; the frozen RuleConfig carries only per-rule integer settings and never the [check] section, so [check] is read here. It takes no argument: like load_config it resolves the nearest-ancestor honest-check.toml, and honoring --config's explicit path is not wired through either reader in this layer. exclude is the empty list when [check] exclude is unset; adoption is 'Declared' when [check] adoption is absent (section 9.4). Its one side effect is reading the filesystem."
+
+  boundary_out fn write_report : (text: str) -> bool side_effect writes "stdout" note "the stdout writer, the CLI path's one output boundary. It prints the already-rendered report text to standard output and returns whether the write completed. text is the finished report a format function produced (section 6); write_report neither formats nor decides anything, it only writes. It is a terminus: it calls nothing inward. Its one side effect is writing stdout."
+
+  # ---- the CLI orchestrator ----
+
+  orchestrator fn run_check : (argv: list<str>) -> ExitCode invokes parse_args, load_project_config, discover_files, load_config, read_source, check_source, prepare_report, by_format, write_report, resolve_exit_code note "the orchestrator the CLI door hands the argument vector to (section 2.1). It parses the arguments with parse_args; pulls the [check] settings with load_project_config and the per-rule settings with load_config, each resolved once for the whole run; discovers the concrete source files with discover_files over the parsed paths and the config's exclude globs; then, for each discovered file, pulls its text with read_source and runs the pure core check_source over it under the one resolved RuleConfig, folding every file's diagnostics into one list — the same per-file pull-and-check the startup orchestrator check_paths does, sharing the pure core check_source rather than a second copy of the checking logic. It prepares the combined findings with prepare_report (applying the adoption downgrade, the --severity threshold and the --rule/--no-rule filters, and computing the counts and the adoption-line numbers), selects the renderer with the by_format dispatch on the resolved format and renders the report to text, writes that text to stdout through write_report, and returns the exit code resolve_exit_code decides. honest-check names no language anywhere on this path: each file's grammar is detected by honest-parse from its extension inside check_source. argv is the raw argument vector from the door; the returned ExitCode is handed back to the door, which exits the process with it."
+
+  # ---- the CLI door ----
+
+  boundary_in fn main : (argv: list<str>) -> ExitCode invokes run_check note "the command-line door (section 2.1), the primary invocation surface. The host starts it as 'python -m honest_check.cli <paths...>' with the section 2.1 flags; the pre-commit gate calls it exactly this way and reads its exit code. It carries only I/O: it receives the argument vector, hands it straight to run_check, and exits the process with the exit code run_check returns — it holds no parsing, discovery or checking logic, all of which live on run_check's path. The process exit is the door's output to the shell, the same way the startup door's 'halt' path exits the process (section 2.3): 0 means the shell sees success (no errors, though warnings may have printed), 1 means the gate failed with one or more errors at or below the declared adoption level, and 2 means the run could not complete (a configuration error or internal failure). argv is the argument vector the module's __main__ shim read from the process and passed in; that shim is the entry below, reported UNCHECKED."
+
+  # main is the CLI door the world reaches via `python -m honest_check.cli`. It hands argv to one
+  # orchestrator (run_check), which discovers the files, pulls the config, runs the pure core over
+  # each file, renders the report, writes stdout, and returns the exit code. A cli:__main__ entry,
+  # so the entry-check reports it UNCHECKED rather than confirming it.
+  chain cli = main -> run_check
+  entry "cli:__main__" -> main

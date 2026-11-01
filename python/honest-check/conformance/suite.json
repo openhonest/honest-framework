@@ -1,195 +1,105 @@
 {
   "suite": "honest-check",
   "version": "1.0",
-  "note": "One case per rule category (section 9.2). This file is the per-rule test-of-record: check_source must produce exactly the diagnostics a case expects over its source, no more and no fewer. Core conformance (section 9.1) covers the seven construction-time rules HC003, HC006, HC007, HC011, HC-SM01, HC-SM02, HC-SM05; the parse gate HC-SYN and the suppression guarantees hold at every level. HC-P003 is carried as the first structural-rule case. Full and the remaining levels are added as their rules are built (bead honest-framework-4gv).",
+  "note": "One case per rule category (section 9.2). This file is the per-rule test-of-record: check_source must produce exactly the diagnostics a case expects over its source, no more and no fewer. Core conformance (section 9.1) covers the seven construction-time rules HC003, HC006, HC007, HC011, HC-SM01, HC-SM02, HC-SM05; the parse gate HC-SYN holds at every level; HC-P003 is carried as the first structural-rule case. Full and the remaining levels are added as their rules are built (bead honest-framework-4gv).",
   "cases": [
     {
       "id": "HC-SYN-001",
       "description": "Source that does not parse gates every other rule and reports HC-SYN.",
       "category": "HC-SYN",
-      "input": {
-        "language": "python",
-        "source": "def f(:"
-      },
-      "expected": {
-        "diagnostics": [
-          { "rule": "HC-SYN", "severity": "error", "line": 1 }
-        ]
-      }
+      "input": { "language": "python", "source": "def f(:" },
+      "expected": { "diagnostics": [ { "rule": "HC-SYN", "severity": "error", "line": 1 } ] }
     },
     {
       "id": "HC007-001",
       "description": "A chain() constructed with no links is an empty chain.",
       "category": "HC007",
-      "input": {
-        "language": "python",
-        "source": "from honest_type import chain\nreport = chain()\n"
-      },
-      "expected": {
-        "diagnostics": [
-          { "rule": "HC007", "severity": "error", "line": 2 }
-        ]
-      }
+      "input": { "language": "python", "source": "from honest_type import chain\nreport = chain()\n" },
+      "expected": { "diagnostics": [ { "rule": "HC007", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC007-alias-001",
+      "description": "An empty chain is caught when the constructor is imported under an alias (section 3.3).",
+      "category": "HC007",
+      "input": { "language": "python", "source": "from honest_type import chain as c\nreport = c()\n" },
+      "expected": { "diagnostics": [ { "rule": "HC007", "severity": "error", "line": 2 } ] }
     },
     {
       "id": "HC007-clean-001",
       "description": "A chain() with links is not empty and fires nothing.",
       "category": "HC007",
-      "input": {
-        "language": "python",
-        "source": "from honest_type import chain\nreport = chain(step_one, step_two)\n"
-      },
-      "expected": {
-        "diagnostics": []
-      }
-    },
-    {
-      "id": "HC007-alias-001",
-      "description": "A chain imported under an alias is still resolved (section 3.3): `chain as c` then `c()` is an empty chain and fires HC007.",
-      "category": "HC007",
-      "input": {
-        "language": "python",
-        "source": "from honest_type import chain as c\nreport = c()\n"
-      },
-      "expected": {
-        "diagnostics": [
-          { "rule": "HC007", "severity": "error", "line": 2 }
-        ]
-      }
+      "input": { "language": "python", "source": "from honest_type import chain\nreport = chain(step_one, step_two)\n" },
+      "expected": { "diagnostics": [] }
     },
     {
       "id": "HC006-001",
       "description": "A composed type whose requires names a base type the vocabulary does not declare.",
       "category": "HC006",
-      "input": {
-        "language": "python",
-        "source": "from honest_type import vocabulary, composed\nv = vocabulary({\"digit\": {\"0\", \"1\"}}, composed_types=[composed(\"pair\", {\"missing\": \"x\"}, \"digit\")])\n"
-      },
-      "expected": {
-        "diagnostics": [
-          { "rule": "HC006", "severity": "error", "line": 2 }
-        ]
-      }
+      "input": { "language": "python", "source": "from honest_type import vocabulary, composed\nv = vocabulary({\"digit\": {\"0\", \"1\"}}, composed_types=[composed(\"pair\", {\"missing\": \"x\"}, \"digit\")])\n" },
+      "expected": { "diagnostics": [ { "rule": "HC006", "severity": "error", "line": 2 } ] }
     },
     {
       "id": "HC003-001",
       "description": "Two Set types in one vocabulary sharing a value overlap, a decidable error.",
       "category": "HC003",
-      "input": {
-        "language": "python",
-        "source": "from honest_type import vocabulary\nv = vocabulary({\"a\": {\"x\", \"y\"}, \"b\": {\"y\", \"z\"}})\n"
-      },
-      "expected": {
-        "diagnostics": [
-          { "rule": "HC003", "severity": "error", "line": 2 }
-        ]
-      }
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nv = vocabulary({\"a\": {\"x\", \"y\"}, \"b\": {\"y\", \"z\"}})\n" },
+      "expected": { "diagnostics": [ { "rule": "HC003", "severity": "error", "line": 2 } ] }
     },
     {
       "id": "HC003-clean-001",
       "description": "Two Set types with no shared value do not overlap.",
       "category": "HC003",
-      "input": {
-        "language": "python",
-        "source": "from honest_type import vocabulary\nv = vocabulary({\"a\": {\"x\", \"y\"}, \"b\": {\"z\"}})\n"
-      },
-      "expected": {
-        "diagnostics": []
-      }
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nv = vocabulary({\"a\": {\"x\", \"y\"}, \"b\": {\"z\"}})\n" },
+      "expected": { "diagnostics": [] }
     },
     {
       "id": "HC011-001",
       "description": "A predicate recognizer may be a catch-all; honest-check cannot run it, so it reports info and defers to honest-test.",
       "category": "HC011",
-      "input": {
-        "language": "python",
-        "source": "from honest_type import vocabulary\nv = vocabulary({\"anything\": lambda s: True})\n"
-      },
-      "expected": {
-        "diagnostics": [
-          { "rule": "HC011", "severity": "info", "line": 2 }
-        ]
-      }
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nv = vocabulary({\"anything\": lambda s: True})\n" },
+      "expected": { "diagnostics": [ { "rule": "HC011", "severity": "info", "line": 2 } ] }
     },
     {
       "id": "HC-SM01-001",
       "description": "A transition table names a from-state that is not in the states vocabulary.",
       "category": "HC-SM01",
-      "input": {
-        "language": "python",
-        "source": "from honest_type import state_machine\nm = state_machine([\"idle\"], [\"go\"], {(\"running\", \"go\"): \"idle\"}, \"idle\")\n"
-      },
-      "expected": {
-        "diagnostics": [
-          { "rule": "HC-SM01", "severity": "error", "line": 2 }
-        ]
-      }
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"idle\"], [\"go\"], {(\"running\", \"go\"): \"idle\"}, \"idle\")\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-SM01", "severity": "error", "line": 2 } ] }
     },
     {
       "id": "HC-SM02-001",
       "description": "A transition table names an event that is not in the events vocabulary.",
       "category": "HC-SM02",
-      "input": {
-        "language": "python",
-        "source": "from honest_type import state_machine\nm = state_machine([\"idle\", \"run\"], [\"go\"], {(\"idle\", \"stop\"): \"run\"}, \"idle\")\n"
-      },
-      "expected": {
-        "diagnostics": [
-          { "rule": "HC-SM02", "severity": "error", "line": 2 }
-        ]
-      }
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"idle\", \"run\"], [\"go\"], {(\"idle\", \"stop\"): \"run\"}, \"idle\")\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-SM02", "severity": "error", "line": 2 } ] }
     },
     {
       "id": "HC-SM05-001",
       "description": "The initial state is not in the states vocabulary.",
       "category": "HC-SM05",
-      "input": {
-        "language": "python",
-        "source": "from honest_type import state_machine\nm = state_machine([\"idle\"], [\"go\"], {}, \"missing\")\n"
-      },
-      "expected": {
-        "diagnostics": [
-          { "rule": "HC-SM05", "severity": "error", "line": 2 }
-        ]
-      }
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"idle\"], [\"go\"], {}, \"missing\")\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-SM05", "severity": "error", "line": 2 } ] }
     },
     {
       "id": "HC-SM-clean-001",
       "description": "A state machine whose states, events, transitions and initial all agree fires nothing.",
       "category": "HC-SM01",
-      "input": {
-        "language": "python",
-        "source": "from honest_type import state_machine\nm = state_machine([\"idle\", \"run\"], [\"go\", \"stop\"], {(\"idle\", \"go\"): \"run\", (\"run\", \"stop\"): \"idle\"}, \"idle\")\n"
-      },
-      "expected": {
-        "diagnostics": []
-      }
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"idle\", \"run\"], [\"go\", \"stop\"], {(\"idle\", \"go\"): \"run\", (\"run\", \"stop\"): \"idle\"}, \"idle\")\n" },
+      "expected": { "diagnostics": [] }
     },
     {
       "id": "HC-P003-001",
       "description": "A bare class declaration is dishonest: a record is a TypedDict and behaviour is a function.",
       "category": "HC-P003",
-      "input": {
-        "language": "python",
-        "source": "class Report:\n    pass\n"
-      },
-      "expected": {
-        "diagnostics": [
-          { "rule": "HC-P003", "severity": "error", "line": 1 }
-        ]
-      }
+      "input": { "language": "python", "source": "class Report:\n    pass\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P003", "severity": "error", "line": 1 } ] }
     },
     {
       "id": "clean-001",
       "description": "Plain honest code fires nothing.",
       "category": "clean",
-      "input": {
-        "language": "python",
-        "source": "x = 1\n"
-      },
-      "expected": {
-        "diagnostics": []
-      }
+      "input": { "language": "python", "source": "x = 1\n" },
+      "expected": { "diagnostics": [] }
     }
   ]
 }

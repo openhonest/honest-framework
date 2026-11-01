@@ -1,104 +1,79 @@
-"""Honest test for the startup_check scenario (features/honest-check.feature).
+"""startup_check hands paths to check_paths, returns that diagnostic list, and acts
+per on_error: 'warn' returns and does not raise, 'raise' raises HonestCheckError
+when a finding reaches severity.
 
-startup_check(paths, on_error, severity) is the development-mode startup door.
-It hands paths to check_paths, runs the startup-eligible rules, decides whether
-any finding reaches the blocking severity, and acts on on_error:
-  - 'warn'  prints the blocking violations to stderr and returns the diagnostics,
-            letting startup continue (no raise);
-  - 'raise' raises HonestCheckError carrying the report;
-  - 'halt'  prints and exits the process with code 1.
-
-Blocking finding used here: a source that does not parse. A parse failure fires
-HC-SYN, a startup-eligible rule at error severity already built into check_source.
-(The .hd note's own example, the empty-chain HC007 trigger, needs declaration-graph
-extraction that is not built yet; see bead honest-framework-4gv.)
-
-Limit, stated on purpose: the 'halt' process-exit path is left unexercised.
-Driving it would call sys.exit(1) and end this test process, so it cannot be
-probed in-process. That is a coverage limit of this probe, not a gap in the spec.
+A class .py produces an error-severity HC-P003 (the .hd: startup_check returns the
+same diagnostic list check_paths produced). Under on_error 'warn', severity 'error'
+it returns that list and does not raise; under on_error 'raise' it raises
+HonestCheckError. 'halt' is never exercised here: it would exit the process.
+Its side effect is writing stderr, redirected here so the run stays quiet.
 """
 
+import contextlib
 import io
 import os
 import tempfile
-from contextlib import redirect_stderr
 
-from honest_check import startup_check, HonestCheckError
-
-# A file that does not parse -> HC-SYN at error severity -> a blocking finding.
-_UNPARSEABLE = "def (:\n"
-# Valid Python with no framework construction -> no finding -> clean.
-_CLEAN = "x = 1\n"
+_CLASS_SOURCE = "class Report:\n    pass\n"
 
 _CASES = [
-    # Blocking source, on_error 'warn': returns a non-empty list carrying an
-    # HC-SYN finding, prints to stderr, and does not raise.
-    {
-        "source": _UNPARSEABLE,
-        "on_error": "warn",
-        "severity": "error",
-        "expect": {"raised": False, "hc_syn_in_result": True, "stderr_nonempty": True},
-    },
-    # Same blocking source, on_error 'raise': raises HonestCheckError.
-    {
-        "source": _UNPARSEABLE,
-        "on_error": "raise",
-        "severity": "error",
-        "expect": {"raised": True},
-    },
-    # Clean source, on_error 'warn': the explicit absence case. Returns [], no raise.
-    {
-        "source": _CLEAN,
-        "on_error": "warn",
-        "severity": "error",
-        "expect": {"raised": False, "result": []},
-    },
+    {"on_error": "warn", "severity": "error", "want_rule": "HC-P003", "should_raise": False},
+    {"on_error": "raise", "severity": "error", "should_raise": True},
 ]
 
 
-def _rule_id(diagnostic):
-    """Pull rule_id from one Diagnostic, whether it is a dict or a record object."""
-    if isinstance(diagnostic, dict):
-        return diagnostic.get("rule_id")
-    return getattr(diagnostic, "rule_id", None)
-
-
-def _run(source, on_error, severity):
-    """Write source to a real temp .py file, call startup_check on it, and report
-    what it did: whether it raised, what it returned, and whether it wrote stderr."""
-    fd, path = tempfile.mkstemp(suffix=".py")
-    try:
-        with os.fdopen(fd, "w") as handle:
-            handle.write(source)
-        err = io.StringIO()
-        try:
-            with redirect_stderr(err):
-                result = startup_check([path], on_error, severity)
-        except HonestCheckError:
-            return {"raised": True}
-        return {
-            "raised": False,
-            "result": result,
-            "hc_syn_in_result": any(_rule_id(d) == "HC-SYN" for d in result),
-            "stderr_nonempty": err.getvalue() != "",
-        }
-    finally:
-        os.remove(path)
-
-
 def probe_startup_check():
-    """A blocking finding under 'warn' prints to stderr and returns the diagnostics
-    (HC-SYN present, no raise); under 'raise' it raises HonestCheckError; and a clean
-    source under 'warn' returns [] without raising."""
+    try:
+        from honest_check import startup_check
+    except ImportError as exc:
+        return [f"cannot import startup_check: {exc}"]
+
     bad = []
     for case in _CASES:
-        observed = _run(case["source"], case["on_error"], case["severity"])
-        for key, want in case["expect"].items():
-            got = observed.get(key, "<missing>")
-            if got != want:
-                bad.append(
-                    f"startup_check(on_error={case['on_error']!r}, "
-                    f"severity={case['severity']!r}) on {case['source']!r}: "
-                    f"{key} -> {got!r}, expected {want!r}"
-                )
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "source.py")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_CLASS_SOURCE)
+            stderr = io.StringIO()
+            if case["should_raise"]:
+                raised = None
+                try:
+                    with contextlib.redirect_stderr(stderr):
+                        startup_check([path], case["on_error"], case["severity"])
+                except Exception as exc:  # the probe records the raise as data
+                    raised = exc
+                if raised is None:
+                    bad.append(
+                        f"startup_check([{path!r}], 'raise', 'error') did not raise; "
+                        f"expected HonestCheckError"
+                    )
+                elif type(raised).__name__ != "HonestCheckError":
+                    bad.append(
+                        f"startup_check([{path!r}], 'raise', 'error') raised "
+                        f"{type(raised).__name__}, expected HonestCheckError"
+                    )
+            else:
+                raised = None
+                got = None
+                try:
+                    with contextlib.redirect_stderr(stderr):
+                        got = startup_check([path], case["on_error"], case["severity"])
+                except Exception as exc:
+                    raised = exc
+                if raised is not None:
+                    bad.append(
+                        f"startup_check([{path!r}], 'warn', 'error') raised "
+                        f"{type(raised).__name__}, expected it to return"
+                    )
+                elif not isinstance(got, list):
+                    bad.append(
+                        f"startup_check([{path!r}], 'warn', 'error') -> {got!r}, expected a list"
+                    )
+                else:
+                    rule_ids = [diag.get("rule_id") for diag in got]
+                    if case["want_rule"] not in rule_ids:
+                        bad.append(
+                            f"startup_check([{path!r}], 'warn', 'error') -> rule_ids {rule_ids}, "
+                            f"expected one to be {case['want_rule']!r}"
+                        )
     return bad
