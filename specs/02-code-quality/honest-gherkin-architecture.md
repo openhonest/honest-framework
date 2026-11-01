@@ -175,7 +175,7 @@ StepMatch = {
 - `empty_registry() -> StepRegistry` returns `{ patterns: [] }`.
 - `register_step(registry, kind, pattern, handler) -> StepRegistry` returns a **new** registry with one pattern appended. It never mutates its argument.
 
-A `StepHandler` takes the immutable context and the bound captures (as named arguments) and returns a new context. Purity of handlers is a convention the framework's own linter enforces structurally elsewhere (no mutation, no `self`); the engine does not re-check it at runtime.
+A `StepHandler` takes the immutable context and the bound captures (as named arguments) and returns a new context. Purity of handlers is a convention the framework's own checker enforces structurally elsewhere (no mutation, no `self`); the engine does not re-check it at runtime.
 
 ### 5.1 Matching
 

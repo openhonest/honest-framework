@@ -10,7 +10,7 @@
 
 The Honest Framework is an architectural standard for code that is **correct by construction**: it eliminates named categories of defect at their source, making them structurally impossible to express rather than detecting them after the fact. Each construct that manufactures a defect class — classes carrying mutable state, inheritance, value-dispatch branching, hidden state, unbounded I/O in business logic — is replaced by one that cannot represent it: pure-function dispatch tables over closed, declared vocabularies, with I/O confined to the boundary. The test for every rule is the same: *which category of defect does this make impossible?*
 
-The discipline is mechanically enforced, not advisory. A static linter (`honest-check`) rejects any code that can represent an eliminated defect class; exhaustive verification (`honest-test`) runs the full bounded input space rather than sampling it. The specification is language-agnostic, and the guarantees are available in ordinary imperative languages — Python, TypeScript, Java, C#, Ruby — without a new language or reskilling: the adoption cost is subtractive, a few habits to stop, not a body of knowledge to acquire.
+The discipline is mechanically enforced, not advisory. A static checker (`honest-check`) rejects any code that can represent an eliminated defect class; exhaustive verification (`honest-test`) runs the full bounded input space rather than sampling it. The specification is language-agnostic, and the guarantees are available in ordinary imperative languages — Python, TypeScript, Java, C#, Ruby — without a new language or reskilling: the adoption cost is subtractive, a few habits to stop, not a body of knowledge to acquire.
 
 ---
 
@@ -70,7 +70,7 @@ And the honesty that makes an apophatic claim more than a boast: **every one sta
 
 ## The Third Pillar: Architecture-First IDE
 
-The framework is not a linter plus a plugin plus a code generator stapled together. It is the foundation for a new category of development environment: **an IDE whose organizing unit is the architecture, not the file**.
+The framework is not a checker plus a plugin plus a code generator stapled together. It is the foundation for a new category of development environment: **an IDE whose organizing unit is the architecture, not the file**.
 
 Every mainstream IDE today treats files as the primary concept. The file tree is the navigator. Tabs are files. "Go to definition" jumps between files. Tests live in one file, templates in another, configuration in a third, and the programmer's mental model — "this module handles X, composed of these parts, bound to these routes" — is nowhere in the tooling. The programmer maintains that model in their head and projects it onto a flat file-system whenever they work.
 
@@ -166,7 +166,7 @@ Every layer of the framework, every principle in *Honest Code*, and every featur
 
 The Honest Framework did not begin as a framework. It began as a series of articles and papers describing a new approach to web application design: language-agnostic, but deeply opinionated about which language constructs are honest and which are not. Those articles became the book *Honest Code*, whose ethos is simple: **code should do what it says and say what it does.**
 
-Writing the book forced a reckoning: the author had already built most of the framework. Across several independent repositories, each solving one piece of the puzzle in isolation, the same principles kept reappearing. A type system here. A persistence layer there. A component model. A client-side attribute library. A linter. A test harness. None of them knew about each other, but all of them were expressions of the same idea.
+Writing the book forced a reckoning: the author had already built most of the framework. Across several independent repositories, each solving one piece of the puzzle in isolation, the same principles kept reappearing. A type system here. A persistence layer there. A component model. A client-side attribute library. A checker. A test harness. None of them knew about each other, but all of them were expressions of the same idea.
 
 The Honest Framework is the convergence of those repositories into a single coherent whole, unified around HTMX and a server-rendered, DOM-as-state model, and grounded in the Honest Code principles the book articulates.
 
@@ -195,7 +195,7 @@ The spec defines what each implementation must do. Each language does it in its 
 |---|---|
 | **Honest Code** | The prerequisite. honest framework is strongly opinionated: it requires adoption of the Honest Code principles before the rest of the framework has anything to work with. The two that matter most here: **Dict-Lookup Polymorphism** replaces if/elif/else dispatch chains with dict lookup tables (`HANDLERS = {"email": send_email, "sms": send_sms}`); adding a case means adding a row, not modifying control flow. **Typed Dicts Over Classes** replaces classes with plain dicts (`User = TypedDict("User", {"email": str, "name": str})`); data is just data, no behavior attached. These are not stylistic preferences. They are the structural precondition for everything else in the framework. A codebase that does not follow them cannot use honest-type, cannot be checked by honest-check, and cannot be tested by honest-test. The principles are the foundation. The framework is what the foundation makes possible. And here is what nobody told you: Honest Code is also automatically typed code. Not typed in the TypeScript sense. Typed in the structural sense: every value is a plain dict with declared keys, every dispatch table is a finite set of known values, every function accepts and returns declared shapes. The type information is already in the code. honest-type does not add a type system. It reads the one you already built. |
 | **honest-ui** | The presentation layer that started all of this. The server renders a value into an HTML element as text. The `h*-` attribute on that element is the presentation instruction: `<span hf="currency USD 2">1299.99</span>` tells the formatting module to render this text as currency, USD, 2 decimal places. The element renders as `$1,299.99`. The instruction is inline, on the element it describes, with no indirection. Seventy-three lines of JavaScript become one attribute. |
-| **honest-type** | Once you have adopted Dict-Lookup Polymorphism and Typed Dicts Over Classes, something magical happens: those lookup tables and typed dicts are structurally identical to a type system. A Set used for dispatch is a type declaration. A collection of them is a type system. You built one by following the principles. honest-type makes it explicit: collect your existing tables into a vocabulary, add a binding table that names each slot, call `classify()`. Tokens in. Named dict out. The vast majority of types in an Honest Code codebase are Sets: finite, fully enumerable, and deterministic by definition. The permutation space is closed at definition time and honest-test generates every combination automatically. Predicates (`s.isdigit()`, UUID format checks) handle the edge cases that cannot be fully enumerated; honest-test applies boundary testing there. The same tables power honest-check (pre-commit linter, zero annotations) and honest-test (exhaustive harness, zero test code). The principles created the type system. honest-type named it. |
+| **honest-type** | Once you have adopted Dict-Lookup Polymorphism and Typed Dicts Over Classes, something magical happens: those lookup tables and typed dicts are structurally identical to a type system. A Set used for dispatch is a type declaration. A collection of them is a type system. You built one by following the principles. honest-type makes it explicit: collect your existing tables into a vocabulary, add a binding table that names each slot, call `classify()`. Tokens in. Named dict out. The vast majority of types in an Honest Code codebase are Sets: finite, fully enumerable, and deterministic by definition. The permutation space is closed at definition time and honest-test generates every combination automatically. Predicates (`s.isdigit()`, UUID format checks) handle the edge cases that cannot be fully enumerated; honest-test applies boundary testing there. The same tables power honest-check (pre-commit checker, zero annotations) and honest-test (exhaustive harness, zero test code). The principles created the type system. honest-type named it. |
 | **honest-check** | Type checking for free. honest-check runs as a pre-commit hook, exactly like a compiler: it builds an AST, reads your honest-type declaration tables, and verifies type matching across all possible input combinations without requiring a single type annotation in your code. No mypy. No Pyright. No type declarations cluttering your source. It also checks whether your code is honest according to Honest Code principles, returning errors for serious violations and warnings for lesser ones. Developers hate writing type declarations and hate seeing them in code. honest-check means they never have to. |
 | **honest-test** | Correctness testing at zero effort. The same way Swagger reads your API definition and generates documentation, clients, and test interfaces automatically, honest-test reads your vocabulary definitions and generates every test case. You declare what your function accepts. The framework writes the tests, runs them, and reports. Thousands of cases in milliseconds. Programmers can still add BDD for functional and behavioral testing, but correctness is already covered before they write a single test. |
 | **honest-persist** | Declare your schema as data. The framework computes migrations automatically by diffing your declared schema against the actual database state. No migration files to write, no linear revision chains to manage, no ORM session to reason about. Works with PostgreSQL, SQLite, and Turso with one API. Python `Literal` types become database enums automatically. Supports fluent, Django-style, Prisma-style, and pseudo-SQL query styles. Pseudo-SQL is for developers who think in SQL: write `select("id", "email", from_table="users", where="status = :s", params={"s": "active"})` and get a parameterized, schema-validated query without giving up SQL's clarity. Includes latency instrumentation, an optimistic write queue for high-latency backends, and bulk transfer between databases. |
@@ -326,6 +326,8 @@ A boundary is not only what enters the application; it is also everything a rend
 
 The single parser that makes the input boundary closed makes these references closed as well. The template, the stylesheet, the client code, and the server routes are all source the framework reads, so every identifier one artifact emits can be resolved to a definition in another without running anything. A reference that resolves to no definition is a **structural** fault — the same kind of fact as an undeclared name — so it belongs at the gate, not in a running browser. An end-to-end run is the expensive way to find it: a browser meets a dead reference only incidentally, as the first thing that happens to depend on it, and pays start-up, latency, and flakiness to report what a file read decides for certain.
 
+**The architecture declaration is a reference like any other.** Each module states its surface in its `.hd` — `fn name : (params) -> result` for every function it offers — and that declaration names identifiers defined in the source, exactly as a template names a route. So it resolves in both directions or it is false: a declared name the source does not define is an unbuilt promise, and an offered function no declaration names is surface nobody chose, the same defect as an unmodelled route. `HC-REF005` is this rule applied between the two artifacts, and it is built when the declaration layer is (see *The build order* below, step 4). Leaving it out leaves the declaration decorative, and a decorative declaration is worse than none: every other rule that reads it — role reachability, orchestrator discipline, the output-boundary and awaiting rules — silently narrows to whatever subset the `.hd` still happens to name.
+
 The deeper remedy removes the disagreement at its source. When a feature is correct only if several hand-authored artifacts agree — the markup, the config, the stylesheet — the artifacts should be **generated from one declaration**, so there is nothing left for them to disagree about. That is the same move the framework makes everywhere: one owned declaration, everything else derived from it. The reference-resolves check is the guard that holds until a surface reaches that single-source form.
 
 ---
@@ -364,7 +366,11 @@ errors     → type                                  the error-policy leaf: norm
 gherkin    → type                                  the BDD execution engine (parse a feature,
                                                    match steps against a registry, fold/run,
                                                    report); test runs on it
-check      → parse                                 the structural gate
+check      → parse, design                         the structural gate. The universal tier (shape
+                                                   rules) needs only parse and fires with no .hd
+                                                   present. The declaration tier (HC-REF005,
+                                                   HC-R002, HC-R003) reads design's IR against the
+                                                   source, so it lands once design exists.
 test       → parse, type, gherkin                  builds and runs the tests; runs feature
                                                    files through the gherkin engine
 observe    → type, errors                          the event log and projections;
@@ -403,8 +409,9 @@ boot       → DOM, format, components                the client bootloader and 
                                                     boot does not depend on honest-type.
 ```
 
-Three rules fix this order:
+Six rules fix this order. The first governs every module; the rest order the modules against each other.
 
+- **Inside a module, the declaration precedes the code.** The order above says which module comes next. Within each one the order is **spec, then the `.hd` declaration, then a failing test, then code**, because a module's `.hd` is what the conformance rules read it against. So the declaration is never written after the fact and never caught up on in a later pass: adding a module means writing its `.hd`, altering a module means altering its `.hd`, and a change that leaves the `.hd` alone is a change that has not been made. `parse` is the single exception, and only once: the declaration language does not exist while `parse` is being built, so `parse` is declared at step 2 below, as soon as `design` can read a declaration. Every module after that is declared before it is built.
 - **`design` second, right after `parse` and before `type`.** The `.hd` layer needs only the parser (its own tree-sitter `.hd` grammar, alongside the jinja/css grammars), so it can come as soon as `parse` exists; `parse` is the one true leaf, the single artifact that must precede everything, `design` included. It comes *before* `type` — and before the whole code-quality tier — because `.hd` is the layer in which every subsequent module, `type` included, *declares* its architecture, and everything downstream is checked against those declarations. Its one hard consumer is honest-check's **conformance tier** (the rules that verify an implementation matches its declared architecture — role reachability, orchestrator discipline), which reads `design`'s IR. honest-check's **universal tier** needs only `parse` and fires without any `.hd`, so it is independent of `design`; only the conformance pass depends on `design`'s IR and lands once `design` exists. The `.hd` format and the framework's own `.hd` declarations are hand-authored and hand-checked first, before the reader automates the check — the same posture as `parse` being "the shared parser, checked by hand first." `design` is authoring/dev tooling shipped in the repo, never a runtime dependency of an adopter's app. Its full architecture is in `../02-code-quality/honest-design-architecture.md`.
 - **Leaves first, then `errors`.** `parse` and `type` depend on nothing. `errors` depends only on `type` (it returns faults as data in the shared `Result` shape) and is otherwise a pure leaf — it normalizes failures into one report, decides behavior as a pure function of the environment, and throttles repeats, all with no I/O. It is *composed* by `observe` (the normalizers) and `alerts` (the behavior table and rate-limiter), so it must precede both.
 - **`gherkin` before `test`.** honest-gherkin is the BDD execution *engine* (parse a feature, match its steps against a registry, fold the scenario, report). honest-test *runs on* it — it generates the step scaffolding and ships the standard step library, and the engine runs them (honest-test §8.1, honest-gherkin §1.3). So the engine must exist before test, not the other way round; the engine itself depends only on `type` (for the `Result`/fault-as-data shape).
@@ -415,12 +422,14 @@ Three rules fix this order:
 
 ### Build the un-checkable parts first, then turn the gate on
 
-Two modules cannot be checked by the very thing they implement until that thing exists. They are written, then checked once by hand or a small harness, to get started:
+Four modules cannot be checked by the very thing they implement until that thing exists. They are written, then checked once by hand or a small harness, to get started:
 
 1. **Start `parse`.** Check it by hand against the parser rules: a node's text is exactly the slice of source it covers; the walk visits every node, parents before children; line and column count from 1; it reports an error exactly when the tree has one; the same input gives the same result; only known languages are accepted; text decodes correctly.
-2. **Start `check`.** Write the shape rules, then run honest-check on its own source until it is clean. From here on the gate exists.
-3. **Start `test`.** Write the generators, then have them check their own rules (a generator that fails to cover a declared finite set is wrong). From here on test generation exists.
-4. **Gate everything else.** Every other module — and re-checking the first three — lands only by passing all four gates: honest-check (shape), its own conformance suite (behaviour), full line-and-branch coverage, and mutation adequacy (every change to its source caught or set aside). No code that fails the framework's own gate enters the repository.
+2. **Start `design`.** Write the `.hd` grammar and the reader, declare the framework's own modules in `.hd`, and check both by hand: every declaration parses, every declaration validates, and every name a declaration carries is a name the source defines. From here on a module's surface is stated on the record.
+3. **Start `check`.** Write the shape rules, then run honest-check on its own source until it is clean. From here on the gate exists.
+4. **Close the declaration against the code, before any module lands under the gate.** honest-check's `HC-REF005` reads each module's `.hd` against the functions its source offers and fails on any name present in one and absent from the other, in either direction, and on any disagreement in parameter count. It needs `parse` (to read the source), `design` (to read the declaration), and `check` (to host the rule), so step 4 is the earliest point it can exist. Its first run crosses the three modules that already exist by then, `parse` and `design` and `check` itself, which is also the first automated check of the declarations step 2 wrote by hand. It must also exist here rather than later, because every module from this point on declares its surface in `.hd`, and an unchecked declaration drifts from its first commit. The Python reference implementation deferred this rule and the declarations drifted exactly as predicted. Measured on 2026-10-02 across its sixteen modules, reading the declarations through honest-design rather than by pattern: 219 functions declared, 1,086 defined in the source, and of the names the packages themselves export, 132 functions and 46 types that no declaration mentions. In one module the undeclared set included the function the module is named for. A new language implementation does not repeat that; it turns this rule on at step 4 and never accumulates the backlog. It never accumulates one because there is nowhere for a backlog to come from: every change either adds a module, which means writing its `.hd`, or alters a module, which means altering its `.hd`. The declaration is edited with the code that it describes. So the order of work inside a change is **spec, then declaration, then a failing test, then code**, and a change that leaves the declaration alone is a change that has not been made.
+5. **Start `test`.** Write the generators, then have them check their own rules (a generator that fails to cover a declared finite set is wrong). From here on test generation exists.
+6. **Gate everything else.** Every other module — and re-checking the first four — lands only by passing all six gates: honest-check (shape), the declaration crossed against the code (`HC-REF005` and the rest of the declaration tier), its own conformance suite (behaviour), full line-and-branch coverage, one gherkin scenario per function (`HC-P009`), and mutation adequacy (every change to its source caught or set aside). No code that fails the framework's own gate enters the repository.
 
 ### Two proofs per module
 
@@ -601,276 +610,9 @@ One `request_id` joins every event in this sequence. `honest-observe inspect <re
 
 ## Project 1: `honest-type`
 
-### Purpose
+honest-type is specified in full in `../02-code-quality/honest-type-architecture.md`: the recognizers, the vocabulary, the binding table, the two-pass `classify()` algorithm, composed types, Maybe, the chain execution model, fault and rejection semantics, and the cross-language conformance suite. An implementor can build a conformant honest-type from that document alone.
 
-Every language has the concept of a function that wraps another function. A middleware. A decorator. A higher-order function. Whatever your language calls it, the concept is the same: intercept a call, do something with the inputs, pass them on, optionally do something with the output.
-
-honest-type is that wrapper for every function in your application. You write a function. honest-type wraps it. Before your function runs, the wrapper takes the raw strings that were going to arrive as arguments, classifies them into a named typed dict, and passes that in instead. Your function never sees a raw string. It receives named, typed values and does pure computation with them. On the way out, the wrapper validates that the output is consistent with what this function declared it would produce, so the next function in the chain can trust what it receives.
-
-This is not a new idea. It is the same idea as a type-checking compiler, except it runs at the boundary where strings enter your system instead of at compile time. The mechanism that classifies a raw string into a named type is the `recognize()` function. The collection of all the types your application knows about is the vocabulary. `classify()` runs `recognize()` against every type in the vocabulary and returns a dict of matched names to values. That dict is the manifest. Your function receives the manifest.
-
-### Core Concepts
-
-| Term | What It Is |
-|---|---|
-| **recognizer** | A single function: `recognize(token, declaration) → boolean`. You pass it a token (a string) and a declaration (a Set, a callable, or a `predicate()`). It returns true or false. A Set declaration checks membership. A callable declaration calls it. A `predicate()` declaration evaluates it. One function, three kinds of declaration. |
-| **vocabulary** | A dict of type names to declarations: `{"currency_code": {"USD", "EUR", "GBP"}, "integer": predicate(lambda s: s.isdigit())}`. Every type the application knows about, in one place. When `classify()` runs, it calls `recognize(token, declaration)` for each entry in this dict until it finds a match. The matching entry's name is the type. |
-| **classify()** | The function that does the work. You pass it a list of raw string tokens and a vocabulary. For each token it calls `recognize()` against every entry in the vocabulary until one matches. It returns a plain dict of type names to matched values. That dict is the manifest. |
-| **manifest** | The plain dict that `classify()` returns. Instead of your function receiving the raw string `"currency EUR 2"` and parsing it, it receives `{"format": "currency", "currency": "EUR", "precision": "2"}`. Named values, ready to use. |
-| **binding** | An optional dict that renames the keys in the manifest. Without it, `classify()` uses the type name as the key: `{"currency_code": "EUR"}`. With a binding `{"currency_code": "currency"}`, the manifest key becomes `"currency"` instead. Lets you use friendly names in your functions regardless of what the type is called in the vocabulary. |
-| **composed type** | A declaration that only fires when a specific other type has already matched in the same token list. Handles cases where the same token means different things in different contexts, without requiring the tokens to be in a specific order. |
-| **rejection** | An unrecognized token. Not an exception: a data value in the manifest. The function receives it and decides what to do. |
-| **fault** | A processing error (predicate threw, non-string token, etc.). Also a data value, not an exception. Exceptions only at the HTTP boundary. |
-| **link** | A function wrapped by honest-type so that it receives a typed manifest instead of raw strings. In Python this is a decorator (`@link`); in other languages it is whatever that language uses to wrap a function. The wrapper handles classification, routes the manifest in, and routes the result out. The function itself stays pure: it sees only named, typed values. |
-| **chain** | An ordered list of links. The manifest that comes out of one link goes into the next. Each link does one thing. The chain composes them into a pipeline. |
-
-### API (Python)
-
-```python
-from honest_type import vocabulary, binding, chain, link, classify, check
-
-# --- Layer 1: Recognizers ---
-
-# Set-based recognizer (finite vocabulary)
-currencies = vocabulary({
-    "currency_code": {"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF"},
-    "format_name":   {"currency", "number", "percent", "date", "phone", "duration"},
-    "style_name":    {"short", "medium", "long", "full"},
-})
-
-# Predicate-based recognizer (open pattern)
-from honest_type import predicate
-
-patterns = vocabulary({
-    "integer":  predicate(lambda s: s.isdigit()),
-    "boolean":  {"true", "false"},
-    "iso_date": predicate(lambda s: len(s) == 10 and s[4] == "-" and s[7] == "-"),
-})
-
-# Vocabularies compose by merging
-format_vocab = currencies | patterns
-
-
-# --- Layer 2: Flat Binding ---
-
-format_binding = binding({
-    "format_name":   "format",
-    "currency_code": "currency",
-    "style_name":    "style",
-    "integer":       "precision",
-    "boolean":       "enabled",
-})
-
-
-# --- Classification ---
-
-result = classify(
-    tokens=["currency", "EUR", "2"],
-    vocab=format_vocab,
-    bind=format_binding,
-)
-# result is a manifest:
-# {
-#     "format": "currency",
-#     "currency": "EUR",
-#     "precision": "2",
-# }
-
-# See honest-type-architecture.md for composed types,
-# which handle context-sensitive binding without a third mechanism.
-
-
-# --- Chains ---
-
-@link(accepts=format_vocab, binds=format_binding)
-def format_value(value: str, manifest: dict) -> str:
-    """Pure function. Receives only classified, bound arguments."""
-    ...
-
-@link(accepts=output_vocab, binds=output_binding)
-def render_output(formatted: str, manifest: dict) -> str:
-    ...
-
-pipeline = chain(format_value, render_output)
-
-# --- Static Check (honest-check) ---
-
-errors = check(pipeline)
-# Returns [] if chain is valid
-# Returns list of type mismatches if not
-```
-
-### API (JavaScript)
-
-```javascript
-import { vocabulary, binding, classify, chain, link } from 'honest-type'
-
-// Identical semantics, JS idiom
-const currencies = vocabulary({
-  currency_code: new Set(['USD', 'EUR', 'GBP', 'JPY', 'CAD']),
-  format_name:   new Set(['currency', 'number', 'percent', 'date']),
-  style_name:    new Set(['short', 'medium', 'long', 'full']),
-  integer:       (s) => /^\d+$/.test(s),
-  boolean:       new Set(['true', 'false']),
-})
-
-const formatBinding = binding({
-  format_name:   'format',
-  currency_code: 'currency',
-  style_name:    'style',
-  integer:       'precision',
-  boolean:       'enabled',
-})
-
-const result = classify(['currency', 'EUR', '2'], currencies, formatBinding)
-// { format: 'currency', currency: 'EUR', precision: '2' }
-```
-
-### Properties (rules that always hold)
-
-These must hold in both implementations:
-
-1. **Determinism**: Same tokens + same tables = same manifest. Always.
-2. **Order independence** (flat binding): Token order does not affect the manifest when using Layer 2 only.
-3. **Exhaustive classification**: Every token is either classified or rejected. No silent pass-through.
-4. **Rejection is data**: An unrecognized token produces a rejection entry in the manifest, not an exception. The caller decides what to do.
-5. **Composition via merge**: `vocab_a | vocab_b` produces a valid vocabulary. Binding tables merge the same way.
-6. **Bounded enumeration**: For Set-based recognizers, the complete list of valid values is available for static analysis and exhaustive testing.
-
-### honest-check (The Linter)
-
-Focused, single-purpose.
-
-**Rules:**
-
-| Rule ID | Description | Severity |
-|---|---|---|
-| `HC001` | Function in chain has no vocabulary declared | Error |
-| `HC002` | Chain link output types not subset of next link input types | Error |
-| `HC003` | Recognizer overlap: token matches multiple types in same vocabulary | Warning |
-| `HC004` | Dead vocabulary: type defined but never bound to a slot | Warning |
-| `HC005` | Unused binding: slot defined but no recognizer produces that type | Warning |
-| `HC006` | Context binding references type not in vocabulary | Error |
-| `HC007` | Chain has no links | Error |
-| `HC008` | Link function is not pure (heuristic: accesses global state) | Warning |
-
-**Invocation:**
-
-```bash
-# Python
-honest-check src/
-
-# JavaScript
-honest-check --lang js src/
-
-# Pre-commit hook
-# .pre-commit-config.yaml
-- repo: honest-type
-  hooks:
-    - id: honest-check
-```
-
-### honest-test (The Testing Harness)
-
-Where honest-check asks "does this code *look* honest?" honest-test asks "does this code *behave* honestly?" It does this by leveraging the defining property of bounded vocabularies: **if you can enumerate every valid input, you can run every valid input.**
-
-This is the Swagger principle applied to type systems. Swagger reads an API definition and generates documentation, test interfaces, and client SDKs. honest-test reads vocabulary definitions and generates exhaustive test cases. The vocabulary *is* the spec.
-
-**Capabilities:**
-
-| Capability | What It Does | How |
-|---|---|---|
-| **Exhaustive permutation** | Generates and runs every valid input combination | Enumerates Set members, combines across vocabularies. `5 formats * 150 currencies * 4 styles = 3,000 tests`: all run, not sampled. |
-| **Purity verification** | Proves a function is pure, not just guesses | Calls `f(x)` twice, compares output. Instruments for global reads, mutations, I/O, network. |
-| **Chain contract testing** | Verifies data actually flows through chains | Runs every valid output of link N through link N+1. Confirms nothing crashes, nothing is dropped. |
-| **Rejection boundary** | Confirms invalid inputs are always caught | Generates adversarial near-miss tokens, off-by-one strings, type confusions. Verifies all produce rejections. |
-| **Idempotency proof** | Catches hidden state | Runs every chain twice with the same manifest. Results must be identical. |
-| **Mutation detection** | Catches functions that modify their input | Snapshots manifest before dispatch, compares after. Any difference is a dishonesty violation. |
-
-**How it differs from property-based testing:**
-
-Property-based testing (Hypothesis, QuickCheck) *samples* from infinite input spaces. It finds bugs probabilistically. Run it twice and you might get different results.
-
-honest-test *enumerates* from bounded input spaces. It proves their absence exhaustively, not probabilistically. Run it a thousand times and the result is identical, because every possible input was tested every time.
-
-This is only possible because honest-type vocabularies are limited to a known, finite set of values. No other framework has type spaces you can list in full. This is a categorically different guarantee.
-
-**The compile-time argument, resolved:**
-
-The standard objection to dynamic languages is: "better to catch errors at compile time than at runtime."
-
-honest-test eliminates this objection entirely. The same predicate tables run at three times:
-
-1. **Pre-commit** (honest-check): static verification via set intersection
-2. **Test suite** (honest-test): exhaustive runtime verification of every permutation
-3. **Production** (honest-type): runtime classification at every boundary
-
-All three use the same code. The same tables. The same semantics. There is no gap between what the static checker knows, what the tests cover, and what the runtime enforces. Zero drift.
-
-The fiction was never "dynamic vs. static." The fiction was that unbounded type spaces (created by classes) required a compiler to check. Bounded type spaces don't need a compiler. They need a `for` loop.
-
-**Invocation:**
-
-```bash
-# Run exhaustive tests for all chains in src/
-honest-test src/
-
-# Test a specific chain
-honest-test src/pipelines/create_user.py
-
-# Show all generated permutations without running them (dry run)
-honest-test src/ --dry-run
-
-# Generate test report (like Swagger UI, but for type coverage)
-honest-test src/ --report html --output coverage.html
-
-# Verify purity of all link functions
-honest-test src/ --purity
-
-# Run rejection boundary tests only
-honest-test src/ --rejections
-```
-
-**Generated output (example):**
-
-```
-honest-test v0.1.0
-Scanning src/ for chains...
-
-Found 4 chains, 12 links, 6 vocabularies
-
-format_pipeline (3 links)
-  Vocabulary: format_name(5) × currency_code(150) × style_name(4)
-  Permutations: 3,000
-  Running.............. 3,000/3,000 PASS
-  Purity: 3/3 links verified pure
-  Idempotency: PASS
-  Rejections: 847 adversarial inputs, 847 rejected
-
-create_user_pipeline (5 links)
-  Vocabulary: action(3) × role(4) × boolean(2)
-  Permutations: 24
-  Running... 24/24 PASS
-  Purity: 4/5 links verified pure
-    ⚠ insert_user: I/O detected (expected: boundary function)
-  Chain contracts: all outputs of link N accepted by link N+1
-  Rejections: 156 adversarial inputs, 156 rejected
-
-Total: 3,024 permutations tested, 0 failures
-       11/12 links verified pure (1 boundary function)
-       1,003 adversarial inputs rejected
-```
-
-**Comparison with honest-check:**
-
-| | honest-check (linter) | honest-test (harness) |
-|---|---|---|
-| When | Pre-commit, static | Test suite, runtime |
-| How | AST analysis, set intersection | Actually runs the code |
-| Proves | "This code *looks* honest" | "This code *behaves* honestly" |
-| Catches | Missing vocabularies, chain type mismatches, dead bindings | Impure functions, hidden state, silent failures, mutation |
-| Generates | Warnings and errors | Exhaustive test cases from vocabularies |
-| Analogy | ESLint for honesty | Swagger for type systems |
+`honest-check` and `honest-test` grew out of this project and now have architecture documents of their own, `../02-code-quality/honest-check-architecture.md` and `../02-code-quality/honest-test-architecture.md`.
 
 ---
 
@@ -982,13 +724,22 @@ async with pool(config) as conn:
 
 Rejections and errors flow through chains as data, not exceptions. Exceptions only happen at the HTTP boundary.
 
+A fault carries five fields, all of them always present: `code`, `message`, `category`, `results`, and `detail`. The message names the facts in a sentence a person reads; `detail` carries those same facts as data a caller or a test can read. There are no optional fields and no implicit defaults. The authoritative schema is in `../02-code-quality/honest-type-architecture.md` section 13.2.
+
 ```python
 from honest.fault import fault, catch_at_boundary
 
-# Inside a chain, faults are data
+# Inside a chain, faults are data. A fault bubbles up by return, caller to caller,
+# out to the boundary. Every field is passed; nothing defaults.
 def validate_email(manifest: dict) -> dict | fault:
     if "@" not in manifest.get("email", ""):
-        return fault("invalid_email", f"Bad email: {manifest.get('email')}")
+        return fault(
+            "invalid_email",
+            f"Bad email: {manifest.get('email')}",
+            "client",
+            [],
+            {"email": manifest.get("email")},
+        )
     return manifest
 
 # At the HTTP boundary, faults become responses
@@ -1250,7 +1001,7 @@ end
 | JavaScript framework | `honest-js` | `import { ... } from 'honest-js'` |
 | React bridge | `honest-js` (subpath) | `import { ... } from 'honest-js/react'` |
 | Rails gem | `honest-rails` | `require 'honest'` |
-| Linter | `honest-check` | CLI: `honest-check src/` |
+| Checker | `honest-check` | CLI: `honest-check src/` |
 | Testing harness | `honest-test` | CLI: `honest-test src/` |
 
 ### Internal Naming Rules
@@ -1289,7 +1040,7 @@ This is the foundation. Nothing else works without it.
 4. **Context-sensitive binding:** (context_type, token_type) → slot resolution.
 5. **Manifest construction:** Token sequence → classified, bound manifest.
 6. **Rejection handling:** Unrecognized tokens as data, not exceptions.
-7. **honest-check linter:** Chain validation via set intersection.
+7. **honest-check:** Chain validation via set intersection.
 8. **honest-test harness:** Exhaustive permutation testing, purity verification, chain contract testing, rejection boundary testing, idempotency proof. The Swagger of type systems.
 9. **Test suite for honest-type itself:** Exhaustive. Every permutation of every bounded vocabulary. This is the proof that bounded vocabularies are exhaustively testable.
 
@@ -1436,14 +1187,21 @@ The following are included in this repository for reference:
 
 ## Companion Specifications
 
-The following documents extend and distill the framework specification. They are canonical: when they conflict with this document, they are newer and correct.
+The following documents extend and distill the framework specification. They are canonical: when they conflict with this document, they are newer and correct. Every module in the build order above appears here, except `parse`, which is specified in prose in this document and by `specs/features/honest-parse.feature`.
 
 ### Code Quality Axis
 
-- **`honest-code-principles.md`:** Nineteen practices that describe what correct code looks like at the level of daily programming decisions. The distillation of the code quality axis.
+- **`honest-code-principles.md`:** Twenty practices that describe what correct code looks like at the level of daily programming decisions. The distillation of the code quality axis.
 - **`honest-persist-architecture.md`:** Language-agnostic architecture specification for honest-persist. Defines exact algorithms, data structures, and conformance requirements. An implementor can build a conformant honest-persist from this document alone.
 - **`honest-type-architecture.md`:** Architecture specification for honest-type. Includes the classify() algorithm, composed types, maybe bindings, chain execution model, fault semantics, and conformance suite.
-- **`honest-check-architecture.md`:** Complete rule set for the static linter. CLI, LSP, startup integration, and all HC and HC-P rules with algorithms.
+- **`honest-check-architecture.md`:** Complete rule set for the static checker. CLI, LSP, startup integration, and all HC and HC-P rules with algorithms.
+- **`honest-design-architecture.md`:** The `.hd` architecture-declaration language: the grammar, the four-column model it expresses, the reader that produces the IR, the validator, and the static renderer. Second in the build order, right after `parse`.
+- **`honest-errors-architecture.md`:** The report IR, normalization, the behaviour policy table, the rate limiter, and the email-body formatter. A pure leaf, composed by observe and alerts.
+- **`honest-gherkin-architecture.md`:** The BDD execution engine: the source-level IR, pattern compilation, the step registry, the execution model, and the fault vocabulary. honest-test runs on it.
+- **`honest-rca-architecture.md`:** The causal-completeness solver, apophasis applied to debugging: the causal IR, evidence hashing, edge construction, fixpoint traversal, and the attestation that makes a fake root cause unrepresentable.
+- **`honest-auth-architecture.md`:** The `AuthProvider` contract, provider registration, and boundary actor resolution. Authentication only; what an actor may do is ordinary business logic.
+- **`honest-features-architecture.md`:** Feature flags as a bounded vocabulary, flag state as a value, the handler table pattern, the toggle API, and the A/B middleware.
+- **`honest-estimate-architecture.md`:** Size, cost, and duration estimated from the `.hd` surface, in three dimensions never fused into one number. Authoring tooling, not in the build order.
 - **`honest-test-architecture.md`:** Complete specification for the test harness. Auto-generated tests, honesty tests, BDD runner, state machine testing, and coverage model.
 - **`honest-state-architecture.md`:** The six kinds of state, the single-mutator law, and each kind's home module (user state is DATAOS in honest-DOM; state machines are honest-type). honest-state defines no primitives of its own.
 - **`honest-observe-architecture.md`:** Event sourcing, projections, OTel export, and honest-framework semantic conventions.
@@ -1454,3 +1212,5 @@ The following documents extend and distill the framework specification. They are
 - **`honest-page-architecture.md`:** Base page contract: six required surfaces, bootstrap sequence, honest-alerts SSE wiring, CSS custom property token set, dark mode switching, Jinja2 block contract, and honest-py intake integration.
 - **`honest-DOM-architecture.md`:** Client-side DATAOS implementation: collect(), apply(), observe(). Reference implementations: domx and stateless.
 - **`honest-alerts-architecture.md`:** Actor model message passing. Mailbox as projection. send_and_wait() coroutine primitive.
+- **`honest-format-architecture.md`:** Declarative value formatting: the `hf-*` attribute grammar, the format vocabulary, the formatter contract, and the declared vocabulary manifest HC-REF004 resolves authored values against.
+- **`honest-boot-architecture.md`:** The client bootloader and composition root. On load it scans the declared `h*-` attributes, loads and initialises the owning module, and rescans on HTMX swaps. Last in the build order.

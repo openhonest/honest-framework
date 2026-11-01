@@ -152,7 +152,7 @@ For the PI's Python implementation, a lightweight log captures AI involvement pe
 ```
 # ~/.honest-research/ai-log.csv
 date,phase,activity,ai_involvement,notes
-2026-03-22,spec,conformance law HT-9 drafting,ai-assisted,Claude helped formalize the property
+2026-03-22,spec,conformance law HT-8 drafting,ai-assisted,Claude helped formalize the property
 2026-03-23,design,persist API design,human-originated,sketched on paper first
 2026-03-24,impl,classify() function,ai-generated-reviewed,Claude wrote first draft; refactored twice
 ```

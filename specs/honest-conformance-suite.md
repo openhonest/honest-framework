@@ -629,7 +629,7 @@ property "pure functions perform no I/O" {
   -- non-link functions?
   source = arbitrary(SourceFile containing PureFunctions with I/O calls)
   diagnostics = honest_check(source)
-  assert HC-IO001 ∈ diagnostics
+  assert HC-P004 ∈ diagnostics
 }
 ```
 
