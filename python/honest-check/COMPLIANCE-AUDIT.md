@@ -16,7 +16,7 @@ Automated rules (32) enforce themselves on every self-lint (`python -m honest_ch
 
 ## HC-P010 standing exemption: the AST-traversal layer
 
-honest-check is an AST linter, so its parsing and declaration-graph helpers necessarily return tree-sitter `Node` / `Tree` objects (`parse`, `first_error_node`, `link_decorator_call`, `_dictionary_arg`, `constructor_calls`, and others). These are non-serializable class instances, which the *literal* HC-P010 would flag.
+honest-check is an static checker, so its parsing and declaration-graph helpers necessarily return tree-sitter `Node` / `Tree` objects (`parse`, `first_error_node`, `link_decorator_call`, `_dictionary_arg`, `constructor_calls`, and others). These are non-serializable class instances, which the *literal* HC-P010 would flag.
 
 This is the same shape of tension as dict-dispatch-vs-HC008 and cli-I/O-vs-HC-P004: the rule's intent is to stop *business* logic from returning opaque objects instead of TypedDicts, not to forbid an AST tool from trafficking in AST nodes. The nodes **are** the data under analysis.
 

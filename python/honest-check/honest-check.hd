@@ -1,28 +1,108 @@
-# honest-check declared in .hd — the static linter, the honesty gate. check_source parses source and
-# returns diagnostics (pure over the parse tree, via honest-parse); startup_check reads a source tree
-# from disk and runs the eligible rules at framework startup.
+# honest-check declared in .hd — the static checker, the honesty gate. honest-check checks honest-framework
+# APPLICATION code (the languages honest-parse recognizes, e.g. Python and JavaScript), not .hd files and not
+# its own internals: check_source parses one application source file, resolves the framework's own
+# construction call sites in it, builds a declaration graph, and runs the HC rules over that graph (section
+# 3.4: rules operate on the graph, not on raw ASTs); startup_check is the door, and it
+# hands a source tree to check_paths, which reads each file with read_source, reads the project's
+# honest-check.toml with load_config, and runs the eligible rules at framework startup. honest-check
+# takes no language: honest-parse owns the extension-to-grammar table and detects each file's grammar
+# from its path, so one run may cover a mixed tree with no language named at the boundary.
 
 module honest-check
 
-  layer tooling
+  layer correctness
 
   # The surface, closed: every side of the world a boundary here touches, and no other.
   inputs = { "filesystem" }
+  outputs = { "stderr" : "the standard-error stream startup_check prints violations to, in the 'warn' and 'halt' paths of section 2.3" }
 
   type Diagnostic = {
-    rule_id: str
+    rule_id: RuleId
     severity: str
     message: str
     source_location: str
-  }
+    context: str
+    fixable: bool
+  } note "one finding from one rule against one place in the source. honest-check returns a list of these and never throws for a violation, because a violation is data, not an exception. rule_id is the HC rule that fired, drawn from the RuleId vocabulary — the closed 49-rule catalogue honest-check runs — and written as its catalogue identifier: HC001, HC-P001, HC-REF005, HC-SM01, and so on; the JSON output names this field 'rule'. severity grades the finding and is exactly one of three words. error means the code is dishonest and the finding blocks the gate (exit 1). warning means a smell that is reported without turning the module away. info means either a finding honest-check cannot decide statically and defers to honest-test, or a suppressed or above-adoption-level diagnostic downgraded to info so it stays visible rather than being dropped. message is the human sentence naming what is wrong and, by convention, how to fix it. source_location is where the finding sits, as file:line:col (for example src/chains/report.py:67:1); the JSON output splits it into separate file, line and col fields. context is the offending source snippet quoted verbatim from that location, the exact line (or lines) the finding points at, for example 'if role == \"admin\":'; it gives a reader the code in question without opening the file, and is the empty string when the rule has no single line to quote. fixable is true when the finding sits in the conservative auto-fix subset honest-check can correct mechanically, the same subset the --fix flag applies and the LSP offers as a code action, and false when correcting it needs a human judgement; it lets a tool decide whether to offer an automatic fix."
 
-  fn check_source : (source: str, path: str, language: str) -> list<Diagnostic>
+  type RuleConfig = dict<str, dict<str, int>> note "the resolved per-rule settings honest-check runs under (section 3.1), keyed by rule id. The outer map goes from a configurable rule's catalogue id to that rule's settings; the inner map goes from one setting's name to its integer value. honest-check configures only the rules it runs, and it runs exactly one configurable rule: HC-OR003, whose single setting min_run is the minimum run of consecutive equivalent operations two orchestrators must share before HC-OR003 reports suspected duplication (section 3.1, §HC-OR003). HC-P008 (max_lines) and HC-P012 (max_mocks) are honest-test's rules, which honest-check does not run (section 9.4), so they are never keys here. min_run has no built-in default: the documented value 3 is a recommendation, not a value load_config fills in, and HC-OR003 runs only when a project sets min_run in honest-check.toml, so a chosen threshold is never confused with a value nobody set (§HC-OR003). HC-OR003 is therefore the outer map's one possible key and no other rule id is ever a key; HC-OR003's inner map carries min_run as its one setting. Every setting value is an integer — min_run is a count — so the inner value type is int and never an open 'any'. A project sets the value with a per-rule table in honest-check.toml, [rules.HC-OR003] with min_run = N. A resolved RuleConfig is the empty map when honest-check.toml sets nothing, because there is no default to fill in, and {\"HC-OR003\": {\"min_run\": N}} when the project sets min_run = N. There is no default fill-in and no always-present rule id."
 
-  fn check_hc_r002 : (root: any, source: bytes, path: str, roles: dict<str, str>) -> list<Diagnostic>
-  fn check_hc_r003 : (root: any, source: bytes, path: str, awaited: dict<str, bool>) -> list<Diagnostic>
-  fn declared_roles : (source: str) -> Result
-  fn declared_awaited : (source: str) -> Result
-  fn undeclared_members : (members: set<str>, with_declaration: set<str>) -> list<str>
-  fn declared_column : (role: str) -> int
+  # The rule engine declared as data: the catalogue check_source folds over is RuleId, split into the
+  # two disjoint sets that are the module's one behavioural distinction — the rules startup_check runs
+  # and the rest. Declared so the engine is named and counted, never buried in a "runs every rule" phrase.
+  set startup_rules = {
+    "HC001" : "link in a chain has no vocabulary declared",
+    "HC002" : "chain type mismatch between adjacent links",
+    "HC003" : "recognizer overlap within a vocabulary (error on a decidable Set-versus-Set overlap, info when a predicate is involved)",
+    "HC006" : "composed type references an unknown base type",
+    "HC007" : "empty chain (a chain() constructed with no links)",
+    "HC011" : "catch-all recognizer (accepts nearly all inputs); at startup it fires through actual construction",
+    "HC-SM01" : "transition-table state not in the states vocabulary",
+    "HC-SM02" : "transition-table event not in the events vocabulary",
+    "HC-SM05" : "initial state not in the states vocabulary",
+    "HC-SYN" : "source does not parse — gates every other rule; runs first at startup, because a file that does not parse has no architecture to check (section 2.3)"
+  } note "the ten startup-eligible HC rules: the parse gate HC-SYN, the construction-time rules, and the two cheapest static rules (HC001, HC002) honest-check runs at framework startup, exactly the ten section 2.3 names. HC-SYN runs first, because a file that does not parse has no architecture to check, so a parse failure blocks startup ahead of every other rule (section 2.3). The full-codebase AST rules are too slow to run as the host application boots, so startup_check runs only these ten while check_source runs the whole RuleId catalogue. Each member but HC-SYN can emit an error-severity diagnostic (section 8); HC003 emits error only on a decidable Set-versus-Set overlap and info when a predicate is involved; HC-SYN emits error when the source does not parse."
+  set non_startup_rules = {
+    "HC004" : "dead vocabulary type (defined, never bound or composed)",
+    "HC005" : "unused binding entry",
+    "HC008" : "impure link (framework tier)",
+    "HC009" : "predicate may throw on non-matching input",
+    "HC010" : "declared emission never produced",
+    "HC-SM03" : "unreachable state",
+    "HC-SM04" : "dead state (no outgoing transitions)",
+    "HC-P001" : "if/elif/else dispatch chain (branches are not data)",
+    "HC-P002" : "exception caught in a non-boundary function",
+    "HC-P003" : "class declaration (inheritance or bare class)",
+    "HC-P004" : "I/O inside a non-boundary function",
+    "HC-P005" : "isinstance() or type() in business logic",
+    "HC-P006" : "cache without a profiling annotation",
+    "HC-P007" : "instance state in a constructor",
+    "HC-P010" : "non-serializable return value",
+    "HC-P011" : "framework lifecycle hook",
+    "HC-P013" : "unbounded database routing key",
+    "HC-P014" : "recognizer reused across slots",
+    "HC-P016" : "nonlocal closure over mutable state",
+    "HC-P017" : "serializer not declared as a chain link",
+    "HC-P018" : "unbounded call target (provably-unbounded call site)",
+    "HC-R001" : "orphan function (no role, not reachable)",
+    "HC-R002" : "output boundary invokes an orchestrator or an input boundary",
+    "HC-R003" : "declaration and code disagree about awaiting (async def without `awaited`, or `awaited` over a plain def)",
+    "HC-OR001" : "orchestrator calls another orchestrator",
+    "HC-OR003" : "suspected duplication between orchestrators",
+    "HC-A001" : "no AuthProvider registered; actor-using operations unverifiable",
+    "HC-A002" : "actor trusted from request input instead of the boundary",
+    "HC-SUP001" : "suppression matched no diagnostic (dead directive)",
+    "HC-SUP002" : "suppression carries no reason",
+    "HC-REF001" : "template action target resolves to no mounted route",
+    "HC-REF002" : "template include/extends target resolves to no template",
+    "HC-REF003" : "template class reference resolves to no defined rule",
+    "HC-REF004" : "behavioural attribute value names no declared vocabulary member",
+    "HC-REF005" : "declaration and implementation do not resolve to each other",
+    "HC-REF006" : "a seam enters M.d but module M declares no function d",
+    "HC-REF007" : "a seam enters M.d but d is not a door",
+    "HC-REF008" : "a cross-module side effect names a module but no door",
+    "HC-REF009" : "two modules meet at a named resource and neither names the other",
+    "HC-REF010" : "a world-less module that exactly one module calls",
+    "HC-ST001" : "write to persisted state outside an I/O-boundary function",
+    "HC-ST002" : "shadow copy of user state outside the manifest-declared DOM",
+    "HC-HF001" : "feature_state references a flag not declared in FEATURES",
+    "HC-HF002" : "handler table missing an entry for a declared flag state"
+  } note "the forty-four HC rules honest-check runs that section 2.3 does not list among the startup-eligible ten: the full-codebase static and reference rules too costly to run as the host boots, together with the two suppression guarantees, all of which run in CLI and LSP mode. check_source runs these; startup_check does not. Five are the cross-module seam and coupling rules section 8 adds (HC-REF006, HC-REF007, HC-REF008 are errors on a seam that fails to resolve to a door; HC-REF009 and HC-REF010 are questions about coupling that report but never fail a run, carrying section 8's Question severity). Each member pairs one rule's catalogue id with the one-line description section 8 gives it and carries the severity section 8 lists."
+  vocabulary RuleId = { startup_rules, non_startup_rules } note "the closed catalogue of HC rule ids honest-check runs, as the union of two disjoint sets — startup_rules (ten, run at startup) and non_startup_rules (forty-four, run only in CLI and LSP mode). Its 54 members are section 8's Complete Rule Summary (57 rules) minus the three test-time rules honest-test owns and honest-check does not verify: HC-P008 (gherkin step too long), HC-P009 (roled function without a gherkin) and HC-P012 (excessive test doubles), per section 1 and section 9.4. A RuleId value is exactly what a Diagnostic's rule_id carries when that rule fires: check_source runs every member of RuleId over the declaration graph, and the exact Diagnostic a given rule produces for a given source is pinned per rule by the conformance suite (section 9.2), not by any function declared in this module."
 
-  boundary_in fn startup_check : (paths: list<str>, on_error: str, severity: str) -> list<Diagnostic> side_effect reads "filesystem"
+  # honest-parse detects the grammar from each file's extension; honest-check names no language, so
+  # there is no second copy of honest-parse's extension-to-grammar table in this module.
+  fn check_source : (source: str, path: str, rule_config: RuleConfig) -> list<Diagnostic> note "the pure core of the checker. It takes one source unit already held in memory, parses it under the grammar honest-parse detects from path's extension, resolves the framework's own construction call sites in it, builds the declaration graph (vocabularies, bindings, links, chains, state machines — section 3.4), runs every rule in the RuleId catalogue (both startup_rules and non_startup_rules) over that graph, and returns the findings as data. The rules read this graph, not raw ASTs (section 3.4). It never opens a file (read_source does that), never executes the application code it inspects, and never modifies anything. source is the full text of one honest-framework application source file: code written against the framework in a language honest-parse recognizes (Python, JavaScript or TypeScript, Ruby, Go — section 3.2, section 4.1), never a .hd declaration and never honest-check's own internals. It is not an opaque string; check_source parses it and resolves the framework's construction call sites in it — vocabulary(), binding(), chain(), composed(), state_machine() (section 4.1) — to build the declaration graph the rules read. path is the filesystem path that text came from; honest-parse owns the extension-to-grammar table (section 3.2) and detects which grammar to parse this source under from path's extension, so there is no second copy of that table here, and check_source does not open path (it uses it to detect the grammar and to stamp each diagnostic's source_location). The HC008 impurity watch lists are keyed by the language honest-parse detected for this file (IO_WATCH_LIST[language], NONDETERMINISTIC_WATCH_LIST[language]), so a mixed tree is checked file by file, each under its own grammar and its own watch lists, with no language named at the boundary. rule_config is the resolved per-rule settings: a map from a configurable rule's id to the settings that rule requires, resolved at the boundary (load_config reads the project's honest-check.toml and returns what the project declared, so check_source takes the resolved settings as a required argument). honest-check's one configurable rule is HC-OR003, whose setting min_run has no built-in default; when the project sets min_run = N the map is {\"HC-OR003\": {\"min_run\": N}}, and when it sets nothing the map is empty. A rule absent from the map takes no configuration; HC-OR003 in particular runs only when min_run is set (§HC-OR003), so an empty map means HC-OR003 does not fire. Each rule in the RuleId catalogue has its own source-to-diagnostic behavior — the exact Diagnostic a given rule produces for a given source — and that behavior is pinned by the conformance suite (section 9.2, python/honest-check/conformance/suite.json), which holds one case per rule category giving a source string and its expected diagnostics; the rules are data the check_source core runs, not separately declared functions here, so a specific rule's finding is asserted through that suite, not through a per-rule function-point. It returns the list of every Diagnostic the rules produced over this one source; an empty list means the source is clean. It raises nothing: a violation comes back as a Diagnostic, never as an exception."
+
+  reader fn read_source : (path: str) -> str side_effect reads "filesystem" note "the reader on the filesystem side. It pulls one file's complete text from disk and hands it back as a string, so the orchestrator can pass that text to check_source. It reads and does nothing else: it does not parse, check, or write. path is the filesystem path of the one file to read, and it is always a concrete source file: file discovery at the boundary (section 3.2) walks each requested path, appends only files whose extension honest-parse recognizes, and drops anything an exclude glob matches, so a directory, a path that does not exist, and a file of an unrecognized extension are filtered out before check_paths runs and never reach read_source. It returns that file's full contents as a string. The spec states no fault for a path that becomes unreadable after discovery — a permission error, or a file deleted between the walk and the read — so read_source declares none and names no absence case here. The spec gives honest-check a single catch-all for a run that cannot complete, exit code 2 (configuration error or internal failure, section 2.1), but does not state that an unreadable file routes there, so whether such a path raises, and what it raises, the spec leaves undecided. Its one side effect is reading the filesystem."
+
+  reader fn load_config : () -> RuleConfig side_effect reads "filesystem" note "the config reader on the filesystem side (section 3.1). It finds honest-check.toml in the nearest ancestor directory of the working directory, reads it, and resolves the project's declared per-rule settings into the rule_config map the orchestrator passes to check_source. It reads the filesystem and resolves what it read: it does not parse source, check, or write. It takes no argument because the startup door has no --config flag (section 2.3) and the config location is the nearest ancestor of where the host application runs, which is filesystem state the boundary reads directly. It returns a map from each configurable rule's id to that rule's settings. honest-check configures only the rules it runs, and it runs exactly one configurable rule: HC-OR003, whose single setting min_run has no built-in default (section 3.1, §HC-OR003). HC-P008 (max_lines) and HC-P012 (max_mocks) are honest-test's rules, configured in honest-test's own config and never here (section 9.4), so no other rule id ever appears. A project sets min_run with a per-rule table in honest-check.toml: under the [rules] section a header [rules.HC-OR003] introduces min_run = N. load_config returns {\"HC-OR003\": {\"min_run\": N}} when the project sets min_run = N, and the empty map when honest-check.toml sets nothing or no honest-check.toml exists — min_run has no documented default to fill in, so a project that sets nothing leaves HC-OR003 unconfigured, and HC-OR003 runs only when min_run is set (§HC-OR003). The resolution happens at the boundary (section 3.1, §HC-OR003): load_config returns what the project declared and check_source takes the result as a required argument, so a run configured with nothing is a run where HC-OR003 does not fire and check_source never has to invent a threshold. Its one side effect is reading the filesystem."
+
+  orchestrator fn check_paths : (paths: list<str>) -> list<Diagnostic> invokes read_source, load_config, check_source note "the orchestrator the door hands its paths to. It pulls the project's resolved rule_config with load_config at the start of the run and applies that one map to every file: for each path it was given, it pulls that file's text with read_source and runs check_source over it under that same rule_config, folding every file's diagnostics into one combined list. One resolved configuration governs the whole run, so no file is checked under different settings and the result does not depend on how many files there are; resolving the config a single time rather than once per file is an efficiency of the orchestrator, not an observable part of the contract. honest-check names no language: each file's grammar is detected by honest-parse from the file's extension inside check_source, so a mixed tree checks file by file with no language threaded through. paths is the list of filesystem paths to check, each already resolved to a concrete source file: file discovery (walking a directory, keeping only files whose extension honest-parse recognizes, and dropping anything matched by an exclude glob, section 3.2) happens at the boundary before this orchestrator runs. It returns one flat list of every Diagnostic found across all the files, in the order the paths were given. An empty list means every file was clean."
+
+  boundary_in fn startup_check : (paths: list<str>, on_error: str, severity: str) -> list<Diagnostic> raises HonestCheckError invokes check_paths side_effect writes "stderr" note "the door the framework's development-mode startup integration calls (section 2.3). The host application calls it with the source paths; it hands them to check_paths, gets back the folded diagnostics, decides whether any finding reaches the blocking severity, acts per on_error, and returns the same diagnostic list check_paths produced. honest-check names no language at this door: each file's grammar is detected by honest-parse from the file's extension (section 3.2), so a mixed tree is covered by one call and the door carries only paths, on_error and severity, matching the section 2.3 startup example exactly. At startup it runs only the startup_rules set — the startup-eligible subset of the RuleId catalogue, the parse gate HC-SYN plus the construction-time and light static rules HC001, HC002, HC003, HC006, HC007, HC011, HC-SM01, HC-SM02, HC-SM05 (section 2.3) — because the full-codebase AST rules (non_startup_rules) are too slow for startup. HC-SYN runs first: a file that does not parse has no architecture to check, so a parse failure blocks startup ahead of every other rule (section 2.3), and it emits error when the source does not parse. Each of the other nine can emit a diagnostic at error severity (section 8): HC001, HC002, HC006, HC007, HC-SM01, HC-SM02 and HC-SM05 are error-only; HC003 emits error on a decidable Set-versus-Set recognizer overlap (and info when a predicate is involved); and HC011, which at startup fires through actual construction (section 4.1), rejects a catch-all recognizer at error severity. An error-severity finding is exactly what the documented severity 'error' counts as a block. For a concrete trigger, a framework chain() call constructed with no links fires HC007 at error severity — in the application code honest-check reads, not a .hd declaration and not a parse failure: section 4.1's check_HC007 fires on IF len(chain.links) == 0, and in CLI and startup mode honest-check reaches that verdict by analyzing the chain() call site. So an application-code chain() built with an empty link list produces one blocking diagnostic at startup; under on_error 'halt' and severity 'error' that prints the violation to stderr and exits the process with code 1. paths is the list of source paths to check, for example ['src/'], handed straight to check_paths. on_error says how a block behaves and is exactly one of three words: 'warn' prints the blocking violations to stderr and lets startup continue; 'raise' raises HonestCheckError carrying the full report, stopping startup by exception; 'halt' prints the blocking violations to stderr and then exits the process with code 1, which stops startup the way a failed precondition stops a program. severity is the minimum severity a diagnostic must reach to count as a block, one of 'error', 'warning' or 'info'; the documented setting is 'error', meaning only error-severity diagnostics block startup while warnings and infos are reported but never block. A diagnostic below this threshold never triggers on_error. Its one side effect is writing to stderr: both 'warn' and 'halt' print the blocking violations there, and 'raise' writes nothing because it carries the report in the exception instead. The process exit is part of the 'halt' path only: after printing, it exits the process with code 1, as section 2.3 states, and startup_check does not return in that case. It raises HonestCheckError only when on_error is 'raise' and at least one diagnostic reaches severity; the error carries the full report."
+
+  # startup_check is the door the world reaches. It hands its paths to one orchestrator (check_paths),
+  # which pulls each file and runs the pure core (check_source) over it. A call-form entry, so the
+  # entry-check reports it UNCHECKED rather than confirming it.
+  entry "call:startup" -> startup_check

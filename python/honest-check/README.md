@@ -1,8 +1,8 @@
 # honest-check
 
-The static linter that enforces Honest Code. Point it at your source and it flags the structural dishonesty the framework eliminates: classes that hide state, if/elif/else value-dispatch, I/O performed off the boundary, exceptions caught in business logic, and the rest. Any code it passes is, by definition, structurally Honest Code.
+The static checker that enforces Honest Code. Point it at your source and it flags the structural dishonesty the framework eliminates: classes that hide state, if/elif/else value-dispatch, I/O performed off the boundary, exceptions caught in business logic, and the rest. Any code it passes is, by definition, structurally Honest Code.
 
-This README is for **using** the linter. How the rules work internally is in [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
+This README is for **using** the checker. How the rules work internally is in [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Install
 
@@ -85,7 +85,7 @@ A `disable` with no matching `enable` holds to the end of the file. Suppressions
 
 ## As a pre-commit gate
 
-The framework repo wires honest-check into a pre-commit hook so dishonest code cannot land. To do the same in your project, run honest-check over your staged sources and block the commit on a non-zero exit. The repo's own `lint-all.sh` and `lint-affected.sh` show the shape.
+The framework repo wires honest-check into a pre-commit hook so dishonest code cannot land. To do the same in your project, run honest-check over your staged sources and block the commit on a non-zero exit. The repo's own `check-all.sh` and `check-affected.sh` show the shape.
 
 ## Editor integration (LSP)
 
