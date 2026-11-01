@@ -90,7 +90,7 @@ Each implementation extends the blacklist with its language's full reserved word
 
 The vocabulary constructor must check every Set member against all three layers at construction time. If any member is reserved, construction fails with an explicit error naming the offending token and its reservation layer.
 
-Predicate-based recognizers cannot be *exhaustively* checked at construction time (their input space is unbounded). Reserved word violations from predicates are caught at classification time — if a predicate matches a reserved word, the token is rejected with a `reserved_word` reason. The one construction-time check a predicate does undergo is the catch-all test (section 13.3): a statistical sample, not an exhaustive enumeration, so it remains feasible at construction.
+Predicate-based recognizers cannot be *exhaustively* checked at construction time (their input space is unbounded). Reserved word violations from predicates are caught at classification time — if a predicate matches a reserved word, the token is rejected with a `reserved_word` reason. The one construction-time check a predicate does undergo is the catch-all test (HC011, specified in `honest-check-architecture.md`): a statistical sample, not an exhaustive enumeration, so it remains feasible at construction.
 
 ---
 
@@ -98,7 +98,7 @@ Predicate-based recognizers cannot be *exhaustively* checked at construction tim
 
 **A token must match exactly zero or one type in a vocabulary.**
 
-If a token can match more than one type name within the same vocabulary, that vocabulary is invalid. This is not a runtime decision — it is a design error caught at construction time or by the linter.
+If a token can match more than one type name within the same vocabulary, that vocabulary is invalid. This is not a runtime decision — it is a design error caught at construction time or by the checker.
 
 ### Enforcement
 
@@ -582,12 +582,15 @@ An error in a chain. Data, not an exception.
 
 ```
 fault = {
-    code:    String   — machine-readable error identifier
-    message: String   — human-readable description
-    link:    String?  — name of the chain link that produced the fault
-    input:   dict?    — the manifest that was passed to the failing link
+    code:     String    — machine-readable error identifier
+    message:  String    — human-readable description; a chain or dispatch fault names what failed and the value that reached it
+    category: String    — "client" or "server"
+    results:  [Result]  — every link's result for a validate_all fault; an empty list otherwise
+    detail:   dict      — structured context outside the chain; an empty dict when there is none
 }
 ```
+
+Section 13.2 is the authoritative schema.
 
 ### composed
 
@@ -603,13 +606,19 @@ composed = {
 
 ---
 
-## 7b. honest-state
+## 8. Where state is specified
 
-The complete honest-state specification — including the full state taxonomy, DATAOS client-side primitives (manifest, collect, apply, observe), pure function state machines, cross-machine guards, transition history, and conformance requirements — is defined in `honest-state-architecture.md`. That document is the canonical reference. This section is a pointer only.
+Three documents divide the subject, and each owns a different part of it.
+
+`honest-state-architecture.md` owns the taxonomy of state kinds, the single-mutator law, and which module houses each kind. It defines no primitives of its own.
+
+`honest-DOM-architecture.md` owns the DATAOS client primitives: `collect`, `apply`, and `observe`.
+
+This document owns the state machine: its data shape, the `transition()` function, and the rule that a constructed machine cannot be changed. Section 8 below is that specification. A state machine is a vocabulary pair and a lookup table, so it belongs to the type system rather than to a module that defines no primitives.
 
 ---
 
-## 7c. honest-state — Pure Function State Machines (archived reference)
+## 9. State Machines
 
 ### Overview
 
@@ -693,9 +702,9 @@ Because states and events are vocabularies, honest-check can verify state machin
 
 ---
 
-## 8. Architectural Diagrams
+## 10. Architectural Diagrams
 
-### 8.1 The Two-Pass classify() Flow
+### 10.1 The Two-Pass classify() Flow
 
 ```mermaid
 flowchart TD
@@ -764,7 +773,7 @@ flowchart TD
     style manifest fill:#2a1a1a,stroke:#a94,stroke-width:2px
 ```
 
-### 8.2 Compositional Types: How Composed Types Override Base Bindings
+### 10.2 Compositional Types: How Composed Types Override Base Bindings
 
 ```mermaid
 flowchart LR
@@ -807,7 +816,7 @@ flowchart LR
     style result fill:#2a1a1a,stroke:#a94,stroke-width:2px
 ```
 
-### 8.3 Maybe: Three Token States
+### 10.3 Maybe: Three Token States
 
 ```mermaid
 flowchart TD
@@ -840,7 +849,7 @@ flowchart TD
     style note_maybe fill:#1a1a2a,stroke:#49a,stroke-width:1px,stroke-dasharray: 5 5
 ```
 
-### 8.4 The Manifest in the Full Architecture
+### 10.4 The Manifest in the Full Architecture
 
 ```mermaid
 flowchart LR
@@ -886,7 +895,7 @@ flowchart LR
     style manifests fill:#2a1a2a,stroke:#a4a,stroke-width:2px
 ```
 
-### 8.5 Chain Execution and Fault Propagation
+### 10.5 Chain Execution and Fault Propagation
 
 ```mermaid
 flowchart TD
@@ -933,11 +942,11 @@ flowchart TD
 
 ---
 
-## 9. Edge Case Rules
+## 11. Edge Case Rules
 
 These rules are mandatory for all implementations. They define classify()'s behavior at every boundary condition. No implementation-defined behavior is permitted for these cases.
 
-### 9.1 Case Sensitivity
+### 11.1 Case Sensitivity
 
 **Vocabulary matching is case-sensitive by default.**
 
@@ -953,7 +962,7 @@ To opt into case-insensitive matching for a specific recognizer, wrap it with `i
 
 `insensitive()` applies only to Set recognizers. Predicates handle their own case logic internally.
 
-### 9.2 Whitespace
+### 11.2 Whitespace
 
 **Boundary code is responsible for trimming tokens. classify() receives pre-trimmed strings.**
 
@@ -963,7 +972,7 @@ This stripping is a boundary responsibility, expressed as a lookup table entry, 
 
 If a token arrives at classify() with leading or trailing whitespace, it is classified as-is. Whether it matches depends on the vocabulary.
 
-### 9.3 Empty Tokens
+### 11.3 Empty Tokens
 
 **classify() rejects empty strings with reason `"empty_token"`.**
 
@@ -980,7 +989,7 @@ empty_token_policy = {
 
 If boundary code discards the empty string, classify() never sees it. If boundary code passes it through, classify() produces a `"empty_token"` rejection.
 
-### 9.4 Null Tokens
+### 11.4 Null Tokens
 
 **classify() rejects null/None/nil tokens with reason `"null_token"`.**
 
@@ -988,7 +997,7 @@ Null is distinct from empty string. `"null_token"` and `"empty_token"` are separ
 
 Same boundary policy applies: boundary code decides whether to discard nulls or pass them through. If passed through, classify() produces a `"null_token"` rejection.
 
-### 9.5 Non-String Tokens
+### 11.5 Non-String Tokens
 
 **classify() faults on non-string input.**
 
@@ -1015,7 +1024,7 @@ coercion_rules = {
 
 If boundary code coerces, classify() never sees a non-string. If boundary code does not coerce and a non-string reaches classify(), that is a fault.
 
-### 9.6 Predicate Exceptions
+### 11.6 Predicate Exceptions
 
 **A predicate that throws produces a fault, not a rejection.**
 
@@ -1031,9 +1040,9 @@ fault(
 
 This fault propagates up through the chain and becomes a server error at the boundary — HTTP 500, CLI exit 2, dead letter queue, or whatever the context requires. The developer sees it immediately. It is never swallowed silently.
 
-honest-check (the linter) should warn about predicates that can throw for common inputs (HC009: predicate may throw on non-matching input).
+honest-check (the checker) should warn about predicates that can throw for common inputs (HC009: predicate may throw on non-matching input).
 
-### 9.7 Duplicate Tokens
+### 11.7 Duplicate Tokens
 
 **Duplicate tokens are handled by the existing `duplicate_slot` rejection.**
 
@@ -1041,7 +1050,7 @@ If two tokens classify to the same type and bind to the same slot, the second to
 
 This applies equally to required and maybe slots. A maybe slot filled by one token cannot be filled again by a second token of the same type.
 
-### 9.8 Empty Token List
+### 11.8 Empty Token List
 
 **`classify([], vocabulary, binding)` returns a manifest with rejections.**
 
@@ -1069,9 +1078,9 @@ The result is a manifest with `Nothing` for every maybe slot and `_rejections` l
 
 ---
 
-## 10. Chain Execution Model
+## 12. Chain Execution Model
 
-### 10.1 The Result Type
+### 12.1 The Result Type
 
 Every link returns exactly one of two things:
 
@@ -1094,7 +1103,7 @@ These are the only two valid return values from a link. There is no third option
 | Go | `Result{Ok: manifest}` | `Result{Err: faultData}` |
 | Elixir | `{:ok, manifest}` | `{:error, fault_data}` |
 
-### 10.2 The Manifest as Data Dictionary
+### 12.2 The Manifest as Data Dictionary
 
 The chain passes the **full manifest** to every link. The manifest is the master data dictionary. The chain is the supervisor. Links declare what they need for static verification, but receive everything because:
 
@@ -1109,7 +1118,7 @@ The chain passes the **full manifest** to every link. The manifest is the master
 
 If a nested sub-function needs a slot, the parent link should declare that slot in its own vocabulary — making the dependency visible at the chain level, not hidden inside implementation.
 
-### 10.3 Chain Execution: Short-Circuit (Default)
+### 12.3 Chain Execution: Short-Circuit (Default)
 
 The default chain executor runs links in sequence and short-circuits on the first fault.
 
@@ -1125,10 +1134,10 @@ FUNCTION execute_chain(links, initial_manifest):
 
         IF "ok" NOT IN result:
             RETURN fault(
-                code    = "non_result_return",
-                message = "Link returned neither ok nor err",
-                link    = link.name,
-                input   = current,
+                code     = "non_result_return",
+                message  = link.name + " returned neither ok nor err; it was given " + describe(current),
+                category = "server",
+                detail   = {"link": link.name},
             )
 
         current ← result["ok"]
@@ -1138,7 +1147,7 @@ FUNCTION execute_chain(links, initial_manifest):
 
 The chain itself returns a Result — `ok(final_manifest)` or the first `err` that occurred. The chain is a link. It composes.
 
-### 10.4 validate_all() — Accumulating Combinator
+### 12.4 validate_all() — Accumulating Combinator
 
 For cases where all links must run regardless of individual failures (form validation, multi-field checks), `validate_all()` wraps a group of links and runs them all against the same input manifest.
 
@@ -1155,8 +1164,10 @@ FUNCTION validate_all(links, manifest):
 
     IF any_err:
         RETURN fault(
-            code    = "validation_failed",
-            results = results,       // EVERY result, ok and err both
+            code     = "validation_failed",
+            message  = "one or more validation checks failed",
+            category = "client",
+            results  = results,       // EVERY result, ok and err both
         )
 
     RETURN ok(manifest)
@@ -1176,7 +1187,7 @@ pipeline = chain(
 
 The outer chain does not know or care that the first link is a `validate_all`. It just sees `ok` or `err`.
 
-### 10.5 Link Declaration
+### 12.5 Link Declaration
 
 A link declares its vocabulary for static verification by honest-check. The declaration does not restrict runtime access — it annotates intent.
 
@@ -1204,7 +1215,7 @@ The `@link` decorator / `link()` wrapper:
 2. Does not modify the function's runtime behavior
 3. Does not scope or filter the manifest passed to the function
 
-### 10.6 Async Links
+### 12.6 Async Links
 
 Links may be synchronous or asynchronous. The chain executor must support both. An async link is identical in contract — it returns a Result — but its return is a promise/coroutine/future that resolves to a Result.
 
@@ -1221,7 +1232,7 @@ The chain executor awaits async links automatically. A chain containing any asyn
 
 **I/O in links:** async links are the designated I/O boundary. honest-test flags them as boundary functions (not a purity violation — an expected and explicit boundary). The `@link` decorator accepts an optional `boundary=True` annotation for links that intentionally perform I/O, suppressing the honest-test purity warning.
 
-### 10.7 Chain Composition
+### 12.7 Chain Composition
 
 Chains compose. A chain is a link. A chain of chains is a chain.
 
@@ -1234,7 +1245,7 @@ create_user_pipeline = chain(validation_chain, persistence_chain)
 
 The outermost chain has the same `execute_chain` contract. Short-circuit propagates through all levels — a fault in `validation_chain` short-circuits the entire `create_user_pipeline`.
 
-### 10.8 What the Chain Does NOT Do
+### 12.8 What the Chain Does NOT Do
 
 - **Does not classify tokens.** Classification happens before the chain, at the boundary (honest.intake for HTTP, honest.boot for DOM, or any other boundary). The chain receives a manifest, not raw tokens.
 - **Does not catch exceptions.** Unhandled exceptions from links propagate up and are caught at the boundary. The chain does not swallow errors.
@@ -1242,9 +1253,9 @@ The outermost chain has the same `execute_chain` contract. Short-circuit propaga
 
 ---
 
-## 11. Fault and Rejection Semantics
+## 13. Fault and Rejection Semantics
 
-### 11.1 Three Error Types, Three Responsibilities
+### 13.1 Three Error Types, Three Responsibilities
 
 The framework uses three distinct error types. They must never be conflated — conflating them lies to both the client and the developer.
 
@@ -1254,27 +1265,27 @@ The framework uses three distinct error types. They must never be conflated — 
 | **fault** | Server logic is broken or client data failed validation | Server or Client — see 11.3 | Returned as `{"err": fault_data}` from a link |
 | **exception** | Unhandled runtime error | Server | Caught only at `@catch_at_boundary` |
 
-### 11.2 Updated Fault Schema
+### 13.2 Updated Fault Schema
 
-The fault struct gains a `category` field to distinguish client from server responsibility:
+A fault carries a `category` that says who is responsible, and never relies on an optional field:
 
 ```
 fault = {
-    code:     String          — machine-readable identifier
-    message:  String          — human-readable description
-    category: String          — "client" or "server"
-    link:     String?         — chain link that produced the fault
-    input:    dict?           — manifest passed to the failing link
-    results:  [Result]?       — present only for "validation_failed" (validate_all)
-    detail:   dict?           — any other fault-specific context outside the chain
+    code:     String      — machine-readable identifier
+    message:  String      — human-readable description. For a chain fault or a dispatch fault, the message names the link or table that failed, the value that reached it, and the values that were expected.
+    category: String      — "client" or "server"
+    results:  [Result]    — every link's result; filled by validate_all(), an empty list otherwise
+    detail:   dict        — the fault's enumerable facts as structured data a test or caller reads without parsing the message: the failing link of a chain fault, the accepted keys and arriving value of a dispatch fault, the rejected token of a non_string_token fault, the state and event of a state-machine fault, the word and layer of a reserved-word fault; an empty dict when there is none
 }
 ```
 
-`link`, `input`, and `results` are the named chain-fault fields and are present only when set. `detail` carries fault-specific context outside the chain context — the rejected token of a `non_string_token` fault, the state and event of a state-machine fault, the blocking rejections of a boundary fault — so a fault never has to overload the chain fields for non-chain data.
+Every field is always present. `results` and `detail` are empty, never absent, when they do not apply, so a caller never tests for a missing key and `fault()` never carries an optional parameter.
 
-`fault()` constructor always requires `category`. It is not optional. A fault without a category is itself a server error.
+Earlier drafts split the chain context into separate `link` and `input` top-level fields. The Fault no longer carries them at the top level. Instead the context travels two ways at once: the `message` states it in a sentence a person reads, and `detail` carries the same facts as structured data a test or caller reads without parsing prose. A short-circuit fault reads `check_duplicate returned neither ok nor err` in its `message` and carries `{"link": "check_duplicate"}` in `detail`. An enumerable fact never lives in prose alone; that is the same defect as a vocabulary sitting in a plain string, one level up. `validate_all()`'s every-result list stays in `results`, and each accumulated fault carries its own failing link in its own `detail`, so a caller holding `results` tells the faults apart without reading English.
 
-### 11.3 Fault Code Registry
+`fault()` always requires `category`. It is not optional. A fault without a category is itself a server error.
+
+### 13.3 Fault Code Registry
 
 All framework-defined fault codes, their category, and their HTTP mapping:
 
@@ -1292,10 +1303,11 @@ All framework-defined fault codes, their category, and their HTTP mapping:
 | `unbound_type` | server | 500 | Token classified but no binding exists for its type |
 | `reserved_word` | server | 500 | Predicate matched a reserved word at runtime |
 | `vocabulary_overlap` | server | 500 | Token matched two recognizers at classification (a predicate overlap not caught at construction) |
+| `unknown_recognizer_kind` | server | 500 | `recognize()` got a recognizer whose kind is outside the vocabulary, hitting the terminal entry of its kind dispatch (section 13.7) |
 
 Application code may define additional fault codes. Application fault codes must specify their category. The HTTP mapping for unknown codes defaults to 422 (client) or 500 (server) based on category.
 
-### 11.4 The Boundary
+### 13.4 The Boundary
 
 The boundary is wherever your application meets the outside world. It is the only place where faults become output. The form of that output depends entirely on context:
 
@@ -1357,7 +1369,7 @@ fault_to_http = {
 
 The boundary does not contain conditional logic — it is a lookup. New fault codes get a new entry in the table.
 
-### 11.5 Rejections vs Faults at the Boundary
+### 13.5 Rejections vs Faults at the Boundary
 
 Rejections live inside the manifest (`_rejections`). They are not faults. When classify() produces rejections, the manifest is still returned — the chain decides what to do.
 
@@ -1375,7 +1387,7 @@ rejection_policy = {
 
 Inside the chain, there are no rejections — only the clean manifest or a fault.
 
-### 11.6 validate_all() Fault Structure
+### 13.6 validate_all() Fault Structure
 
 The `validation_failed` fault carries the complete picture — every result, both `ok` and `err`:
 
@@ -1397,956 +1409,45 @@ The `validation_failed` fault carries the complete picture — every result, bot
 
 Every link's result is present, in order. The caller sees exactly what passed and what failed. No information is discarded.
 
+### 13.7 Every Dispatch Table Faults on an Unknown Key
+
+Every table that selects what runs by a key ends with one entry for the key that matched nothing. That entry returns a fault. Its `message` states, in a sentence, every key the table accepts, the key that actually arrived, and that no branch ran. Its `detail` carries the same facts as structured data, `{"accepted": [...], "arrived": ...}`, so a test asserts them without substring-matching English. Its category is `server`, because a vocabulary bounds the key at construction, so a key that reaches the table unmatched can only come from a program bug, never from client input.
+
+The terminal entry need not be a row in the table. It may be an explicit default the caller passes, which is how `catch_at_boundary()` handles a fault code its output table does not list: its `server_default` and `client_default` parameters are the terminal entries, passed as arguments instead of written as rows. Either form satisfies this rule; a table with neither a terminal row nor a terminal default does not.
+
+This is not the defensive interior check that section 17.2 bans. That check re-validates client input the vocabulary already typed. The terminal entry does the opposite: it catches the impossible key a construction bug produced and turns a silent lookup miss into a loud, self-describing fault. It makes one bug category structurally impossible: a dispatch that falls through in silence, leaving the caller a bare lookup error with no record of what was expected.
+
+Every caller of a dispatched function treats that fault as a possible return, the same as any other fault.
+
+The dispatch tables in honest-type are: `recognize()` on the recognizer kind, `transition()` on the state and event, `check_rejections()` on the rejection policy, and `catch_at_boundary()` on the fault code. `classify()` is not among them; it is two passes over the vocabulary, and its only table is the kind dispatch it reaches through `recognize()`.
+
 ---
 
-## 12. honest-check
+## 14. honest-check
 
-The complete honest-check rule set — including all HC001–HC011, HC-P001–HC-P012, and HC-SM01–HC-SM05 rules with full algorithms, language guidance, output formats, and conformance requirements — is defined in `honest-check-architecture.md`. That document is the canonical reference. This section is a pointer only.
+The complete honest-check rule set, with the algorithm for every rule, the language guidance, the output formats, and the conformance requirements, is defined in `honest-check-architecture.md`. That document is the canonical reference. This section is a pointer only.
 
 For reference, the rules that originate from honest-type concerns:
 
 - **HC001–HC011**: vocabulary, binding, link, and chain structural rules
-- **HC-SM01–HC-SM05**: state machine rules (see section 7b)
+- **HC-SM01–HC-SM05**: state machine rules (see section 9)
 - **HC-P001–HC-P012**: Honest Code principle rules
 
-Construction-time validation (reserved word rejection, vocabulary overlap detection, and catch-all recognizer rejection per section 13.3) is first-class behavior of the `vocabulary()` constructor defined in section 6. Those are not honest-check rules — they are runtime errors that fire at construction time in every invocation mode.
+Construction-time validation (reserved word rejection, vocabulary overlap detection, and catch-all recognizer rejection per HC011) is first-class behavior of the `vocabulary()` constructor defined in section 6. Those are not honest-check rules — they are runtime errors that fire at construction time in every invocation mode.
 
----
-
-## 12b. honest-check Algorithms (archived reference)
-
-### 12.1 Purpose
-
-honest-check is a static linter. It verifies that vocabularies, bindings, links, and chains are correctly constructed before the code runs. It catches design errors at pre-commit or CI time — not at runtime.
-
-honest-check never executes application code. It reads source files, resolves aliases, and analyzes structure.
-
-### 12.2 Discovery
-
-honest-check is invoked with one or more entry points — source directories or files declared in config:
-
-```
-# honest-check.toml
-check = ["src/pipelines/", "src/vocab/", "src/state/"]
-```
-
-For each entry point honest-check:
-
-1. Parses source files into ASTs
-2. Resolves import aliases — `from honest_type import vocabulary as v` means `v(...)` calls are `vocabulary(...)` calls
-3. Finds all `vocabulary()`, `binding()`, `chain()`, `link()`, `composed()`, `state_machine()` call sites
-4. Builds an internal graph: vocabularies → bindings → links → chains
-
-AST alias resolution algorithm:
-
-```
-FUNCTION resolve_aliases(ast):
-    aliases ← {}
-
-    FOR EACH import_statement IN ast:
-        IF import_statement is "from honest_type import X as Y":
-            aliases[Y] ← X
-        IF import_statement is "import honest_type as Z":
-            aliases[Z + ".*"] ← "honest_type.*"
-
-    RETURN aliases
-
-FUNCTION is_honest_call(node, name, aliases):
-    // Direct call: vocabulary(...)
-    IF node.func.name = name: RETURN true
-    // Aliased call: v(...) where v = vocabulary
-    IF node.func.name IN aliases AND aliases[node.func.name] = name: RETURN true
-    RETURN false
-```
-
-### 12.3 Link Declaration
-
-Every link must declare both `accepts` and `emits`. These are the function's type signature — what it needs from the manifest and what it contributes.
-
-```python
-@link(
-    accepts = format_vocab,              # types this link reads from manifest
-    emits   = format_vocab | result_vocab,  # types this link produces in manifest
-    boundary = False,                    # True suppresses purity warning (HC008)
-)
-def format_value(manifest):
-    ...
-```
-
-`emits` uses `|` (vocabulary merge) to express "everything I received, plus what I added." A pure pass-through link has `emits = accepts`. A link that adds fields has `emits = accepts | new_vocab`.
-
-### 12.4 Rule Algorithms
-
-#### HC001 — No vocabulary declared
-
-**Trigger:** A function appears in a `chain()` call but is not wrapped with `@link`.
-
-```
-FUNCTION check_HC001(chain):
-    FOR EACH link IN chain.links:
-        IF link has no honest_type metadata:
-            EMIT error(HC001, link.name,
-                "Function in chain has no vocabulary declared")
-```
-
-#### HC002 — Chain type mismatch
-
-**Trigger:** A link's `accepts` vocabulary contains types not present in the preceding link's `emits`.
-
-```
-FUNCTION check_HC002(chain):
-    FOR i FROM 1 TO len(chain.links) - 1:
-        emits   ← chain.links[i-1].emits.type_names    // Set of type name strings
-        accepts ← chain.links[i].accepts.type_names     // Set of type name strings
-
-        missing ← accepts - emits    // set difference
-
-        IF missing is not empty:
-            EMIT error(HC002, chain.links[i].name,
-                f"Accepts types not provided by previous link: {missing}")
-```
-
-The first link has no predecessor, but its input is not unknown: it receives the manifest `classify()` produces at intake from the request the templates send — the closed, statically-inspectable input boundary (see honest-framework-spec.md, "The input boundary is closed"). So the first link's `accepts` is checked against that **derived** boundary vocabulary — the types reachable at the chain's intake — not a separately declared `honest.intake`. A first link declared `boundary=True` is the intake boundary itself and is exempt; a first link declaring no vocabulary is HC001's concern, as for any link.
-
-#### HC003 — Recognizer overlap
-
-**Trigger:** Two types in the same vocabulary can both match the same token.
-
-```
-FUNCTION check_HC003(vocabulary):
-    type_names ← vocabulary.base_types.keys()
-
-    FOR EACH pair (A, B) IN combinations(type_names, 2):
-        recog_A ← vocabulary.base_types[A]
-        recog_B ← vocabulary.base_types[B]
-
-        IF both are Sets:
-            overlap ← recog_A ∩ recog_B
-            IF overlap not empty:
-                EMIT error(HC003, vocabulary.name,
-                    f"Types '{A}' and '{B}' share values: {overlap}")
-
-        IF one is Set, one is Predicate:
-            // Run every Set member through the predicate
-            set_recog, pred_recog ← (recog_A, recog_B) or (recog_B, recog_A)
-            FOR EACH value IN set_recog:
-                IF pred_recog(value):
-                    EMIT warning(HC003, vocabulary.name,
-                        f"Value '{value}' matches both Set type and predicate type")
-
-        IF both are Predicates:
-            // Cannot check statically — deferred to honest-test
-            EMIT info(HC003, vocabulary.name,
-                "Predicate × predicate overlap cannot be checked statically — verified by honest-test")
-```
-
-#### HC004 — Dead vocabulary
-
-**Trigger:** A type is defined in the vocabulary but has no entry in the binding table and is not used in any composed type.
-
-```
-FUNCTION check_HC004(vocabulary, binding):
-    // Auto-binding covers all types by definition — skip if no explicit binding
-    IF binding is auto_binding: RETURN
-
-    FOR EACH type_name IN vocabulary.base_types:
-        in_binding  ← type_name IN binding
-        in_composed ← ANY comp IN vocabulary.composed_types
-                       WHERE type_name IN comp.requires
-                       OR type_name = comp.captures
-
-        IF NOT in_binding AND NOT in_composed:
-            EMIT warning(HC004, type_name,
-                "Type defined in vocabulary but never bound or composed")
-```
-
-#### HC005 — Unused binding
-
-**Trigger:** A slot is declared in the binding table but no type in the vocabulary produces it.
-
-```
-FUNCTION check_HC005(vocabulary, binding):
-    IF binding is auto_binding: RETURN
-
-    FOR EACH (type_name, slot) IN binding:
-        IF type_name NOT IN vocabulary.base_types
-        AND type_name NOT IN vocabulary.composed_type_names:
-            EMIT warning(HC005, type_name,
-                f"Binding references type '{type_name}' not found in vocabulary")
-```
-
-#### HC006 — Composed type references unknown base type
-
-**Trigger:** A `composed()` definition references a type in `requires` or `captures` that does not exist in the base vocabulary.
-
-```
-FUNCTION check_HC006(vocabulary):
-    FOR EACH comp IN vocabulary.composed_types:
-        FOR EACH req_type IN comp.requires.keys():
-            IF req_type NOT IN vocabulary.base_types:
-                EMIT error(HC006, comp.name,
-                    f"Composed type requires unknown base type '{req_type}'")
-
-        capture_type ← unwrap_maybe(comp.captures)
-        IF capture_type NOT IN vocabulary.base_types:
-            EMIT error(HC006, comp.name,
-                f"Composed type captures unknown base type '{capture_type}'")
-```
-
-#### HC007 — Empty chain
-
-**Trigger:** `chain()` is called with no links.
-
-```
-FUNCTION check_HC007(chain):
-    IF len(chain.links) = 0:
-        EMIT error(HC007, chain.name, "Chain has no links")
-```
-
-#### HC008 — Impure link (heuristic)
-
-**Trigger:** A link function accesses global state, performs I/O, or uses non-deterministic operations — without declaring `boundary=True`.
-
-```
-FUNCTION check_HC008(link):
-    IF link.boundary = True: RETURN    // explicitly declared, suppress warning
-
-    ast ← link.function_ast
-    violations ← []
-
-    // Check for I/O calls
-    io_calls ← {"open", "read", "write", "print", "input",
-                 "requests", "urllib", "fetch", "console.log",
-                 "File", "FileReader", "Socket", ...}
-
-    FOR EACH call IN ast.all_calls:
-        IF call.name IN io_calls:
-            APPEND call.name TO violations
-
-    // Check for global variable reads (not imports, not constants)
-    FOR EACH name_ref IN ast.name_references:
-        IF name_ref is a global variable (not local, not parameter, not import):
-            APPEND name_ref TO violations
-
-    // Check for non-deterministic calls
-    nondeterministic ← {"random", "uuid", "now", "time", "Date.now", ...}
-    FOR EACH call IN ast.all_calls:
-        IF call.name IN nondeterministic:
-            APPEND call.name TO violations
-
-    IF violations not empty:
-        EMIT warning(HC008, link.name,
-            f"Link may be impure: {violations}. Add boundary=True if I/O is intentional.")
-```
-
-#### HC009 — Predicate may throw
-
-**Trigger:** A predicate function contains operations that can raise on certain inputs (type coercions, index access, division).
-
-```
-FUNCTION check_HC009(vocabulary):
-    FOR EACH (type_name, recognizer) IN vocabulary.base_types:
-        IF recognizer is a predicate:
-            ast ← recognizer.function_ast
-            risky ← []
-
-            // Operations that throw on bad input
-            FOR EACH node IN ast:
-                IF node is int(), float(), index_access, division:
-                    APPEND node TO risky
-
-            IF risky not empty:
-                EMIT warning(HC009, type_name,
-                    f"Predicate may throw on non-matching input: {risky}")
-```
-
-#### HC010 — Declared emission never produced
-
-**Trigger:** A link's `emits` vocabulary declares a type that its function body never puts into the manifest.
-
-```
-FUNCTION check_HC010(link):
-    emitted_types ← link.emits.type_names
-    ast           ← link.function_ast
-
-    // Find all manifest keys set in the function body
-    // e.g., manifest["hashed_password"] = ... or ok({**manifest, "hashed_password": ...})
-    produced_keys ← extract_manifest_assignments(ast)
-
-    // Map produced keys back to type names via binding
-    produced_types ← { binding_reverse[key] FOR key IN produced_keys }
-
-    // Types declared in emits but never produced
-    phantom ← emitted_types - produced_types - link.accepts.type_names
-
-    IF phantom not empty:
-        EMIT warning(HC010, link.name,
-            f"Link declares emission of types never produced: {phantom}")
-```
-
-#### HC-SM01 through HC-SM05 — State machine rules
-
-See section 7b. These rules use the same vocabulary intersection algorithms as HC003.
-
-### 12.5 Honest Code Principle Rules (HC-P)
-
-These rules verify that application code follows the Honest Code principles from `honest-code-principles.md`. They apply to all code in the declared entry points — not just framework structures but the programmer's application code itself.
-
-#### HC-P001 — if/elif/else dispatch chain
-
-**Severity: Error**
-
-An `if/elif/else` chain with 3 or more branches that dispatches on type, category, or string value should be a dict lookup.
-
-```
-FUNCTION check_HC_P001(ast):
-    FOR EACH if_node IN ast.all_if_statements:
-        branches ← count_elif_else_branches(if_node)
-        IF branches >= 3:
-            // Check if condition is type/category dispatch
-            IF condition_dispatches_on_value(if_node):
-                EMIT error(HC-P001, if_node.location,
-                    "if/elif/else chain dispatches on value — use dict lookup")
-```
-
-Detection: `if x == "a": ... elif x == "b": ... elif x == "c":` — three or more string/type equality tests on the same variable.
-
-#### HC-P002 — Exception caught in non-boundary function
-
-**Severity: Error**
-
-Business logic does not catch. Functions raise; the boundary catches, inspects the typed exception and maps it to a response. A `try`/`except` inside a non-boundary function swallows faults and produces a caught path the manifest cannot see. Faults inside business logic are data, not exceptions. `honest-check-architecture.md` §HC-P002 is canonical.
-
-```
-FUNCTION check_HC_P002(ast):
-    FOR EACH function_def IN ast.all_functions:
-        IF function_def is a boundary (decorated @boundary or @link(boundary=True)):
-            CONTINUE
-        FOR EACH try_stmt IN function_def.body:
-            IF try_stmt has an except clause:
-                EMIT error(HC-P002, try_stmt.location,
-                    f"Function '{function_def.name}' catches an exception in business "
-                    "logic. Let the function raise; catch at the boundary, or return "
-                    "a fault as data.")
-```
-
-A `try` with only a `finally` is not a catch and does not fire.
-
-#### HC-P003 — Class declaration
-
-**Severity: Error**
-
-A class definition is permitted only when it subclasses a framework-approved base. Both inheriting from a non-approved base and declaring a class with no explicit base are violations: a bare class implicitly inherits `object`, which is not approved, and is the main way non-honest code sneaks in. `honest-check-architecture.md` §HC-P003 is canonical.
-
-```
-FUNCTION check_HC_P003(ast):
-    allowed_bases ← {"TypedDict", "Protocol", "ABC", "Exception",
-                      "BaseException", "Error"}   // language-specific
-
-    FOR EACH class_def IN ast.all_classes:
-        IF class_def.bases IS EMPTY:
-            EMIT error(HC-P003, class_def.location,
-                f"Class '{class_def.name}' has no declared base. Use a TypedDict "
-                "for data shapes or a pure function.")
-            CONTINUE
-
-        FOR EACH base IN class_def.bases:
-            IF base NOT IN allowed_bases:
-                EMIT error(HC-P003, class_def.location,
-                    f"Class '{class_def.name}' inherits from '{base}' — use composition")
-```
-
-#### HC-P004 — I/O inside non-boundary function
-
-**Severity: Error**
-
-Promoted from HC008 (Warning → Error for principle tier). I/O inside a function not declared `boundary=True` is a structural violation.
-
-*(See HC008 algorithm — same detection, elevated severity.)*
-
-#### HC-P005 — isinstance() or type() in business logic
-
-**Severity: Warning**
-
-Type checking via `isinstance()` or `type()` in business logic should be replaced by vocabulary declaration. May be transitional code — warning not error.
-
-```
-FUNCTION check_HC_P005(ast):
-    FOR EACH call IN ast.all_calls:
-        IF call.name IN {"isinstance", "type"}:
-            IF NOT in_boundary_function(call):
-                EMIT warning(HC-P005, call.location,
-                    "isinstance() check — consider vocabulary declaration instead")
-```
-
-#### HC-P006 — Cache without profiling annotation
-
-**Severity: Warning**
-
-A cache pattern detected without a `@profiled` annotation or comment indicating measurement was done first.
-
-```
-FUNCTION check_HC_P006(ast):
-    cache_patterns ← {
-        "decorators": {"lru_cache", "cache", "memoize", "cached_property"},
-        "imports":    {"redis", "memcache", "pylibmc"},
-        "patterns":   ["if key in self._cache", "if key in _cache"],
-    }
-
-    FOR EACH cache_use IN find_cache_patterns(ast, cache_patterns):
-        IF NOT has_profiling_annotation(cache_use):
-            EMIT warning(HC-P006, cache_use.location,
-                "Cache detected — add @profiled annotation confirming query was measured first")
-```
-
-Suppressed with `# honest: profiled` comment or `@profiled` decorator.
-
-#### HC-P007 — Instance state in a constructor
-
-**Severity: Warning**
-
-`self._connection`, `self._config`, `self._client` stored on instance. Should be passed as parameters or used as context managers.
-
-```
-FUNCTION check_HC_P007(ast):
-    FOR EACH class_def IN ast.all_classes:
-        init ← class_def.get_method("__init__")
-        IF init:
-            FOR EACH assignment IN init.assignments_to_self:
-                IF assignment.name starts with "_":
-                    EMIT warning(HC-P007, assignment.location,
-                        f"Instance state '{assignment.name}' — pass as parameter or use context manager")
-```
-
-#### HC-P008 — Gherkin step definition exceeds line threshold
-
-**Severity: Warning**
-
-A Gherkin step definition longer than 10 lines signals hidden dependencies. The step should be calling a pure function — if it's longer than 10 lines, the code under test is not honest.
-
-```
-FUNCTION check_HC_P008(step_files):
-    FOR EACH step_file IN step_files:
-        FOR EACH step_def IN step_file.step_definitions:
-            IF line_count(step_def.body) > 10:
-                EMIT warning(HC-P008, step_def.location,
-                    f"Step '{step_def.name}' is {line_count} lines — honest functions need 1-3 line steps")
-```
-
-#### HC-P009 — Roled function without a gherkin
-
-**Severity: Warning**
-
-Every declared chain should have a corresponding Gherkin `.feature` file. Missing coverage is flagged.
-
-```
-FUNCTION check_HC_P009(chains, feature_files):
-    feature_names ← { basename(f) for f in feature_files }
-
-    FOR EACH chain IN chains:
-        expected_feature ← chain.name + ".feature"
-        IF expected_feature NOT IN feature_names:
-            EMIT warning(HC-P009, chain.declaration_location,
-                f"Chain '{chain.name}' has no .feature file — add {expected_feature}")
-```
-
-Convention: `create_user_pipeline` expects `features/create_user_pipeline.feature`.
-
-#### HC-P010 — Data structure not JSON-serializable
-
-**Severity: Error**
-
-"If you can't `json.dumps()` it, it's too clever by half." A data structure returned from a pure function that fails JSON serialization is hiding behaviour in data.
-
-```
-FUNCTION check_HC_P010(ast):
-    // Static: detect return types that are class instances (not dicts, lists, primitives)
-    FOR EACH function_def IN ast.pure_functions:
-        FOR EACH return_stmt IN function_def.return_statements:
-            IF return_stmt.value is class_instance:
-                IF NOT is_typeddict(return_stmt.value):
-                    EMIT error(HC-P010, return_stmt.location,
-                        "Pure function returns non-serializable object — use TypedDict or dict")
-```
-
-#### HC-P011 — Framework lifecycle hook
-
-**Severity: Error**
-
-Client-side lifecycle hooks (`useEffect`, `componentDidMount`, `ngOnInit`, `addEventListener`) signal imperative DOM manipulation. The framework takes a hard stance against these.
-
-```
-FUNCTION check_HC_P011(ast):
-    lifecycle_hooks ← {
-        "useEffect", "useLayoutEffect", "componentDidMount",
-        "componentDidUpdate", "componentWillUnmount",
-        "ngOnInit", "ngOnDestroy",
-        "addEventListener", "removeEventListener",
-    }
-
-    FOR EACH call IN ast.all_calls:
-        IF call.name IN lifecycle_hooks:
-            EMIT error(HC-P011, call.location,
-                f"Lifecycle hook '{call.name}' — use HTMX attributes or server-rendered HTML")
-```
-
-#### HC-P012 — Mock in test
-
-**Severity: Warning**
-
-More than 2 mocks in a single test function signals hidden dependencies in the code under test. The function is not pure.
-
-```
-FUNCTION check_HC_P012(test_files):
-    mock_patterns ← {"Mock", "MagicMock", "patch", "jest.fn", "sinon.stub", "double"}
-
-    FOR EACH test_function IN test_files.all_tests:
-        mock_count ← count_mock_usages(test_function, mock_patterns)
-        IF mock_count > 2:
-            EMIT warning(HC-P012, test_function.location,
-                f"{mock_count} mocks in '{test_function.name}' — extract pure logic and test directly")
-```
-
-### 12.6 Complete Rule Summary
-
-| Rule | Severity | Principle | When |
-|---|---|---|---|
-| HC001 | Error | Link missing vocabulary | Chain analysis |
-| HC002 | Error | Chain type mismatch | Chain analysis |
-| HC003 | Error/Warning | Recognizer overlap | Vocabulary construction |
-| HC004 | Warning | Dead vocabulary type | Vocabulary + binding |
-| HC005 | Warning | Unused binding | Binding analysis |
-| HC006 | Error | Composed type references unknown base | Vocabulary construction |
-| HC007 | Error | Empty chain | Chain analysis |
-| HC008 | Warning | Impure link (framework tier) | Link AST |
-| HC009 | Warning | Predicate may throw | Vocabulary AST |
-| HC010 | Warning | Declared emission never produced | Link AST |
-| HC011 | Error | Catch-all recognizer | Vocabulary construction |
-| HC-SM01 | Error | State not in vocabulary | State machine |
-| HC-SM02 | Error | Event not in vocabulary | State machine |
-| HC-SM03 | Warning | Unreachable state | State machine |
-| HC-SM04 | Warning | Dead state (no outgoing transitions) | State machine |
-| HC-SM05 | Error | Initial state not in vocabulary | State machine |
-| HC-P001 | Error | if/elif/else dispatch chain | Application AST |
-| HC-P002 | Error | Exception caught in non-boundary function | Application AST |
-| HC-P003 | Error | Class declaration (inheritance or bare class) | Application AST |
-| HC-P004 | Error | I/O inside non-boundary function | Application AST |
-| HC-P005 | Warning | isinstance() or type() in business logic | Application AST |
-| HC-P006 | Warning | Cache without profiling annotation | Application AST |
-| HC-P007 | Warning | Instance state in a constructor | Application AST |
-| HC-P008 | Warning | Gherkin step too long | Test files |
-| HC-P009 | Warning | Roled function without a gherkin | Coverage |
-| HC-P010 | Error | Non-serializable return value | Application AST |
-| HC-P011 | Error | Framework lifecycle hook | Application AST |
-| HC-P012 | Warning | Excessive test doubles in test | Test files |
-
----
-
-## 13. honest-test
+## 15. honest-test
 
 The complete honest-test specification — including auto-generated test rules, honesty tests, BDD runner contract, state machine testing, honest-persist contract tests, component isolation tests, coverage model, and conformance requirements — is defined in `honest-test-architecture.md`. That document is the canonical reference. This section is a pointer only.
 
----
+## 16. Conformance Test Suite
 
-## 13b. honest-test Generation Rules (archived reference)
-
-### 13.1 Purpose
-
-honest-test is the exhaustive verification harness. Where honest-check asks "does this code *look* honest?", honest-test asks "does this code *behave* honestly?" It does this by generating and running every valid input combination, then verifying correctness, purity, and chain contracts.
-
-### 13.2 Predicate Classification
-
-Before generating test cases, honest-test classifies each predicate by analyzing its AST. The classification determines the generation strategy.
-
-| Class | Detection (AST) | Strategy |
-|---|---|---|
-| **Numeric** | Contains `int(s)`, `float(s)`, numeric comparison | Fibonacci sequence |
-| **Length-bounded** | Contains `len(s) ==` or `len(s) <` fixed value | Enumerate valid lengths |
-| **Character-class** | Contains `s.isdigit()`, `s.isalpha()`, `s.isupper()` | Enumerate character classes |
-| **External lookup** | Calls function not in codebase (external library) | Programmer-supplied via `honest-test.toml` |
-| **Composite** | Calls function defined in codebase | Recurse into callee AST |
-| **Catch-all** | Accepts nearly all inputs (HC011 violation) | Rejected at vocabulary construction |
-
-**External library calls are the programmer's responsibility.** honest-test emits a warning and skips generation for that predicate unless test values are supplied in `honest-test.toml`. Using external library functions in recognizers is strongly discouraged — their behavior is unverifiable by the framework.
-
-**Composite predicates** that call codebase-defined functions are followed recursively — the AST walk descends into the callee. This works for any depth of call stack within the codebase.
-
-### 13.3 HC011 — Catch-All Recognizer
-
-A recognizer that accepts all (or nearly all) inputs is not a type — it is the absence of a type. The vocabulary constructor rejects it.
-
-```
-FUNCTION check_HC011(recognizer):
-    // For predicates: run against a fixed, diverse sample of 1000 strings
-    // If acceptance rate > 95%, it's a catch-all
-    sample ← FIXED_SAMPLE_CORPUS   // 1000 strings, deterministic — see note
-    accepted ← COUNT s IN sample WHERE recognizer(s) = true
-
-    IF accepted / 1000 > 0.95:
-        EMIT error(HC011, "Recognizer accepts nearly all inputs — not a discriminating type")
-```
-
-The sample is a **fixed, diverse corpus**, not randomly generated: the vocabulary constructor is a pure function, and the framework forbids nondeterminism (a recognizer near the 95% threshold must pass or fail identically on every run, in every invocation mode). The corpus must vary length and character class — digits, lowercase and uppercase letters, punctuation, whitespace, and non-ASCII — so that a genuinely discriminating recognizer accepts only a small fraction of it. A predicate that raises on a sample string counts as *not* accepting that string, the same tolerance classification applies at runtime (section 9.6).
-
-### 13.4 Set Enumeration
-
-For Set-based recognizers, honest-test enumerates every member. For a vocabulary with multiple Sets, it generates every combination.
-
-```
-FUNCTION enumerate_sets(vocabulary):
-    set_types ← { name: list(members)
-                  FOR (name, recog) IN vocabulary.base_types
-                  IF recog is a Set }
-
-    // every combination of all Set members
-    RETURN product(set_types.values())
-```
-
-For `format_name(5) × currency_code(150) × style_name(4)` = 3,000 test cases. All run. No sampling.
-
-Maybe slots add one case: `Nothing`. A maybe Set of 4 members = 5 test cases.
-
-### 13.5 Numeric Predicate Generation
-
-For predicates classified as Numeric, generate a Fibonacci sequence in both directions from zero, up to a configurable limit.
-
-```
-FUNCTION fibonacci_sequence(limit):
-    seq ← [0, 1]
-    WHILE seq[-1] < limit:
-        seq.APPEND(seq[-2] + seq[-1])
-
-    // Both directions
-    positive ← seq
-    negative ← [-x FOR x IN seq IF x > 0]
-    RETURN negative + positive
-
-DEFAULT_LIMIT = 1_000_000
-```
-
-For floats, divide each Fibonacci number by 100 to produce representative real values: `0.0, 0.01, 0.01, 0.02, 0.03, 0.05, 0.08...`
-
-**Configurable via `honest-test.toml`:**
-
-```toml
-[predicates.order_amount]
-strategy = "fibonacci"
-limit = 1_000_000_000   # override default
-negative = false        # only positive values
-
-[predicates.tax_rate]
-strategy = "fibonacci"
-float = true
-limit = 1.0             # rates are 0.0-1.0
-```
-
-### 13.6 Adversarial Input Generation
-
-For every Set member, honest-test generates edit-distance-1 neighbors. These are tokens that *look* valid but aren't — they should all be rejected. If any are accepted, that is a vocabulary overlap or case-sensitivity bug.
-
-```
-FUNCTION adversarial_neighbors(value):
-    results ← []
-    chars   ← list(value)
-    alpha   ← "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-    // Deletions
-    FOR i IN range(len(chars)):
-        results.APPEND(join(chars[:i] + chars[i+1:]))
-
-    // Insertions
-    FOR i IN range(len(chars) + 1):
-        FOR c IN alpha:
-            results.APPEND(join(chars[:i] + [c] + chars[i:]))
-
-    // Substitutions
-    FOR i IN range(len(chars)):
-        FOR c IN alpha:
-            IF c ≠ chars[i]:
-                results.APPEND(join(chars[:i] + [c] + chars[i+1:]))
-
-    // Case variations
-    results.APPEND(value.lower())
-    results.APPEND(value.upper())
-    results.APPEND(value.title())
-
-    // Whitespace variations
-    results.APPEND(" " + value)
-    results.APPEND(value + " ")
-    results.APPEND(value[0] + " " + value[1:])    // internal space
-
-    RETURN deduplicate(results) - {value}    // exclude the original
-```
-
-Every adversarial neighbor must produce a rejection when passed to `classify()`. Any that don't are reported as failures.
-
-### 13.7 Purity Verification
-
-honest-test verifies that link functions are pure: same input always produces same output, no side effects.
-
-```
-FUNCTION verify_purity(link, test_manifest):
-    // Run twice with identical input
-    result_1 ← link(test_manifest)
-    result_2 ← link(test_manifest)
-
-    IF result_1 ≠ result_2:
-        EMIT failure("non_deterministic",
-            f"Link '{link.name}' produced different results on identical input")
-
-    // Instrument for side effects (patch I/O, globals, time)
-    WITH io_monitor():
-        result_3 ← link(test_manifest)
-
-    IF io_monitor.detected_io AND NOT link.boundary:
-        EMIT warning("io_detected",
-            f"Link '{link.name}' performed I/O. Add boundary=True if intentional.")
-```
-
-`io_monitor()` patches known I/O functions (file open, network, time, random) to detect calls without executing them. Language-specific implementations use mocking/patching infrastructure.
-
-### 13.8 Mutation Detection
-
-A pure function must not modify its input. honest-test snapshots the manifest before and after each link call.
-
-```
-FUNCTION detect_mutation(link, test_manifest):
-    snapshot_before ← deep_copy(test_manifest)
-    result          ← link(test_manifest)
-    snapshot_after  ← test_manifest    // same object, may have been mutated
-
-    IF snapshot_before ≠ snapshot_after:
-        diff ← diff(snapshot_before, snapshot_after)
-        EMIT failure("manifest_mutated",
-            f"Link '{link.name}' modified its input manifest: {diff}")
-```
-
-### 13.9 Chain Contract Testing
-
-For each adjacent pair of links in a chain, honest-test verifies that every valid output of link N is accepted as valid input by link N+1.
-
-```
-FUNCTION test_chain_contracts(chain, vocabulary, binding):
-    FOR i FROM 0 TO len(chain.links) - 2:
-        link_n     ← chain.links[i]
-        link_n1    ← chain.links[i+1]
-
-        // Generate all valid inputs for link N
-        test_cases ← enumerate_test_cases(link_n.accepts, binding)
-
-        FOR EACH test_manifest IN test_cases:
-            result ← link_n(test_manifest)
-
-            IF "ok" IN result:
-                // Pass link N's output into link N+1
-                result2 ← link_n1(result["ok"])
-                IF "err" IN result2:
-                    IF result2["err"].category = "server":
-                        EMIT failure("chain_contract",
-                            f"Link '{link_n1.name}' rejected valid output from '{link_n.name}': {result2}")
-```
-
-Note: client faults from link N+1 are not chain contract failures — they mean link N produced output that link N+1 correctly rejected as invalid. Only server faults indicate a contract violation.
-
-### 13.10 Idempotency Proof
-
-The same chain run twice with the same manifest must produce the same result.
-
-```
-FUNCTION test_idempotency(chain, test_manifest):
-    result_1 ← execute_chain(chain, test_manifest)
-    result_2 ← execute_chain(chain, deep_copy(test_manifest))
-
-    IF result_1 ≠ result_2:
-        EMIT failure("not_idempotent",
-            f"Chain '{chain.name}' produced different results on identical input")
-```
-
-Chains with `boundary=True` links are exempt from idempotency testing — I/O links are expected to have side effects. honest-test reports them as boundary functions, not failures.
-
-### 13.11 State Machine Testing
-
-honest-test generates exhaustive tests for state machines using the same vocabulary enumeration machinery.
-
-```
-FUNCTION test_state_machine(machine):
-    // Test all valid transitions
-    FOR EACH (state, event), next_state IN machine.transitions:
-        result ← transition(machine, state, event)
-        ASSERT result = ok({ state: next_state })
-
-    // Test all invalid transitions (state/event pairs not in table)
-    FOR EACH state IN machine.states:
-        FOR EACH event IN machine.events:
-            IF (state, event) NOT IN machine.transitions:
-                result ← transition(machine, state, event)
-                ASSERT result = err({ code: "no_transition" })
-
-    // Test invalid states and events
-    FOR EACH adversarial IN adversarial_neighbors(machine.states):
-        result ← transition(machine, adversarial, first_valid_event)
-        ASSERT result = err({ code: "invalid_state" })
-```
-
-### 13.12 Programmer-Supplied Test Values
-
-For predicates that cannot be analyzed (external lookups, context-dependent), programmers supply test values in `honest-test.toml`:
-
-```toml
-[predicates.customer_id]
-valid = ["CUST-00001", "CUST-99999"]
-invalid = ["CUST-0", "cust-00001", "CUST-AAAAA"]   # too short / wrong case / non-numeric suffix
-strategy = "supplied_only"   # don't attempt generation
-```
-
-honest-test runs supplied valid values and confirms they are accepted. Runs supplied invalid values and confirms they are rejected. Reports a missing entry for external-lookup predicates as a warning.
-
-### 13.13 Output Format
-
-```
-honest-test v0.1.0
-Scanning src/ for chains...
-
-Found 4 chains, 12 links, 6 vocabularies
-
-format_pipeline (3 links)
-  Vocabulary: format_name(5) × currency_code(150) × style_name(4)
-  Permutations: 3,000
-  Running.............. 3,000/3,000 PASS
-  Adversarial: 847 near-miss inputs, 847 rejected
-  Purity: 3/3 links verified pure
-  Idempotency: PASS
-  Mutation: no manifest mutations detected
-
-create_user_pipeline (5 links)
-  Vocabulary: action(3) × role(4) × boolean(2)
-  Permutations: 24
-  Running... 24/24 PASS
-  Adversarial: 156 near-miss inputs, 156 rejected
-  Purity: 4/5 links verified pure
-    ⚠ insert_user: I/O detected (boundary=True — expected)
-  Chain contracts: all outputs of link N accepted by link N+1
-  Idempotency: PASS (boundary links excluded)
-
-Total: 3,024 permutations tested, 0 failures
-       1,003 adversarial inputs, 1,003 rejected
-       11/12 links verified pure (1 boundary function)
-```
-
-### 13.14 Coverage Calculation
-
-Coverage requires both honest-check (the declared structure) and honest-test (what was exercised). honest-test owns coverage reporting — it reads the declared structure from honest-check's graph and computes what percentage was exercised.
-
-#### Four Coverage Dimensions
-
-**1. Vocabulary Coverage**
-
-What percentage of Set members appeared in at least one test case?
-
-```
-vocabulary_coverage(vocab) =
-    members_exercised / total_members × 100
-```
-
-honest-test's exhaustive enumeration drives Set coverage to 100% automatically. Predicate coverage is reported as "boundary + adversarial" since exhaustive enumeration is not possible.
-
-**2. Chain Coverage**
-
-What percentage of fault exit points in a chain are exercised?
-
-```
-chain_coverage(chain) =
-    fault_paths_exercised / total_fault_paths × 100
-```
-
-A chain of N links has up to N fault exit points (one per link that can return `fault`). honest-test exercises each by generating inputs that trigger each link's failure conditions.
-
-**3. Principle Coverage**
-
-What percentage of chains, links, and functions have passed HC-P rule checks?
-
-```
-principle_coverage(codebase) =
-    clean_functions / total_functions × 100
-```
-
-Broken down per rule: `HC-P001: 94% clean (6 violations)`, etc.
-
-**4. State Machine Coverage**
-
-What percentage of declared transitions were exercised?
-
-```
-state_machine_coverage(machine) =
-    transitions_exercised / total_transitions × 100
-```
-
-honest-test's exhaustive transition testing drives this to 100%.
-
-#### Coverage Report Format
-
-```
-honest-test coverage report
-===========================
-
-Vocabulary Coverage
-  format_name    (5 members):   100% — all members exercised
-  currency_code  (150 members): 100% — all members exercised
-  integer        (predicate):   boundary + adversarial (unbounded)
-
-Chain Coverage
-  format_pipeline:       3/3 fault paths exercised  (100%)
-  create_user_pipeline:  4/5 fault paths exercised  (80%)
-    ⚠ missing: hash_password fault path
-
-Principle Coverage (HC-P rules)
-  HC-P001 (if/elif dispatch): 100% clean
-  HC-P002 (catch in logic):   100% clean
-  HC-P003 (class declaration):100% clean
-  HC-P009 (feature files):    80% — 2 chains missing .feature files
-    ⚠ missing: reset_password_pipeline.feature
-    ⚠ missing: export_data_pipeline.feature
-
-State Machine Coverage
-  order_machine: 5/5 transitions exercised (100%)
-
-Overall: 94% coverage
-```
-
-#### Coverage Data Format
-
-honest-test writes a `coverage.json` file that honest-check can read for HC-P009 (chain missing .feature file) and other cross-tool checks:
-
-```json
-{
-    "version": "1.0",
-    "timestamp": "2026-03-11T...",
-    "vocabularies": {
-        "format_vocab": { "total": 5, "exercised": 5, "pct": 100 }
-    },
-    "chains": {
-        "format_pipeline": { "fault_paths": 3, "exercised": 3, "pct": 100 }
-    },
-    "principles": {
-        "HC-P001": { "total": 42, "clean": 42, "violations": [] }
-    },
-    "state_machines": {
-        "order_machine": { "transitions": 5, "exercised": 5, "pct": 100 }
-    }
-}
-```
-
----
-
-## 14. Conformance Test Suite
-
-### 14.1 Purpose
+### 16.1 Purpose
 
 The conformance suite is the executable proof that two honest-type implementations are semantically identical. It is a language-agnostic JSON collection of input/output pairs. Any implementation that passes all cases is conformant — no human review required.
 
 It lives in this repository at `python/honest-type/conformance/suite.json`, beside the reference implementation and run by its gate on every commit — keeping the suite and the implementation it measures in step. A second-language implementation proves conformance by running the same file; the cases are input/output data with no Python in them.
 
-### 14.2 Repository Structure
+### 16.2 Repository Structure
 
 ```
 specs/02-code-quality/honest-type-architecture.md   ← this document
@@ -2371,7 +1472,7 @@ Spoke repos reference the suite version in CI:
     runner: python    # or javascript, ruby, go, etc.
 ```
 
-### 14.3 Test Case Format
+### 16.3 Test Case Format
 
 Each test case is a JSON object with a unique ID, description, input, and expected output.
 
@@ -2391,7 +1492,7 @@ Each test case is a JSON object with a unique ID, description, input, and expect
 
 Exactly one of `manifest`, `fault`, or `rejected_tokens` appears in `expected` — a test case expects either a successful manifest, a fault, or specific rejections. Never more than one.
 
-### 14.4 Test Case Categories
+### 16.4 Test Case Categories
 
 | Category | What it covers |
 |---|---|
@@ -2400,7 +1501,7 @@ Exactly one of `manifest`, `fault`, or `rejected_tokens` appears in `expected` �
 | `classify-composed` | Composed types, capture override, base binding suppression |
 | `classify-order` | Order independence — same tokens different orders, same manifest |
 | `classify-rejection` | Every rejection reason code with exact triggering input |
-| `classify-edge` | All section 9 edge cases: empty, null, case, whitespace, duplicates |
+| `classify-edge` | All section 11 edge cases: empty, null, case, whitespace, duplicates |
 | `classify-fault` | Inputs that produce faults: predicate_error, non_string_token etc. |
 | `binding-auto` | Auto-binding produces type names as slot names |
 | `binding-explicit` | Explicit binding renames slots correctly |
@@ -2411,7 +1512,7 @@ Exactly one of `manifest`, `fault`, or `rejected_tokens` appears in `expected` �
 | `chain-result` | ok() and fault() constructors, non_result_return fault |
 | `state-machine` | Valid transitions, invalid transitions, adversarial states/events |
 
-### 14.5 Example Test Cases
+### 16.5 Example Test Cases
 
 **classify-basic-001: Three tokens, explicit binding**
 ```json
@@ -2607,7 +1708,7 @@ Exactly one of `manifest`, `fault`, or `rejected_tokens` appears in `expected` �
 }
 ```
 
-### 14.6 Runner Contract
+### 16.6 Runner Contract
 
 Each language runner is a thin adapter. It reads `suite.json`, calls the implementation's `classify()` (or `vocabulary()`, `chain()`, etc.), and compares results.
 
@@ -2636,7 +1737,7 @@ FUNCTION run_suite(suite_path, implementation):
 
 A runner may skip test cases for features not yet implemented — partial conformance is valid during development. Full conformance requires zero failures and zero skips.
 
-### 14.7 Conformance Levels
+### 16.7 Conformance Levels
 
 | Level | Requirement |
 |---|---|
@@ -2648,9 +1749,9 @@ Implementations declare their conformance level in their README and package meta
 
 ---
 
-## 16. Theory and Implementation Guide
+## 17. Theory and Implementation Guide
 
-### 16.1 Forget What You Know About Type Systems
+### 17.1 Forget What You Know About Type Systems
 
 If you have spent time with Java, TypeScript, or Python type annotations, you have learned a specific thing: types live next to the code that uses them. You put `String name` or `name: str` inline, the compiler or type checker reads it, and VS Code lights up red when you get it wrong. The type system is woven through the code, everywhere, all the time.
 
@@ -2662,7 +1763,7 @@ Honest-type works the same way. You declare what valid tokens look like, once, i
 
 The VS Code red lines are not coming. That is not a limitation. It is the design.
 
-### 16.2 Why It Runs Faster Than Your Java
+### 17.2 Why It Runs Faster Than Your Java
 
 The benchmark results are published at honestcode.software and the source is on GitHub. The short version: pure functions over flat dicts outperform class-based object graphs, measured in nanoseconds, across Java, TypeScript, Python, Go, and a dozen others.
 
@@ -2670,11 +1771,11 @@ This is not surprising once you understand why. A class-based object graph does 
 
 A pure function over a flat dict does one thing: it looks up values by key and returns a new dict. No allocation beyond the return value. No hierarchy. No hidden state. No side effects. The CPU does what it is good at, uninterrupted.
 
-Honest-type adds safety on top of that: every value in the manifest was classified at the boundary before the chain started. A function that receives `manifest["currency"]` knows it is one of `{"USD", "EUR", "GBP"}` because the vocabulary said so and `classify()` enforced it. No defensive checks inside the function. No runtime surprises.
+Honest-type adds safety on top of that: every value in the manifest was classified at the boundary before the chain started. A function that receives `manifest["currency"]` knows it is one of `{"USD", "EUR", "GBP"}` because the vocabulary said so and `classify()` enforced it. No defensive checks inside the function. No runtime surprises. A dispatch table's terminal entry (section 13.7) is not a defensive check: it does not re-test a typed value, it catches a key that only a construction bug could produce and reports it loudly.
 
 Faster and safer is not a tradeoff here. It is the same thing.
 
-### 16.3 The Three Rules for AI Coding Assistants
+### 17.3 The Three Rules for AI Coding Assistants
 
 This section exists because AI coding assistants, including the one you may be using right now, were trained on a corpus dominated by class-based, imperative, object-oriented code. Left to their defaults, they will generate classes, write `if/elif/else` chains, and add layers of abstraction that serve nobody.
 
@@ -2692,12 +1793,12 @@ A chain of `if/elif/else` that dispatches on a type, category, or string value i
 
 Honest-type is a two-pass algorithm over lists and dicts. The entire Python implementation is under 250 lines. If your implementation is growing beyond that, you have added something that was not asked for. The spec is complete. Read it, implement exactly what it says, and stop.
 
-The conformance suite in section 14 is the arbiter. If your implementation passes every test case, it is correct. Add nothing that the test cases do not require.
+The conformance suite in section 16 is the arbiter. If your implementation passes every test case, it is correct. Add nothing that the test cases do not require.
 
-### 16.4 Where to Start
+### 17.4 Where to Start
 
-Read the spec in order. Section 2 (reserved words) and section 3 (vocabulary overlap) are construction-time rules; implement them first because every other section depends on a valid vocabulary. Section 6 (the classify algorithm) is the core; get that right before touching chains or faults. Section 9 (edge case rules) is mandatory and non-negotiable; do not skip it.
+Read the spec in order. Section 2 (reserved words) and section 3 (vocabulary overlap) are construction-time rules; implement them first because every other section depends on a valid vocabulary. Section 6 (the classify algorithm) is the core; get that right before touching chains or faults. Section 11 (edge case rules) is mandatory and non-negotiable; do not skip it.
 
 The Python implementation at `honest/python/honest_type.py` is the reference. When the spec and the implementation disagree, the spec is correct and the implementation has a bug. File it.
 
-When you have an implementation, run the conformance suite from section 14 against it. Core conformance first, then Full, then Verified. Do not declare conformance until the suite says so.
+When you have an implementation, run the conformance suite from section 16 against it. Core conformance first, then Full, then Verified. Do not declare conformance until the suite says so.

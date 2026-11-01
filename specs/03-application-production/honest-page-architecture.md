@@ -31,7 +31,7 @@ honest-page is not a component. It is not a layout engine. It is a contract: a d
 
 ### 1.3 The Reference Implementation
 
-The reference implementation is in `python/templates/base.html` and `python/templates/page.html`, with supporting files `python/app.py` and `python/static/theme.css`. These files are the normative reference for this spec. When this document and the reference implementation disagree, this document is correct.
+The reference implementation is in `python/templates/base.html` and `python/templates/page.html`, with the composition root `python/app.py` and the token stylesheet `python/static/theme.css`. These files are the normative reference for this spec, and honest-page ships them as one installable package (§12). When this document and the reference implementation disagree, this document is correct.
 
 ---
 
@@ -166,6 +166,12 @@ The `/api/alerts/stream` endpoint must emit a keep-alive comment (`: keep-alive\
 ### 4.4 Unauthenticated Users
 
 When no valid session exists, `/api/alerts/stream` returns HTTP 204 No Content. The SSE extension treats this as an empty stream; no error is shown. Application-level login prompts are delivered via honest-auth, not via honest-alerts.
+
+### 4.5 Registering a Custom Source
+
+The three notification surfaces are honest-alerts targets by default (§2.3), but the page does not reserve the SSE stream for honest-alerts alone. A module registers its own source against one declared surface through a hook honest-page exposes. The module names a surface, the event type it emits, and the source. honest-page resolves the surface against the surface registry (§2.1) and registers the source on the stream.
+
+The hook is a door, and the module that uses it declares the dependency, not honest-page. honest-page lists no custom module. A registering module names honest-page and the hook door in its own declaration, so the page contract stays fixed as modules are added. The surface registry carries the other half: each surface names the slot a registered source's markup lands in.
 
 ---
 
@@ -438,6 +444,16 @@ async def intake(request: Request, call_next):
 
 Token priority on collision: `_state` wins over query parameters; query parameters win over path parameters. This ordering reflects the specificity of user intent: explicit state the user established in the DOM is more specific than URL-level parameters.
 
+### 10.4 The Application Factory
+
+The pieces in §10.1 through §10.3 assemble into one running application. honest-py assembles them in a single factory, so the application is built from declared data in one place rather than wired piece by piece down a file. This factory is the composition root: the one point that knows every module an application mounts.
+
+The factory does five things in order. It creates the application object. It mounts the static directory, so the token stylesheet and the client scripts load. It registers the template environment (§10.1). It installs the intake middleware (§10.3) ahead of every route, so each route reads `request.state.manifest` already resolved. It registers one handler per route-map entry (§10.2): honest-page's own routes, and the routes every mounted module declares, the honest-alerts SSE stream and reply routes among them.
+
+The factory returns the application object and constructs nothing at import beyond the declarations a tool reads without running it. The route map and the surface list stay module-level data, so honest-check resolves a path to its chain and a surface to its slot by parsing, never by calling the factory.
+
+The honest-py realization uses FastAPI. `create_app()` returns a `FastAPI` instance, and a host serves that instance with any ASGI server, uvicorn by default. FastAPI is the Python spoke's driver for the HTTP boundary, named here in the integration section and never in the language-agnostic contract: another spoke's factory returns that language's application object and runs on that language's server (framework spec, per-language table).
+
 ---
 
 ## 11. Conformance
@@ -481,3 +497,21 @@ A conformant implementation passes these checks:
 - Route handler passes `request` as first context variable
 - All optional context variables use declared defaults when absent
 - Fragment routes do not extend base.html
+- A single factory (§10.4) builds the application, installs intake ahead of every route, and registers each route-map entry
+- The route map and surface list are module-level data a tool reads without running the factory
+
+---
+
+## 12. Distribution and Install
+
+An honest-framework application installs and starts the way a programmer expects from Rails or Django: install one package, scaffold a project, run it. This section defines the Python spoke; each spoke installs through its own language's package manager.
+
+### 12.1 The Shipped Package
+
+honest-page ships the application factory (§10.4), the base templates (§8), the token stylesheet (§7), and the intake middleware (§10.3) as one installable package. A programmer who installs it holds every piece §2 through §10 require, and writes only their own routes, chains, and templates on top. The factory and the base layer are the distribution; the programmer's project is the part they author.
+
+### 12.2 Scaffolding a Project
+
+The framework's scaffolding command (framework spec, "the same scaffolding commands") generates a new project: a module directory, a route map with one example route, a child template that extends base.html, and an entry that calls the factory. The generated project runs under any ASGI server with no further wiring, the way `rails new` or `django-admin startproject` yields a project that runs on first command.
+
+The generated code is ordinary target-language code. It carries no `.hd` and no conformance obligation: the `.hd` layer builds the framework and is never imposed on an application that adopts it.

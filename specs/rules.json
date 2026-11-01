@@ -79,7 +79,7 @@
       "startup": false,
       "lsp": true,
       "description": "if/elif/else dispatch chain",
-      "prevents": "Cannot enumerate dispatch paths — branches are not data",
+      "prevents": "Cannot enumerate dispatch paths \u2014 branches are not data",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -91,7 +91,7 @@
       "startup": false,
       "lsp": true,
       "description": "Exception caught in non-boundary function",
-      "prevents": "Cannot verify the caught path — catching in business logic hides faults from the manifest",
+      "prevents": "Cannot verify the caught path \u2014 catching in business logic hides faults from the manifest",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -103,7 +103,7 @@
       "startup": false,
       "lsp": true,
       "description": "Class declaration (inheritance or bare class)",
-      "prevents": "Cannot verify purity — no classes (inheritance), non-serializable data",
+      "prevents": "Cannot verify purity \u2014 no classes (inheritance), non-serializable data",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -115,7 +115,7 @@
       "startup": false,
       "lsp": true,
       "description": "I/O inside non-boundary function",
-      "prevents": "Cannot verify boundary isolation — I/O outside declared boundaries",
+      "prevents": "Cannot verify boundary isolation \u2014 I/O outside declared boundaries",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -187,7 +187,7 @@
       "startup": false,
       "lsp": true,
       "description": "Non-serializable return value",
-      "prevents": "Cannot verify purity — no classes (inheritance), non-serializable data",
+      "prevents": "Cannot verify purity \u2014 no classes (inheritance), non-serializable data",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -223,7 +223,7 @@
       "startup": false,
       "lsp": true,
       "description": "Unbounded database routing key",
-      "prevents": "Cannot enumerate the routing key's value space — a predicate behind a database routing key is unbounded",
+      "prevents": "Cannot enumerate the routing key's value space \u2014 a predicate behind a database routing key is unbounded",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -235,7 +235,19 @@
       "startup": false,
       "lsp": true,
       "description": "Recognizer reused across slots",
-      "prevents": "Cannot distinguish slots — recognizer reuse collapses semantic roles",
+      "prevents": "Cannot distinguish slots \u2014 recognizer reuse collapses semantic roles",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC-P015",
+      "severity": "Warning",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": true,
+      "description": "Default parameter value (implicit default)",
+      "prevents": "Cannot exercise the omitted-argument region — a default absorbs the caller's omission, so no generated case covers the path where the argument is absent",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -247,7 +259,7 @@
       "startup": false,
       "lsp": true,
       "description": "Nonlocal closure over mutable state",
-      "prevents": "Cannot verify purity — closure carries mutable state",
+      "prevents": "Cannot verify purity \u2014 closure carries mutable state",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -259,7 +271,7 @@
       "startup": false,
       "lsp": true,
       "description": "Serializer not declared as chain link",
-      "prevents": "Cannot generate serialization tests — HTTP output function has no declared vocabulary",
+      "prevents": "Cannot generate serialization tests \u2014 HTTP output function has no declared vocabulary",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -271,7 +283,31 @@
       "startup": false,
       "lsp": true,
       "description": "Unbounded call target",
-      "prevents": "Cannot enumerate the callees — a call whose target set is unbounded makes the call graph infinite",
+      "prevents": "Cannot enumerate the callees \u2014 a call whose target set is unbounded makes the call graph infinite",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC-P019",
+      "severity": "Warning",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": true,
+      "description": "Lookup read with a fallback default (dict.get(key, default))",
+      "prevents": "Cannot enumerate the miss \u2014 a lookup's fallback default serves an unknown key as a known one, so no generated case covers the unknown-key path",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC-P020",
+      "severity": "Warning",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": true,
+      "description": "Dispatch read with no reported miss (bare TABLE[key])",
+      "prevents": "Cannot enumerate the miss \u2014 a dispatch table read without a guard lets an unknown key stop the program with a bare KeyError, so no generated case covers the unknown-key path",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -283,7 +319,7 @@
       "startup": false,
       "lsp": true,
       "description": "Orphan function (no role, not reachable)",
-      "prevents": "Cannot reach every function — orphan function has no declared role",
+      "prevents": "Cannot reach every function \u2014 orphan function has no declared role",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -308,6 +344,30 @@
       "lsp": false,
       "description": "Declared awaited disagrees with the implementation",
       "prevents": "",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC-R004",
+      "severity": "Error",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": false,
+      "description": "The card names no absence arm and the code can return None, or the reverse",
+      "prevents": "A caller getting None where the card promised an answer, or testing for an absence that cannot arrive.",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC-R005",
+      "severity": "Error",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": false,
+      "description": "A declared function's body yields, so it answers with a stream rather than a value",
+      "prevents": "A second reader of a once-read stream getting an empty answer with no error.",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -367,10 +427,70 @@
       "startup": false,
       "lsp": false,
       "description": "Declaration and implementation do not resolve to each other",
-      "prevents": "",
+      "prevents": "An exported function nobody declared, a declaration that resolves to no function, and a declaration whose parameter count has drifted from the code.",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": false
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC-REF006",
+      "severity": "Error",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": false,
+      "description": "A side names a door the declared module does not have",
+      "prevents": "A seam between two modules pointing at a function that is not there.",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC-REF007",
+      "severity": "Error",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": false,
+      "description": "A side names something that module declares and that is not a door",
+      "prevents": "The world reaching a module somewhere other than its entrance, a pure function most often.",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC-REF008",
+      "severity": "Error",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": false,
+      "description": "A cross-module side effect names a module but no door",
+      "prevents": "A seam that names another module without its door, which leaves HC-REF006 and HC-REF007 nothing to resolve.",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC-REF009",
+      "severity": "Info",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": false,
+      "description": "Two modules meet at a shared non-ambient resource and neither names the other",
+      "prevents": "A hidden coupling where one module writes a resource and another reads it, invisible because each declares only its own world side and neither names the other. A question, not a gate failure: a module may honestly stand alone.",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
+      "id": "HC-REF010",
+      "severity": "Info",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": false,
+      "description": "A module touches no side of the world and exactly one module calls it",
+      "prevents": "A module that stands apart while earning nothing by standing apart: it touches no world and serves one caller, so its own file may be hiding a function that belongs in that caller. A question, not a gate failure: a second caller may be coming, and folding is a person's call. A module that owns a world side is never asked.",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
     },
     {
       "id": "HC-SM01",
@@ -379,7 +499,7 @@
       "startup": true,
       "lsp": true,
       "description": "State not in vocabulary",
-      "prevents": "Cannot generate exhaustive state machine tests — state/event space incomplete",
+      "prevents": "Cannot generate exhaustive state machine tests \u2014 state/event space incomplete",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -486,7 +606,7 @@
       "firing_time": "Static",
       "startup": true,
       "lsp": false,
-      "description": "Source does not parse — gates every other rule",
+      "description": "Source does not parse \u2014 gates every other rule",
       "prevents": "",
       "enforced_by": "honest-check",
       "deferred_cases": [],
@@ -499,7 +619,7 @@
       "startup": true,
       "lsp": true,
       "description": "Link missing vocabulary",
-      "prevents": "Cannot generate chain contract tests — vocabulary missing or incompatible",
+      "prevents": "Cannot generate chain contract tests \u2014 vocabulary missing or incompatible",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -511,7 +631,7 @@
       "startup": true,
       "lsp": true,
       "description": "Chain type mismatch",
-      "prevents": "Cannot generate chain contract tests — vocabulary missing or incompatible",
+      "prevents": "Cannot generate chain contract tests \u2014 vocabulary missing or incompatible",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -523,11 +643,11 @@
       "startup": true,
       "lsp": true,
       "description": "Recognizer overlap",
-      "prevents": "Cannot generate unambiguous classification — recognizers overlap or are catch-all",
+      "prevents": "Cannot generate unambiguous classification \u2014 recognizers overlap or are catch-all",
       "enforced_by": "honest-check",
       "deferred_cases": [
         {
-          "case": "predicate × predicate",
+          "case": "predicate \u00d7 predicate",
           "owner": "honest-test",
           "description": "Predicate overlap requires empirical testing"
         }
@@ -565,7 +685,7 @@
       "startup": true,
       "lsp": true,
       "description": "Composed type references unknown base",
-      "prevents": "Cannot generate composed-type or chain tests — references unresolved or chain empty",
+      "prevents": "Cannot generate composed-type or chain tests \u2014 references unresolved or chain empty",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -577,7 +697,7 @@
       "startup": true,
       "lsp": true,
       "description": "Empty chain",
-      "prevents": "Cannot generate composed-type or chain tests — references unresolved or chain empty",
+      "prevents": "Cannot generate composed-type or chain tests \u2014 references unresolved or chain empty",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -589,7 +709,7 @@
       "startup": false,
       "lsp": true,
       "description": "Impure link (framework tier)",
-      "prevents": "Cannot verify boundary isolation — I/O outside declared boundaries",
+      "prevents": "Cannot verify boundary isolation \u2014 I/O outside declared boundaries",
       "enforced_by": "honest-check",
       "deferred_cases": [],
       "emitted_by_honest_check": true
@@ -625,7 +745,7 @@
       "startup": true,
       "lsp": true,
       "description": "Catch-all recognizer",
-      "prevents": "Cannot generate unambiguous classification — recognizers overlap or are catch-all",
+      "prevents": "Cannot generate unambiguous classification \u2014 recognizers overlap or are catch-all",
       "enforced_by": "honest-check",
       "deferred_cases": [
         {

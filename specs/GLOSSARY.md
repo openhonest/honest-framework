@@ -15,7 +15,7 @@ Two kinds of term earn a place: words the framework coins for its own concepts (
 | **vocabulary** | The named set of kinds an application declares — its list of recognizers. The application's set of allowed shapes. |
 | **link** | One step in handling a request: a function that takes the manifest and returns it changed, or returns a fault. Marked as a boundary step when it is allowed to touch the outside world. |
 | **chain** | An ordered list of steps the manifest flows through, stopping at the first fault. A chain is itself a step, so chains nest. |
-| **guard** | An ordinary early-return precondition a developer writes in a link before a write — plain code, the same as any other business rule. (In honest-auth, still pending revision, a guard is written as a data expression; see that spec.) |
+| **guard** | An ordinary early-return precondition a developer writes in a link before a write — plain code, the same as any other business rule. |
 | **fault** | A reported problem, carried as plain data `{code, message, who-is-at-fault, detail}` — never thrown as an exception except at the outer edge. |
 | **rejection** | An input that could not be recognized or placed, carried as data in the manifest — not an error that stops the program. |
 | **`.hd`** | A module's architecture written down as data: its types, its functions and the column each belongs to, its chains, its boundaries, and its routes — in a form a machine can check and draw, independent of the language the module is written in. |

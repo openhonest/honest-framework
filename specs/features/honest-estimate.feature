@@ -23,22 +23,22 @@ Feature: honest-estimate — deductive SIZE from the .hd contract boundary
     When cfp maps each process's role and side effects to data movements
     Then it sums an Entry or eXit from the role and a Read or Write per side effect, flooring each process at two movements
 
-  Scenario: depth sums bits of case-distinction over closed vocabularies and composed types
+  Scenario: depth sums bits and cases over the closed vocabularies a process commits to
     Given a module's IR
-    When depth walks each process's input parameters
-    Then a parameter typed by a set or vocabulary contributes log-2 of its cardinality, a composed type the sum of its fields' bits
-    And a parameter of any other type is flagged open and contributes nothing
+    When depth gathers, for each process, the distinct closed vocabularies on its inputs, on its own eXit return, and on the returns of the pure functions or readers it dispatches on
+    Then it sums log-2 of each vocabulary's cardinality as bits and the cardinalities themselves as cases, counting a vocabulary reached by two channels once
+    And an input of any open type is flagged and contributes nothing
 
   Scenario: quality reports the build-time defect proxies per process
     Given the mutation and escaped-defect counts and the process count
     When quality divides them
     Then it reports the non-equivalent mutation density and the escaped-defect density per process, labelled a proxy
 
-  Scenario: cost projects a dollar band from an injected rate model
-    Given a size in CFP and a priced, dated rate model
-    When cost multiplies size by the model's per-CFP rates
-    Then it reports the compute, oversight, tooling, and total dollars with the price date and basis
-    And with no model it produces no figure and is marked uncalibrated, fabricating no constant
+  Scenario: cost projects a dollar band from breadth and depth, priced by work class
+    Given a size in CFP, a case count, a work class, and a priced, dated rate model
+    When cost sums the CFP times the per-CFP rates and the case count times the per-case rate, both read under the work class
+    Then it reports the compute, oversight, tooling, case, and total dollars with the price date, basis, and work class
+    And with no model, or a work class the model does not price, it produces no figure and is marked uncalibrated, fabricating no constant
 
   Scenario: duration projects a wall-clock band from an injected rate model
     Given a size in CFP and a rate model's throughput

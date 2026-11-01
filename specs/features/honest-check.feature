@@ -108,13 +108,23 @@ Feature: honest-check — the static honesty gate
     Then it reports true when an inline ignore covers that line
     Or when a disable block spans that line
 
-  # startup.py — framework startup integration
+  # the startup door — framework startup integration
 
-  Scenario: startup_check runs the fast rules during boot and acts on findings
+  Scenario: startup_check hands the paths to the orchestrator and acts on the findings
     Given paths to check and a chosen reaction to dishonest code
-    When startup_check runs the startup-eligible rules over them
-    Then clean code passes silently
-    But findings are warned, raised, or halt the boot per the chosen reaction
+    When startup_check hands them to the orchestrator
+    Then it returns the diagnostics the orchestrator folds back
+    But a blocking finding raises instead, per the chosen reaction
+
+  Scenario: check_paths reads each file and runs the checker over it
+    Given a list of file paths
+    When check_paths reads each one and checks it
+    Then every file's diagnostics are folded into a single list
+
+  Scenario: read_source reads one file's text from disk
+    Given a path to a file on disk
+    When read_source reads it
+    Then it returns the file's text
 
   # rules.py — the rules and the entry point
 
@@ -152,6 +162,29 @@ Feature: honest-check — the static honesty gate
     Given an inner function that captures an enclosing name and rebinds it
     When check_hc_p016 inspects it
     Then it flags the mutable closure as HC-P016
+
+  Scenario: _default_is_empty tells an empty default from a real one
+    Given a parameter default value node
+    When _default_is_empty inspects it
+    Then it returns true for None, false, zero, empty text, or an empty collection or constructor, and false for a real value
+
+  Scenario: check_hc_p015 flags a parameter default that bakes in a real value
+    Given a function whose parameter defaults to a non-empty value, such as a number or a name
+    When check_hc_p015 inspects it
+    Then it warns on the baked-in default as HC-P015
+    And it leaves an empty default alone, such as None or an empty list, because empty is the honest way to say nothing was given
+
+  Scenario: check_hc_p019 flags a fallback lookup and allows a reported miss
+    Given a lookup written as a get or pop with a second argument, beside a lookup read without a fallback that returns a report when the key is unexpected
+    When check_hc_p019 inspects them
+    Then it warns on the fallback lookup as HC-P019
+    And it leaves the reported-miss lookup alone, because the unexpected value is returned and named rather than swallowed
+
+  Scenario: check_hc_p020 flags a dispatch read with no reported miss
+    Given a dispatch table read as a bare subscript with a variable key and no membership guard, beside the same read placed under an if-key-not-in-table arm that reports the miss
+    When check_hc_p020 inspects them
+    Then it warns on the unguarded dispatch read as HC-P020
+    And it leaves the guarded read and any constant-key read alone, because the miss is reported and named rather than left to a bare KeyError
 
   Scenario: check_hc_p004 flags hidden side effects in a non-boundary function
     Given a non-boundary function that performs input or output, draws on non-determinism, or reads mutable module-level state

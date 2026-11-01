@@ -29,7 +29,7 @@ All of it shares one runner and one coverage model. Coverage is **structural, no
 
 ### 1.1 Relationship to Other Specs
 
-The test generation algorithms in this document were originally specified in `honest-type-architecture.md` section 13. That document now defers to this one as the canonical reference. `honest-type-architecture.md` section 14 (conformance suite) remains in that document; it is the cross-language contract for implementing `classify()` and is not honest-test's concern.
+The test generation algorithms in this document were originally specified in `honest-type-architecture.md` section 15. That document now defers to this one as the canonical reference. `honest-type-architecture.md` section 16 (conformance suite) remains in that document; it is the cross-language contract for implementing `classify()` and is not honest-test's concern.
 
 honest-test depends on honest-check's declaration graph. It reads the same vocabulary, binding, link, and chain declarations that honest-check analyzes statically, and exercises them dynamically.
 
