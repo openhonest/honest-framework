@@ -3,16 +3,20 @@ name = "honest-parse"
 version = "0.1.0"
 description = "The shared tree-sitter parsing boundary of the Honest Framework: the single place source is parsed."
 requires-python = ">=3.11"
+# Pinned, not floored. A grammar renames a node type inside a release, and every comparison on
+# that name stops matching while the rules report clean and no test fails (the CLI that generates
+# each parser was pinned for the same reason in f2600c3). The lockfile already resolves these;
+# the pin stops a plain upgrade from moving them out from under the node-type checks.
 dependencies = [
-    "tree-sitter>=0.23",
-    "tree-sitter-python>=0.23",
-    "tree-sitter-javascript>=0.23",
-    "tree-sitter-ruby>=0.23",
-    "tree-sitter-php>=0.23",
-    "tree-sitter-go>=0.23",
-    "tree-sitter-elixir>=0.3",
-    "tree-sitter-html>=0.23",
-    "tree-sitter-css>=0.23",
+    "tree-sitter==0.25.2",
+    "tree-sitter-python==0.25.0",
+    "tree-sitter-javascript==0.25.0",
+    "tree-sitter-ruby==0.23.1",
+    "tree-sitter-php==0.24.1",
+    "tree-sitter-go==0.25.0",
+    "tree-sitter-elixir==0.3.5",
+    "tree-sitter-html==0.23.2",
+    "tree-sitter-css==0.25.0",
     "tree-sitter-honest-jinja",
     "tree-sitter-honest-hd",
 ]

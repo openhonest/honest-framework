@@ -1,18 +1,33 @@
-# honest-parse declared in .hd — the shared parsing boundary of the framework. `parse` is where
-# tree-sitter (external) is touched; the node helpers are pure functions over the resulting tree.
+# honest-parse declared in .hd — the framework's only parser. Written in the order the hd skill
+# sets: the world first, then the path its door takes, then the types, then what the orchestrator
+# pulls, then the pure functions it reaches.
+# Architecture: ../../specs/02-code-quality/honest-parse-architecture.md
 
 module honest-parse
 
   layer foundation
 
-  # The surface, closed: every side of the world a boundary here touches, and no other.
-  inputs = { "tree-sitter" }
+  # Step 1. The world, and nothing else is in it. Another module asks for a syntax tree; the
+  # grammars live in tree-sitter. This module writes nothing anywhere: its answer travels back
+  # through the door, and a return is not a write.
+  inputs  = { "caller" : "another module asking for a syntax tree",
+              "tree-sitter" : "the parser library that owns every grammar" }
+  outputs = { }
 
-  type Node = {
-    type: str
-    start_byte: int
-    end_byte: int
-  }
+  # Step 3. The dictionary for the one path. A grammar name is a closed set of words, so it is a
+  # vocabulary and never a str: the module carries ten grammars and no eleventh is sayable.
+  set grammars = { "python", "javascript", "ruby", "php", "go", "elixir",
+                   "html" : "the HTML and HTMX template grammar",
+                   "jinja" : "the Jinja template grammar tree-sitter-html reads as opaque text",
+                   "css" : "component stylesheets, for resolving a class to a rule",
+                   "hd" : "the architecture declarations themselves" }
+  vocabulary Language = { grammars }
+
+  # Node is tree-sitter's syntax node, not parse's. parse wraps tree-sitter and hands the node
+  # straight out; consumers read ten of its members, one a method that takes an argument, so no
+  # record is true. It is declared foreign: the source it comes from, and no fields, because
+  # describing someone else's object is a copy that drifts.
+  type Node = foreign "tree-sitter"
 
   type Tree = {
     root_node: Node
@@ -23,36 +38,38 @@ module honest-parse
     col: int
   }
 
-  # --- The parsing boundary: bytes + a language -> a tree ------------------
+  type Fault = {
+    code: str
+    message: str
+    category: str
+    detail: dict<str, str>
+  }
 
-  boundary_in fn parse : (source: bytes, language: str) -> Tree side_effect reads "tree-sitter"
+  # Step 1, the cards. One per thing in the world, each a signature and a side effect and no more.
 
-  boundary_in fn parse_python : (source: bytes) -> Tree side_effect reads "tree-sitter"
+  boundary_in fn parse_source : (source: bytes, path: str) -> Tree | Fault side_effect reads "caller" note "the door: it hands the call to the one orchestrator and adds nothing of its own"
 
-  boundary_in fn parse_javascript : (source: bytes) -> Tree side_effect reads "tree-sitter"
+  reader fn parse : (source: bytes, language: Language) -> Tree raises unknown_grammar side_effect reads "tree-sitter" note "the one place tree-sitter is touched; a pull many orchestrators may ask"
 
-  boundary_in fn parse_ruby : (source: bytes) -> Tree side_effect reads "tree-sitter"
+  # Step 2. The door's path, which names the orchestrator by what the path does.
 
-  boundary_in fn parse_php : (source: bytes) -> Tree side_effect reads "tree-sitter"
+  orchestrator fn place_source : (source: bytes, path: str) -> Tree | Fault invokes language_of, parse, first_error_node, line_col note "reads the source under the grammar its path names, and returns a located fault when the tree has an error"
 
-  boundary_in fn parse_go : (source: bytes) -> Tree side_effect reads "tree-sitter"
+  chain place = parse_source -> place_source
 
-  boundary_in fn parse_elixir : (source: bytes) -> Tree side_effect reads "tree-sitter"
+  # Step 5. The pure functions that one orchestrator reaches.
 
-  boundary_in fn parse_html : (source: bytes) -> Tree side_effect reads "tree-sitter"
+  fn language_of : (path: str) -> Language | Fault
 
-  boundary_in fn parse_jinja : (source: bytes) -> Tree side_effect reads "tree-sitter"
+  # Tree helpers. honest-check and honest-test import all four directly, so the world reaches the
+  # pure core here with no door in between. They are declared as what they are and the map says so.
 
-  boundary_in fn parse_css : (source: bytes) -> Tree side_effect reads "tree-sitter"
-
-  boundary_in fn parse_hd : (source: bytes) -> Tree side_effect reads "tree-sitter"
-
-  # --- Pure helpers over the tree ------------------------------------------
-
-  fn node_text : (node: Node, source: bytes) -> str
 
   fn line_col : (node: Node) -> Position
 
   fn walk : (node: Node) -> list<Node>
 
-  fn first_error_node : (root: Node) -> Node
+  fn first_error_node : (root: Node) -> Node | NOTHING invokes walk note "the first error or missing node, or nothing when the tree is clean"
+
+  entry "import honest_parse" -> parse_source
+  entry "import honest_parse" -> parse
