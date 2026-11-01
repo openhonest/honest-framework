@@ -8,11 +8,12 @@ I/O. HonestCheckError is the one typed exception, raised at the door on on_error
 
 import sys
 
-from honest_check.core import check_source
+from honest_check.core import check_source, cross_declaration, pair_source
 from honest_check.readers import (
     discover_files,
     load_config,
     load_project_config,
+    read_declaration,
     read_source,
     write_report,
 )
@@ -82,28 +83,61 @@ def startup_check(paths, on_error, severity):
 
 
 def run_check(argv):
-    """The orchestrator the CLI door hands the argument vector to (section 2.1). It parses
-    the arguments, pulls the [check] and [rules] config each once, discovers the source
-    files, runs the pure core over each, prepares the report, renders it in the chosen
-    format, writes it to stdout, and returns the exit code."""
+    """The orchestrator the CLI door hands the argument vector to (section 2.1). It parses the
+    arguments, pulls the [check] config once, and discovers the source files, then runs in one
+    of two modes chosen by whether CliArgs.declaration is empty.
+
+    Base mode (empty declaration) pulls the per-rule config and runs the pure core check_source
+    over each discovered file, folding every file's diagnostics into one list. Crossing mode
+    (non-empty declaration) pulls the one parsed module with read_declaration; when that read
+    fails it routes the Fault straight outward as its own answer (ExitCode | Fault), checking
+    nothing over a declaration it could not open (§HC-R002). Otherwise it pulls the export
+    module's text, pairs each discovered file's path with its text into a SourceFile, and runs
+    cross_declaration once over the whole package, crossing only the rules named in
+    include_rules. Both modes feed one combined list into the same report/format/write/exit
+    tail, returning the exit code resolve_exit_code decides."""
     args = parse_args(argv)
     project = load_project_config()
     files = discover_files(args["paths"], project["exclude"])
-    rule_config = load_config()
-    diagnostics = []
-    for path in files:
-        diagnostics.extend(check_source(read_source(path), path, rule_config))
+
+    if args["declaration"]:
+        declaration = read_declaration(args["declaration"])
+        if "problem" in declaration:
+            return declaration
+        export_source = read_source(args["exports"]) if args["exports"] else ""
+        sources = [pair_source(path, read_source(path)) for path in files]
+        diagnostics = cross_declaration(
+            sources, declaration, export_source, args["include_rules"]
+        )
+    else:
+        rule_config = load_config()
+        diagnostics = []
+        for path in files:
+            diagnostics.extend(check_source(read_source(path), path, rule_config))
+
     report = prepare_report(diagnostics, args, project["adoption"])
     write_report(by_format[args["format"]](report))
     return resolve_exit_code(report)
 
 
 def main(argv):
-    """The command-line door (section 2.1). It carries only I/O: it hands argv to run_check
-    and returns the exit code run_check produced; the __main__ shim exits the process with
-    it."""
-    return run_check(argv)
+    """The command-line door (section 2.1). It carries only I/O: it hands argv to run_check and
+    turns run_check's answer into the process exit. run_check answers either an ExitCode or the
+    declaration-read Fault it routed outward. On an ExitCode the __main__ shim exits with it. On
+    the Fault — a configured .hd that was missing or did not parse (§HC-R002) — the door
+    discharges it at exit code 2 by raising HonestCheckError carrying the Fault's problem and
+    remedy, rather than letting a returned value be ignored: this is the one place a Fault
+    crosses from a value into a world effect."""
+    result = run_check(argv)
+    if isinstance(result, dict):
+        raise HonestCheckError(f"{result['problem']} {result['remedy']}")
+    return result
 
 
 if __name__ == "__main__":
-    raise SystemExit(int(main(sys.argv[1:])))
+    try:
+        exit_code = int(main(sys.argv[1:]))
+    except HonestCheckError as read_failure:
+        print(str(read_failure), file=sys.stderr)
+        exit_code = 2
+    raise SystemExit(exit_code)

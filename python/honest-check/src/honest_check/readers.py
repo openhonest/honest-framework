@@ -10,6 +10,7 @@ import fnmatch
 import os
 import tomllib
 
+from honest_design import read_hd
 from honest_parse import language_of
 
 
@@ -114,6 +115,39 @@ def load_project_config():
         "exclude": check.get("exclude", []),
         "adoption": check.get("adoption", "Declared"),
     }
+
+
+def read_declaration(hd_path):
+    """Read the named .hd from disk, parse it through honest-design's read_hd, and return the
+    one parsed module (a Declaration), or a Fault when the .hd is missing or does not parse
+    (section 2.1, §HC-R002).
+
+    The declaration is the gate's own ground truth, so a run that cannot read it must fail,
+    never pass quietly: the Fault is honest-check's own {problem, remedy} record, a value that
+    travels by return. run_check routes it outward and the door discharges it as exit code 2.
+    read_declaration reads and parses and does nothing else — it does not check, and it does
+    not construct the declaration shape, which is honest-design's to own.
+
+    hd_path is the filesystem path named by --declaration; run_check calls this only when that
+    value is non-empty. Its one side effect is reading the filesystem.
+    """
+    if not os.path.isfile(hd_path):
+        return {
+            "problem": f"the declaration path {hd_path!r} named by --declaration does not "
+            "name a readable file.",
+            "remedy": "correct the --declaration path to the module's .hd.",
+        }
+    with open(hd_path, "r", encoding="utf-8") as handle:
+        text = handle.read()
+    parsed = read_hd(text)
+    if "ok" not in parsed:
+        return {
+            "problem": f"honest-design could not parse the declaration at {hd_path!r}: "
+            f"{parsed.get('err')!r}.",
+            "remedy": "fix the declaration so honest-design can parse it.",
+        }
+    modules = parsed["ok"]["modules"]
+    return modules[0]
 
 
 def write_report(text):

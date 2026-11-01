@@ -1,8 +1,13 @@
 """honest-check — the static checker, the honesty gate.
 
-The eighteen declared functions of honest-check.hd, re-exported so a caller writes
-`from honest_check import check_source`. Every module-level def across this package is
-one of these eighteen; every other helper is nested or module-level data.
+The twenty-one declared functions of honest-check.hd, re-exported so a caller writes
+`from honest_check import check_source`. Every module-level def across this package is one
+of these twenty-one; every other helper is nested or module-level data.
+
+__all__ is exactly the twenty-one declared functions, the surface HC-REF005 crosses against
+the declaration. HonestCheckError is honest-check's sanctioned boundary exception, declared
+in the .hd as a `raises` target rather than a `fn`, so it stays importable by name but is not
+in the declared function surface __all__ publishes.
 """
 
 from honest_check.cli import (
@@ -12,11 +17,12 @@ from honest_check.cli import (
     run_check,
     startup_check,
 )
-from honest_check.core import check_source
+from honest_check.core import check_source, cross_declaration, pair_source
 from honest_check.readers import (
     discover_files,
     load_config,
     load_project_config,
+    read_declaration,
     read_source,
     write_report,
 )
@@ -32,9 +38,9 @@ from honest_check.report import (
 )
 
 __all__ = [
-    "HonestCheckError",
     "check_paths",
     "check_source",
+    "cross_declaration",
     "discover_files",
     "enforced_rules_of",
     "format_github",
@@ -44,8 +50,10 @@ __all__ = [
     "load_config",
     "load_project_config",
     "main",
+    "pair_source",
     "parse_args",
     "prepare_report",
+    "read_declaration",
     "read_source",
     "resolve_exit_code",
     "run_check",

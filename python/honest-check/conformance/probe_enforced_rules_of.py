@@ -1,7 +1,7 @@
 """enforced_rules_of returns the cumulative rules a level enforces (section 9.4).
 
 HC-P001 is enforced at Structural; HC-SYN holds at every level; HC001 is not
-enforced at Structural but is at Typed; Declared enforces all 50 rules the levels
+enforced at Structural but is at Typed; Declared enforces all 53 rules the levels
 cover.
 """
 
@@ -18,7 +18,7 @@ _MEMBERSHIP = [
 
 # The strictest level enforces every rule the levels cover.
 _COUNTS = [
-    {"level": "Declared", "count": 50},
+    {"level": "Declared", "count": 53},
 ]
 
 

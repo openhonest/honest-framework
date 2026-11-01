@@ -98,7 +98,7 @@ honest-check [options] [paths...]
 An adopter choosing a level (section 9.4) needs one number per rule: how much would this cost me? `--report` answers it. It runs every rule across the tree and prints the count for each, marking which are enforced at the declared level and which the next level up would add.
 
 ```
-honest-check: adoption level Boundary — 17 of 47 rules enforced.
+honest-check: adoption level Boundary — 17 of 53 rules enforced.
 
   rule        severity  findings  enforced
   HC-P001     error            0  yes
@@ -1891,6 +1891,8 @@ src/pipelines/user.py:42: info
 | HC-R001 | Error | Static | — | Orphan function (no role, not reachable) |
 | HC-R002 | Error | Static | — | Output boundary invokes an orchestrator or an input boundary |
 | HC-R003 | Error | Static | — | Declaration and code disagree about awaiting (async def without `awaited`, or `awaited` over a plain def) |
+| HC-R004 | Error | Static | — | Declaration and code disagree about absence (code returns nothing with no declared absence arm, or the reverse) |
+| HC-R005 | Error | Static | — | Declared function answers with a stream (a declared value whose body yields) |
 | HC-OR001 | Error | Static | — | Orchestrator calls another orchestrator |
 | HC-OR003 | Warning | Static | — | Suspected duplication between orchestrators |
 | HC-A001 | Warning | Static | — | No AuthProvider registered |
@@ -1980,7 +1982,7 @@ An adoption level is a named, closed set of rules. A codebase declares one; the 
 | **Structural** | The shape of the code: no classes, no dispatch chains, no hidden state in closures or constructors, no lifecycle hooks | HC-P001, HC-P003, HC-P007, HC-P011, HC-P016 |
 | **Boundary** | I/O, faults, persistence, and identity cross only at declared boundaries; the interior is pure | HC-P002, HC-P004, HC-P005, HC-P006, HC-P010, HC-P013, HC-ST001, HC-A001, HC-A002 |
 | **Typed** | The vocabulary, chain, and state-machine type system holds | HC001–HC011, HC-SM01–HC-SM05, HC-P014, HC-P017 |
-| **Declared** | Everything is declared rather than inferred: roles, orchestration, static references, and user state | HC-R001, HC-R002, HC-R003, HC-OR001, HC-OR003, HC-REF001–HC-REF004, HC-REF006–HC-REF008, HC-ST002, HC-HF001, HC-HF002 |
+| **Declared** | Everything is declared rather than inferred: roles, orchestration, static references, and user state | HC-R001, HC-R002, HC-R003, HC-R004, HC-R005, HC-OR001, HC-OR003, HC-REF001–HC-REF008, HC-ST002, HC-HF001, HC-HF002 |
 
 **Three rules hold at every level: HC-SYN, HC-SUP001, and HC-SUP002.** A codebase that does not parse has no level, and the suppression guarantee of section 7.4 cannot be level-dependent — if it were, a low level would silently buy the right to hide things, which is the dial problem again.
 
@@ -1995,12 +1997,12 @@ adoption = "Boundary"
 
 **Rules above the declared level still run, and still report, downgraded to `info`.** They never fail the run and they are never dropped — the same treatment a suppressed diagnostic gets, for the same reason. A level is a statement about what a codebase holds today, not permission to stop looking.
 
-**The denominator is 50, not 57.** Section 8 lists 57 rules. Seven of them belong to no level. Three are the test-time rules honest-test owns (HC-P008, HC-P009, HC-P012), which no adoption level can enforce because honest-check does not verify them. Two, HC-REF009 and HC-REF010, are questions that never fail a run, so they sit outside the levels by design. The last two, HC-P018 and HC-REF005, are unassigned and should be placed; until they are, a run counts against the 50 rules the levels do cover and says so.
+**The denominator is 53, not 59.** Section 8 lists 59 rules. Six of them belong to no level. Three are the test-time rules honest-test owns (HC-P008, HC-P009, HC-P012), which no adoption level can enforce because honest-check does not verify them. Two, HC-REF009 and HC-REF010, are questions that never fail a run, so they sit outside the levels by design. The last, HC-P018, is unassigned and should be placed; until it is, a run counts against the 53 rules the levels do cover and says so.
 
 **Every run states its level.** Human output opens with it, and the JSON `summary` carries `adoption` and `enforced_rules`. A passing run therefore always says what it proved:
 
 ```
-honest-check: adoption level Boundary — 17 of 47 rules enforced.
+honest-check: adoption level Boundary — 17 of 53 rules enforced.
 ```
 
 **Ordering.** Suppression is resolved first (section 7.4), then the level is applied. A suppressed diagnostic keeps its directive alive whether or not its rule is enforced at the current level, so raising or lowering a level never makes a live directive look dead.

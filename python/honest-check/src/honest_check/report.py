@@ -12,7 +12,7 @@ import json
 _FORMATS = frozenset({"human", "json", "github", "junit"})
 
 # The section 9.4 level-to-rule membership, as data. Four cumulative level sets plus the
-# always-on three, 50 members in all. enforced_rules_of folds a named set, never a phrase.
+# always-on three, 53 members in all. enforced_rules_of folds a named set, never a phrase.
 _ALWAYS_RULES = frozenset({"HC-SYN", "HC-SUP001", "HC-SUP002"})
 _STRUCTURAL_RULES = frozenset({"HC-P001", "HC-P003", "HC-P007", "HC-P011", "HC-P016"})
 _BOUNDARY_RULES = frozenset(
@@ -55,12 +55,15 @@ _DECLARED_RULES = frozenset(
         "HC-R001",
         "HC-R002",
         "HC-R003",
+        "HC-R004",
+        "HC-R005",
         "HC-OR001",
         "HC-OR003",
         "HC-REF001",
         "HC-REF002",
         "HC-REF003",
         "HC-REF004",
+        "HC-REF005",
         "HC-REF006",
         "HC-REF007",
         "HC-REF008",
@@ -82,14 +85,20 @@ _RULES_ADDED_AT = {
 }
 
 # The rules the adoption levels cover, the denominator of the adoption line (section 9.4).
-_TOTAL_COVERED = 50
+_TOTAL_COVERED = 53
 
 # severity ordering, so the --severity threshold keeps findings at or above it.
 _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
 
 # The flag tables parse_args dispatches on: value flags consume the next token, list flags
 # append it, boolean flags set a field true. A token in none of them is a positional path.
-_VALUE_FLAGS = {"--config": "config_path", "--format": "format", "--severity": "severity"}
+_VALUE_FLAGS = {
+    "--config": "config_path",
+    "--format": "format",
+    "--severity": "severity",
+    "--declaration": "declaration",
+    "--exports": "exports",
+}
 _LIST_FLAGS = {"--rule": "include_rules", "--no-rule": "exclude_rules"}
 _BOOL_FLAGS = {"--report": "report_mode"}
 
@@ -98,8 +107,9 @@ def parse_args(argv):
     """Turn the raw argument vector into the resolved CliArgs (section 2.1).
 
     Absence is resolved here, at the boundary, to an explicit bounded value: an omitted or
-    unrecognized --format becomes 'human', an omitted --severity becomes 'warning'. --fix
-    and --watch are not carried by this layer.
+    unrecognized --format becomes 'human', an omitted --severity becomes 'warning', an omitted
+    --declaration or --exports becomes the empty string — the exact signal run_check reads to
+    stay in base mode. --fix and --watch are not carried by this layer.
     """
     args = {
         "paths": [],
@@ -109,6 +119,8 @@ def parse_args(argv):
         "exclude_rules": [],
         "config_path": "",
         "report_mode": False,
+        "declaration": "",
+        "exports": "",
     }
 
     def take_value(index, field):
@@ -144,7 +156,7 @@ def parse_args(argv):
 def enforced_rules_of(level):
     """Every HC rule enforced at the given adoption level — the section 9.4 cumulative
     membership. always_rules hold everywhere; each level adds its own set on top of the
-    levels below it, so Declared returns the whole 50-rule set.
+    levels below it, so Declared returns the whole 53-rule set.
 
     level is a declared AdoptionLevel; the interior trusts that contract.
     """
