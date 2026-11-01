@@ -10,14 +10,19 @@ honest-parse owns the extension-to-grammar table and the parse, so there is no
 second copy of that table here and no hand-rolled parser: check_source hands the
 source and path to honest-parse and reads the tree it returns.
 
-Scope of this run: the built rule is HC-P003 for Python (see rules.py). The full
-RuleId catalogue and the §3.3/§3.4 declaration-graph extraction are a tracked
-follow-on (bead honest-framework-4gv). The rules here read the parse tree
-directly; reading a resolved declaration graph arrives with that follow-on.
+Two families of rule run here and return one flat list. The construction-time
+rules (HC003, HC006, HC007, HC011, HC-SM01/02/05) read the declaration graph the
+§3.3 alias resolver and §3.4 extractor build from the construction call sites
+(honest_check.graph, honest_check.graph_rules). The AST rules (HC-P003) read the
+parse tree directly (honest_check.rules). Both coexist: check_source parses,
+builds the graph, runs the graph rules and the AST rules, and returns the
+combined findings as data.
 """
 
 from honest_parse import language_of, parse_source
 
+from honest_check.graph import build_graph
+from honest_check.graph_rules import graph_rules
 from honest_check.rules import rules_for
 from honest_check.types import Diagnostic, RuleConfig
 
@@ -54,7 +59,10 @@ def check_source(source: str, path: str, rule_config: RuleConfig) -> list[Diagno
     if "err" in parsed:
         return [_syntax_diagnostic(parsed["err"], path)]
     root = parsed["ok"].root_node
+    graph = build_graph(root, language["ok"], source)
     findings: list[Diagnostic] = []
+    for graph_rule in graph_rules():
+        findings.extend(graph_rule(graph, path))
     for rule in rules_for(language["ok"]):
         findings.extend(rule(root, language["ok"], source, path))
     return findings
