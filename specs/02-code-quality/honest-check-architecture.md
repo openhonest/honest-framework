@@ -26,20 +26,23 @@ Every HC rule is a precondition for auto-generation. Each rule, when it fires, n
 | HC-P004, HC008 | Cannot verify boundary isolation — I/O outside declared boundaries |
 | HC-P013 | Cannot enumerate the routing key's value space — a predicate behind a database routing key is unbounded |
 | HC-P014 | Cannot distinguish slots — recognizer reuse collapses semantic roles |
+| HC-P015 | Cannot exercise the omitted-argument region — a default absorbs the caller's omission, so no generated case covers the path where the argument is absent |
 | HC-P016 | Cannot verify purity — closure carries mutable state |
 | HC-P017 | Cannot generate serialization tests — HTTP output function has no declared vocabulary |
 | HC-P018 | Cannot enumerate the callees — a call whose target set is unbounded makes the call graph infinite |
+| HC-P019 | Cannot enumerate the miss — a lookup's fallback default serves an unknown key as a known one, so no generated case covers the unknown-key path |
+| HC-P020 | Cannot enumerate the miss — a dispatch table read without a guard lets an unknown key stop the program with a bare KeyError, so no generated case covers the unknown-key path |
 | HC-R001 | Cannot reach every function — orphan function has no declared role |
 
-**honest-check is a linter only in mechanism.** In purpose, it is the gate between dishonest code and the auto-generation pipeline. Code that passes honest-check is guaranteed to have a complete auto-generated test suite. Code that fails has no test story at all.
+**honest-check is the gate between dishonest code and the auto-generation pipeline.** Code that passes honest-check has a complete auto-generated test suite. Code that fails has no test story at all.
 
-It reads source files, resolves aliases, walks abstract syntax trees, and reports violations. It never executes application code. It never modifies files. It produces a report. Its exit code is the signal to CI: 0 = generatable, 1 = dishonest, 2 = internal failure.
+It reads source files, resolves aliases, walks abstract syntax trees, and reports violations. It never executes application code. It never modifies files. It produces a report. Its exit code is the signal to the commit gate: 0 = generatable, 1 = dishonest, 2 = internal failure.
 
 **Boundary to honest-test.** honest-check asks whether auto-generation *can* run; honest-test asks whether the generated suite *passes*. Rules that can be verified by reading code belong here. Rules that require running the generated code belong in honest-test. When a rule cannot be verified statically but an analog exists at runtime, honest-check emits an `info` diagnostic directing the developer to the corresponding honest-test check.
 
 ### 1.1 Relationship to Other Specs
 
-The rule algorithms in this document were originally specified in `honest-type-architecture.md` sections 12 and 13. That document now defers to this one as the canonical reference for all HC rules. `honest-type-architecture.md` retains its own construction-time validation (reserved word checks, vocabulary overlap) as first-class behavior of the `vocabulary()` constructor — those are not honest-check rules, they are runtime errors that happen to fire at construction time.
+The rule algorithms in this document were originally specified in `honest-type-architecture.md` sections 14 and 15. That document now defers to this one as the canonical reference for all HC rules. `honest-type-architecture.md` retains its own construction-time validation (reserved word checks, vocabulary overlap) as first-class behavior of the `vocabulary()` constructor — those are not honest-check rules, they are runtime errors that happen to fire at construction time.
 
 ### 1.2 What honest-check Covers
 
@@ -95,7 +98,7 @@ honest-check [options] [paths...]
 An adopter choosing a level (section 9.4) needs one number per rule: how much would this cost me? `--report` answers it. It runs every rule across the tree and prints the count for each, marking which are enforced at the declared level and which the next level up would add.
 
 ```
-honest-check: adoption level Boundary — 17 of 45 rules enforced.
+honest-check: adoption level Boundary — 17 of 47 rules enforced.
 
   rule        severity  findings  enforced
   HC-P001     error            0  yes
@@ -185,7 +188,7 @@ if settings.ENV == "development":
 
 Startup integration runs only construction-time and static analysis rules. It does not run rules that require full AST analysis of the entire codebase, as those are too slow for startup. The subset that runs at startup is declared in each rule's metadata as `startup: true/false`.
 
-**Startup-eligible rules:** HC001, HC002, HC003, HC006, HC007, HC011, HC-SM01, HC-SM02, HC-SM05.
+**Startup-eligible rules:** HC-SYN, HC001, HC002, HC003, HC006, HC007, HC011, HC-SM01, HC-SM02, HC-SM05. HC-SYN runs first, because a file that does not parse has no architecture to check, so a parse failure blocks startup ahead of every other rule.
 
 ---
 
@@ -209,12 +212,16 @@ declaration = "src/app.hd"   # the module's .hd; HC-R002 and HC-R003 run only wh
 # Suppress specific rules globally
 disable = ["HC-P006"]
 
-# Per-path rule configuration
-[rules.HC-P008]
-max_lines = 15    # override default of 10
+# Per-rule configuration. honest-check configures only the rules it runs.
+# HC-OR003 is honest-check's one configurable rule. min_run has no built-in
+# default (see HC-OR003): a project must set it, HC-OR003 runs only when it is
+# set, and so a chosen threshold is never confused with a value nobody set.
+[rules.HC-OR003]
+min_run = 3
 
-[rules.HC-P012]
-max_mocks = 3     # override default of 2
+# HC-P008 (max_lines) and HC-P012 (max_mocks) are honest-test's rules, which
+# honest-check does not run (section 9.4). honest-test configures them in its
+# own config, not here.
 
 [startup]
 on_error = "warn"
@@ -223,7 +230,7 @@ on_error = "warn"
 ### 3.2 File Discovery
 
 ```
-FUNCTION discover_files(paths, exclude, language):
+FUNCTION discover_files(paths, exclude):
     files ← []
 
     FOR EACH path IN paths:
@@ -232,14 +239,16 @@ FUNCTION discover_files(paths, exclude, language):
                 APPEND path TO files
         IF path is a directory:
             FOR EACH file IN recursive_walk(path):
-                IF file.extension IN language_extensions(language):
+                IF honest_parse recognizes file.extension:
                     IF NOT matches_any(file, exclude):
                         APPEND file TO files
 
     RETURN files
 ```
 
-Language extensions by implementation:
+honest-check takes no language. honest-parse owns the extension-to-grammar table, and the grammar for each file is detected from its extension when honest-parse parses it. Discovery keeps a file when honest-parse recognizes its extension, and `check_source` parses each file under the grammar honest-parse selects for that file's path. A single run may therefore cover a mixed tree; each file is read under its own grammar, so a Python backend and a browser JavaScript client are checked together, each file under the right rules, with no language named at the boundary.
+
+Extensions honest-parse recognizes:
 
 | Language | Extensions |
 |---|---|
@@ -338,7 +347,7 @@ FUNCTION check_HC003(vocabulary):
                     f"Types '{A}' and '{B}' share values: {overlap}")
 
         IF one is Set, one is Predicate:
-            // The static linter never executes application code, so it cannot evaluate the
+            // honest-check never executes application code, so it cannot evaluate the
             // predicate over the Set's members. It emits an info pointing to honest-test
             // (section 1.1); honest-test runs the predicate over each Set value at test time
             // and emits a warning for any value matched by both.
@@ -395,7 +404,9 @@ FUNCTION check_HC011(recognizer, type_name):
             "Recognizer accepts nearly all inputs — not a discriminating type")
 ```
 
-**Note:** running the predicate is exactly what honest-check does not do — it is a pure static analyzer that never executes application code. So honest-check does not sample the predicate itself; on each predicate recognizer it emits an `info` (CLI and LSP) directing the developer to the runtime checks that decide it, the same static-emits-info / runtime-decides split HC003 uses for predicate overlaps. The catch-all cannot ship regardless: the `vocabulary()` constructor rejects it at construction, and honest-test rejects it under the generated suite. The corpus is fixed and deterministic (not random) so the >95% verdict is identical across runs.
+**Note:** running the predicate is exactly what honest-check does not do — it is a pure static analyzer that never executes application code. So honest-check does not sample the predicate itself; on each predicate recognizer it emits an `info` (CLI and LSP) directing the developer to the runtime checks that decide it, the same static-emits-info / runtime-decides split HC003 uses for predicate overlaps. The catch-all cannot ship regardless: the `vocabulary()` constructor rejects it at construction, and honest-test rejects it under the generated suite.
+
+**The corpus is normative.** `catch_all_corpus` is a fixed, diverse list of 1000 strings, not randomly generated. It is fixed because the `vocabulary()` constructor is a pure function and the framework forbids nondeterminism: a recognizer sitting near the 95% threshold must pass or fail identically on every run, in every invocation mode. It must be diverse in both length and character class — digits, lower-case letters, upper-case letters, punctuation, whitespace, and non-ASCII — so that a genuinely discriminating recognizer accepts only a small fraction of it. A corpus drawn from one character class would pass a recognizer that accepts everything outside that class. A predicate that raises on a corpus string counts as *not* accepting that string, which is the same tolerance classification the runtime applies (honest-type-architecture.md §11.6).
 
 #### HC-SM01, HC-SM02, HC-SM05 — State machine vocabulary violations
 
@@ -440,9 +451,12 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-P011 | Error | ✓ | Framework lifecycle hook |
 | HC-P013 | Error | ✓ | Unbounded database routing key |
 | HC-P014 | Error | ✓ | Recognizer reused across slots |
+| HC-P015 | Warning | ✓ | Default parameter value (implicit default) |
 | HC-P016 | Error | ✓ | Nonlocal closure over mutable state |
 | HC-P017 | Error | ✓ | Serializer not declared as chain link |
 | HC-P018 | Error | ✓ | Unbounded call target (provably-unbounded call site) |
+| HC-P019 | Warning | ✓ | Lookup read with a fallback default (`dict.get(key, default)`) |
+| HC-P020 | Warning | ✓ | Dispatch read with no reported miss (bare `TABLE[key]`) |
 | HC-R001 | Error | ✓ | Orphan function (no role, not reachable) |
 | HC-OR001 | Error | ✓ | Orchestrator calls another orchestrator |
 | HC-OR003 | Warning | ✓ | Suspected duplication between orchestrators |
@@ -548,36 +562,149 @@ FUNCTION check_HC_REF004(vocabulary, scanned_templates):
 
 #### HC-REF005 — Declaration and implementation resolve to each other
 
-A module's `.hd` declares its surface: `fn name : (params) -> result` for each function the module offers. Nothing today reads that declaration against the source. A module can declare eight functions and implement a hundred and one, and no gate objects, so the declaration silently becomes a document about an earlier version of the module. Measured across the reference implementation: 152 declared, 560 public functions implemented, 408 implemented and never declared. In one module the undeclared set included the function the module is named for.
+A module's `.hd` declares its surface: `fn name : (params) -> result` for each function the module offers. HC-REF005 applies "Every reference resolves" between that declaration and the code. The declaration then states what the module is, not what an earlier version of it was. A declaration naming no implementation is an unbuilt promise. An exported function no declaration names is undeclared surface. That is the same defect as an unmodelled route: it exists, it is callable, and nobody chose it on the record.
 
-HC-REF005 applies "Every reference resolves" in both directions between the two artifacts. A declaration naming no implementation is an unbuilt promise. An implementation named by no declaration is undeclared surface, which is the same defect as an unmodelled route: it exists, it is callable, and nobody chose it on the record.
+**The rule reads three sets, and the host language supplies the third.** The declared set is the `fn` names in the module's `.hd`, read through honest-design. The defined set is the functions the module's source defines, read through honest-parse. The exported set is the surface the module publishes. It is read from the export declaration the host language already carries: Python's `__all__`, JavaScript's `export`, Rust's `pub`. That export declaration is the module's internal marker, and it is a list the author wrote. A function is internal because it is absent from that list, never because of the shape of its name. A leading underscore is a convention, and a convention cannot carry a gate: `parse` is public by any reading and carries no underscore.
 
 ```
-FUNCTION check_HC_REF005(hd_module, source_functions):
-    declared ← { d.name FOR d IN hd_module.fn_declarations }
-    offered  ← { f.name FOR f IN source_functions IF f is not internal }
+FUNCTION check_HC_REF005(hd_module, source_functions, export_declaration):
+    IF export_declaration is absent OR not a literal list:
+        EMIT error(HC-REF005, export_declaration.location or module_root,
+            f"{module} publishes no literal export list, so its surface is inferred "
+            "rather than declared and this rule cannot read it. Write the list.")
+        RETURN
 
-    FOR EACH name IN declared - offered:
+    declared ← { d.name FOR d IN hd_module.fn_declarations }
+    defined  ← { f.name FOR f IN source_functions }
+    exported ← { n FOR n IN export_declaration.names }
+
+    FOR EACH name IN exported - declared:
+        EMIT error(HC-REF005, source_location_of(name),
+            f"'{name}' is exported by the module and declared in no .hd. "
+            "Declare it, or stop exporting it.")
+
+    FOR EACH name IN declared - defined:
         EMIT error(HC-REF005, hd_module.location_of(name),
-            f"'{name}' is declared in {hd_module.path} and implemented nowhere. "
+            f"'{name}' is declared in {hd_module.path} and defined nowhere. "
             "Implement it, or remove the declaration.")
 
-    FOR EACH name IN offered - declared:
-        EMIT error(HC-REF005, source_location_of(name),
-            f"'{name}' is offered by the module and declared in no .hd. "
-            "Declare it, or mark it internal.")
-
-    FOR EACH name IN declared & offered:
+    FOR EACH name IN declared & defined:
         IF arity(hd_module.declaration(name)) ≠ arity(source_function(name)):
             EMIT error(HC-REF005, source_location_of(name),
-                f"'{name}' is declared with {n} parameters and implemented with {m}.")
+                f"'{name}' is declared with {n} parameters and defined with {m}.")
 ```
 
-**Internal is declared, not inferred.** A leading underscore is a convention, and a convention cannot carry a gate: `parse` is public by any reading and carries no underscore. A function is internal because it says so, through the module's own internal marker, and every other function must appear in the `.hd`. The author states which of the two a function is; the checker never guesses. This is the same rule as the entry-point set: a tool that infers the surface will either reject the API or bless what nobody chose.
+**Declaring more than you export is allowed; exporting more than you declare is not.** The two directions are not symmetric, because they answer different questions. Every exported name must be declared, since an unlisted export is surface nobody chose. A declared name need not be exported, because the `.hd` is also the module's architecture diagram, and a module may put its internal structure on the record deliberately. honest-design declares its own private readers and validators, and the diagram is better for it. What a declared name may never be is undefined: whether exported or internal, a declaration that resolves to no function is false.
+
+**An absent or computed export list fails the rule rather than passing it.** A list built by a call is inferred, not declared, so the surface it names is whatever the call happens to return on the day. The rule has nothing to read and says so, in place of returning clean, the same posture the checker takes on source it cannot fully parse (HC-SYN). A module whose declaration names a surface in another language, with no source of this language behind it, likewise reports that it did not run; a rule that treats absent input as agreement is the defect this whole tier exists to remove.
 
 **Names and arity first, types later.** Matching the `.hd` type language against the host language's annotations is a separate problem with its own decisions, and the name and parameter-count check catches the drift this rule exists for without waiting on it. A conformant implementation may check types; none is required to yet.
 
-**The repair is generatable, and that matters for adoption.** 408 findings is not 408 judgments. honest-design already parses `.hd` and honest-parse already parses source, so the missing `fn` lines can be emitted from the AST for a person to review and correct, once. The gate then holds them in step. A rule whose first run produces hundreds of findings is only affordable when the fix is mechanical, and here it is.
+**The declaration is edited with the code, so there is no migration to schedule.** Every change either adds a module, which means writing its `.hd`, or alters a module, which means altering its `.hd`. A module's declaration therefore comes into agreement as part of whatever change next touches it, not in a separate pass. An implementation adopting this rule after the fact names, as data, the modules it has not yet crossed, the same way the mutation gate names the changes it sets aside: a module absent from that list is gated, a module on it is on the record as ungated, and the list only shrinks. Asserting "the rest will follow later" without that list is how a rule comes to exist in a catalogue and nowhere else.
+
+**The repair is generatable, and that matters for adoption.** Hundreds of findings is not hundreds of judgments. honest-design already parses `.hd` and honest-parse already parses source, so the missing `fn` lines can be emitted from the parse tree for a person to review and correct, once. The gate then holds the two artifacts in step. A rule whose first run produces hundreds of findings is only affordable when the fix is mechanical, and here it is.
+
+#### HC-REF006 and HC-REF007: a seam names a door that is there, and a door
+
+A declaration never crosses a module boundary. The caller names the callee's door on its own side effect, with a dot: `reads "honest-parse.parse_source"`. The callee never names its callers, which is what lets a library be used by code it has never heard of. So the seam is written once, by the side that knows, and resolving it needs both declarations in view at the same time. `validate` sees one module and reports nothing here; this is honest-check's, like every other reference that resolves or does not.
+
+Measured across the framework on 6 October 2026, before the word existed: 74 distinct seams between modules in the code, and one of them declared anywhere. Eleven enter honest-parse alone.
+
+**HC-REF006, the named module declares no such door.** The caller says it enters `M.d`, the declaration of `M` names no function `d`, and the reference is dead. This is the same fault as a template naming a route nothing mounts: the artifact reads as working and the thing it points at is absent.
+
+**HC-REF007, the name is there and is not a door.** The declaration of `M` does have a function `d`, and `d` is not a `boundary_in`. The world is reaching that module somewhere other than its entrance. A pure function is the common case and the worst one, because it means the core is being used directly: honest-check imports `node_text`, `line_col` and `first_error_node` out of honest-parse, and those three are red in honest-parse today for the matching reason, that nothing inside the module calls them.
+
+The two are separate codes because they call for different repairs. The first is a wrong name and someone corrects it. The second is a name that is right and a shape that is wrong, and correcting it means either giving that module a door or moving the function to something that is a library by design. Reporting both as one finding would hand a reader a repair that fits half the cases.
+
+```
+FUNCTION check_seams(caller, declarations, path):
+    FOR EACH function IN caller.functions:
+        FOR EACH side IN function.side_effects:
+            IF side.module IS "" THEN CONTINUE          // no dot: nothing to resolve
+            IF side.module NOT IN declarations THEN CONTINUE   // a module not in view
+
+            callee ← declarations[side.module]
+            target ← callee.function_named(side.door)
+
+            IF target IS absent:
+                EMIT error(HC-REF006, path, function.location,
+                    f"'{function.name}' {side.direction} '{side.module}.{side.door}', and "
+                    f"{side.module} declares no function of that name.")
+            ELSE IF target.role IS NOT "boundary_in":
+                EMIT error(HC-REF007, path, function.location,
+                    f"'{function.name}' {side.direction} '{side.module}.{side.door}', which "
+                    f"{side.module} declares as a {target.role} and not a door.")
+```
+
+**A module not in view is skipped, not assumed absent.** A workspace holds the modules it holds, and a declaration may name one from outside it. Reporting a dead reference because the file was not loaded would make the rule depend on how it was invoked, and a gate whose answer changes with its arguments is not a gate. The caller supplies the declarations and the rule judges only those.
+
+#### HC-REF008: a cross-module side effect names its door
+
+HC-REF006 and HC-REF007 both resolve a door name. A side effect that names another module but no door carries no name for them to resolve, so both rules pass it in silence. That is the state of the framework today. honest-observe declares `writes "honest-persist"`, honest-persist is a real module with four boundaries, and nothing checks that the write reaches any of them. The rule that would catch a write landing nowhere never runs, because the seam never said where it lands. Measured across both trees on 18 October 2026: no seam anywhere names a door, so HC-REF006 and HC-REF007 have never fired.
+
+HC-REF008 requires the door. A side effect whose target names a module in view must name a function in that module, written with a dot: `writes "honest-persist.execute"`, never `writes "honest-persist"`. The bare module name is the fault. It reads as a reach into another module and tells the resolver nothing it can act on, which is what leaves the other two rules idle.
+
+A side effect that names the world is untouched. `reads "HTTP"`, `reads "clock"`, `reads "env:POOL_SIZE"`, and every target a module declares in its own inputs and outputs name no module and resolve against no declaration. HC-REF008 fires on one case only: a target whose name, before any dot, matches a module the caller supplied, and that carries no door. It reads the same set of module names HC-REF006 and HC-REF007 read, so it runs beside them over the same declarations, and it skips a module not in view for the same reason they do.
+
+Recognizing the bare module name is honest-design's half of this rule. A target written without a dot parses as a world side effect today, which is how `writes "honest-persist"` passes as though it named no module. honest-design marks a target whose name matches a module as a cross-module seam even when the dot is absent, so the checker can tell a disguised seam from a world read. The `.hd` step records that change before the rule is built.
+
+```
+FUNCTION check_ref008(caller, declarations, path):
+    FOR EACH function IN caller.functions:
+        FOR EACH side IN function.side_effects:
+            IF side.module_name NOT IN declarations THEN CONTINUE   // a world target, or a module not in view
+            IF side.door IS "":
+                EMIT error(HC-REF008, path, function.location,
+                    f"'{function.name}' {side.direction} '{side.module_name}', which names a module "
+                    f"and not a door. Name the function it enters, as '{side.module_name}.<door>'.")
+```
+
+#### HC-REF009: two modules meet at a resource and neither names the other
+
+HC-REF006, HC-REF007 and HC-REF008 each resolve a name one module wrote for another, so a module that names no other module gives them nothing and passes all three. A page of modules that each name nobody then reads clean, and the emptiest page scores highest. The coupling is still there to see. When one module writes a resource and another reads the same resource, the two meet through it, and the declarations show it even though neither names the other.
+
+HC-REF009 reads the coupling off the world targets rather than off the seams. When one module's `writes` target and another module's `reads` target are the same string, and that string carries a name after its kind, so it is not ambient (honest-design's world-side vocabulary), the two modules are joined through that resource. The rule names the pair and the resource and asks whether the join is intended. It does not fail the build. A module may honestly stand alone, and two modules may share a resource on purpose, so this is a question the reader answers, not a fault the gate refuses. It is the complement of the other three: they fire on a declared reference that fails to resolve, and this fires on an undeclared coupling that the declarations reveal. It carries the posture set for the reach count on 6 October 2026, that a cross-module observation informs the reader and does not bind the caller.
+
+A shared bare kind raises nothing, because a bare kind is ambient and every module may read `clock` or write `DOM` without meeting another module there. The rule fires on a shared target that carries a name after its kind: `file:design/data`, `database:mockument`, `messages:inbox`. A named side names one place, so two modules naming the same one meet there. The reserved name `given` is the one exception: `database:given` names a place the module learns at run time, so one `given` never matches another and two modules carrying it are not shown to meet. Both tests, the bare-kind one and the `given` one, live in honest-design's `couples_on`, which honest-check and the system map both call, so neither keeps its own copy of the rule. The rule reads two or more declarations at once, as HC-REF006 and HC-REF007 do, and it skips a module not in view.
+
+**HC-REF009 answers by meaning once the declarations use the closed world-side vocabulary, and the vocabulary is now closed (honest-framework-j15), so enforcement waits on the migration rather than on a ruling.** Measured across 25 declarations on 22 October 2026, the sides were free strings, so one resource was named two ways and an exact-string match missed the join. provider wrote `data_dir` and renderer read `data`, both the design/data directory, and the rule saw no meeting, which was the motivating case escaping the rule it motivated. The cause was the one the layer list just had: a free string compared against a free string answers by spelling. j15 closes the sides into kinds, so a resource named twice resolves to one side and the join becomes visible: provider writes `file:design/data` and renderer reads the same string. The rule is enforceable against a migrated corpus; it fires on nothing useful against the free strings in place today, so the migration to the vocabulary gates it. The ambient test is no longer a membership list that can misspell. A bare kind is ambient and a named kind is not, decided from the string's own shape.
+
+```
+FUNCTION check_ref009(modules, path):
+    writers ← {}   // resource -> [(module, function)]
+    readers ← {}
+    FOR EACH module IN modules:
+        FOR EACH function IN module.functions:
+            FOR EACH side IN function.side_effects:
+                IF side.module_name IS NOT "" THEN CONTINUE     // a seam; HC-REF006/007/008 own it
+                IF NOT couples_on(side.target) THEN CONTINUE    // honest-design: a bare kind is ambient, and "given" never matches another
+                IF side.direction IN ("writes", "reads_writes"): writers[side.target].add((module, function))
+                IF side.direction IN ("reads", "reads_writes"):  readers[side.target].add((module, function))
+    FOR EACH resource IN writers:
+        FOR EACH (wm, wf) IN writers[resource]:
+            FOR EACH (rm, rf) IN readers.get(resource, []):
+                IF wm IS rm THEN CONTINUE                        // one module meeting itself is not two modules meeting
+                EMIT question(HC-REF009, path, wf.location,
+                    f"'{wm.name}' writes '{resource}' and '{rm.name}' reads it, so the two meet through "
+                    f"'{resource}' and neither names the other. Confirm the coupling is intended.")
+```
+
+#### HC-REF010: a module that touches nothing and that one module calls
+
+HC-REF009 asks about two modules that meet at a resource. HC-REF010 asks about one module that meets nothing. Adam set the rule on 22 October 2026, out of honest-parse. A module that declares no side of the world, and that exactly one other module calls, carries a question on its system card: fold it into that one caller, or is a second caller coming? A module that owns a side of the world is never asked, whoever calls it, because the side is its own reason to stand apart. The rule asks and never rules, because folding two modules into one is a person's call, the same posture HC-REF009 carries.
+
+The rule reads two facts off the declarations and the packaging. A module touches no side of the world when no function of it declares a side whose target is a world kind, counting a seam that names another module and the module's own `store` as not a world side. A caller is a module that reaches one of this module's doors, by a declared seam or by an import the packaging shows, which is why honest-parse reads as three callers even before the three seams are declared. The question fires only on a count of exactly one. Zero callers is a different finding, an unreached module, and two or more is the standing honest-parse answer: a module earns its own file.
+
+```
+FUNCTION check_ref010(module, callers, path):
+    touches_world ← ANY(side.module_name IS "" AND side.target DOES NOT START "store:"
+                        FOR function IN module.functions FOR side IN function.side_effects)
+    IF touches_world THEN RETURN                      // it owns a side; never asked
+    IF count(callers) IS NOT 1 THEN RETURN            // zero is unreached; two or more stands apart
+    EMIT question(HC-REF010, path, module.location,
+        f"'{module.name}' touches no side of the world and only '{callers[0].name}' calls it. "
+        f"Fold it into '{callers[0].name}', or is a second caller coming?")
+```
 
 #### HC004 — Dead vocabulary type
 
@@ -1002,6 +1129,39 @@ FUNCTION check_HC_P014(bindings):
 2. **Composed / sum types.** Declare a `transfer` composed type that captures `{from: user_id, to: user_id}` as a single slot. The composed type preserves both values but binds as a single slot.
 3. **Explicit acknowledgement.** A `# honest: allow-recognizer-reuse <reason>` comment suppresses HC-P014 at the binding site, but requires a BDD feature file named `{chain_name}_swap.feature` to be present and cover each slot's semantic role. honest-test verifies the feature presence.
 
+#### HC-P015 — Parameter default that bakes in a real value
+
+A default carrying a real value absorbs the caller's omission. After `def f(x, timeout=30)` runs, the program cannot tell a caller who chose thirty seconds from one who forgot, and no call site exercises the path where the argument is absent, so auto-generation produces no case for it. A real-valued default is catch-and-swallow applied to the input list: it manufactures an untested input region by construction (principle P15, No Implicit Defaults).
+
+Emptiness is not this. A default of None, false, zero, empty text, or an empty list, dict, set or tuple stands for "nothing was given," which is the honest encoding of absence rather than a baked-in choice, so it is left alone. The rule fires only on a default whose value is non-empty — a number, a non-empty string, true, a populated collection, or a name or call that is not an empty constructor. The default and its value are both plain syntactic facts, so the rule is decidable.
+
+```
+FUNCTION check_HC_P015(ast):
+    FOR EACH function_def IN ast.all_functions:
+        FOR EACH parameter IN function_def.parameters:
+            IF parameter has a default value AND that value is not empty:
+                EMIT warning(HC-P015, parameter.location,
+                    f"Parameter '{parameter.name}' defaults to a real value. A default "
+                    f"hides whether the caller chose the value or omitted it, and leaves "
+                    f"the omitted-argument path untested. Make the parameter required, or "
+                    f"default it to empty if absence is the honest nothing.")
+
+// empty: None, false, zero, "", [], {}, set(), (), or an empty-constructor call
+```
+
+**Resolution.** Make the parameter required and let the caller pass the value, or, when absence is the honest nothing, default it to an empty value. The swallow is a default that stands in for a real choice; an empty default surfaces nothing because there is no choice to surface. Where a function must mirror a host framework's required signature and genuinely cannot drop a real-valued default, a `# honest: disable HC-P015 <reason>` directive suppresses the rule at that definition, naming why.
+
+**Severity.** HC-P015 emits a warning, not an error. A real-valued default is a smell the reader must retire, and a warning reports each one without turning the module away, which is the standing treatment for a principle the framework states and is still bringing its own code into line with.
+
+**Language equivalents:**
+
+| Language | Real-valued default to flag | Empty default to allow |
+|---|---|---|
+| Python | `def f(x=30)`, `def f(x="h")`, `def f(x=[1])` | `def f(x=None)`, `def f(x=0)`, `def f(x=[])`, `def f(x=False)` |
+| JavaScript | `function f(x = 30)`, `(x = "h") =>` | `function f(x = null)`, `(x = []) =>` |
+| Ruby | `def f(x = 30)` | `def f(x = nil)`, `def f(x = [])` |
+| Go | no parameter defaults; rule does not apply | — |
+
 #### HC-P016 — Nonlocal closure over mutable state
 
 A function that captures a name from an enclosing scope via `nonlocal` (or equivalent) and mutates it hides state outside class declarations — closures are the non-class vector for smuggling state into otherwise-pure-looking functions.
@@ -1122,7 +1282,7 @@ FUNCTION check_HC_R002(source_tree, declaration):
                     "on, or move the work upstream of the boundary.")
 ```
 
-A callee the declaration does not name is skipped rather than assumed. It may be a helper in another module, a host-language builtin, or a function the declaration is missing, and the last of those is `HC-REF005`'s finding rather than this rule's.
+A callee the declaration does not name is skipped rather than assumed. It may be a helper in another module, a host-language builtin, or a function the declaration is missing, and the last of those is `HC-REF005`'s finding rather than this rule's, and only where that function is exported, since an internal helper is declared at the author's discretion.
 
 **The declaration is named, not found.** The rule runs only where a module's `.hd` is configured, as `[check] declaration` or `--declaration`, exactly as `HC-REF001` runs only where templates are configured and `HC-REF004` only where a format manifest is. Walking up from a source file to guess which `.hd` governs it would infer what the framework says must be declared. A configured declaration that is missing or does not parse is a read failure, exit 2: a gate that reports clean over a declaration it could not open is no gate.
 
@@ -1143,7 +1303,50 @@ FUNCTION check_HC_R003(source_tree, declaration):
                          : f"'{name}' is declared awaited and is a plain def. ...")
 ```
 
-The rule reads the same named declaration as HC-R002 and runs under the same condition. A function the declaration does not name is `HC-REF005`'s finding. A host with blocking calls has no `async` keyword and no `awaited` word, and the rule finds nothing there, which is correct: there is nothing to disagree about.
+The rule reads the same named declaration as HC-R002 and runs under the same condition. A function the declaration does not name is `HC-REF005`'s finding where that function is exported, and otherwise an internal helper the author chose not to declare. A host with blocking calls has no `async` keyword and no `awaited` word, and the rule finds nothing there, which is correct: there is nothing to disagree about.
+
+#### HC-R004: declaration and code disagree about absence
+
+The `.hd` names an absence as a type atom in a union: a return of `Node | NOTHING` says the answer is a `Node` or nothing, and a caller written from that card checks for the nothing before it reads the Node. A return of plain `Node` promises a `Node` every time. The host language has its own nothing: Python returns `None`, from an explicit `return None`, a bare `return`, or a function that falls off its end.
+
+This rule crosses the two. A function whose code can return the host nothing, while its card names no absence arm, hands a caller written from the card a `None` where the card promised the answer. The caller reads an attribute of it and fails on a later line that names neither function, the same shape as HC-R003's coroutine. A card that names an absence arm over code that never returns nothing is the opposite lie: the caller tests for an absence that cannot arrive.
+
+```
+FUNCTION check_HC_R004(source_tree, declaration):
+    optional ← declared_optional(declaration)    // name -> true (card has a NOTHING arm) | false
+    FOR EACH function IN source_tree.all_functions:
+        IF function.name NOT IN optional: CONTINUE   // not a declared function of this module
+        IF code_returns_nothing(function) ≠ optional[function.name]:
+            EMIT error(HC-R004, function.location,
+                code_returns_nothing ? f"'{name}' can return None and its card names no absence arm. "
+                                       "Add '| NOTHING' to the return, or stop returning None."
+                                     : f"'{name}' is declared to return an absence and never returns None. "
+                                       "Remove the absence arm, or return None where the answer is absent.")
+```
+
+`code_returns_nothing` is decided from the source outright, like `is_async`: a function with an explicit `return None` or a bare `return` can answer nothing. The absence atoms the card may name are `NOTHING` and `Absent`, the same word a union uses for an `env` that may be missing. A function the declaration does not name is skipped, as in HC-R002 and HC-R003. The default, absent means the card promises an answer, is verified against the code rather than assumed (P15).
+
+This is the fourth of the rules that tell an honest absence from a dishonest one. The other three are honest-design's, over the declaration alone: a parameter typed only `NOTHING`, which no caller can hand over, is refused; a pure function whose whole answer is `NOTHING`, which touched no world and kept no result, is refused; a pure function answering `X | NOTHING`, and a boundary answering bare `NOTHING` with no `raises` and no `note`, are each marked as a question for a person. This rule is the one no declaration can see alone, because it needs the code.
+
+#### HC-R005: a declared function answers with a stream
+
+A card says a function answers with a value. A list reads the same twice and says the same thing both times. A generator does not: it empties as it is read, so a second reader gets nothing back and sees an empty input rather than an error. A declared function whose body yields is a generator wearing a value's card, and the failure it permits is silent, which is the worst kind. `honest-parse`'s `walk` is declared `list<Node>` and yields. The framework reads it in over a hundred places, each reading it where it opens it, so nothing is broken today and the shape permits the break: one rule binding that answer and handing it to two checks would report a clean file it stopped reading partway through.
+
+A stream is also mutable state whose owner changes with every reader, which the framework's third convention forbids. So the format gains no `stream<X>` word. Laziness lives below the declaration line instead: a helper the module does not declare may yield as much as it likes, because the function holding it is its only reader and no second one can arrive.
+
+```
+FUNCTION check_HC_R005(source_tree, declaration):
+    declared ← names the declaration carries
+    FOR EACH function IN source_tree.all_functions:
+        IF function.name NOT IN declared: CONTINUE
+        IF function.body yields AND function is not a context manager:
+            EMIT error(HC-R005, function.location,
+                f"'{name}' is declared and its body yields, so it answers with a stream rather "
+                "than a value. Return a value, or move the laziness into a helper this module "
+                "does not declare.")
+```
+
+Two exemptions, each needed. A context manager yields exactly once and hands back a value for the length of a block, so it is not a stream; a `contextmanager` decorator on the enclosing definition marks it. A yield inside a function defined within the declared one belongs to that inner function, so the search stops at a nested definition. A function the declaration does not name is a private helper whose laziness is its own business, as in HC-R002, HC-R003 and HC-R004.
 
 #### HC-R001 — Orphan function (no role, not reachable from any role)
 
@@ -1225,7 +1428,7 @@ FUNCTION check_HC_OR003(ast, min_run):        # required: see above
 
 **Soft rule, not error.** A developer may have legitimate reasons to keep two similar orchestrators distinct (e.g., different fault-mapping strategies). HC-OR003 surfaces the pattern without forcing the refactor. Developers suppress per-case with `# honest: ignore HC-OR003` when the duplication is intentional.
 
-**Why soft:** duplication detection is inherently heuristic. Cosmetic-vs-structural duplication is a judgment call that belongs in the edit, not the linter. But surfacing the detection keeps the orchestrator-extraction principle visible during development.
+**Why soft:** duplication detection is inherently heuristic. Cosmetic-vs-structural duplication is a judgment call that belongs in the edit, not the gate. But surfacing the detection keeps the orchestrator-extraction principle visible during development.
 
 **Companion to HC-OR001.** HC-OR001 catches the direct case (orchestrator calls orchestrator). HC-OR003 catches the latent case (orchestrators are evolving toward an unstated shared pattern; extract it before the temptation to compose them arises).
 
@@ -1284,15 +1487,129 @@ FUNCTION check_HC_HF001(features, calls):
 
 ### 4.3 Test Time (Deferred to honest-test)
 
-These rules cannot be verified statically. honest-check emits an `info` diagnostic noting they are verified by honest-test. They are listed here for completeness.
+These rules cannot be verified statically. honest-check emits an `info` diagnostic noting they are verified by honest-test. They are specified here because the identifiers are honest-check's; the verification is honest-test's.
 
 | Rule | Owner | Description |
 |---|---|---|
 | HC003 (predicate × predicate) | honest-test | Predicate overlap requires empirical testing |
 | HC011 (predicate sampling) | honest-test | Catch-all predicate detection via sampling |
-| HC-P008 | honest-test | Gherkin step too long |
+| HC-P008 | honest-test | Gherkin step definition exceeds the line threshold |
 | HC-P009 | honest-test | Roled function without a gherkin |
-| HC-P012 | honest-test | Excessive test doubles in test |
+| HC-P012 | honest-test | Excessive test doubles in a test |
+
+#### HC-P019 — Lookup read with a fallback default
+
+A lookup reads a value out of a table by a key. When it is written `TABLE.get(key, default)`, the `default` is handed back for any key the table does not hold, so a key nobody wrote a row for is served the answer written for a different situation, and the fact that the key was unknown disappears (principle P16, Dispatch Tables Close Open Input). The miss is filed as a hit, which is the input side of silent failure.
+
+Two honest forms replace it. If the empty or absent case is itself a real, expected case, it gets its own row: an explicit key in the table, so an ordinary lookup finds it rather than falling through. If the key can lie outside the table's declared set, the lookup is read without a fallback and the miss is handled in the open — the code returns or raises a fault that says the key was not expected and names the keys that are, the way `recognize()` names the accepted recognizer kinds.
+
+The violation is the fallback argument, and it sits in the call the way a parameter default sits in a signature: a `.get` with a second positional argument. The rule fires on every such call, not only on a handler-dispatch table, because no lookup is allowed to come up empty by falling back.
+
+```
+FUNCTION check_HC_P019(ast):
+    FOR EACH call IN ast.all_calls:
+        IF call.func is an attribute access named "get"
+           AND call has two or more positional arguments:
+            EMIT warning(HC-P019, call.location,
+                "This lookup falls back to a default for a key the table does not hold, "
+                "so an unknown key is served as a known one and the miss is lost. If the "
+                "absent case is real, give it its own row with its own key. If the key can "
+                "be unknown, read without a fallback and report the miss, naming the "
+                "expected keys.")
+```
+
+**Severity.** HC-P019 emits a warning, not an error. The codebase holds many fallback lookups today, and a warning reports each without turning the module away while they are moved to an explicit row or a reported miss, the same treatment HC-P015 gets.
+
+**Language equivalents:**
+
+| Language | Fallback-lookup pattern to detect |
+|---|---|
+| Python | `d.get(key, default)`, `d.pop(key, default)` |
+| JavaScript | `map.get(key) ?? default`, `obj[key] ?? default`, `obj[key] || default` |
+| Ruby | `h.fetch(key, default)`, `h[key] || default` |
+
+#### HC-P020 — Dispatch read with no reported miss
+
+A dispatch table maps a key to the function or value that handles it. Read as `TABLE[key]` with a variable key, an unknown key raises a bare `KeyError`: the program stops, and the error names neither the keys the table expected nor a fault a caller can read. The miss halts the run without closing the input (principle P16, Dispatch Tables Close Open Input), the same open input HC-P019 leaves when it swallows the miss with a fallback default. The two rules are the two directions of the one requirement: a dispatch table may neither default the miss (HC-P019) nor leave it to a bare exception (HC-P020).
+
+The honest form reads the table under a guard. Before the subscript, `if key not in TABLE` returns or raises a fault that says the key was not expected and names the keys that are, the way `recognize()` names the accepted recognizer kinds. The guard is the arm that closes the table over its open input.
+
+The violation is a subscript whose object is a name bound to a dict literal and whose key is a variable, with no `in` or `not in` test of that name in the same function. A string or other constant key is a fixed row, not a dispatch on an unknown value, and is left alone, the decidable line HC-P019 draws from the other side.
+
+```
+FUNCTION check_HC_P020(ast):
+    tables = names assigned a dict literal with at least one entry
+    FOR EACH subscript TABLE[key] IN ast:
+        IF TABLE IN tables
+           AND key is a variable, not a constant
+           AND no 'key in TABLE' / 'key not in TABLE' test in the enclosing function:
+            EMIT warning(HC-P020, subscript.location,
+                "This dispatch read raises a bare KeyError for a key the table does not "
+                "hold, naming neither the expected keys nor a fault. Guard it with "
+                "'if key not in TABLE' that reports the miss and names the expected keys, "
+                "or give the absent case its own row.")
+```
+
+**Severity.** HC-P020 emits a warning, not an error. Bare dispatch reads are common in the codebase today, and a warning reports each without turning the module away while they are moved under a reported-miss guard, the same treatment HC-P019 and HC-P015 get.
+
+**Language equivalents:**
+
+| Language | Unguarded dispatch read to detect |
+| --- | --- |
+| Python | `TABLE[key]` over a dict literal, key a variable, no `in` guard |
+| JavaScript | `TABLE[key]` over an object literal, no `in`/`hasOwnProperty` guard |
+| Ruby | `TABLE.fetch(key)` with no block, over a hash literal, no `key?` guard |
+
+#### HC-P008 — Gherkin step definition exceeds the line threshold
+
+**Severity: Warning.** A step definition longer than the threshold signals hidden dependencies in the code under test. When the function under test is pure, the step definition calls it and checks the result, which takes one to three lines. A long step definition is almost always mock configuration, and mock configuration is the shape of a function with dependencies it does not declare.
+
+```
+FUNCTION check_HC_P008(step_files, max_lines):      # required: see HC-OR003 on threading
+    FOR EACH step_file IN step_files:
+        FOR EACH step_def IN step_file.step_definitions:
+            IF line_count(step_def.body) > max_lines:
+                EMIT warning(HC-P008, step_def.location,
+                    f"Step '{step_def.name}' is {line_count} lines against a threshold "
+                    f"of {max_lines}. An honest function needs a one-to-three-line step.")
+```
+
+The documented threshold is 10 lines, resolved at the boundary and passed in, never defaulted inside the rule. `[rules.HC-P008] max_lines` overrides it.
+
+#### HC-P009 — Roled function without a gherkin
+
+**Severity: Warning.** Every roled function carries exactly one gherkin scenario stating its behaviour (honest-test-architecture.md §8.3). That one-to-one mapping is what lets the gherkin count serve as a direct function-point count, so a roled function with no scenario breaks the count as well as the coverage.
+
+```
+FUNCTION check_HC_P009(roled_functions, feature_files):
+    subjects ← { scenario.subject FOR f IN feature_files FOR scenario IN f.scenarios }
+
+    FOR EACH fn IN roled_functions:
+        IF fn.name NOT IN subjects:
+            EMIT warning(HC-P009, fn.location,
+                f"'{fn.name}' carries a role and no gherkin scenario. "
+                "Add a scenario naming it, or remove the role.")
+```
+
+Chain-level gherkins are filed one `.feature` file per chain, named after the chain, so `create_user_pipeline` expects `features/create_user_pipeline.feature`. Function-level gherkins are filed alongside their function. honest-test reads the mapping from `coverage.json` (honest-test §9.5).
+
+#### HC-P012 — Excessive test doubles in a test
+
+**Severity: Warning.** More than the threshold number of doubles in one test function means the code under test has that many dependencies it did not declare. The fix is to extract the pure logic and assert against it directly, then test the wiring separately.
+
+```
+FUNCTION check_HC_P012(test_files, max_mocks):      # required: see HC-OR003 on threading
+    double_patterns ← {"Mock", "MagicMock", "patch", "jest.fn", "sinon.stub", "double"}
+
+    FOR EACH test_function IN test_files.all_tests:
+        count ← count_double_usages(test_function, double_patterns)
+        IF count > max_mocks:
+            EMIT warning(HC-P012, test_function.location,
+                f"{count} test doubles in '{test_function.name}' against a threshold of "
+                f"{max_mocks}. Extract the pure logic and assert on it directly.")
+```
+
+The documented threshold is 2. `[rules.HC-P012] max_mocks` overrides it.
 
 ### 4.4 Link Declaration
 
@@ -1588,6 +1905,11 @@ src/pipelines/user.py:42: info
 | HC-REF003 | Error | Static | — | Template class reference does not resolve to a defined rule |
 | HC-REF004 | Error | Static | — | Behavioural attribute value is not a declared vocabulary member |
 | HC-REF005 | Error | Static | — | Declaration and implementation do not resolve to each other |
+| HC-REF006 | Error | Static | — | A seam enters `M.d` but module `M` declares no function `d` |
+| HC-REF007 | Error | Static | — | A seam enters `M.d` but `d` is not a door |
+| HC-REF008 | Error | Static | — | A cross-module side effect names a module but no door |
+| HC-REF009 | Question | Static | — | Two modules meet at a named resource and neither names the other |
+| HC-REF010 | Question | Static | — | A world-less module that exactly one module calls |
 | HC-ST001 | Error | Static | — | Write to persisted state outside an I/O-boundary function |
 | HC-ST002 | Error | Static | — | Shadow copy of user state outside the manifest-declared DOM |
 | HC-HF001 | Error | Static | — | `feature_state` references a flag not declared in FEATURES |
@@ -1658,7 +1980,7 @@ An adoption level is a named, closed set of rules. A codebase declares one; the 
 | **Structural** | The shape of the code: no classes, no dispatch chains, no hidden state in closures or constructors, no lifecycle hooks | HC-P001, HC-P003, HC-P007, HC-P011, HC-P016 |
 | **Boundary** | I/O, faults, persistence, and identity cross only at declared boundaries; the interior is pure | HC-P002, HC-P004, HC-P005, HC-P006, HC-P010, HC-P013, HC-ST001, HC-A001, HC-A002 |
 | **Typed** | The vocabulary, chain, and state-machine type system holds | HC001–HC011, HC-SM01–HC-SM05, HC-P014, HC-P017 |
-| **Declared** | Everything is declared rather than inferred: roles, orchestration, static references, and user state | HC-R001, HC-R002, HC-R003, HC-OR001, HC-OR003, HC-REF001–HC-REF004, HC-ST002, HC-HF001, HC-HF002 |
+| **Declared** | Everything is declared rather than inferred: roles, orchestration, static references, and user state | HC-R001, HC-R002, HC-R003, HC-OR001, HC-OR003, HC-REF001–HC-REF004, HC-REF006–HC-REF008, HC-ST002, HC-HF001, HC-HF002 |
 
 **Three rules hold at every level: HC-SYN, HC-SUP001, and HC-SUP002.** A codebase that does not parse has no level, and the suppression guarantee of section 7.4 cannot be level-dependent — if it were, a low level would silently buy the right to hide things, which is the dial problem again.
 
@@ -1673,10 +1995,12 @@ adoption = "Boundary"
 
 **Rules above the declared level still run, and still report, downgraded to `info`.** They never fail the run and they are never dropped — the same treatment a suppressed diagnostic gets, for the same reason. A level is a statement about what a codebase holds today, not permission to stop looking.
 
+**The denominator is 50, not 57.** Section 8 lists 57 rules. Seven of them belong to no level. Three are the test-time rules honest-test owns (HC-P008, HC-P009, HC-P012), which no adoption level can enforce because honest-check does not verify them. Two, HC-REF009 and HC-REF010, are questions that never fail a run, so they sit outside the levels by design. The last two, HC-P018 and HC-REF005, are unassigned and should be placed; until they are, a run counts against the 50 rules the levels do cover and says so.
+
 **Every run states its level.** Human output opens with it, and the JSON `summary` carries `adoption` and `enforced_rules`. A passing run therefore always says what it proved:
 
 ```
-honest-check: adoption level Boundary — 17 of 45 rules enforced.
+honest-check: adoption level Boundary — 17 of 47 rules enforced.
 ```
 
 **Ordering.** Suppression is resolved first (section 7.4), then the level is applied. A suppressed diagnostic keeps its directive alive whether or not its rule is enforced at the current level, so raising or lowering a level never makes a live directive look dead.
