@@ -12,6 +12,7 @@ import sys
 from honest_parse import language_of
 
 from honest_check.core import (
+    check_auth,
     check_references,
     check_roles,
     check_source,
@@ -187,6 +188,18 @@ def run_check(argv):
                 pair_source(path, read_source(path)) for path in group_paths
             ]
             diagnostics.extend(check_roles(group_sources, declaration_at(hd_path)))
+
+        # The whole-program auth pass (HC-A001, HC-A002): pair every discovered code file into
+        # one SourceFile list and run check_auth once over that single whole set. Unlike the
+        # role pass it is not grouped by .hd, because provider registration is project-wide — a
+        # provider registered in any one file governs every authorizing link in the project, so
+        # a per-.hd grouping would split a provider from the links it governs.
+        auth_sources = [
+            pair_source(path, read_source(path))
+            for path in files
+            if language_of(path).get("ok") in _CODE_GRAMMARS
+        ]
+        diagnostics.extend(check_auth(auth_sources))
 
     report = prepare_report(diagnostics, args, project["adoption"])
     write_report(by_format[args["format"]](report))

@@ -20,6 +20,7 @@ from honest_check.cli import (
     startup_check,
 )
 from honest_check.core import (
+    check_auth,
     check_references,
     check_roles,
     check_source,
@@ -46,6 +47,7 @@ from honest_check.report import (
 )
 
 __all__ = [
+    "check_auth",
     "check_paths",
     "check_references",
     "check_roles",
