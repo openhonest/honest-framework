@@ -8,7 +8,14 @@ I/O. HonestCheckError is the one typed exception, raised at the door on on_error
 
 import sys
 
-from honest_check.core import check_source, cross_declaration, pair_source
+from honest_parse import language_of
+
+from honest_check.core import (
+    check_references,
+    check_source,
+    cross_declaration,
+    pair_source,
+)
 from honest_check.readers import (
     discover_files,
     load_config,
@@ -26,6 +33,12 @@ from honest_check.report import (
 
 # The minimum severity a finding must reach to block startup, ranked (section 2.3).
 _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
+
+# The grammars whose files carry the cross-file references check_references resolves: the
+# template grammars (html, jinja), the stylesheet grammar (css) and the script grammar
+# (javascript). run_check pairs only the discovered files honest-parse detects as one of
+# these into the whole-set view check_references folds over.
+_REFERENCE_GRAMMARS = frozenset({"html", "jinja", "css", "javascript"})
 
 
 class HonestCheckError(Exception):
@@ -88,7 +101,10 @@ def run_check(argv):
     of two modes chosen by whether CliArgs.declaration is empty.
 
     Base mode (empty declaration) pulls the per-rule config and runs the pure core check_source
-    over each discovered file, folding every file's diagnostics into one list. Crossing mode
+    over each discovered file, folding every file's diagnostics into one list; after that loop
+    it pairs each discovered template, stylesheet and script file into a SourceFile and runs the
+    pure core check_references once over the whole set, folding its HC-REF002 and HC-REF003
+    cross-file findings into the same list. Crossing mode
     (non-empty declaration) pulls the one parsed module with read_declaration; when that read
     fails it routes the Fault straight outward as its own answer (ExitCode | Fault), checking
     nothing over a declaration it could not open (§HC-R002). Otherwise it pulls the export
@@ -114,6 +130,12 @@ def run_check(argv):
         diagnostics = []
         for path in files:
             diagnostics.extend(check_source(read_source(path), path, rule_config))
+        reference_sources = [
+            pair_source(path, read_source(path))
+            for path in files
+            if language_of(path).get("ok") in _REFERENCE_GRAMMARS
+        ]
+        diagnostics.extend(check_references(reference_sources))
 
     report = prepare_report(diagnostics, args, project["adoption"])
     write_report(by_format[args["format"]](report))

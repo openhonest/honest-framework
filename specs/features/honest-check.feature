@@ -1,7 +1,8 @@
 Feature: honest-check — the static checker, the honesty gate
-  One scenario per declared function (26 total). One pure core folds the whole rule
+  One scenario per declared function (27 total). One pure core folds the whole rule
   catalogue over a declaration graph; a second pure core crosses a module's .hd against
-  its whole package; three orchestrators pull files and seams and share those cores; three
+  its whole package; a third pure core crosses references across the whole file set; three
+  orchestrators pull files and seams and share those cores; three
   doors reach the world (startup integration, the CLI, and the hd-check seam gate); the
   cross-module seam checks resolve the references one module's .hd writes into others; the
   rest read the filesystem, parse the argument vector, pair a path with its text, or render
@@ -112,6 +113,15 @@ Feature: honest-check — the static checker, the honesty gate
     And it takes the package as a list of SourceFile, not a single source, because HC-REF005 crosses the declared function set against the package's entire defined-function set, which needs every file's definitions in view together; it parses each file under the grammar honest-parse detects from its path extension, reads from the code each fact it states outright (each function's name, whether it is async def, whether it can return the host nothing, whether its body yields, its call graph), and crosses those against the same-named declared function
     And the per-rule crossing logic (HC-R002, HC-R003, HC-R004, HC-R005, HC-REF005) is nested here as data exactly as check_source holds the construction rules, and the exact diagnostic each rule produces for a given package and declaration is pinned by the conformance suite, not by any per-rule function
     But it opens no file, executes no application code, modifies nothing, and raises nothing: a disagreement comes back as a Diagnostic; an empty list means the declaration and the package agree
+
+  Scenario: check_references crosses references across the whole file set and returns the unresolved ones
+    Given sources: list<SourceFile>
+    When check_references is called
+    Then it is the pure cross-file reference core of the base-mode CLI path, the whole-set counterpart of check_source for references that resolve across files rather than within one: it takes the whole discovered set of the project's template, stylesheet and script files, already read and paired into SourceFile records, parses each under the grammar honest-parse detects from its path extension, builds from the whole set at once the two resolvable sets the reference rules need, resolves each template's include/extends targets and class references against those sets, and returns the findings as a list of Diagnostic
+    And sources is that whole-set view, a list of SourceFile each pairing one discovered template, stylesheet or script file with the filesystem path it was read from — the path used to detect the grammar and to stamp each diagnostic's source_location, and check_references does not re-open it; off each file it reads what that file states: a template's (.html, under the Jinja grammar) include/extends targets and static or interpolated class values, a stylesheet's (.css) class selectors, and a script's (.js) string-literal classList add/remove/toggle/replace/contains arguments and className assignment tokens
+    And HC-REF002 resolves each template's literal include/extends target against the set of templates the whole set holds — a target resolves when it matches a template file relative to any search root the way the engine's loader searches — and emits an error for a literal target that matches no template, skipping a dynamic target that carries no string literal; HC-REF003 resolves each static class a template emits and each string-literal class a script adds against the union of the class selectors every discovered stylesheet defines and emits an error for a class no stylesheet defines, skipping an interpolated class value or a non-literal classList/className argument as the stated bound of the check; both rules are error severity
+    And the per-rule crossing logic is nested here as data exactly as check_source holds its construction rules — HC-REF002 and HC-REF003 are not separately declared functions, and the exact Diagnostic each produces for a given set of files is pinned by the conformance suite, not by any per-rule function
+    But it opens no file (read_source does that), parses no .hd, executes none of the code it inspects, modifies nothing, and raises nothing: a dead reference comes back as a Diagnostic; an empty list means every literal include/extends target and every static class reference resolved
 
   Scenario: discover_files walks the paths and keeps only recognized, non-excluded files
     Given paths: list<str> and exclude: list<str>
