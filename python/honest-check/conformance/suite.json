@@ -375,6 +375,41 @@
       "expected": { "diagnostics": [ { "rule": "HC-P001", "severity": "info", "line": 2 }, { "rule": "HC-SUP002", "severity": "error", "line": 2 } ] }
     },
     {
+      "id": "HC004-001",
+      "description": "A vocabulary type that the paired binding never binds and no composed type uses is dead.",
+      "category": "HC004",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify\nv = vocabulary({\"email\": {\"a@b.com\"}, \"phone\": {\"555\"}})\nb = binding({\"email\": \"sender\"})\nresult = classify(tokens, v, bind=b)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC004", "severity": "warning", "line": 2 } ] }
+    },
+    {
+      "id": "HC004-002",
+      "description": "The vocabulary and binding a link pairs through accepts and binds are crossed the same way as a classify call.",
+      "category": "HC004",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nv = vocabulary({\"email\": {\"a@b.com\"}, \"phone\": {\"555\"}})\nb = binding({\"email\": \"sender\"})\n@link(accepts=v, binds=b)\ndef step(m):\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC004", "severity": "warning", "line": 2 } ] }
+    },
+    {
+      "id": "HC004-clean-001",
+      "description": "With no binding supplied, classify uses the identity auto_binding where every type is its own slot, so no type is dead.",
+      "category": "HC004",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, classify\nv = vocabulary({\"email\": {\"a@b.com\"}, \"phone\": {\"555\"}})\nresult = classify(tokens, v)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC005-001",
+      "description": "A binding entry whose type name is in no paired vocabulary cannot be classified.",
+      "category": "HC005",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify\nv = vocabulary({\"email\": {\"a@b.com\"}})\nb = binding({\"email\": \"sender\", \"phone\": \"receiver\"})\nresult = classify(tokens, v, bind=b)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC005", "severity": "warning", "line": 3 } ] }
+    },
+    {
+      "id": "HC005-clean-001",
+      "description": "A binding whose every type is in the vocabulary, and a vocabulary whose every type is bound, fires neither HC004 nor HC005.",
+      "category": "HC005",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify\nv = vocabulary({\"email\": {\"a@b.com\"}})\nb = binding({\"email\": \"sender\"})\nresult = classify(tokens, v, bind=b)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
       "id": "clean-001",
       "description": "Plain honest code fires nothing.",
       "category": "clean",

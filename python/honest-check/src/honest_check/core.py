@@ -1270,6 +1270,169 @@ def check_source(source, path, rule_config):
             )
         return findings
 
+    def construction_maps():
+        """Each file-local variable bound to a `vocabulary(...)` or a `binding(...)` call,
+        mapped to that construction call node (§HC004, §HC005). A name bound to anything else
+        is not here; a name honest-check cannot resolve to one of these two constructions is
+        one it cannot cross, and a pairing site naming it is left alone."""
+        vocab_calls = {}
+        binding_calls = {}
+        for node in nodes:
+            if node.type != "assignment":
+                continue
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            if left is None or right is None or left.type != "identifier":
+                continue
+            if right.type != "call":
+                continue
+            canonical = canonical_name(right)
+            name = left.text.decode("utf-8")
+            if canonical == "vocabulary":
+                vocab_calls[name] = right
+            elif canonical == "binding":
+                binding_calls[name] = right
+        return vocab_calls, binding_calls
+
+    def vocabulary_types(vocab_call):
+        """The type surface of a `vocabulary(...)` call: its base-type names, its composed-type
+        names, the base names its composed types require, and the base names its composed types
+        capture (§HC004, §HC005). base_types_of reads the first-argument dictionary's keys; the
+        composed data is read from each `composed(name, requires, captures)` call in the
+        `composed_types` keyword, the same shape check_composed reads."""
+        positionals, keywords = call_arguments(vocab_call)
+        base_names = set()
+        if positionals and positionals[0].type == "dictionary":
+            base_names = set(base_types_of(positionals[0]))
+        composed_names = set()
+        composed_requires = set()
+        composed_captures = set()
+        composed_list = keywords.get("composed_types")
+        if composed_list is not None:
+            for child in composed_list.named_children:
+                if child.type != "call" or canonical_name(child) != "composed":
+                    continue
+                c_positionals, _c_keywords = call_arguments(child)
+                if c_positionals and c_positionals[0].type == "string":
+                    composed_names.add(literal_string(c_positionals[0]))
+                if len(c_positionals) >= 2 and c_positionals[1].type == "dictionary":
+                    for pair in c_positionals[1].named_children:
+                        if pair.type == "pair":
+                            composed_requires.add(
+                                literal_string(pair.child_by_field_name("key"))
+                            )
+                if len(c_positionals) >= 3 and c_positionals[2].type == "string":
+                    composed_captures.add(literal_string(c_positionals[2]))
+        return base_names, composed_names, composed_requires, composed_captures
+
+    def binding_keys(binding_call):
+        """The type names a `binding(...)` call binds — the keys of its first-argument table
+        (§HC004, §HC005)."""
+        positionals, _keywords = call_arguments(binding_call)
+        if not positionals or positionals[0].type != "dictionary":
+            return set()
+        keys = set()
+        for pair in positionals[0].named_children:
+            if pair.type == "pair":
+                keys.add(literal_string(pair.child_by_field_name("key")))
+        return keys
+
+    def vocabulary_binding_pairs():
+        """Each (vocabulary call, binding call) a classify or link pairs by name (§HC004,
+        §HC005). A `classify(tokens, vocab, bind=b)` pairs positional 2 with the `bind`
+        keyword; a `link(accepts=v, binds=b)` (bare or as a decorator) pairs `accepts` with
+        `binds`. A site with no binding keyword uses the identity auto_binding, which binds
+        each type to itself, so neither rule fires and the site is not a pair. A vocabulary or
+        binding argument that is not a plain name, or a name that resolves to no local
+        construction, is skipped — honest-check cannot cross what it was not handed. A pair
+        reached from two sites is crossed once."""
+        vocab_calls, binding_calls = construction_maps()
+        pairs = []
+        seen = set()
+        for node in nodes:
+            if node.type != "call":
+                continue
+            canonical = canonical_name(node)
+            positionals, keywords = call_arguments(node)
+            if canonical == "classify":
+                vocab_arg = positionals[1] if len(positionals) >= 2 else None
+                binding_arg = keywords.get("bind")
+            elif canonical == "link":
+                vocab_arg = keywords.get("accepts")
+                binding_arg = keywords.get("binds")
+            else:
+                continue
+            if binding_arg is None:
+                continue
+            if (
+                vocab_arg is None
+                or vocab_arg.type != "identifier"
+                or binding_arg.type != "identifier"
+            ):
+                continue
+            vocab_call = vocab_calls.get(vocab_arg.text.decode("utf-8"))
+            binding_call = binding_calls.get(binding_arg.text.decode("utf-8"))
+            if vocab_call is None or binding_call is None:
+                continue
+            key = (id(vocab_call), id(binding_call))
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append((vocab_call, binding_call))
+        return pairs
+
+    def check_hc004():
+        """HC004: a vocabulary base type the paired binding never binds and no composed type
+        uses, in its requires or as its captures, is dead (§HC004). Reported at the
+        vocabulary() call's line, once per dead type. A classify with no bind, or a link with
+        no binds, pairs the identity auto_binding and does not fire."""
+        findings = []
+        for vocab_call, binding_call in vocabulary_binding_pairs():
+            base_names, _composed_names, composed_requires, composed_captures = (
+                vocabulary_types(vocab_call)
+            )
+            bound = binding_keys(binding_call)
+            for type_name in sorted(base_names):
+                if type_name in bound:
+                    continue
+                if type_name in composed_requires or type_name in composed_captures:
+                    continue
+                findings.append(
+                    diagnostic(
+                        "HC004",
+                        "warning",
+                        f"Type {type_name!r} is declared in the vocabulary but no binding slot "
+                        "or composed type uses it. Bind it to a slot, use it in a composed "
+                        "type, or remove it from the vocabulary.",
+                        vocab_call,
+                    )
+                )
+        return findings
+
+    def check_hc005():
+        """HC005: a binding key that names neither a base type nor a composed type of the
+        paired vocabulary binds a type no token can carry (§HC005). Reported at the binding()
+        call's line, once per unmatched key. A classify with no bind, or a link with no binds,
+        pairs the identity auto_binding and does not fire."""
+        findings = []
+        for vocab_call, binding_call in vocabulary_binding_pairs():
+            base_names, composed_names, _requires, _captures = vocabulary_types(vocab_call)
+            known = base_names | composed_names
+            for type_name in sorted(binding_keys(binding_call)):
+                if type_name in known:
+                    continue
+                findings.append(
+                    diagnostic(
+                        "HC005",
+                        "warning",
+                        f"Binding references type {type_name!r} not found in the paired "
+                        "vocabulary, so no classified token can reach its slot. Add the type "
+                        "to the vocabulary, or remove the binding entry.",
+                        binding_call,
+                    )
+                )
+        return findings
+
     # The per-file AST rules: each reads the shared `nodes` once-walked above and returns its
     # findings as data. check_source folds the tuple in one pass, so adding a per-file rule is
     # adding a row. HC-P003 (check_classes) is the first row. The construction-rule dispatch
@@ -1289,6 +1452,8 @@ def check_source(source, path, rule_config):
         check_hc001,
         check_hc_or001,
         check_p017,
+        check_hc004,
+        check_hc005,
     )
 
     def parse_directive(comment_node):
