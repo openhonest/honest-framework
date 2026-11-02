@@ -1,9 +1,10 @@
 Feature: honest-check — the static checker, the honesty gate
-  One scenario per declared function (21 total). One pure core folds the whole rule
+  One scenario per declared function (24 total). One pure core folds the whole rule
   catalogue over a declaration graph; a second pure core crosses a module's .hd against
   its whole package; two orchestrators pull files and share those cores; two doors reach
-  the world (startup integration and the CLI); the rest read the filesystem, parse the
-  argument vector, pair a path with its text, or render the report.
+  the world (startup integration and the CLI); three cross-module seam functions resolve
+  the references one module's .hd writes into others; the rest read the filesystem, parse
+  the argument vector, pair a path with its text, or render the report.
 
   Scenario: check_source runs the declared rule catalogue over one source's declaration graph
     Given source: str and path: str and rule_config: RuleConfig
@@ -153,3 +154,27 @@ Feature: honest-check — the static checker, the honesty gate
     And on an ExitCode answer it exits the process with it: 0 means success (warnings may have printed) and 1 means the gate failed with one or more errors at or below the declared adoption level
     And on the declaration-read Fault run_check routed outward (a configured .hd that was missing or did not parse, §HC-R002) it discharges it at exit code 2, the run-could-not-complete code, raising HonestCheckError carrying the Fault's problem and remedy rather than returning a clean code over a declaration it could not open
     But it raises HonestCheckError only on that declaration-read failure; this door is the one place a Fault crosses from a value into a world effect
+
+  Scenario: declared_seams collects every cross-module seam one module declares
+    Given module: Declaration
+    When declared_seams is called
+    Then for each function in module.functions and each side effect that function declares, it keeps only the side effects whose module half is non-empty, turning each into one Seam carrying the function's name as caller, the named module, the door (the side effect's door half, which may be the empty string when the target named a module and no door), and the direction (reads, writes or reads_writes)
+    And it skips a side effect whose module half is the empty string, because that names the world — reads "HTTP", writes "DOM", reads "env:POOL_SIZE" — and carries no module to resolve
+    And it is the one derivation check_hc_ref006 and check_hc_ref007 each invoke, so a module's seams are derived once and named in one place
+    But it reads nothing, opens nothing, and decides nothing beyond this selection, returning the list of seams, empty when the module declares no cross-module side effect
+
+  Scenario: check_hc_ref006 flags a seam into a present module that declares no function of that door name
+    Given module: Declaration and declarations: dict<str, Declaration> and path: str
+    When check_hc_ref006 is called
+    Then it invokes declared_seams to get the module's seams, then for a seam whose named module is a key in declarations but whose functions include no function named the seam's door, it emits one HC-REF006 error naming the caller, the module and the door — a dead reference, the artifact reads as working and the door it points at is absent
+    And it skips a seam whose door is the empty string (a module named with no door, HC-REF008's case, not this rule's) and skips a seam whose named module is not a key in declarations, not assumed absent, because a workspace may name a module from outside it and a gate whose answer changes with how it was invoked is not a gate
+    And module is the one declaration whose seams are resolved, declarations is every loaded declaration keyed by its module name (the gate supplies them and the rule judges only those), and path is the filesystem path of module's .hd stamped into each diagnostic's source_location
+    But it reads nothing and raises nothing, returning one Diagnostic per dead seam at error severity; the empty list means every door name a seam of this module named resolved to a function in the named module
+
+  Scenario: check_hc_ref007 flags a seam whose door name is declared but is not a boundary_in
+    Given module: Declaration and declarations: dict<str, Declaration> and path: str
+    When check_hc_ref007 is called
+    Then it invokes declared_seams to get the module's seams, then for a seam whose named module is in declarations and declares a function of the seam's door name whose role is not boundary_in, it emits one HC-REF007 error naming the caller, the module, the door and the role the module gave that door — the world is reaching that module somewhere other than its entrance
+    And it applies the same two skips as HC-REF006: a seam whose door is the empty string is skipped (HC-REF008's case), and a seam whose named module is not a key in declarations is skipped, not assumed absent, because a gate whose answer changes with how it was invoked is not a gate
+    And module is the one declaration whose seams are resolved, declarations is every loaded declaration keyed by its module name, and path is the filesystem path of module's .hd stamped into each diagnostic's source_location
+    But it reads nothing and raises nothing, returning one Diagnostic per such seam at error severity; the empty list means every door a seam of this module named is a boundary_in of the module it named

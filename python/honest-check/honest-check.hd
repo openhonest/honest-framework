@@ -288,3 +288,52 @@ module honest-check
   # so the entry-check reports it UNCHECKED rather than confirming it.
   chain cli = main -> run_check
   entry "cli:__main__" -> main
+
+  # ======================================================================================
+  # The cross-module seam checks (section 8, §HC-REF006 and §HC-REF007). These three functions
+  # stand apart from the CLI path and the declaration-crossing path above: no door and no
+  # orchestrator of this module reaches them, because their caller is the external hd-check gate,
+  # which imports them with `from honest_check.integration_rules import check_hc_ref006,
+  # check_hc_ref007, declared_seams`. They are cross-module rather than single-module: each reads
+  # one module's parsed declaration and the set of all loaded declarations, and resolves the seams
+  # the one module wrote into the others. They are pure — the gate supplies the declarations, so
+  # they open no file, parse nothing, and touch no world — and they return Diagnostics as data,
+  # exactly as check_source and cross_declaration do. HC-REF008, HC-REF009 and HC-REF010 are NOT
+  # declared here: HC-REF008 waits on honest-design to mark a bare module name (no dot) as a seam
+  # (§649), and HC-REF009/HC-REF010 are Question-severity coupling rules blocked on honest-design's
+  # world-side vocabulary and caller detection.
+  # ======================================================================================
+
+  # The three side-effect verbs honest-design parses, bounded. A seam carries exactly one of these
+  # as the way its caller touches the module it enters, so the Seam record names the closed set
+  # rather than a loose str.
+  set directions = {
+    "reads"        : "the caller reads the target",
+    "writes"       : "the caller writes the target",
+    "reads_writes" : "the caller both reads and writes the target"
+  } note "the three side-effect directions the Honest Framework grammar defines (reads, writes, reads_writes). honest-design parses one of these as each side effect's direction; a Seam carries it verbatim, and HC-REF006 and HC-REF007 render it into their message so a reader sees how the caller reaches the door it named."
+  vocabulary Direction = { directions } note "the closed set of side-effect directions a seam may carry: reads, writes or reads_writes. It is exactly honest-design's SideEffect.direction value, named here as a vocabulary rather than a plain str because the set of ways one function may touch another is closed."
+
+  # One cross-module reach a module declares: a single side effect of one of the module's functions
+  # whose target names another module. The record that declared_seams produces and the two REF rules
+  # fold over.
+  type Seam = {
+    caller: str
+    module: str
+    door: str
+    direction: Direction
+  } note "one cross-module reach one module declares — a single side effect, of one of the module's functions, whose target names another module. A declaration never crosses a module boundary: the caller names the callee's door on its own side effect, with a dot — `reads \"honest-parse.parse_source\"` — and the callee never names its callers, which is what lets a library be used by code it has never heard of. So a seam is written once, by the side that knows, and resolving it needs both the caller's declaration and the callee's in view at the same time; `validate` sees one module and reports nothing here, which is why this is honest-check's, like every other reference that resolves or does not. caller is the name of the function that declared the side effect, the side that wrote the seam. module is the named module the seam enters, the module half honest-design split from the dotted target. door is the function name inside that module the seam targets, the door half of the dotted target; it is the empty string when the side effect named a module and no door (a bare `writes \"honest-persist\"`), a seam that carries no door name for HC-REF006 or HC-REF007 to resolve and that HC-REF008 — honest-design's half not yet built, so not declared here — is the rule that will catch. direction is how the caller touches the target, one of reads, writes or reads_writes. honest-check reads this record off a Declaration's functions; it never constructs a declaration, which is honest-design's to own."
+
+  fn declared_seams : (module: Declaration) -> list<Seam> note "collects every seam one module declares into a list of Seam records, the one derivation HC-REF006 and HC-REF007 share rather than each re-deriving it. For each function in module.functions and each side effect that function declares, a side effect whose module half is the empty string names the world — `reads \"HTTP\"`, `writes \"DOM\"`, `reads \"env:POOL_SIZE\"` — and carries no module to resolve, so it is skipped; a side effect whose module half is non-empty is a cross-module seam and becomes one Seam carrying the function's name as the caller, the named module, the door (the side effect's door half, which may be the empty string when the target named a module and no door), and the direction (the side effect's reads/writes/reads_writes). module is the one parsed .hd module whose seams to collect: a Declaration, honest-design's IR for one `module` block, read_hd's value for a single module. It reads nothing, opens nothing, and decides nothing beyond this selection — it only reads each function's side effects off the declaration and keeps the ones that name a module — and returns the list of seams, empty when the module declares no cross-module side effect. check_hc_ref006 and check_hc_ref007 each invoke it, so the set of seams a module declares is derived once and named in one place."
+
+  fn check_hc_ref006 : (module: Declaration, declarations: dict<str, Declaration>, path: str) -> list<Diagnostic> invokes declared_seams note "runs HC-REF006 over the seams one module declares: for each seam into a module that IS present in declarations but that declares no function of the seam's door name, it emits an HC-REF006 error. The caller says it enters `M.d`, the declaration of M names no function d, and the reference is dead — the same fault as a template naming a route nothing mounts: the artifact reads as working and the thing it points at is absent. It invokes declared_seams to get the module's seams, then for each seam applies two skips before resolving: a seam whose door is the empty string names a module and no door and carries nothing to resolve, so it is skipped (that bare-module case is HC-REF008's, not this rule's); and a seam whose named module is not a key in declarations is skipped, not assumed absent — a workspace holds the modules it holds, a declaration may name one from outside it, and reporting a dead reference because the file was not loaded would make the rule depend on how it was invoked, and a gate whose answer changes with its arguments is not a gate (§639). For a seam whose named module is in declarations, if that module's functions include no function named the seam's door, it emits one HC-REF006 error naming the caller, the module and the door. module is the one declaration whose seams are resolved (a Declaration); declarations is every loaded declaration keyed by its module name (the gate supplies them, and the rule judges only those); path is the filesystem path of module's .hd, stamped into each diagnostic's source_location so a reader finds the offending side effect. HC-REF006 and HC-REF007 are separate codes because they call for different repairs: HC-REF006's finding is a wrong name, and someone corrects it. It reads nothing and returns one Diagnostic per dead seam at error severity (section 8); the empty list means every door name a seam of this module named resolved to a function in the named module. It raises nothing."
+
+  fn check_hc_ref007 : (module: Declaration, declarations: dict<str, Declaration>, path: str) -> list<Diagnostic> invokes declared_seams note "runs HC-REF007 over the seams one module declares: for each seam whose door name IS declared in the named module but whose role is not boundary_in, it emits an HC-REF007 error. The name is there and is not a door: the declaration of M does have a function d, and d is not a `boundary_in`, so the world is reaching that module somewhere other than its entrance. A pure function is the common case and the worst one, because it means the core is being used directly. It invokes declared_seams to get the module's seams, then applies the same two skips HC-REF006 does — a seam whose door is the empty string is skipped (HC-REF008's case), and a seam whose named module is not a key in declarations is skipped, not assumed absent, because a gate whose answer changes with how it was invoked is not a gate (§639). For a seam whose named module is in declarations AND declares a function of the seam's door name, if that function's role is not boundary_in, it emits one HC-REF007 error naming the caller, the module, the door and the role the module gave that door. module is the one declaration whose seams are resolved (a Declaration); declarations is every loaded declaration keyed by its module name (the gate supplies them, and the rule judges only those); path is the filesystem path of module's .hd, stamped into each diagnostic's source_location. HC-REF006 and HC-REF007 are separate codes because they call for different repairs: HC-REF007's finding is a name that is right and a shape that is wrong, and correcting it means either giving that module a door or moving the function to something that is a library by design — reporting it as one finding with HC-REF006 would hand a reader a repair that fits half the cases. It reads nothing and returns one Diagnostic per such seam at error severity (section 8); the empty list means every door a seam of this module named is a boundary_in of the module it named. It raises nothing."
+
+  # The three functions the hd-check gate imports from honest_check.integration_rules. No internal
+  # door or chain starts them — the external gate is their caller — so each carries an import entry,
+  # the library idiom, which the entry-check reports UNCHECKED (it confirms only the import, never
+  # the call) rather than flagging the function as an orphan.
+  entry "import honest_check.integration_rules" -> check_hc_ref006
+  entry "import honest_check.integration_rules" -> check_hc_ref007
+  entry "import honest_check.integration_rules" -> declared_seams
