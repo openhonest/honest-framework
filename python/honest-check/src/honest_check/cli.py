@@ -13,6 +13,7 @@ from honest_parse import language_of
 
 from honest_check.core import (
     check_references,
+    check_roles,
     check_source,
     cross_declaration,
     pair_source,
@@ -40,6 +41,11 @@ _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
 # (javascript). run_check pairs only the discovered files honest-parse detects as one of
 # these into the whole-set view check_references folds over.
 _REFERENCE_GRAMMARS = frozenset({"html", "jinja", "css", "javascript"})
+
+# The grammars honest-parse recognizes as source code, not templates or stylesheets: the
+# languages HC-R001's orphan pass reads. run_check groups the discovered files honest-parse
+# detects as one of these by their nearest module .hd and runs check_roles once per group.
+_CODE_GRAMMARS = frozenset({"python", "javascript", "ruby", "go", "php", "elixir"})
 
 
 class HonestCheckError(Exception):
@@ -130,29 +136,34 @@ def run_check(argv):
     else:
         rule_config = load_config()
 
-        def nearest_declaration(path):
-            """The parsed module .hd governing a discovered file: walk the file's directory
-            ancestors to the first honest-<name>/honest-<name>.hd and read it through
-            read_declaration, returning its one parsed module, or NOTHING (None) when no such
-            .hd is found or the read/parse fails. Base-mode discovery is best-effort — the
-            strict missing-declaration Fault belongs to the explicit --declaration path, not
-            here. A .hd that declares more than one module yields read_declaration's first
-            module, which is enough to recognize this file's doors by name."""
+        def nearest_hd_path(path):
+            """The filesystem path of the module .hd governing a discovered file: walk the
+            file's directory ancestors to the first honest-<name>/honest-<name>.hd, or None when
+            no such .hd is found. Base-mode discovery is best-effort — the strict
+            missing-declaration Fault belongs to the explicit --declaration path, not here."""
             directory = os.path.dirname(os.path.abspath(path))
             while True:
                 base = os.path.basename(directory)
                 candidate = os.path.join(directory, f"{base}.hd")
                 if base.startswith("honest-") and os.path.isfile(candidate):
-                    parsed = read_declaration(candidate)
-                    return None if "problem" in parsed else parsed
+                    return candidate
                 parent = os.path.dirname(directory)
                 if parent == directory:
                     return None
                 directory = parent
 
+        def declaration_at(hd_path):
+            """The parsed module at hd_path, or NOTHING (None) when hd_path is None or the
+            read/parse fails. A .hd that declares more than one module yields read_declaration's
+            first module, which is enough to recognize this group's functions by name."""
+            if hd_path is None:
+                return None
+            parsed = read_declaration(hd_path)
+            return None if "problem" in parsed else parsed
+
         diagnostics = []
         for path in files:
-            declaration = nearest_declaration(path)
+            declaration = declaration_at(nearest_hd_path(path))
             diagnostics.extend(
                 check_source(read_source(path), path, rule_config, declaration)
             )
@@ -162,6 +173,20 @@ def run_check(argv):
             if language_of(path).get("ok") in _REFERENCE_GRAMMARS
         ]
         diagnostics.extend(check_references(reference_sources))
+
+        # The whole-program role pass (HC-R001): group the discovered code files by their
+        # nearest module .hd and run check_roles once per group with that group's declaration
+        # (NOTHING for files under no module .hd), since an orphan in one file may be reached by
+        # a call from another, so the question is answerable only across a whole module at once.
+        role_groups = {}
+        for path in files:
+            if language_of(path).get("ok") in _CODE_GRAMMARS:
+                role_groups.setdefault(nearest_hd_path(path), []).append(path)
+        for hd_path, group_paths in role_groups.items():
+            group_sources = [
+                pair_source(path, read_source(path)) for path in group_paths
+            ]
+            diagnostics.extend(check_roles(group_sources, declaration_at(hd_path)))
 
     report = prepare_report(diagnostics, args, project["adoption"])
     write_report(by_format[args["format"]](report))
