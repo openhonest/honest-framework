@@ -58,6 +58,24 @@ _LIFECYCLE_HOOKS = frozenset(
     }
 )
 
+# The Python HTTP-response markers HC-P017 names (§HC-P017). A function whose own body calls
+# one of these produces HTTP output, so it must be a declared @link whose emits vocabulary is
+# declared, or it escapes chain-contract testing of its serialized output. These are the
+# response constructors and the template call `render`, matched by the call's name
+# (called_name). They are not the watchlists.py I/O set, which this rule does not read.
+_HTTP_RESPONSE_MARKERS = frozenset(
+    {
+        "Response",
+        "JSONResponse",
+        "HTMLResponse",
+        "PlainTextResponse",
+        "RedirectResponse",
+        "FileResponse",
+        "StreamingResponse",
+        "render",
+    }
+)
+
 # The Python I/O calls HC-P004 names in a non-boundary function (§5.4). _IO_CALLS is matched
 # by whole dotted name (`open`, `print`, `os.system`); _IO_MODULE_PREFIXES is the three
 # modules whose every call reaches outside the process, matched by dotted prefix.
@@ -1197,6 +1215,55 @@ def check_source(source, path, rule_config):
                 )
         return findings
 
+    def link_declares_emits(fdef):
+        """True when a function carries a `@link` decorator that passes an `emits` keyword — the
+        emits vocabulary HC-P017 requires of an HTTP-producing link (§HC-P017). Read the same
+        way is_boundary_decorator reads `boundary`: from the decorator call's keyword
+        arguments. A bare `@link` with no call declares no emits."""
+        for decorator in decorators_of(fdef):
+            if decorator_target(decorator) != "link":
+                continue
+            expr = decorator_expression(decorator)
+            if expr is None or expr.type != "call":
+                continue
+            _positionals, keywords = call_arguments(expr)
+            if "emits" in keywords:
+                return True
+        return False
+
+    def check_p017():
+        """HC-P017: a function whose own body calls an HTTP-response marker produces HTTP output
+        (§HC-P017). It fires unless the function is a `@link` whose `emits` vocabulary is
+        declared, because otherwise its serialized output is classified by no vocabulary and
+        escapes chain-contract testing. Reported at the function's `def` line."""
+        findings = []
+        for node in nodes:
+            if node.type != "function_definition":
+                continue
+            produces_http = any(
+                called_name(child) in _HTTP_RESPONSE_MARKERS
+                for child in own_body(node)
+                if child.type == "call"
+            )
+            if not produces_http:
+                continue
+            if is_link_decorated(node) and link_declares_emits(node):
+                continue
+            name_node = node.child_by_field_name("name")
+            name = name_node.text.decode("utf-8") if name_node else "<function>"
+            findings.append(
+                diagnostic(
+                    "HC-P017",
+                    "error",
+                    f"Function {name!r} produces HTTP output without being a declared @link "
+                    "with an emits vocabulary. Declare emits covering status, content-type, "
+                    "body shape, headers, and cookies, or delegate to a declared serializer "
+                    "link.",
+                    node,
+                )
+            )
+        return findings
+
     # The per-file AST rules: each reads the shared `nodes` once-walked above and returns its
     # findings as data. check_source folds the tuple in one pass, so adding a per-file rule is
     # adding a row. HC-P003 (check_classes) is the first row. The construction-rule dispatch
@@ -1215,6 +1282,7 @@ def check_source(source, path, rule_config):
         check_hc008,
         check_hc001,
         check_hc_or001,
+        check_p017,
     )
 
     diagnostics = []

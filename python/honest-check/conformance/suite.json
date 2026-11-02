@@ -319,6 +319,34 @@
       "expected": { "diagnostics": [] }
     },
     {
+      "id": "HC-P017-001",
+      "description": "A plain function that produces an HTTP response escapes chain-contract testing of its serialized output.",
+      "category": "HC-P017",
+      "input": { "language": "python", "source": "def view(req):\n    return JSONResponse({\"ok\": True})\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P017", "severity": "error", "line": 1 } ] }
+    },
+    {
+      "id": "HC-P017-002",
+      "description": "A link that produces an HTTP response but declares no emits vocabulary still escapes serialization testing.",
+      "category": "HC-P017",
+      "input": { "language": "python", "source": "from honest_type import link\n@link()\ndef view(req):\n    return JSONResponse({\"ok\": True})\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P017", "severity": "error", "line": 3 } ] }
+    },
+    {
+      "id": "HC-P017-clean-001",
+      "description": "A link that produces an HTTP response and declares emits vocabulary is contract-tested and fires nothing.",
+      "category": "HC-P017",
+      "input": { "language": "python", "source": "from honest_type import link\n@link(emits=response_vocab)\ndef view(req):\n    return JSONResponse({\"ok\": True})\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P017-clean-002",
+      "description": "A function that produces no HTTP response is not a serializer and fires nothing.",
+      "category": "HC-P017",
+      "input": { "language": "python", "source": "def compute(req):\n    return req[\"x\"] + 1\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
       "id": "clean-001",
       "description": "Plain honest code fires nothing.",
       "category": "clean",
