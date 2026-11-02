@@ -1925,23 +1925,31 @@ def check_source(source, path, rule_config, declaration):
         line_count = source.count("\n") + 1
         scopes = []
         open_ranges = {}
+
+        # The directive keyword picks how a directive opens a scope (§7.1), dispatched as data
+        # rather than a branch on the keyword value: an ignore opens a point scope on its own
+        # line; a disable opens a range unless the rule is already open; an enable closes an
+        # open range. Each handler mutates the shared scopes and open_ranges in place.
+        def open_ignore(directive, line, index):
+            for rule in directive["rules"]:
+                scopes.append({"rule": rule, "lo": line, "hi": line, "owner": index})
+
+        def open_disable(directive, line, index):
+            for rule in directive["rules"]:
+                if rule not in open_ranges:
+                    open_ranges[rule] = (line, index)
+
+        def close_enable(directive, line, index):
+            for rule in directive["rules"]:
+                if rule in open_ranges:
+                    lo, owner = open_ranges.pop(rule)
+                    scopes.append({"rule": rule, "lo": lo, "hi": line - 1, "owner": owner})
+
+        open_scope = {"ignore": open_ignore, "disable": open_disable, "enable": close_enable}
         for index, directive in enumerate(directives):
-            keyword = directive["keyword"]
-            line = directive["line"]
-            if keyword == "ignore":
-                for rule in directive["rules"]:
-                    scopes.append({"rule": rule, "lo": line, "hi": line, "owner": index})
-            elif keyword == "disable":
-                for rule in directive["rules"]:
-                    if rule not in open_ranges:
-                        open_ranges[rule] = (line, index)
-            elif keyword == "enable":
-                for rule in directive["rules"]:
-                    if rule in open_ranges:
-                        lo, owner = open_ranges.pop(rule)
-                        scopes.append(
-                            {"rule": rule, "lo": lo, "hi": line - 1, "owner": owner}
-                        )
+            handler = open_scope.get(directive["keyword"])
+            if handler is not None:
+                handler(directive, directive["line"], index)
         for rule, (lo, owner) in open_ranges.items():
             scopes.append({"rule": rule, "lo": lo, "hi": line_count, "owner": owner})
         return scopes

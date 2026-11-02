@@ -73,26 +73,27 @@ def startup_check(paths, on_error, severity):
             for d in blocking
         )
 
-    def act_warn():
-        if blocking:
-            print(render_block(), file=sys.stderr)
-
-    def act_raise():
-        if blocking:
-            raise HonestCheckError(render_block())
-
-    def act_halt():
-        if blocking:
-            print(render_block(), file=sys.stderr)
-            raise SystemExit(1)
-
-    actions = {"warn": act_warn, "raise": act_raise, "halt": act_halt}
-    if on_error not in actions:
+    # The on_error word picks an outcome as data (section 2.3): whether a block prints to
+    # stderr, raises, and halts the process. The door performs the I/O in its own body, so the
+    # stderr write sits at the boundary this function already is, not in a nested helper a .hd
+    # cannot name.
+    outcomes = {
+        "warn": {"print": True, "raise": False, "halt": False},
+        "raise": {"print": False, "raise": True, "halt": False},
+        "halt": {"print": True, "raise": False, "halt": True},
+    }
+    if on_error not in outcomes:
         raise HonestCheckError(
             f"on_error {on_error!r} matched no branch; accepted are "
-            f"{sorted(actions)}"
+            f"{sorted(outcomes)}"
         )
-    actions[on_error]()
+    outcome = outcomes[on_error]
+    if blocking and outcome["print"]:
+        print(render_block(), file=sys.stderr)
+    if blocking and outcome["raise"]:
+        raise HonestCheckError(render_block())
+    if blocking and outcome["halt"]:
+        raise SystemExit(1)
     return diagnostics
 
 
