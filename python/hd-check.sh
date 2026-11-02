@@ -63,7 +63,7 @@ echo ""
 uv run --package honest-check python - <<'PY'
 import glob, os, sys
 from honest_design import read_hd
-from honest_check.integration_rules import check_hc_ref006, check_hc_ref007, declared_seams
+from honest_check.integration_rules import check_seams
 
 targets = set(os.environ.get("HD_TARGETS", "").split())
 declarations = {}
@@ -76,17 +76,16 @@ for path in sorted(glob.glob("honest-*/honest-*.hd")):
         declarations[module["name"]] = module
         paths[module["name"]] = path
 
-seams = 0
-findings = []
-for name, module in declarations.items():
-    if targets and paths[name].split("/")[0] not in targets:
-        continue   # out of scope for this commit; its declaration is still loaded above, to resolve a caller's door
-    seams += len(declared_seams(module))
-    findings += check_hc_ref006(module, declarations, paths[name])
-    findings += check_hc_ref007(module, declarations, paths[name])
+# The gate is the outside world, so it enters honest-check's cross-module checks through the one
+# door, check_seams, and never calls the pure rule functions directly (ruling 2026-11-01). In-scope
+# is this commit's affected modules, or every loaded declaration when none were named; a module out
+# of scope is still loaded above, so a caller's seam into it resolves.
+in_scope = sorted(n for n in declarations if not targets or paths[n].split("/")[0] in targets)
+findings = check_seams(declarations, paths, in_scope)
 for d in findings:
-    print(f"  {d['rule']} {d['path']}: {d['message']}")
-print(f"hd-check: {seams} declared seam(s) across {len(declarations)} declaration(s), {len(findings)} unresolved.")
+    print(f"  {d['rule_id']} {d['source_location']}: {d['message']}")
+print(f"hd-check: cross-module seams checked across {len(declarations)} declaration(s), "
+      f"{len(findings)} unresolved.")
 sys.exit(1 if findings else 0)
 PY
 status=$(( status || $? ))

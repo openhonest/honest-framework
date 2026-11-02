@@ -18,6 +18,50 @@ the package __init__ (so no export the .hd does not declare).
 """
 
 
+def check_seams(declarations, paths, in_scope):
+    """The door the hd-check dogfood gate calls to run honest-check's cross-module seam checks
+    (section 8, §HC-REF006/§HC-REF007). It is the single entry point the external gate reaches
+    into these checks.
+
+    It carries only I/O: it hands its three inputs straight to the orchestrator run_seam_rules and
+    returns the combined diagnostic list the orchestrator produced, holding no resolution logic
+    itself. declarations is every loaded module's parsed declaration keyed by its module name;
+    paths is each module's .hd filesystem path keyed by the same name; in_scope is the module
+    names to report on (the empty list meaning the whole framework, every loaded module). It
+    reads no world and writes none: the gate supplies the declarations already parsed. It raises
+    nothing — an unresolved seam comes back as a Diagnostic.
+    """
+    return run_seam_rules(declarations, paths, in_scope)
+
+
+def run_seam_rules(declarations, paths, in_scope):
+    """The orchestrator the seam door hands its inputs to (section 8, §HC-REF006/§HC-REF007). For
+    each module named in in_scope — or every loaded module when in_scope is empty — it runs the
+    two cross-module seam rules over that module's declaration and folds every finding into one
+    list.
+
+    For each in-scope module it calls check_hc_ref006 with the module's declaration, the whole
+    declarations map and the module's .hd path, then check_hc_ref007 the same way, concatenating
+    their diagnostics in that order across every in-scope module. Both rules derive the module's
+    seams themselves through declared_seams, so the orchestrator never derives seams here. Each
+    in-scope module's seams resolve against the COMPLETE declarations map, not the in-scope
+    subset, so the gate's verdict on a module never changes with how it was invoked (§639). An
+    in-scope name absent from declarations is skipped, the same skip posture the rules take for an
+    out-of-view module: a workspace holds the modules it holds. It returns the flat combined list,
+    empty when every in-scope module's seams resolve; it raises nothing.
+    """
+    targets = in_scope if in_scope else list(declarations)
+    findings = []
+    for name in targets:
+        if name not in declarations:
+            continue
+        module = declarations[name]
+        path = paths[name]
+        findings.extend(check_hc_ref006(module, declarations, path))
+        findings.extend(check_hc_ref007(module, declarations, path))
+    return findings
+
+
 def declared_seams(module):
     """Collect every cross-module seam one module declares into a list of Seam records, the one
     derivation HC-REF006 and HC-REF007 share rather than each re-deriving it (§HC-REF006).

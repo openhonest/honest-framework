@@ -290,18 +290,23 @@ module honest-check
   entry "cli:__main__" -> main
 
   # ======================================================================================
-  # The cross-module seam checks (section 8, §HC-REF006 and §HC-REF007). These three functions
-  # stand apart from the CLI path and the declaration-crossing path above: no door and no
-  # orchestrator of this module reaches them, because their caller is the external hd-check gate,
-  # which imports them with `from honest_check.integration_rules import check_hc_ref006,
-  # check_hc_ref007, declared_seams`. They are cross-module rather than single-module: each reads
-  # one module's parsed declaration and the set of all loaded declarations, and resolves the seams
-  # the one module wrote into the others. They are pure — the gate supplies the declarations, so
-  # they open no file, parse nothing, and touch no world — and they return Diagnostics as data,
-  # exactly as check_source and cross_declaration do. HC-REF008, HC-REF009 and HC-REF010 are NOT
-  # declared here: HC-REF008 waits on honest-design to mark a bare module name (no dot) as a seam
-  # (§649), and HC-REF009/HC-REF010 are Question-severity coupling rules blocked on honest-design's
-  # world-side vocabulary and caller detection.
+  # The cross-module seam checks (section 8, §HC-REF006 and §HC-REF007). The hd-check dogfood gate
+  # is the outside world here, and the world enters honest-check through a door, never by calling
+  # the pure rule functions straight. So the gate reaches ONE boundary_in, check_seams, handing it
+  # every loaded declaration and the in-scope module names; that door hands its inputs to one
+  # orchestrator, run_seam_rules, which runs the two cross-module rules (check_hc_ref006 and
+  # check_hc_ref007) over the modules in view and folds every finding into one list. The three rule
+  # functions below — declared_seams, check_hc_ref006, check_hc_ref007 — are reached only through
+  # that orchestrator now (declared_seams by the two REF rules, the two REF rules by run_seam_rules),
+  # never by the world directly, exactly as check_source is reached through run_check. They are
+  # cross-module rather than single-module: each reads one module's parsed declaration and the set
+  # of all loaded declarations, and resolves the seams the one module wrote into the others. They are
+  # pure — the gate supplies the declarations already parsed, so they open no file, parse nothing,
+  # and touch no world — and they return Diagnostics as data, exactly as check_source and
+  # cross_declaration do. HC-REF008, HC-REF009 and HC-REF010 are NOT declared here: HC-REF008 waits
+  # on honest-design to mark a bare module name (no dot) as a seam (§649), and HC-REF009/HC-REF010
+  # are Question-severity coupling rules blocked on honest-design's world-side vocabulary and caller
+  # detection.
   # ======================================================================================
 
   # The three side-effect verbs honest-design parses, bounded. A seam carries exactly one of these
@@ -330,10 +335,20 @@ module honest-check
 
   fn check_hc_ref007 : (module: Declaration, declarations: dict<str, Declaration>, path: str) -> list<Diagnostic> invokes declared_seams note "runs HC-REF007 over the seams one module declares: for each seam whose door name IS declared in the named module but whose role is not boundary_in, it emits an HC-REF007 error. The name is there and is not a door: the declaration of M does have a function d, and d is not a `boundary_in`, so the world is reaching that module somewhere other than its entrance. A pure function is the common case and the worst one, because it means the core is being used directly. It invokes declared_seams to get the module's seams, then applies the same two skips HC-REF006 does — a seam whose door is the empty string is skipped (HC-REF008's case), and a seam whose named module is not a key in declarations is skipped, not assumed absent, because a gate whose answer changes with how it was invoked is not a gate (§639). For a seam whose named module is in declarations AND declares a function of the seam's door name, if that function's role is not boundary_in, it emits one HC-REF007 error naming the caller, the module, the door and the role the module gave that door. module is the one declaration whose seams are resolved (a Declaration); declarations is every loaded declaration keyed by its module name (the gate supplies them, and the rule judges only those); path is the filesystem path of module's .hd, stamped into each diagnostic's source_location. HC-REF006 and HC-REF007 are separate codes because they call for different repairs: HC-REF007's finding is a name that is right and a shape that is wrong, and correcting it means either giving that module a door or moving the function to something that is a library by design — reporting it as one finding with HC-REF006 would hand a reader a repair that fits half the cases. It reads nothing and returns one Diagnostic per such seam at error severity (section 8); the empty list means every door a seam of this module named is a boundary_in of the module it named. It raises nothing."
 
-  # The three functions the hd-check gate imports from honest_check.integration_rules. No internal
-  # door or chain starts them — the external gate is their caller — so each carries an import entry,
-  # the library idiom, which the entry-check reports UNCHECKED (it confirms only the import, never
-  # the call) rather than flagging the function as an orphan.
-  entry "import honest_check.integration_rules" -> check_hc_ref006
-  entry "import honest_check.integration_rules" -> check_hc_ref007
-  entry "import honest_check.integration_rules" -> declared_seams
+  # ---- the cross-module seam orchestrator and door ----
+
+  orchestrator fn run_seam_rules : (declarations: dict<str, Declaration>, paths: dict<str, str>, in_scope: list<str>) -> list<Diagnostic> invokes check_hc_ref006, check_hc_ref007 note "the orchestrator the seam door hands its inputs to (section 8, §HC-REF006/§HC-REF007). For each module named in in_scope — or every loaded module when in_scope is empty — it runs the two cross-module seam rules over that module's declaration and folds every finding into one list: for the module it calls check_hc_ref006 with the module's declaration, the whole declarations map and the module's .hd path, then check_hc_ref007 the same way, concatenating their diagnostics in that order across every in-scope module. Both rules in turn call declared_seams to derive that module's seams once, so the orchestrator never derives seams itself and never calls declared_seams directly. It resolves each in-scope module's seams against the COMPLETE declarations map, not against the in-scope subset, because a seam one in-scope module wrote may enter a module outside the scope and must still resolve to a door; reporting only the in-scope modules while resolving against all of them is what keeps the gate's answer independent of how it was invoked, so a commit that stages one module gets the same verdict on that module as a full sweep (§639). declarations is every loaded module's parsed .hd declaration keyed by its module name, a dict<str, Declaration>; the Declaration values are honest-design's IR, foreign here, which honest-check reads and never constructs. paths is each module's .hd filesystem path keyed by the same module name, passed through to each rule so a diagnostic names the file that wrote the offending seam. in_scope is the list of module names to report on — the gate's affected set — and the empty list means every loaded module is in scope. It reads nothing, opens no file and touches no world: the declarations arrive already parsed from the door. It returns the flat combined list of every Diagnostic the two rules produced across the in-scope modules, empty when every in-scope module's seams resolve. It raises nothing; an unresolved seam is a Diagnostic, never an exception."
+
+  # check_seams is the door the hd-check gate reaches. The gate loads every framework module's .hd
+  # declaration (it needs them for its other checks too), then calls this one function and gets back
+  # the combined cross-module findings. It hands its inputs to one orchestrator (run_seam_rules) and
+  # returns that orchestrator's diagnostics — thin, I/O only, no resolution logic. The declarations
+  # arrive already parsed, so this path reads no file; read_declaration stays the filesystem reader
+  # for the single-declaration --declaration crossing path, not this one.
+  boundary_in fn check_seams : (declarations: dict<str, Declaration>, paths: dict<str, str>, in_scope: list<str>) -> list<Diagnostic> invokes run_seam_rules note "the door the hd-check dogfood gate calls to run honest-check's cross-module seam checks (section 8, §HC-REF006/§HC-REF007). It is the single entry point the external gate reaches into these checks: the gate parses every framework module's .hd declaration through honest-design's read_hd — it needs every declaration in view because a seam one module wrote may enter any other, and it holds them for its other checks too — then calls this one function to get back every unresolved cross-module seam as diagnostics. It carries only I/O: it hands its three inputs straight to the orchestrator run_seam_rules and returns the combined diagnostic list the orchestrator produced, holding no resolution logic itself, which lives on run_seam_rules's path through the pure rule functions. declarations is every loaded module's parsed declaration keyed by its module name, the dict<str, Declaration> the gate built by parsing each honest-*/honest-*.hd; the whole map must be in view because resolving an in-scope module's seam into module M needs M's declaration, whether or not M is in scope. The Declaration values are honest-design's IR for one `module` block, foreign to honest-check, which reads them and never constructs them. paths is each module's .hd filesystem path keyed by the same module name, so each diagnostic is stamped with the file that wrote the offending seam. in_scope is the list of module names to report on — the affected set the gate passes (the modules whose .hd or source a commit staged) — and it is the empty list when the whole framework is swept, which means every loaded module is in scope. The checks judge only the in-scope modules but resolve their seams against every declaration, so the gate's verdict on a module never changes with how the gate was invoked (§639). It returns the flat list of every Diagnostic the cross-module rules produced over the in-scope modules — one HC-REF006 error per seam into a module that declares no function of the named door, one HC-REF007 error per seam onto a function that is not a boundary_in — and the empty list when every in-scope module's seams resolve. It reads no world and writes none: because the gate supplies the declarations already parsed, this door opens no file. It raises nothing; an unresolved seam comes back as a Diagnostic, never as an exception."
+
+  # The door the hd-check gate imports from honest_check.integration_rules. The gate calls this one
+  # boundary_in, which leads inward to the orchestrator and then the pure rule functions, so the world
+  # lands on a door and never on a pure function. A library import entry, which the entry-check reports
+  # UNCHECKED (it confirms only the import, never the call) rather than flagging the door as an orphan.
+  entry "import honest_check.integration_rules" -> check_seams
