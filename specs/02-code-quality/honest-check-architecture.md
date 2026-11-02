@@ -308,6 +308,44 @@ declaration_graph = {
 
 Rules operate on this graph, not on raw ASTs. This separates parsing concerns from rule logic.
 
+### 3.5 Shared Extraction API
+
+honest-check recognizes chains, state machines, import aliases, template class references, and watchlist membership to run its own rules. honest-test needs the same constructs: it discovers the chains and state machines a source file declares so it can enumerate them exhaustively (honest-test §3, §7), resolves the same import aliases first so an aliased `@link` or state machine is still recognized, reads a component template's static class references to prove two components do not share a CSS namespace (honest-test §7.1), and checks its own non-determinism watchlist against honest-check's so the two tools trap exactly the same calls (honest-test §4.5).
+
+Two tools deriving "what is a chain" independently would drift: a chain honest-check checks and a chain honest-test enumerates could diverge silently. So the recognition is written once, in honest-check, and exposed as five pure functions honest-test consumes. This is the one source of truth for the declaration graph of §3.4 and the alias resolution of §3.3; honest-test never re-parses the framework's construction grammar.
+
+The five functions are public but are not part of the CLI/startup surface (`__all__`): like the cross-module seam functions, they are reached by importing the submodule that holds them (`honest_check.declgraph`, `honest_check.templates`, `honest_check.watchlists`). They take a parsed node from honest-parse and the file's source bytes — honest-test parses the file once and hands both in — and return their results as data, never raising.
+
+```
+FUNCTION resolve_aliases(root, source) -> { local_name -> canonical_name }
+    // §3.3, exposed. The alias map an extractor consults so an aliased
+    // import (from honest_type import vocabulary as v) is still recognized.
+
+FUNCTION extract_chains(root, source, aliases) -> [ ChainDecl, ... ]
+    // one ChainDecl { name, links } per chain the file declares: the chain's
+    // declared name and the ordered names of its link functions. Recognition
+    // is the declaration-graph chain of §3.4, the same construct HC-R002 and
+    // HC002 cross against adjacent-link vocabularies.
+
+FUNCTION extract_state_machines(root, source, aliases) -> [ MachineDecl, ... ]
+    // one MachineDecl { name } per state machine the file declares: the name
+    // bound to the machine. Recognition is the state_machines of §3.4, the
+    // same construct the HC-SM rules check.
+
+FUNCTION template_class_references(template) -> [ ClassRef, ... ]
+    // one ClassRef { class } per static CSS class a template references.
+    // Interpolated class values are dynamic and skipped, exactly as HC-REF003
+    // skips them (§4.2). template is the template's bytes — the form parse
+    // takes and honest-test holds a component template in.
+
+FUNCTION matches_watchlist(name, watchlist) -> bool
+    // whether a dotted call name matches a watchlist entry — an exact entry
+    // matches by equality, an entry carrying `*` matches as a glob — the same
+    // membership test HC008 runs against its I/O and non-determinism lists.
+```
+
+`ChainDecl`, `MachineDecl`, and `ClassRef` are records (a name, and for a chain its ordered link names). The functions open no file and execute none of the code they read; a construct that cannot be recognized is absent from the returned list, never an exception. honest-test's runner calls `resolve_aliases` once per file, then `extract_chains` and `extract_state_machines` with that alias map, binds each returned name to a live object through the imported module, and enumerates it.
+
 ---
 
 ## 4. Rules by Firing Time

@@ -76,6 +76,46 @@ _CASES = [
         "adoption": "Declared",
         "expect": {"rule_counts": {"HC-P003": 2}, "report_mode": True},
     },
+    # The three survivor counts are read from separate severity tallies, so a report
+    # holding one error, one warning and three infos (all rules enforced at Declared,
+    # threshold 'info' keeping every finding) pins each count to its own number. The
+    # info count differs from the error-plus-warning total, so counting the complement
+    # of info rather than info produces a different number.
+    {
+        "diagnostics": [
+            _diag("HC-P003", "error"),
+            _diag("HC-P001", "warning"),
+            _diag("HC-P007", "info"),
+            _diag("HC-P011", "info"),
+            _diag("HC-P016", "info"),
+        ],
+        "args": _args("info"),
+        "adoption": "Declared",
+        "expect": {"errors": 1, "warnings": 1, "infos": 3},
+    },
+    # A lone info-severity finding, enforced at Declared, sits below the 'warning'
+    # threshold: info ranks under warning, so the finding is dropped and every count is
+    # zero. This pins the exact info and warning severity ranks; raising info to
+    # warning's rank or lowering warning to info's rank would keep the finding.
+    {
+        "diagnostics": [_diag("HC-P007", "info")],
+        "args": _args("warning"),
+        "adoption": "Declared",
+        "expect": {"errors": 0, "warnings": 0, "infos": 0},
+    },
+    # --report mode over two distinct rules tallies each rule under its own id. The
+    # error rule appears twice and the warning rule once, so the per-rule tally keeps
+    # them apart rather than piling every survivor onto one id.
+    {
+        "diagnostics": [
+            _diag("HC-P003", "error"),
+            _diag("HC-P003", "error"),
+            _diag("HC-P001", "warning"),
+        ],
+        "args": _args("info", report_mode=True),
+        "adoption": "Declared",
+        "expect": {"rule_counts": {"HC-P003": 2, "HC-P001": 1}, "report_mode": True},
+    },
 ]
 
 

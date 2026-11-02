@@ -381,3 +381,65 @@ module honest-check
   # lands on a door and never on a pure function. A library import entry, which the entry-check reports
   # UNCHECKED (it confirms only the import, never the call) rather than flagging the door as an orphan.
   entry "import honest_check.integration_rules" -> check_seams
+
+  # ======================================================================================
+  # The shared extraction API (section 3.5). honest-check recognizes chains, state machines,
+  # import aliases, template class references and watchlist membership to run its own rules;
+  # honest-test needs the same recognitions and must not re-derive them, or a chain honest-check
+  # checks and a chain honest-test enumerates could drift apart silently (section 3.5). So the
+  # recognition is written once here, the one source of truth for the section 3.4 declaration
+  # graph and the section 3.3 alias resolution, and exposed as five pure functions honest-test
+  # consumes by importing the submodule that holds each — honest_check.declgraph,
+  # honest_check.templates, honest_check.watchlists — exactly as the cross-module seam functions
+  # are reached by importing honest_check.integration_rules. The five are public but are NOT part
+  # of the CLI/startup __all__ surface; each is named by an import entry below, because each is
+  # imported and called by honest-test on its own (there is no door or orchestrator to invoke
+  # them), so each needs its own entry to be reachable rather than an orphan. They open no file,
+  # execute none of the code they read, and raise nothing: a construct that cannot be recognized
+  # is simply absent from the returned list.
+  # ======================================================================================
+
+  # tree-sitter's parsed node, as honest-check receives it from honest-parse. honest-parse owns
+  # the shape and declares it foreign "tree-sitter"; honest-check does not own it and does not
+  # construct it — honest-test produces it by calling honest-parse's parse and hands it in — so
+  # here it is foreign to honest-parse, exactly as Declaration is foreign to honest-design.
+  type Node = foreign "tree-sitter" note "one parsed syntax-tree node, the value honest-parse's parse produces over one source file (section 3.3, section 3.5). It is foreign because honest-parse, not honest-check, owns its shape: honest-test parses each file once by calling honest-parse's parse, then hands the resulting root node to resolve_aliases, extract_chains and extract_state_machines, which read the framework's construction call sites off it. honest-check receives the node and reads it, never constructs it — the same reason Declaration is foreign to honest-design. The same root node is passed to all three declgraph functions, because honest-test parses the file one time and reuses the one tree."
+
+  # One chain a source file declares: the chain's declared name and the ordered names of its link
+  # functions. extract_chains produces one per recognized chain; honest-test reads both fields.
+  type ChainDecl = {
+    name: str
+    links: list<str>
+  } note "one chain a source file declares, as recognized by the declaration-graph chain of section 3.4 and returned by extract_chains (section 3.5). name is the chain's declared name — the name bound to the chain() construction in the source. links is the ordered names of the chain's link functions, first link to last in the order they compose, the same adjacency HC002 crosses each pair's vocabularies over and HC-R002 reads. honest-test reads decl[\"name\"] to bind the chain to its live object through the imported module and decl[\"links\"] to enumerate the chain, so both fields carry exactly the names the source wrote. A chain extract_chains cannot recognize is absent from its list, never an error, so every ChainDecl names a chain the file really declares."
+
+  # One state machine a source file declares: the name bound to the machine. extract_state_machines
+  # produces one per recognized machine; honest-test reads the name.
+  type MachineDecl = {
+    name: str
+  } note "one state machine a source file declares, as recognized by the state_machines of section 3.4 and returned by extract_state_machines (section 3.5) — the same construct the HC-SM rules (HC-SM01, HC-SM02, HC-SM05) check. name is the state machine's declared name, the name bound to the state_machine() construction in the source. honest-test reads decl[\"name\"] to bind the machine to its live object through the imported module and enumerate it. A machine extract_state_machines cannot recognize is absent from its list, never an error, so every MachineDecl names a machine the file really declares."
+
+  # One static CSS class a template references. template_class_references produces one per static
+  # class; honest-test reads reference["class"], so the field name is exactly `class`.
+  type ClassRef = {
+    class: str
+  } note "one static CSS class a template references, as returned by template_class_references (section 3.5) — the same class recognition HC-REF003 resolves against the defined-class set (section 4.2). class is the class name as the template wrote it, one statically-known class token; honest-test reads reference[\"class\"], so the field name is exactly 'class'. A class value carrying interpolation (class=\"card {{ variant }}\") is dynamic and is skipped whole, exactly as HC-REF003 skips it, so every ClassRef names a fully static class the template really references. A template that references no static class yields the empty list, never an error."
+
+  fn resolve_aliases : (root: Node, source: bytes) -> dict<str, str> note "the import-alias resolver of section 3.3, exposed for honest-test (section 3.5). It reads every import statement off the parsed tree and returns the map from each local name the source bound an honest-framework import to, to that import's canonical framework name, so an aliased import (from honest_type import vocabulary as v) is still recognized as the framework call it names. The returned map goes local_name -> canonical_name: a direct alias (vocabulary as v) maps v -> vocabulary, and a module alias (import honest_type as ht) maps ht.* -> honest_type.* so a dotted call through the alias resolves (section 3.3). root is the parsed syntax-tree node honest-test produced by calling honest-parse's parse over the file. source is that file's full source bytes, the same bytes honest-parse parsed — code in a language honest-parse recognizes (Python, JavaScript or TypeScript, Ruby, Go — section 3.2), never a .hd declaration — which resolve_aliases reads to recover each import statement's text. honest-test calls this once per file and hands the resulting map to extract_chains and extract_state_machines, so the alias resolution the two extractors rely on is derived one time (section 3.5). It opens no file, executes none of the code it reads, and returns the empty map when the source imports nothing from the framework. It raises nothing."
+
+  fn extract_chains : (root: Node, source: bytes, aliases: dict<str, str>) -> list<ChainDecl> note "the chain recognizer of the section 3.4 declaration graph, exposed for honest-test (section 3.5). It finds every chain the source declares — each chain() construction, recognized through the aliases map so an aliased chain import still counts — and returns one ChainDecl per chain, carrying the chain's declared name and the ordered names of its link functions. This is the same chain construct HC002 crosses adjacent links' vocabularies over and HC-R002 reads, recognized once here so honest-check and honest-test never derive 'what is a chain' independently and drift silently (section 3.5). root is the parsed tree honest-test produced with honest-parse's parse. source is the file's full source bytes honest-parse parsed, code in a language honest-parse recognizes and never a .hd. aliases is the local-name-to-canonical-name map resolve_aliases returned for this same file, so an aliased chain import is recognized. honest-test binds each returned name to a live object through the imported module and enumerates the chain exhaustively. It opens no file, executes none of the code it reads, and returns the empty list when the file declares no chain; a construct it cannot recognize is absent from the list, never an error. It raises nothing."
+
+  fn extract_state_machines : (root: Node, source: bytes, aliases: dict<str, str>) -> list<MachineDecl> note "the state-machine recognizer of the section 3.4 declaration graph, exposed for honest-test (section 3.5). It finds every state machine the source declares — each state_machine() construction, recognized through the aliases map so an aliased import still counts — and returns one MachineDecl per machine, carrying the machine's declared name. This is the same state_machines construct the HC-SM rules (HC-SM01, HC-SM02, HC-SM05) check, recognized once here so honest-check and honest-test never derive it independently and drift silently (section 3.5). root is the parsed tree honest-test produced with honest-parse's parse. source is the file's full source bytes honest-parse parsed, code in a language honest-parse recognizes and never a .hd. aliases is the local-name-to-canonical-name map resolve_aliases returned for this same file. honest-test binds each returned name to a live object through the imported module and enumerates the machine exhaustively. It opens no file, executes none of the code it reads, and returns the empty list when the file declares no state machine; a construct it cannot recognize is absent from the list, never an error. It raises nothing."
+
+  fn template_class_references : (template: bytes) -> list<ClassRef> note "the template class-reference recognizer of HC-REF003, exposed for honest-test (section 3.5). It reads a component template's bytes and returns one ClassRef per static CSS class the template references, so honest-test can prove two components do not share a CSS namespace (honest-test section 7.1) against exactly the classes HC-REF003 resolves (section 4.2). template is the template's full markup as bytes — one component template, the form honest-parse's parse takes and honest-test holds a component template in, not a parsed node; it is parsed under the html grammar here, since the class references are read from the template itself. Each returned ClassRef carries one statically-known class token; a class value carrying interpolation (class=\"card {{ variant }}\") is dynamic and is skipped whole, exactly as HC-REF003 skips it (section 4.2), so every ClassRef names a fully static class the template really references. It opens no file, executes nothing, and returns the empty list when the template references no static class. It raises nothing."
+
+  fn matches_watchlist : (name: str, watchlist: list<str>) -> bool note "the watchlist membership test HC008 runs, exposed for honest-test (section 3.5) so honest-test checks its own non-determinism watchlist against honest-check's and the two tools trap exactly the same calls (honest-test section 4.5). It answers whether a dotted call name matches an entry in a watchlist: an entry that carries no '*' matches by exact equality, and an entry that carries a '*' matches as a glob, the same membership HC008 runs against its IO_WATCH_LIST and NONDETERMINISTIC_WATCH_LIST (section 4.2). name is the dotted call name read off a call site — for example 'time.time', 'os.environ.get', 'requests.get' — the name HC008 tests. watchlist is the list of watchlist entries to test against, each a dotted name, some carrying a '*' glob (for example 'random.*', 'subprocess.run', 'fs.*'), exactly the entries section 4.2's IO_WATCH_LIST and NONDETERMINISTIC_WATCH_LIST hold for a language. It returns true when name matches any entry and false when it matches none. It reads nothing, opens nothing, executes nothing, and raises nothing."
+
+  # Each of the five shared-extraction functions is imported and called by honest-test on its own,
+  # so each is named by its own import entry — the seam pattern, one entry per imported public
+  # function. The entry-check confirms only the import and reports each UNCHECKED, which is what
+  # keeps a library function reached only from another module out of the orphan reds.
+  entry "import honest_check.declgraph" -> resolve_aliases
+  entry "import honest_check.declgraph" -> extract_chains
+  entry "import honest_check.declgraph" -> extract_state_machines
+  entry "import honest_check.templates" -> template_class_references
+  entry "import honest_check.watchlists" -> matches_watchlist

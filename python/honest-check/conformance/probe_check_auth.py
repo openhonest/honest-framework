@@ -152,6 +152,42 @@ _CASES = [
         ],
         "want": [("HC-A002", "error", "b.py")],
     },
+    # A non-Python source contributes no auth facts: HC-A001/HC-A002 read Python syntax
+    # (register_auth_provider calls, @link(authorizes=True) decorators), which a Ruby or
+    # Elixir file cannot carry. check_auth parses each file under its own grammar, so it must
+    # read Python auth facts only from a Python file and treat any other grammar as
+    # contributing nothing, never reading a Ruby call node as if it were a Python one.
+    {
+        "name": "a Ruby source contributes no auth facts",
+        "sources": [
+            {"path": "pay.rb", "text": "def pay(m)\n  charge(m)\nend\n"},
+        ],
+        "want": [],
+    },
+    {
+        "name": "an Elixir source contributes no auth facts",
+        "sources": [
+            {"path": "pay.ex", "text": "def pay(m) do\n  charge(m)\nend\n"},
+        ],
+        "want": [],
+    },
+    # A Ruby file beside a Python authorizing link: the Ruby file yields no auth facts and
+    # does not abort the run, so HC-A001 still fires on the Python link (no provider is
+    # registered anywhere, and a Ruby call cannot register one). This case pins that a
+    # non-Python file neither registers a provider (a False->True on the language-guard
+    # return would flip HC-A001 to HC-A002) nor is parsed as Python (dropping the guard would
+    # crash called_name on a Ruby call node).
+    {
+        "name": "a Ruby file beside a Python authorizing link does not abort the run",
+        "sources": [
+            {"path": "helper.rb", "text": "def charge(m)\n  bill(m)\nend\n"},
+            {
+                "path": "pay.py",
+                "text": "@link(authorizes=True)\ndef pay(m):\n    return charge(m)\n",
+            },
+        ],
+        "want": [("HC-A001", "warning", "pay.py")],
+    },
 ]
 
 
@@ -164,6 +200,48 @@ def _want_pairs(want):
     """The (rule_id, severity) set a case fixes, as a sorted list."""
     return sorted((rule_id, severity) for rule_id, severity, _ in want)
 
+
+
+# ---- full-record pinning: the probe above asserts only (rule_id, severity)
+# and the offending path; these cases pin the whole Diagnostic record of each
+# variant, so emptying a message/key literal, flipping fixable, or swapping a
+# dict key changes the record and fails here.
+_MSG_CASES = [
+    {
+        "id": 'HC-A001',
+        "sources": [{'path': 'pay.py', 'text': '@link(authorizes=True)\ndef pay(m):\n    return charge(m)\n'}],
+        "expected": [{'rule_id': 'HC-A001', 'severity': 'warning', 'message': 'This link is declared to authorize an actor, but no AuthProvider is registered anywhere in the project, so the identity it acts under cannot be verified. Register a provider with register_auth_provider(...), or remove the actor dependency.', 'source_location': 'pay.py:2:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-A002',
+        "sources": [{'path': 'a.py', 'text': 'register_auth_provider(p)\n'}, {'path': 'b.py', 'text': '@link(authorizes=True)\ndef pay(m):\n    return charge(m["amount"])\n'}],
+        "expected": [{'rule_id': 'HC-A002', 'severity': 'error', 'message': 'This link is declared authorizes=True but does not reference the boundary-resolved actor, so it sources identity from forgeable request input. Establish identity once at the boundary and pass it inward as the data named actor.', 'source_location': 'b.py:2:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'facts-nonparsing-noprovider',
+        "sources": [{'path': 'bad.py', 'text': 'def (:\n'}, {'path': 'pay.py', 'text': '@link(authorizes=True)\ndef pay(m):\n    return charge(m)\n'}],
+        "expected": [{'rule_id': 'HC-A001', 'severity': 'warning', 'message': 'This link is declared to authorize an actor, but no AuthProvider is registered anywhere in the project, so the identity it acts under cannot be verified. Register a provider with register_auth_provider(...), or remove the actor dependency.', 'source_location': 'pay.py:2:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'auth-gather-nested-actor',
+        "sources": [{'path': 'a.py', 'text': 'register_auth_provider(p)\n'}, {'path': 'b.py', 'text': '@link(authorizes=True)\ndef pay(m):\n    def inner():\n        return actor\n    return charge(m)\n'}],
+        "expected": [{'rule_id': 'HC-A002', 'severity': 'error', 'message': 'This link is declared authorizes=True but does not reference the boundary-resolved actor, so it sources identity from forgeable request input. Establish identity once at the boundary and pass it inward as the data named actor.', 'source_location': 'b.py:2:1', 'context': '', 'fixable': False}],
+    },
+]
+
+def _canon(diags):
+    import json
+    return sorted(json.dumps(d, sort_keys=True) for d in diags)
+
+
+def _message_failures():
+    from honest_check import check_auth
+    bad = []
+    for case in _MSG_CASES:
+        got = check_auth(case["sources"])
+        if _canon(got) != _canon(case["expected"]):
+            bad.append(f"record pinning {case['id']!r}: got {_canon(got)}, expected {_canon(case['expected'])}")
+    return bad
 
 def probe_check_auth():
     """check_auth reports one HC-A001 warning when no provider is registered and the
@@ -208,4 +286,5 @@ def probe_check_auth():
                     f"{case['name']}: no {rule_id} {severity} finding points at "
                     f"{path!r}; findings were {locations}"
                 )
+    bad.extend(_message_failures())
     return bad

@@ -152,6 +152,73 @@ def _want_pairs(want):
     return sorted((rule_id, severity) for rule_id, severity, _ in want)
 
 
+
+# ---- full-record pinning: the probe above asserts only (rule_id, severity)
+# and the offending path; these cases pin the whole Diagnostic record of each
+# variant, so emptying a message/key literal, flipping fixable, or swapping a
+# dict key changes the record and fails here.
+_MSG_CASES = [
+    {
+        "id": 'HC-REF002',
+        "sources": [{'path': 'main.html', 'text': '{% include "missing.html" %}\n'}],
+        "expected": [{'rule_id': 'HC-REF002', 'severity': 'error', 'message': "template include target 'missing.html' resolves to no template among the checked files. Add the template, or correct the target.", 'source_location': 'main.html:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF002-extends',
+        "sources": [{'path': 'main.html', 'text': '{% extends "missing.html" %}\n'}],
+        "expected": [{'rule_id': 'HC-REF002', 'severity': 'error', 'message': "template extends target 'missing.html' resolves to no template among the checked files. Add the template, or correct the target.", 'source_location': 'main.html:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF003-template',
+        "sources": [{'path': 'main.html', 'text': '<div class="card">x</div>\n'}],
+        "expected": [{'rule_id': 'HC-REF003', 'severity': 'error', 'message': "class 'card' resolves to no rule any stylesheet defines. Define the class, or correct the reference.", 'source_location': 'main.html:1:12', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF003-script-add',
+        "sources": [{'path': 'app.js', 'text': 'element.classList.add("card");\n'}],
+        "expected": [{'rule_id': 'HC-REF003', 'severity': 'error', 'message': "class 'card' resolves to no rule any stylesheet defines. Define the class, or correct the reference.", 'source_location': 'app.js:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF003-script-remove',
+        "sources": [{'path': 'app.js', 'text': 'element.classList.remove("card");\n'}],
+        "expected": [{'rule_id': 'HC-REF003', 'severity': 'error', 'message': "class 'card' resolves to no rule any stylesheet defines. Define the class, or correct the reference.", 'source_location': 'app.js:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF003-script-toggle',
+        "sources": [{'path': 'app.js', 'text': 'element.classList.toggle("card");\n'}],
+        "expected": [{'rule_id': 'HC-REF003', 'severity': 'error', 'message': "class 'card' resolves to no rule any stylesheet defines. Define the class, or correct the reference.", 'source_location': 'app.js:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF003-script-replace',
+        "sources": [{'path': 'app.js', 'text': 'element.classList.replace("card");\n'}],
+        "expected": [{'rule_id': 'HC-REF003', 'severity': 'error', 'message': "class 'card' resolves to no rule any stylesheet defines. Define the class, or correct the reference.", 'source_location': 'app.js:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF003-script-contains',
+        "sources": [{'path': 'app.js', 'text': 'element.classList.contains("card");\n'}],
+        "expected": [{'rule_id': 'HC-REF003', 'severity': 'error', 'message': "class 'card' resolves to no rule any stylesheet defines. Define the class, or correct the reference.", 'source_location': 'app.js:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'basename-resolving',
+        "sources": [{'path': 'page.html', 'text': '{% include "main.html" %}\n'}, {'path': 'sub/main.html', 'text': '<b>y</b>\n'}],
+        "expected": [],
+    },
+]
+
+def _canon(diags):
+    import json
+    return sorted(json.dumps(d, sort_keys=True) for d in diags)
+
+
+def _message_failures():
+    from honest_check import check_references
+    bad = []
+    for case in _MSG_CASES:
+        got = check_references(case["sources"])
+        if _canon(got) != _canon(case["expected"]):
+            bad.append(f"record pinning {case['id']!r}: got {_canon(got)}, expected {_canon(case['expected'])}")
+    return bad
+
 def probe_check_references():
     """check_references reports every dead include/extends target and every dead
     static class reference across the whole file set as an error Diagnostic that
@@ -193,4 +260,5 @@ def probe_check_references():
                     f"{case['name']}: no {rule_id} {severity} finding points at "
                     f"{path!r}; findings were {locations}"
                 )
+    bad.extend(_message_failures())
     return bad

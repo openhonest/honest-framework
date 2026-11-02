@@ -162,6 +162,114 @@ def _want_pairs(want):
     return sorted((rule_id, severity) for rule_id, severity, _ in want)
 
 
+
+# ---- full-record pinning: the probe above asserts only (rule_id, severity)
+# and the offending path; these cases pin the whole Diagnostic record of each
+# variant, so emptying a message/key literal, flipping fixable, or swapping a
+# dict key changes the record and fails here.
+_MSG_CASES = [
+    {
+        "id": 'HC-R001',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@boundary\ndef handler(m):\n    return m\n\n\ndef stray(m):\n    return m\n'}],
+        "expected": [{'rule_id': 'HC-R001', 'severity': 'error', 'message': "'stray' carries no role and no roled function reaches it, so auto-generation cannot reach it and no test is generated for it. Give it a role, or call it from one that has one.", 'source_location': 'm.py:6:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'role-link-clean',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@link\ndef x(m):\n    return m\n'}],
+        "expected": [],
+    },
+    {
+        "id": 'role-recognizer-clean',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@recognizer\ndef x(m):\n    return m\n'}],
+        "expected": [],
+    },
+    {
+        "id": 'role-helper-clean',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@helper\ndef x(m):\n    return m\n'}],
+        "expected": [],
+    },
+    {
+        "id": 'role-orchestrator-clean',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@orchestrator\ndef x(m):\n    return m\n'}],
+        "expected": [],
+    },
+    {
+        "id": 'role-boundary-clean',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@boundary\ndef x(m):\n    return m\n'}],
+        "expected": [],
+    },
+    {
+        "id": 'roles-two-hop-reach',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@boundary\ndef a(m):\n    return b(m)\n\n\ndef b(m):\n    return c(m)\n\n\ndef c(m):\n    return m\n'}],
+        "expected": [],
+    },
+    {
+        "id": 'role-member-link',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@boundary\ndef h(m):\n    return m\n\n\n@link\ndef x(m):\n    return m\n'}],
+        "expected": [],
+    },
+    {
+        "id": 'role-member-recognizer',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@boundary\ndef h(m):\n    return m\n\n\n@recognizer\ndef x(m):\n    return m\n'}],
+        "expected": [],
+    },
+    {
+        "id": 'role-member-helper',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@boundary\ndef h(m):\n    return m\n\n\n@helper\ndef x(m):\n    return m\n'}],
+        "expected": [],
+    },
+    {
+        "id": 'role-member-orchestrator',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@boundary\ndef h(m):\n    return m\n\n\n@orchestrator\ndef x(m):\n    return m\n'}],
+        "expected": [],
+    },
+    {
+        "id": 'roles-gather-nested-call',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@boundary\ndef h(m):\n    def inner():\n        return work(m)\n    return m\n\n\ndef work(m):\n    return m\n'}],
+        "expected": [{'rule_id': 'HC-R001', 'severity': 'error', 'message': "'work' carries no role and no roled function reaches it, so auto-generation cannot reach it and no test is generated for it. Give it a role, or call it from one that has one.", 'source_location': 'm.py:8:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'role-link-called',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@link(accepts=1)\ndef x(m):\n    return m\n'}],
+        "expected": [],
+    },
+    {
+        "id": 'role-dotted-orchestrator',
+        "hd": None,
+        "sources": [{'path': 'm.py', 'text': '@deco.orchestrator\ndef y(m):\n    return m\n'}],
+        "expected": [],
+    },
+]
+
+def _canon(diags):
+    import json
+    return sorted(json.dumps(d, sort_keys=True) for d in diags)
+
+
+def _message_failures():
+    from honest_check import check_roles
+    from honest_design import read_hd
+    bad = []
+    for case in _MSG_CASES:
+        declaration = read_hd(case["hd"])["ok"]["modules"][0] if case["hd"] is not None else None
+        got = check_roles(case["sources"], declaration)
+        if _canon(got) != _canon(case["expected"]):
+            bad.append(f"record pinning {case['id']!r}: got {_canon(got)}, expected {_canon(case['expected'])}")
+    return bad
+
 def probe_check_roles():
     """check_roles reports every top-level function that is neither roled nor
     reachable across the whole package as an HC-R001 error Diagnostic that points
@@ -215,4 +323,5 @@ def probe_check_roles():
                     f"{case['name']}: no {rule_id} {severity} finding points at "
                     f"{path!r}; findings were {locations}"
                 )
+    bad.extend(_message_failures())
     return bad

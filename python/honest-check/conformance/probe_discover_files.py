@@ -1,7 +1,9 @@
 """discover_files walks the paths and keeps only recognized, non-excluded source files.
 
 A tree with a.py, b.txt and sub/c.py yields the two .py files and not b.txt; an
-exclude glob '*a.py' drops a.py. Real temp tree, no mock.
+exclude glob '*a.py' drops a.py. A bare 'a.py' glob matches the basename but not the
+full walked path, so a file is excluded when the glob matches the path or the
+basename: the real input is the temp tree, no mock.
 """
 
 import os
@@ -23,6 +25,12 @@ def _build_tree(root):
 _CASES = [
     {"exclude": [], "want": {"a.py", "c.py"}, "absent": {"b.txt"}},
     {"exclude": ["*a.py"], "want": {"c.py"}, "absent": {"a.py", "b.txt"}},
+    # A bare basename glob matches the file's basename but not its full walked path:
+    # a.py sits at <root>/a.py, so fnmatch('<root>/a.py', 'a.py') is False while
+    # fnmatch('a.py', 'a.py') is True. A file is excluded when the glob matches the
+    # path or the basename, so a.py is dropped. Were the two matches required
+    # together, a.py would survive, so this case pins the 'or'.
+    {"exclude": ["a.py"], "want": {"c.py"}, "absent": {"a.py"}},
 ]
 
 

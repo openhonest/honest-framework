@@ -144,17 +144,15 @@ def check_source(source, path, rule_config, declaration):
         error = parsed["err"]
 
         def syntax_location():
-            detail = error.get("detail", {})
-            line = detail.get("line", 1)
-            col = detail.get("col", 1)
-            return f"{path}:{line}:{col}"
+            detail = error["detail"]
+            return f"{path}:{detail['line']}:{detail['col']}"
 
-        if error.get("code") == "syntax_error":
+        if error["code"] == "syntax_error":
             return [
                 {
                     "rule_id": "HC-SYN",
                     "severity": "error",
-                    "message": error.get("message", "source does not parse"),
+                    "message": error["message"],
                     "source_location": syntax_location(),
                     "context": "",
                     "fixable": False,
@@ -498,10 +496,14 @@ def check_source(source, path, rule_config, declaration):
             if node.type != "class_definition":
                 continue
             name_node = node.child_by_field_name("name")
-            name = name_node.text.decode("utf-8") if name_node else "<anonymous>"
+            name = name_node.text.decode("utf-8")
             superclasses = node.child_by_field_name("superclasses")
+            # A class's base list carries positional bases and keyword arguments alike
+            # (TypedDict's `total=False`, a metaclass= or an __init_subclass__ keyword). A
+            # keyword argument configures the class, it is not a base, so it is not an
+            # inheritance the rule judges — only the positional bases are.
             bases = (
-                [c for c in superclasses.named_children]
+                [c for c in superclasses.named_children if c.type != "keyword_argument"]
                 if superclasses is not None
                 else []
             )
@@ -714,7 +716,7 @@ def check_source(source, path, rule_config, declaration):
             if not hit:
                 continue
             name_node = node.child_by_field_name("name")
-            inner = name_node.text.decode("utf-8") if name_node else "<anonymous>"
+            inner = name_node.text.decode("utf-8")
             findings.append(
                 diagnostic(
                     "HC-P016",
@@ -830,7 +832,7 @@ def check_source(source, path, rule_config, declaration):
                 continue
             function = enclosing_function(node)
             name_node = function.child_by_field_name("name")
-            name = name_node.text.decode("utf-8") if name_node else "<anonymous>"
+            name = name_node.text.decode("utf-8")
             findings.append(
                 diagnostic(
                     "HC-P002",
@@ -985,7 +987,7 @@ def check_source(source, path, rule_config, declaration):
             if value is None or is_empty_default(value):
                 continue
             name_node = node.child_by_field_name("name")
-            name = name_node.text.decode("utf-8") if name_node else "<parameter>"
+            name = name_node.text.decode("utf-8")
             findings.append(
                 diagnostic(
                     "HC-P015",
@@ -1080,7 +1082,7 @@ def check_source(source, path, rule_config, declaration):
         return (
             parent is not None
             and parent.type == "attribute"
-            and parent.child_by_field_name("attribute") is node
+            and parent.child_by_field_name("attribute") == node
         )
 
     def is_keyword_name(node):
@@ -1090,7 +1092,7 @@ def check_source(source, path, rule_config, declaration):
         return (
             parent is not None
             and parent.type == "keyword_argument"
-            and parent.child_by_field_name("name") is node
+            and parent.child_by_field_name("name") == node
         )
 
     def watched(target, watch):
@@ -1160,7 +1162,7 @@ def check_source(source, path, rule_config, declaration):
             if not link_is_impure(node, watch, mutable_globals):
                 continue
             name_node = node.child_by_field_name("name")
-            name = name_node.text.decode("utf-8") if name_node else "<link>"
+            name = name_node.text.decode("utf-8")
             findings.append(
                 diagnostic(
                     "HC008",
@@ -1230,7 +1232,7 @@ def check_source(source, path, rule_config, declaration):
             if node.type != "function_definition" or not is_orchestrator(node):
                 continue
             name_node = node.child_by_field_name("name")
-            name = name_node.text.decode("utf-8") if name_node else "<orchestrator>"
+            name = name_node.text.decode("utf-8")
             orchestrators.append((node, name))
             names.add(name)
         findings = []
@@ -1287,7 +1289,7 @@ def check_source(source, path, rule_config, declaration):
             if node.type != "function_definition" or not is_orchestrator(node):
                 continue
             name_node = node.child_by_field_name("name")
-            name = name_node.text.decode("utf-8") if name_node else "<orchestrator>"
+            name = name_node.text.decode("utf-8")
             calls = [
                 called_name(statement)
                 for statement in own_body(node)
@@ -1350,7 +1352,7 @@ def check_source(source, path, rule_config, declaration):
             if is_link_decorated(node) and link_declares_emits(node):
                 continue
             name_node = node.child_by_field_name("name")
-            name = name_node.text.decode("utf-8") if name_node else "<function>"
+            name = name_node.text.decode("utf-8")
             findings.append(
                 diagnostic(
                     "HC-P017",
@@ -1641,7 +1643,7 @@ def check_source(source, path, rule_config, declaration):
             if not phantom:
                 continue
             name_node = node.child_by_field_name("name")
-            name = name_node.text.decode("utf-8") if name_node else "<link>"
+            name = name_node.text.decode("utf-8")
             findings.append(
                 diagnostic(
                     "HC010",
@@ -1738,7 +1740,7 @@ def check_source(source, path, rule_config, declaration):
                 if not missing:
                     continue
                 name_node = current.child_by_field_name("name")
-                name = name_node.text.decode("utf-8") if name_node else "<link>"
+                name = name_node.text.decode("utf-8")
                 findings.append(
                     diagnostic(
                         "HC002",
@@ -2928,7 +2930,15 @@ def check_auth(sources):
     def facts_of(source_file):
         """One file's auth facts: whether it registers a provider, and the authorizing links
         it declares (each with its def-line location and whether it uses the actor). A file
-        that does not parse contributes nothing — a parse failure is HC-SYN's finding."""
+        that does not parse contributes nothing — a parse failure is HC-SYN's finding.
+
+        HC-A001 and HC-A002 read Python syntax: a register_auth_provider call and a
+        @link(authorizes=True) decorator. Only a Python source can carry an auth fact, so a
+        file under any other grammar contributes nothing. This is a language fact, not a
+        defensive check: a Ruby or Elixir call node has no 'function' field, so reading one as
+        if it were Python is a category error, not a case to guard against."""
+        if language_of(source_file["path"]).get("ok") != "python":
+            return {"registers_provider": False, "links": []}
         parsed = parse_source(source_file["text"].encode("utf-8"), source_file["path"])
         if "ok" not in parsed:
             return {"registers_provider": False, "links": []}

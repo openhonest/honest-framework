@@ -1,5 +1,5 @@
 Feature: honest-check — the static checker, the honesty gate
-  One scenario per declared function (29 total). One pure core folds the whole rule
+  One scenario per declared function (34 total). One pure core folds the whole rule
   catalogue over a declaration graph; a second pure core crosses a module's .hd against
   its whole package; a third pure core crosses references across the whole file set; a
   fourth pure core runs the whole-program orphan pass over a package's code; a fifth pure
@@ -226,3 +226,47 @@ Feature: honest-check — the static checker, the honesty gate
     And declarations is every loaded module's parsed declaration keyed by its module name, the whole map in view because resolving an in-scope module's seam into module M needs M's declaration whether or not M is in scope; paths is each module's .hd path keyed by the same name, stamped into each diagnostic; in_scope is the affected set to report on, the empty list meaning every loaded module is in scope
     And it returns the flat list of every Diagnostic the cross-module rules produced — one HC-REF006 error per seam into a module that declares no function of the named door, one HC-REF007 error per seam onto a function that is not a boundary_in — and the empty list when every in-scope module's seams resolve
     But because the gate supplies the declarations already parsed, this door opens no file, reads no world and writes none, and raises nothing: an unresolved seam comes back as a Diagnostic
+
+  Scenario: resolve_aliases recovers the import aliases a framework call resolves through
+    Given root: Node and source: bytes
+    When resolve_aliases is called
+    Then it reads every import statement off the parsed tree and returns the map from each local name the source bound an honest-framework import to, to that import's canonical framework name, so an aliased import (from honest_type import vocabulary as v) is still recognized as the framework call it names
+    And the returned map goes local_name -> canonical_name: a direct alias (vocabulary as v) maps v -> vocabulary, and a module alias (import honest_type as ht) maps ht.* -> honest_type.* so a dotted call through the alias resolves
+    And root is the parsed syntax-tree node honest-test produced with honest-parse's parse, and source is that file's full source bytes — code in a language honest-parse recognizes (Python, JavaScript or TypeScript, Ruby, Go), never a .hd declaration — which it reads to recover each import statement's text
+    And honest-test calls it once per file and hands the resulting map to extract_chains and extract_state_machines, so the alias resolution the two extractors rely on is derived one time
+    But it opens no file, executes none of the code it reads, raises nothing, and returns the empty map when the source imports nothing from the framework
+
+  Scenario: extract_chains recognizes every chain the source declares
+    Given root: Node and source: bytes and aliases: dict<str, str>
+    When extract_chains is called
+    Then it finds every chain the source declares — each chain() construction, recognized through the aliases map so an aliased chain import still counts — and returns one ChainDecl per chain, carrying the chain's declared name and the ordered names of its link functions
+    And this is the same chain construct HC002 crosses adjacent links' vocabularies over and HC-R002 reads, recognized once here so honest-check and honest-test never derive 'what is a chain' independently and drift silently
+    And root is the parsed tree honest-test produced with honest-parse's parse, source is the file's full source bytes honest-parse parsed — code in a language honest-parse recognizes and never a .hd — and aliases is the local-name-to-canonical-name map resolve_aliases returned for this same file
+    And honest-test binds each returned name to a live object through the imported module and enumerates the chain exhaustively
+    But it opens no file, executes none of the code it reads, raises nothing, and returns the empty list when the file declares no chain — a construct it cannot recognize is absent from the list, never an error
+
+  Scenario: extract_state_machines recognizes every state machine the source declares
+    Given root: Node and source: bytes and aliases: dict<str, str>
+    When extract_state_machines is called
+    Then it finds every state machine the source declares — each state_machine() construction, recognized through the aliases map so an aliased import still counts — and returns one MachineDecl per machine, carrying the machine's declared name
+    And this is the same state_machines construct the HC-SM rules (HC-SM01, HC-SM02, HC-SM05) check, recognized once here so honest-check and honest-test never derive it independently and drift silently
+    And root is the parsed tree honest-test produced with honest-parse's parse, source is the file's full source bytes honest-parse parsed — code in a language honest-parse recognizes and never a .hd — and aliases is the local-name-to-canonical-name map resolve_aliases returned for this same file
+    And honest-test binds each returned name to a live object through the imported module and enumerates the machine exhaustively
+    But it opens no file, executes none of the code it reads, raises nothing, and returns the empty list when the file declares no state machine — a construct it cannot recognize is absent from the list, never an error
+
+  Scenario: template_class_references returns the static CSS classes a component template references
+    Given template: str
+    When template_class_references is called
+    Then it reads a component template's text and returns one ClassRef per static CSS class the template references, so honest-test can prove two components do not share a CSS namespace against exactly the classes HC-REF003 resolves
+    And template is the template's full text — the markup of one component template, read as text, not a parsed node and not source bytes, because the class references are read from the template text itself
+    And each returned ClassRef carries one statically-known class token, and a class value carrying interpolation (class="card {{ variant }}") is dynamic and is skipped whole, exactly as HC-REF003 skips it, so every ClassRef names a fully static class the template really references
+    But it opens no file, executes nothing, raises nothing, and returns the empty list when the template references no static class
+
+  Scenario: matches_watchlist tests whether a dotted call name matches a watchlist entry
+    Given name: str and watchlist: list<str>
+    When matches_watchlist is called
+    Then it answers whether a dotted call name matches an entry in a watchlist: an entry that carries no '*' matches by exact equality, and an entry that carries a '*' matches as a glob, the same membership HC008 runs against its IO_WATCH_LIST and NONDETERMINISTIC_WATCH_LIST
+    And name is the dotted call name read off a call site — for example 'time.time', 'os.environ.get', 'requests.get' — and watchlist is the list of watchlist entries to test against, each a dotted name, some carrying a '*' glob (for example 'random.*', 'subprocess.run', 'fs.*'), exactly the entries IO_WATCH_LIST and NONDETERMINISTIC_WATCH_LIST hold for a language
+    And it is exposed for honest-test so honest-test checks its own non-determinism watchlist against honest-check's and the two tools trap exactly the same calls
+    And it returns true when name matches any entry and false when it matches none
+    But it reads nothing, opens nothing, executes nothing, and raises nothing

@@ -231,6 +231,306 @@ def _or003_failures(check_source):
     return bad
 
 
+# ---- full-record pinning (section 9.2) ----
+_MSG_CASES = [
+    {
+        "id": 'HC003-set',
+        "source": 'x = vocabulary({"t1": {"v"}, "t2": {"v"}})\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC003', 'severity': 'error', 'message': "Types 't1' and 't2' share values: ['v']", 'source_location': 'case_HC003-set.py:1:5', 'context': 'vocabulary({"t1": {"v"}, "t2": {"v"}})', 'fixable': False}],
+    },
+    {
+        "id": 'HC003-info-HC009-HC011',
+        "source": "from honest_type import vocabulary\nx = vocabulary({'t1': {'v'}, 't2': lambda s: int(s)})\n",
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC003', 'severity': 'info', 'message': "Types 't1' and 't2' may overlap on a value — verified by honest-test", 'source_location': 'case_HC003-info-HC009-HC011.py:2:5', 'context': "vocabulary({'t1': {'v'}, 't2': lambda s: int(s)})", 'fixable': False}, {'rule_id': 'HC009', 'severity': 'warning', 'message': "Predicate recognizer 't2' may throw on non-matching input. Wrap in try/except or guard with isinstance() — verified by honest-test.", 'source_location': 'case_HC003-info-HC009-HC011.py:2:5', 'context': "vocabulary({'t1': {'v'}, 't2': lambda s: int(s)})", 'fixable': False}, {'rule_id': 'HC011', 'severity': 'info', 'message': "Predicate recognizer 't2' may be a catch-all — verified by honest-test", 'source_location': 'case_HC003-info-HC009-HC011.py:2:5', 'context': "vocabulary({'t1': {'v'}, 't2': lambda s: int(s)})", 'fixable': False}],
+    },
+    {
+        "id": 'HC006-requires',
+        "source": "from honest_type import vocabulary, composed\nx = vocabulary({'a': {'1'}}, composed_types=[composed('c', {'missing': {}})])\n",
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC006', 'severity': 'error', 'message': "Composed type requires unknown base type 'missing'", 'source_location': 'case_HC006-requires.py:2:46', 'context': "composed('c', {'missing': {}})", 'fixable': False}],
+    },
+    {
+        "id": 'HC006-captures',
+        "source": "from honest_type import vocabulary, composed\nx = vocabulary({'a': {'1'}}, composed_types=[composed('c', {'a': {}}, 'nope')])\n",
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC006', 'severity': 'error', 'message': "Composed type captures unknown base type 'nope'", 'source_location': 'case_HC006-captures.py:2:46', 'context': "composed('c', {'a': {}}, 'nope')", 'fixable': False}],
+    },
+    {
+        "id": 'HC007',
+        "source": 'x = chain()\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC007', 'severity': 'error', 'message': 'Chain has no links', 'source_location': 'case_HC007.py:1:5', 'context': 'chain()', 'fixable': False}],
+    },
+    {
+        "id": 'HC-SM01',
+        "source": 'm = state_machine({"a"}, {"e"}, {("bad", "e"): "a"}, "a", terminal={"a"})\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-SM01', 'severity': 'error', 'message': "State 'bad' in transition table not in states vocabulary", 'source_location': 'case_HC-SM01.py:1:5', 'context': 'state_machine({"a"}, {"e"}, {("bad", "e"): "a"}, "a", terminal={"a"})', 'fixable': False}],
+    },
+    {
+        "id": 'HC-SM02',
+        "source": 'm = state_machine({"a"}, {"e"}, {("a", "bad"): "a"}, "a", terminal={"a"})\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-SM02', 'severity': 'error', 'message': "Event 'bad' in transition table not in events vocabulary", 'source_location': 'case_HC-SM02.py:1:5', 'context': 'state_machine({"a"}, {"e"}, {("a", "bad"): "a"}, "a", terminal={"a"})', 'fixable': False}],
+    },
+    {
+        "id": 'HC-SM03',
+        "source": 'm = state_machine({"a", "b", "c"}, {"e"}, {("a", "e"): "b"}, "a", terminal={"b"})\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-SM03', 'severity': 'warning', 'message': "State 'c' is unreachable", 'source_location': 'case_HC-SM03.py:1:5', 'context': 'state_machine({"a", "b", "c"}, {"e"}, {("a", "e"): "b"}, "a", terminal={"b"})', 'fixable': False}, {'rule_id': 'HC-SM04', 'severity': 'warning', 'message': "State 'c' has no outgoing transitions and is not declared terminal", 'source_location': 'case_HC-SM03.py:1:5', 'context': 'state_machine({"a", "b", "c"}, {"e"}, {("a", "e"): "b"}, "a", terminal={"b"})', 'fixable': False}],
+    },
+    {
+        "id": 'HC-SM04',
+        "source": 'm = state_machine({"a", "b"}, {"e"}, {("a", "e"): "b"}, "a")\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-SM04', 'severity': 'warning', 'message': "State 'b' has no outgoing transitions and is not declared terminal", 'source_location': 'case_HC-SM04.py:1:5', 'context': 'state_machine({"a", "b"}, {"e"}, {("a", "e"): "b"}, "a")', 'fixable': False}],
+    },
+    {
+        "id": 'HC-SM05',
+        "source": 'm = state_machine({"a"}, {"e"}, {("a", "e"): "a"}, "zzz", terminal={"a"})\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-SM05', 'severity': 'error', 'message': "Initial state 'zzz' not in states vocabulary", 'source_location': 'case_HC-SM05.py:1:5', 'context': 'state_machine({"a"}, {"e"}, {("a", "e"): "a"}, "zzz", terminal={"a"})', 'fixable': False}, {'rule_id': 'HC-SM03', 'severity': 'warning', 'message': "State 'a' is unreachable", 'source_location': 'case_HC-SM05.py:1:5', 'context': 'state_machine({"a"}, {"e"}, {("a", "e"): "a"}, "zzz", terminal={"a"})', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P003-nobase',
+        "source": 'class A:\n    pass\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P003', 'severity': 'error', 'message': "Class 'A' has no declared base. Use a TypedDict for data shapes or a pure function.", 'source_location': 'case_HC-P003-nobase.py:1:1', 'context': 'class A:', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P003-inherits',
+        "source": 'class A(Foo):\n    pass\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P003', 'severity': 'error', 'message': "Class 'A' inherits from 'Foo'. Use composition over inheritance.", 'source_location': 'case_HC-P003-inherits.py:1:1', 'context': 'class A(Foo):', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P001',
+        "source": 'def f(x):\n    if x == 1:\n        return 1\n    elif x == 2:\n        return 2\n    elif x == 3:\n        return 3\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P001', 'severity': 'error', 'message': 'if/elif/else chain dispatches on value — use dict lookup. See honest-code-principles.md §3.', 'source_location': 'case_HC-P001.py:2:5', 'context': 'if x == 1:', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P007',
+        "source": 'class C:\n    def __init__(self):\n        self._x = 1\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P003', 'severity': 'error', 'message': "Class 'C' has no declared base. Use a TypedDict for data shapes or a pure function.", 'source_location': 'case_HC-P007.py:1:1', 'context': 'class C:', 'fixable': False}, {'rule_id': 'HC-P007', 'severity': 'warning', 'message': "Instance state '_x'. Pass as parameter or use context manager.", 'source_location': 'case_HC-P007.py:3:9', 'context': 'self._x = 1', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P011',
+        "source": 'useEffect()\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P011', 'severity': 'error', 'message': "Lifecycle hook 'useEffect'. Use HTMX attributes or server-rendered HTML.", 'source_location': 'case_HC-P011.py:1:1', 'context': 'useEffect()', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P016',
+        "source": 'def outer():\n    acc = 0\n    def inner():\n        nonlocal acc\n        acc = acc + 1\n    return inner\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P016', 'severity': 'error', 'message': "Inner function 'inner' captures 'acc' via nonlocal and mutates it. Closures may not carry mutable state — use pure parameters or move state into persist.", 'source_location': 'case_HC-P016.py:3:5', 'context': 'def inner():', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P002',
+        "source": 'def f(x):\n    try:\n        return x\n    except Exception:\n        return None\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P002', 'severity': 'error', 'message': "Function 'f' catches an exception in business logic. Let the function raise; catch at the boundary (@boundary / route handler), or return a fault as data.", 'source_location': 'case_HC-P002.py:2:5', 'context': 'try:', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P004',
+        "source": 'def f(p):\n    return open(p)\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P004', 'severity': 'error', 'message': "I/O call 'open' in a non-boundary function reaches outside the process off the boundary. Do the I/O at a boundary (@boundary / route handler) and pass the result into the pure interior.", 'source_location': 'case_HC-P004.py:2:12', 'context': 'open(p)', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P005',
+        "source": 'def f(x):\n    return isinstance(x, int)\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P005', 'severity': 'warning', 'message': 'Runtime type check in business logic. Declare the constraint as a vocabulary at the boundary instead.', 'source_location': 'case_HC-P005.py:2:12', 'context': 'isinstance(x, int)', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P006',
+        "source": '@lru_cache\ndef a():\n    return 1\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P006', 'severity': 'warning', 'message': "Cache decorator without a profiling note. Add a @profiled decorator or a '# honest: profiled' comment proving the cache was measured.", 'source_location': 'case_HC-P006.py:1:1', 'context': '@lru_cache', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P015',
+        "source": 'def f(x=5):\n    return x\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P015', 'severity': 'warning', 'message': "Parameter 'x' defaults to a real value. A default hides whether the caller chose the value or omitted it, and leaves the omitted-argument path untested. Make the parameter required, or default it to empty if absence is the honest nothing.", 'source_location': 'case_HC-P015.py:1:7', 'context': 'x=5', 'fixable': False}],
+    },
+    {
+        "id": 'HC008',
+        "source": 'from honest_type import link\ng = []\n@link()\ndef rd(m):\n    return g\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC008', 'severity': 'warning', 'message': "Link 'rd' may be impure: it calls a watched function or reads module-level mutable state. Add boundary=True if the I/O is intentional.", 'source_location': 'case_HC008.py:4:1', 'context': 'def rd(m):', 'fixable': False}],
+    },
+    {
+        "id": 'HC001',
+        "source": 'from honest_type import chain\ndef step(x):\n    return x\nc = chain(step)\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC001', 'severity': 'error', 'message': "Chain link 'step' has no vocabulary declared. Wrap it with @link(accepts=..., emits=...) or the link() constructor.", 'source_location': 'case_HC001.py:4:5', 'context': 'chain(step)', 'fixable': False}],
+    },
+    {
+        "id": 'HC-OR001',
+        "source": '@orchestrator\ndef flow_a(x):\n    return flow_b(x)\n@orchestrator\ndef flow_b(x):\n    return x\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-OR001', 'severity': 'error', 'message': "Orchestrator 'flow_a' calls orchestrator 'flow_b'. Orchestrators are the root of an operation and do not compose. Extract the shared logic as a pure helper (if no I/O) or as a chain (if I/O is involved).", 'source_location': 'case_HC-OR001.py:3:12', 'context': 'flow_b(x)', 'fixable': False}],
+    },
+    {
+        "id": 'HC-OR003',
+        "source": '@orchestrator\ndef flow_a(x):\n    a = step_one(x)\n    b = step_two(a)\n    c = step_three(b)\n    return c\n@orchestrator\ndef flow_b(x):\n    a = step_one(x)\n    b = step_two(a)\n    c = step_three(b)\n    return other(c)\n',
+        "rule_config": {'HC-OR003': {'min_run': 3}},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-OR003', 'severity': 'warning', 'message': "Orchestrators 'flow_a' and 'flow_b' share 3 consecutive operations. Consider extracting the shared sequence as a pure helper (if side-effect-free) or as a chain (if I/O is involved). Orchestrators are not composable (HC-OR001); reusable orchestration logic belongs in helpers or chains.", 'source_location': 'case_HC-OR003.py:8:1', 'context': 'def flow_b(x):', 'fixable': False}],
+    },
+    {
+        "id": 'HC-OR003-identical',
+        "source": '@orchestrator\ndef flow_a(x):\n    a = step_one(x)\n    b = step_two(a)\n    c = step_three(b)\n    return c\n@orchestrator\ndef flow_b(x):\n    a = step_one(x)\n    b = step_two(a)\n    c = step_three(b)\n    return c\n',
+        "rule_config": {'HC-OR003': {'min_run': 3}},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-OR003', 'severity': 'warning', 'message': "Orchestrators 'flow_a' and 'flow_b' share 3 consecutive operations. Consider extracting the shared sequence as a pure helper (if side-effect-free) or as a chain (if I/O is involved). Orchestrators are not composable (HC-OR001); reusable orchestration logic belongs in helpers or chains.", 'source_location': 'case_HC-OR003-identical.py:8:1', 'context': 'def flow_b(x):', 'fixable': False}],
+    },
+    {
+        "id": 'HC-OR003-disjoint',
+        "source": '@orchestrator\ndef flow_a(x):\n    a = alpha(x)\n    b = beta(a)\n    return b\n@orchestrator\ndef flow_b(x):\n    c = gamma(x)\n    d = delta(c)\n    return d\n',
+        "rule_config": {'HC-OR003': {'min_run': 1}},
+        "hd": None,
+        "expected": [],
+    },
+    {
+        "id": 'HC002',
+        "source": "from honest_type import chain, link, vocabulary\nA = vocabulary({'t1': {'a'}})\nB = vocabulary({'t2': {'b'}})\n@link(accepts=A, emits=A)\ndef s1(m):\n    return m\n@link(accepts=B, emits=B)\ndef s2(m):\n    return m\nc = chain(s1, s2)\n",
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC002', 'severity': 'error', 'message': "Chain link 's2' accepts types the previous link does not emit: ['t2']. Change this link's accepts, change the previous link's emits, or insert a link between them that produces the types.", 'source_location': 'case_HC002.py:10:5', 'context': 'chain(s1, s2)', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P017',
+        "source": 'def a():\n    return Response()\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P017', 'severity': 'error', 'message': "Function 'a' produces HTTP output without being a declared @link with an emits vocabulary. Declare emits covering status, content-type, body shape, headers, and cookies, or delegate to a declared serializer link.", 'source_location': 'case_HC-P017.py:1:1', 'context': 'def a():', 'fixable': False}],
+    },
+    {
+        "id": 'HC004',
+        "source": "from honest_type import vocabulary, binding, classify\nv = vocabulary({'t1': {'a'}, 't2': {'b'}})\nb = binding({'t1': 'slot1'})\nr = classify(tok, v, bind=b)\n",
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC004', 'severity': 'warning', 'message': "Type 't2' is declared in the vocabulary but no binding slot or composed type uses it. Bind it to a slot, use it in a composed type, or remove it from the vocabulary.", 'source_location': 'case_HC004.py:2:5', 'context': "vocabulary({'t1': {'a'}, 't2': {'b'}})", 'fixable': False}],
+    },
+    {
+        "id": 'HC005',
+        "source": "from honest_type import vocabulary, binding, classify\nv = vocabulary({'t1': {'a'}})\nb = binding({'t1': 'slot1', 'tX': 'slotX'})\nr = classify(tok, v, bind=b)\n",
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC005', 'severity': 'warning', 'message': "Binding references type 'tX' not found in the paired vocabulary, so no classified token can reach its slot. Add the type to the vocabulary, or remove the binding entry.", 'source_location': 'case_HC005.py:3:5', 'context': "binding({'t1': 'slot1', 'tX': 'slotX'})", 'fixable': False}],
+    },
+    {
+        "id": 'HC010',
+        "source": "from honest_type import link, vocabulary, binding\nacc = vocabulary({'t1': {'a'}})\nemt = vocabulary({'t2': {'b'}})\nbnd = binding({'t2': 'slot2'})\n@link(accepts=acc, emits=emt, binds=bnd)\ndef f(manifest):\n    return manifest\n",
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC004', 'severity': 'warning', 'message': "Type 't1' is declared in the vocabulary but no binding slot or composed type uses it. Bind it to a slot, use it in a composed type, or remove it from the vocabulary.", 'source_location': 'case_HC010.py:2:7', 'context': "vocabulary({'t1': {'a'}})", 'fixable': False}, {'rule_id': 'HC010', 'severity': 'warning', 'message': "Link 'f' declares it emits ['t2'] but its body never produces them: it writes no manifest slot bound to the type and does not accept the type. Write the slot, drop the type from emits, or accept it.", 'source_location': 'case_HC010.py:6:1', 'context': 'def f(manifest):', 'fixable': False}],
+    },
+    {
+        "id": 'HC-HF001',
+        "source": "FEATURES = {'known': {'states': {'on', 'off'}}}\nx = feature_state(s, 'unknown')\n",
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-HF001', 'severity': 'error', 'message': "feature_state references 'unknown', which is not a declared flag in FEATURES.", 'source_location': 'case_HC-HF001.py:2:5', 'context': "feature_state(s, 'unknown')", 'fixable': False}],
+    },
+    {
+        "id": 'HC-HF002',
+        "source": "FEATURES = {'flag': {'states': {'on', 'off'}}}\nTABLE = {'on': 1}\nx = TABLE[feature_state(s, 'flag')]\n",
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-HF002', 'severity': 'warning', 'message': "Handler table 'TABLE' dispatched on feature 'flag' has no entry for state(s) ['off']; the flag entering that state raises KeyError. Add the missing entry, or handle the state.", 'source_location': 'case_HC-HF002.py:3:5', 'context': "TABLE[feature_state(s, 'flag')]", 'fixable': False}],
+    },
+    {
+        "id": 'HC-SUP001',
+        "source": '# honest: ignore HC-P003: no rule here\nx = 1\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-SUP001', 'severity': 'error', 'message': 'Suppression directive suppressed nothing: no named rule fired in its scope. Remove the directive, or correct the rule it names.', 'source_location': 'case_HC-SUP001.py:1:1', 'context': '# honest: ignore HC-P003: no rule here', 'fixable': False}],
+    },
+    {
+        "id": 'HC-SUP002',
+        "source": '# honest: disable HC-P003\nclass A:\n    pass\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P003', 'severity': 'info', 'message': "Class 'A' has no declared base. Use a TypedDict for data shapes or a pure function.", 'source_location': 'case_HC-SUP002.py:2:1', 'context': 'class A:', 'fixable': False}, {'rule_id': 'HC-SUP002', 'severity': 'error', 'message': "Suppression directive carries no reason. Add ': <why the violation stands>' so the next reader can judge whether it still holds.", 'source_location': 'case_HC-SUP002.py:1:1', 'context': '# honest: disable HC-P003', 'fixable': False}],
+    },
+    {
+        "id": 'HC-P004-door',
+        "source": 'def save(path):\n    return open(path).read()\n',
+        "rule_config": {},
+        "hd": 'module m\n  boundary_in fn save : (path: str) -> str side_effect reads "filesystem"\n',
+        "expected": [],
+    },
+    {
+        "id": 'HC-P004-door-boundary-out',
+        "source": 'def save(path):\n    return open(path).read()\n',
+        "rule_config": {},
+        "hd": 'module m\n  boundary_out fn save : (path: str) -> str side_effect reads "filesystem"\n',
+        "expected": [],
+    },
+    {
+        "id": 'HC-P004-door-reader',
+        "source": 'def save(path):\n    return open(path).read()\n',
+        "rule_config": {},
+        "hd": 'module m\n  reader fn save : (path: str) -> str side_effect reads "filesystem"\n',
+        "expected": [],
+    },
+    {
+        "id": 'HC-SYN',
+        "source": 'def f(:\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-SYN', 'severity': 'error', 'message': 'case_HC-SYN.py does not parse under python: error at line 1, column 7', 'source_location': 'case_HC-SYN.py:1:7', 'context': '', 'fixable': False}],
+    },
+]
+
+
+def _canon(diags):
+    import json
+    return sorted(json.dumps(d, sort_keys=True) for d in diags)
+
+
+def _message_failures(check_source):
+    bad = []
+    for case in _MSG_CASES:
+        declaration = _declaration_for(case["hd"])
+        got = check_source(case["source"], f"case_{case['id']}.py", case["rule_config"], declaration)
+        if _canon(got) != _canon(case["expected"]):
+            bad.append(f"record pinning {case['id']!r}: got {_canon(got)}, expected {_canon(case['expected'])}")
+    return bad
+
+
 def probe_check_source():
     try:
         from honest_check import check_source
@@ -257,4 +557,5 @@ def probe_check_source():
     bad.extend(_watchlist_failures(check_source))
     bad.extend(_declaration_failures(check_source))
     bad.extend(_or003_failures(check_source))
+    bad.extend(_message_failures(check_source))
     return bad

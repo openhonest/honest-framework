@@ -223,6 +223,214 @@ _CASES = [
 ]
 
 
+
+# ---- full-record pinning: the probe above asserts only (rule_id, severity)
+# and the offending path; these cases pin the whole Diagnostic record of each
+# variant, so emptying a message/key literal, flipping fixable, or swapping a
+# dict key changes the record and fails here.
+_MSG_CASES = [
+    {
+        "id": 'HC-R002',
+        "hd": 'module m\n\n  boundary_out fn emit : (x: str) -> str\n  orchestrator fn orchestrate : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def emit(x):\n    return orchestrate(x)\n\n\ndef orchestrate(x):\n    return x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R002'],
+        "expected": [{'rule_id': 'HC-R002', 'severity': 'error', 'message': "'emit' is declared boundary_out and invokes 'orchestrate', declared orchestrator. An output boundary is a terminus: return a value the caller acts on, or move the work upstream of the boundary.", 'source_location': 'm.py:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-R003-async',
+        "hd": 'module m\n\n  fn f : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'async def f(x):\n    return x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R003'],
+        "expected": [{'rule_id': 'HC-R003', 'severity': 'error', 'message': "'f' is async def and its declaration does not say awaited.", 'source_location': 'm.py:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-R003-awaited-plain',
+        "hd": 'module m\n\n  fn f : (x: str) -> str awaited\n',
+        "sources": [{'path': 'm.py', 'text': 'def f(x):\n    return x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R003'],
+        "expected": [{'rule_id': 'HC-R003', 'severity': 'error', 'message': "'f' is declared awaited and is a plain def.", 'source_location': 'm.py:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-R004-none',
+        "hd": 'module m\n\n  fn g : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def g(x):\n    return None\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R004'],
+        "expected": [{'rule_id': 'HC-R004', 'severity': 'error', 'message': "'g' can return None and its card names no absence arm. Add '| NOTHING' to the return, or stop returning None.", 'source_location': 'm.py:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-R004-absence',
+        "hd": 'module m\n\n  fn g : (x: str) -> str | NOTHING\n',
+        "sources": [{'path': 'm.py', 'text': 'def g(x):\n    return x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R004'],
+        "expected": [{'rule_id': 'HC-R004', 'severity': 'error', 'message': "'g' is declared to return an absence and never returns None. Remove the absence arm, or return None where the answer is absent.", 'source_location': 'm.py:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-R004-absent-atom',
+        "hd": 'module m\n\n  fn g : (x: str) -> str | Absent\n',
+        "sources": [{'path': 'm.py', 'text': 'def g(x):\n    return x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R004'],
+        "expected": [{'rule_id': 'HC-R004', 'severity': 'error', 'message': "'g' is declared to return an absence and never returns None. Remove the absence arm, or return None where the answer is absent.", 'source_location': 'm.py:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-R005',
+        "hd": 'module m\n\n  fn h : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def h(x):\n    yield x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R005'],
+        "expected": [{'rule_id': 'HC-R005', 'severity': 'error', 'message': "'h' is declared and its body yields, so it answers with a stream rather than a value. Return a value, or move the laziness into a helper this module does not declare.", 'source_location': 'm.py:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'unwrap-decorated-async',
+        "hd": 'module m\n\n  fn f : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': '@deco\nasync def f(x):\n    return x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R003'],
+        "expected": [{'rule_id': 'HC-R003', 'severity': 'error', 'message': "'f' is async def and its declaration does not say awaited.", 'source_location': 'm.py:2:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'check_r002-boundary-in',
+        "hd": 'module m\n\n  boundary_out fn emit : (x: str) -> str\n  boundary_in fn inward : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def emit(x):\n    return inward(x)\n\n\ndef inward(x):\n    return x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R002'],
+        "expected": [{'rule_id': 'HC-R002', 'severity': 'error', 'message': "'emit' is declared boundary_out and invokes 'inward', declared boundary_in. An output boundary is a terminus: return a value the caller acts on, or move the work upstream of the boundary.", 'source_location': 'm.py:1:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'literal_all-tuple',
+        "hd": 'module m\n\n  fn present : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def present(x):\n    return x\n'}],
+        "export_source": '__all__ = ("present",)\n',
+        "rule_ids": ['HC-REF005'],
+        "expected": [],
+    },
+    {
+        "id": 'literal_all-set',
+        "hd": 'module m\n\n  fn present : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def present(x):\n    return x\n'}],
+        "export_source": '__all__ = {"present"}\n',
+        "rule_ids": ['HC-REF005'],
+        "expected": [],
+    },
+    {
+        "id": 'literal_all-annot-noall',
+        "hd": 'module m\n\n  fn present : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def present(x):\n    return x\n'}],
+        "export_source": 'a, b = 1, 2\n__all__: list\n',
+        "rule_ids": ['HC-REF005'],
+        "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': 'the module publishes no literal export list, so its surface is inferred rather than declared and this rule cannot read it. Write the list.', 'source_location': 'm.py', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'literal_all-augmented',
+        "hd": 'module m\n\n  fn present : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def present(x):\n    return x\n'}],
+        "export_source": '__all__ += ["present"]\n',
+        "rule_ids": ['HC-REF005'],
+        "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': 'the module publishes no literal export list, so its surface is inferred rather than declared and this rule cannot read it. Write the list.', 'source_location': 'm.py', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'check_r002-role-filter',
+        "hd": 'module m\n\n  orchestrator fn emit : (x: str) -> str\n  boundary_in fn inward : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def emit(x):\n    return inward(x)\n\n\ndef inward(x):\n    return x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R002'],
+        "expected": [],
+    },
+    {
+        "id": 'check_ref005-module-root',
+        "hd": 'module m\n\n  fn ghost : (x: str) -> str\n',
+        "sources": [],
+        "export_source": '__all__ = []\n',
+        "rule_ids": ['HC-REF005'],
+        "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': "'ghost' is declared and defined nowhere. Implement it, or remove the declaration.", 'source_location': 'exports.py', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'check_ref005-module-root-first',
+        "hd": 'module m\n\n  fn ghost : (x: str) -> str\n',
+        "sources": [{'path': 'a.py', 'text': 'def present(x):\n    return x\n'}, {'path': 'b.py', 'text': 'y = 1\n'}],
+        "export_source": 'x = 1\n',
+        "rule_ids": ['HC-REF005'],
+        "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': 'the module publishes no literal export list, so its surface is inferred rather than declared and this rule cannot read it. Write the list.', 'source_location': 'a.py', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'arity-comment-param',
+        "hd": 'module m\n\n  fn present : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def present(\n    x,  # c\n):\n    return x\n'}],
+        "export_source": '__all__ = ["present"]\n',
+        "rule_ids": ['HC-REF005'],
+        "expected": [],
+    },
+    {
+        "id": 'cross-gather-nested-none',
+        "hd": 'module m\n\n  fn g : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def g(x):\n    def inner():\n        return None\n    return x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R004'],
+        "expected": [],
+    },
+    {
+        "id": 'contextmanager-not',
+        "hd": 'module m\n\n  fn present : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': '@other\ndef present(x):\n    yield x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-R005'],
+        "expected": [{'rule_id': 'HC-R005', 'severity': 'error', 'message': "'present' is declared and its body yields, so it answers with a stream rather than a value. Return a value, or move the laziness into a helper this module does not declare.", 'source_location': 'm.py:2:1', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF005-no-all',
+        "hd": 'module m\n\n  fn clean_fn : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def clean_fn(x):\n    return x\n'}],
+        "export_source": '',
+        "rule_ids": ['HC-REF005'],
+        "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': 'the module publishes no literal export list, so its surface is inferred rather than declared and this rule cannot read it. Write the list.', 'source_location': 'm.py', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF005-exported-undeclared',
+        "hd": 'module m\n\n  fn present : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def present(x):\n    return x\n'}],
+        "export_source": '__all__ = ["present", "extra"]\n',
+        "rule_ids": ['HC-REF005'],
+        "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': "'extra' is exported by the module and declared in no .hd. Declare it, or stop exporting it.", 'source_location': 'm.py', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF005-defined-nowhere',
+        "hd": 'module m\n\n  fn present : (x: str) -> str\n  fn ghost : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def present(x):\n    return x\n'}],
+        "export_source": '__all__ = ["present"]\n',
+        "rule_ids": ['HC-REF005'],
+        "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': "'ghost' is declared and defined nowhere. Implement it, or remove the declaration.", 'source_location': 'm.py', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF005-arity',
+        "hd": 'module m\n\n  fn present : (x: str) -> str\n',
+        "sources": [{'path': 'm.py', 'text': 'def present(x, y):\n    return x\n'}],
+        "export_source": '__all__ = ["present"]\n',
+        "rule_ids": ['HC-REF005'],
+        "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': "'present' is declared with 1 parameters and defined with 2.", 'source_location': 'm.py:1:1', 'context': '', 'fixable': False}],
+    },
+]
+
+def _canon(diags):
+    import json
+    return sorted(json.dumps(d, sort_keys=True) for d in diags)
+
+
+def _message_failures():
+    from honest_check import cross_declaration
+    from honest_design import read_hd
+    bad = []
+    for case in _MSG_CASES:
+        declaration = read_hd(case["hd"])["ok"]["modules"][0]
+        got = cross_declaration(case["sources"], declaration, case["export_source"], case["rule_ids"])
+        if _canon(got) != _canon(case["expected"]):
+            bad.append(f"record pinning {case['id']!r}: got {_canon(got)}, expected {_canon(case['expected'])}")
+    return bad
+
 def probe_cross_declaration():
     try:
         from honest_check import cross_declaration
@@ -262,4 +470,5 @@ def probe_cross_declaration():
                 f"{case['name']}: {case['want_rule']} fired at severity "
                 f"{[d.get('severity') for d in fired]}, expected 'error'"
             )
+    bad.extend(_message_failures())
     return bad
