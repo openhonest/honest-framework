@@ -10,7 +10,7 @@
 set -uo pipefail
 cd "$(dirname "$0")"            # -> python/
 
-SRC=honest_alerts,honest_auth,honest_check,honest_design,honest_estimate,honest_state,honest_errors,honest_features,honest_gherkin,honest_observe,honest_parse,honest_persist,honest_rca,honest_test,honest_type
+SRC=honest_alerts,honest_auth,honest_check,honest_design,honest_estimate,honest_state,honest_errors,honest_features,honest_gherkin,honest_observe,honest_page,honest_parse,honest_persist,honest_rca,honest_test,honest_type
 # The whole workspace, every time. A `uv run --package X` anywhere before this trims the shared
 # environment to X's closure, and then thirteen suites here failed on a missing import that had
 # nothing to do with the staged change (2026-09-05). The gate must not depend on what the last
@@ -26,8 +26,18 @@ if [ ${#runners[@]} -eq 0 ]; then
     exit 2
 fi
 for runner in "${runners[@]}"; do
+    mod=$(echo "$runner" | sed -E 's#(honest-[a-z_]+)/.*#\1#')
+    pkg=${mod//-/_}
+    # Only a module in the dogfooding set (SRC above) is under this gate. A module not in SRC is in
+    # progress: the build order is .hd, features, red tests, then code, so its conformance is red by
+    # design until the code is written. Running it here would fail the gate on a module meant to be
+    # red. It joins the gate the commit its source lands and it is added to SRC, which is the one
+    # place that says a module is done.
+    case ",$SRC," in
+        *",$pkg,"*) ;;
+        *) echo "coverage-all: $mod is not in the dogfooding set yet (in progress) — skipped."; continue;;
+    esac
     if ! $COV run --append --branch --source="$SRC" "$runner" >/dev/null 2>&1; then
-        mod=$(echo "$runner" | sed -E 's#(honest-[a-z]+)/.*#\1#')
         echo "coverage-all: conformance FAILED: $runner" >&2
         echo "  its output was suppressed here — run it directly to see which case failed:" >&2
         echo "    cd python && uv run --package $mod python $runner" >&2
@@ -41,6 +51,10 @@ done
 tmp=$(mktemp -d)
 printf 'def add(a, b):\n    return a + b\n' > "$tmp/ok.py"
 $COV run --append --branch --source="$SRC" -m honest_check.cli "$tmp/ok.py" >/dev/null 2>&1 || true
+# The __main__ error-exit path: a --declaration naming a .hd that does not exist makes
+# read_declaration answer a Fault, which main discharges as HonestCheckError and the shim
+# turns into exit 2. The success run above never reaches it, so drive it once here.
+$COV run --append --branch --source="$SRC" -m honest_check.cli --declaration "$tmp/missing.hd" "$tmp/ok.py" >/dev/null 2>&1 || true
 printf 'Feature: f\n\n  Scenario: s\n    Given a step\n' > "$tmp/f.feature"
 $COV run --append --branch --source="$SRC" -m honest_gherkin.cli run "$tmp/f.feature" >/dev/null 2>&1 || true
 mkdir -p "$tmp/tsrc"

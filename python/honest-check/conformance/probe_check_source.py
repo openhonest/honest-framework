@@ -27,6 +27,18 @@ _CASES = [
         },
         "want_rule": None,
     },
+    # A path whose extension honest-parse does not place yields a parse result whose
+    # code is not syntax_error, so check_source has no architecture to check and returns
+    # the empty list, distinct from the HC-SYN a real syntax error produces.
+    {
+        "given": {
+            "source": "x = 1\n",
+            "path": "a.bin",
+            "rule_config": {},
+            "declaration": None,
+        },
+        "want_rule": None,
+    },
 ]
 
 

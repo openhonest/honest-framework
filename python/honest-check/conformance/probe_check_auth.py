@@ -137,6 +137,21 @@ _CASES = [
         ],
         "want": [],
     },
+    # HC-A002 fires over a link that calls through a call result: `make()(m)` is a call
+    # whose function is itself a call, neither a bare name nor a dotted name, so the
+    # call-name read answers nothing for that site. A provider is registered and the
+    # link's body never references actor, so one HC-A002 error points at the link's file.
+    {
+        "name": "HC-A002 fires (authorizing link calls through a call result, no actor)",
+        "sources": [
+            {"path": "a.py", "text": "register_auth_provider(p)\n"},
+            {
+                "path": "b.py",
+                "text": "@link(authorizes=True)\ndef pay(m):\n    return make()(m)\n",
+            },
+        ],
+        "want": [("HC-A002", "error", "b.py")],
+    },
 ]
 
 

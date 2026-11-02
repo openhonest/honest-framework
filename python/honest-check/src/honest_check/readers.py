@@ -13,6 +13,14 @@ import tomllib
 from honest_design import read_hd
 from honest_parse import language_of
 
+from honest_check.report import _LEVEL_ORDER
+
+# The adoption levels section 9.4 defines, as a membership set. load_project_config resolves
+# the [check] adoption value against this, so only a declared AdoptionLevel leaves the
+# boundary. _LEVEL_ORDER is report's single source of the ordered levels; this mirrors its
+# membership so the two never drift.
+_ADOPTION_LEVELS = frozenset(_LEVEL_ORDER)
+
 
 def read_source(path):
     """Pull one file's complete text from disk and return it verbatim (section 3.2).
@@ -90,9 +98,10 @@ def load_project_config():
     """Read the nearest-ancestor honest-check.toml [check] section (section 3.1, section 9.4).
 
     exclude is the glob list [check] exclude declares, the empty list when unset; adoption is
-    the declared AdoptionLevel, resolved to 'Declared' (the strictest) when the key is absent,
-    because silence never buys leniency. A different slice of the same file than load_config
-    reads: the [rules] per-rule settings live there, the [check] section lives here.
+    the declared AdoptionLevel, resolved to 'Declared' (the strictest) when the key is absent
+    or names no level the vocabulary carries, because silence never buys leniency. A different
+    slice of the same file than load_config reads: the [rules] per-rule settings live there,
+    the [check] section lives here.
     """
     def find_toml():
         directory = os.getcwd()
@@ -111,9 +120,10 @@ def load_project_config():
     with open(toml_path, "rb") as handle:
         data = tomllib.load(handle)
     check = data.get("check", {})
+    adoption = check.get("adoption", "Declared")
     return {
         "exclude": check.get("exclude", []),
-        "adoption": check.get("adoption", "Declared"),
+        "adoption": adoption if adoption in _ADOPTION_LEVELS else "Declared",
     }
 
 

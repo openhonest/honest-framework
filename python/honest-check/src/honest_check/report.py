@@ -158,13 +158,15 @@ def enforced_rules_of(level):
     membership. always_rules hold everywhere; each level adds its own set on top of the
     levels below it, so Declared returns the whole 53-rule set.
 
-    level is a declared AdoptionLevel; the interior trusts that contract.
+    level is a declared AdoptionLevel bounded by load_project_config, so it names a member of
+    _LEVEL_ORDER; the interior trusts that contract and takes the cumulative levels up to and
+    including it. A level outside the vocabulary raises here rather than silently returning the
+    whole set.
     """
+    cutoff = _LEVEL_ORDER.index(level)
     rules = set(_ALWAYS_RULES)
-    for name in _LEVEL_ORDER:
+    for name in _LEVEL_ORDER[: cutoff + 1]:
         rules |= _RULES_ADDED_AT[name]
-        if name == level:
-            break
     return sorted(rules)
 
 

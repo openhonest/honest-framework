@@ -195,8 +195,6 @@ def check_source(source, path, rule_config, declaration):
         argument_list = call_node.child_by_field_name("arguments")
         positionals = []
         keywords = {}
-        if argument_list is None:
-            return positionals, keywords
         for child in argument_list.named_children:
             if child.type == "keyword_argument":
                 name = child.child_by_field_name("name").text.decode("utf-8")
@@ -637,8 +635,6 @@ def check_source(source, path, rule_config, declaration):
         """The name a call invokes — a bare identifier, or the final attribute of a dotted
         call such as `window.addEventListener` — or None (§HC-P011)."""
         function = call_node.child_by_field_name("function")
-        if function is None:
-            return None
         if function.type == "identifier":
             return function.text.decode("utf-8")
         if function.type == "attribute":
@@ -672,8 +668,6 @@ def check_source(source, path, rule_config, declaration):
         (§4.2). A `nonlocal` and a mutation count only where they sit directly in this body."""
         body = fdef.child_by_field_name("body")
         found = []
-        if body is None:
-            return found
 
         def gather(node):
             for child in node.named_children:
@@ -692,8 +686,7 @@ def check_source(source, path, rule_config, declaration):
             if statement.type != "nonlocal_statement":
                 continue
             for child in statement.named_children:
-                if child.type == "identifier":
-                    names.add(child.text.decode("utf-8"))
+                names.add(child.text.decode("utf-8"))
         return names
 
     def mutated_names(statements):
@@ -746,18 +739,16 @@ def check_source(source, path, rule_config, declaration):
 
     def decorator_expression(decorator):
         """The expression a decorator applies — the identifier, attribute or call after the
-        `@`, or None for an empty decorator node."""
-        return decorator.named_children[0] if decorator.named_children else None
+        `@`. A parsed decorator always carries that expression as its first named child."""
+        return decorator.named_children[0]
 
     def decorator_target(decorator):
         """The final name a decorator names — `boundary` from `@boundary`, `lru_cache` from
         `@functools.lru_cache(maxsize=1)` — or None when it is neither a plain nor a dotted
         name, called or bare (§4.2, §5.6)."""
         expr = decorator_expression(decorator)
-        if expr is not None and expr.type == "call":
+        if expr.type == "call":
             expr = expr.child_by_field_name("function")
-        if expr is None:
-            return None
         if expr.type == "identifier":
             return expr.text.decode("utf-8")
         if expr.type == "attribute":
@@ -769,8 +760,6 @@ def check_source(source, path, rule_config, declaration):
         """True when a decorator declares its function a boundary — `@boundary` (bare or
         called) or `@link(boundary=True)` (§4.2)."""
         expr = decorator_expression(decorator)
-        if expr is None:
-            return False
         if expr.type == "identifier":
             return expr.text.decode("utf-8") == "boundary"
         if expr.type == "call":
@@ -815,8 +804,6 @@ def check_source(source, path, rule_config, declaration):
         as a call on a call's result (§5.4)."""
 
         def name_of(node):
-            if node is None:
-                return None
             if node.type == "identifier":
                 return node.text.decode("utf-8")
             if node.type == "attribute":
@@ -1076,9 +1063,8 @@ def check_source(source, path, rule_config, declaration):
         body. A read of one of these is not a read of a module global (§5.4)."""
         names = set()
         params = fdef.child_by_field_name("parameters")
-        if params is not None:
-            for child in params.named_children:
-                names |= param_names(child)
+        for child in params.named_children:
+            names |= param_names(child)
         for node in body:
             if node.type in ("assignment", "augmented_assignment"):
                 target = node.child_by_field_name("left")
@@ -1196,8 +1182,6 @@ def check_source(source, path, rule_config, declaration):
             if node.type != "function_definition":
                 continue
             name_node = node.child_by_field_name("name")
-            if name_node is None:
-                continue
             links[name_node.text.decode("utf-8")] = is_link_decorated(node)
         return links
 
@@ -1340,7 +1324,7 @@ def check_source(source, path, rule_config, declaration):
             if decorator_target(decorator) != "link":
                 continue
             expr = decorator_expression(decorator)
-            if expr is None or expr.type != "call":
+            if expr.type != "call":
                 continue
             _positionals, keywords = call_arguments(expr)
             if "emits" in keywords:
@@ -1587,7 +1571,7 @@ def check_source(source, path, rule_config, declaration):
                 if decorator_target(decorator) != "link":
                     continue
                 expr = decorator_expression(decorator)
-                if expr is not None and expr.type == "call":
+                if expr.type == "call":
                     link_call = expr
                 break
             if link_call is None:
@@ -1626,14 +1610,13 @@ def check_source(source, path, rule_config, declaration):
                         )
             first_param = None
             params = node.child_by_field_name("parameters")
-            if params is not None:
-                for child in params.named_children:
-                    if child.type == "comment":
-                        continue
-                    names = param_names(child)
-                    if names:
-                        first_param = next(iter(names))
-                    break
+            for child in params.named_children:
+                if child.type == "comment":
+                    continue
+                names = param_names(child)
+                if names:
+                    first_param = next(iter(names))
+                break
             produced_keys = set()
             if first_param is not None:
                 for statement in own_body(node):
@@ -1709,13 +1692,14 @@ def check_source(source, path, rule_config, declaration):
 
         def link_call_of(fdef):
             """The `@link(...)` call node decorating a function, or None when its @link is bare
-            or absent — the decorator call HC002 reads accepts and emits from."""
-            for decorator in decorators_of(fdef):
-                if decorator_target(decorator) != "link":
-                    continue
-                expr = decorator_expression(decorator)
-                return expr if expr is not None and expr.type == "call" else None
-            return None
+            (`@link` with no call) — the decorator call HC002 reads accepts and emits from. Its
+            callers pass only link-decorated functions (link_defs is built from is_link_decorated),
+            so a `@link` decorator is always present; the one real None is the bare @link."""
+            decorator = next(
+                d for d in decorators_of(fdef) if decorator_target(d) == "link"
+            )
+            expr = decorator_expression(decorator)
+            return expr if expr.type == "call" else None
 
         def seam_types(fdef, keyword):
             """The base-type names a link's @link decorator declares for one keyword (accepts
@@ -2016,20 +2000,17 @@ def check_source(source, path, rule_config, declaration):
 
         open_scope = {"ignore": open_ignore, "disable": open_disable, "enable": close_enable}
         for index, directive in enumerate(directives):
-            handler = open_scope.get(directive["keyword"])
-            if handler is not None:
-                handler(directive, directive["line"], index)
+            open_scope[directive["keyword"]](directive, directive["line"], index)
         for rule, (lo, owner) in open_ranges.items():
             scopes.append({"rule": rule, "lo": lo, "hi": line_count, "owner": owner})
         return scopes
 
     def diagnostic_line(diag):
-        """The 1-based line a diagnostic sits on, read from its 'path:line:col' location, or
-        None when the location carries no line. Scope matching compares this against a
-        directive's line."""
+        """The 1-based line a diagnostic sits on, read from its 'path:line:col' location. Every
+        diagnostic this core builds carries that shape — diagnostic() formats it and the HC-SYN
+        path returns before this pass runs — so the line is always present. Scope matching
+        compares it against a directive's line."""
         parts = diag["source_location"].rsplit(":", 2)
-        if len(parts) != 3 or not parts[1].isdigit():
-            return None
         return int(parts[1])
 
     def apply_suppression(raw_diagnostics):
@@ -2050,7 +2031,6 @@ def check_source(source, path, rule_config, declaration):
                 scope
                 for scope in scopes
                 if scope["rule"] == diag["rule_id"]
-                and line is not None
                 and scope["lo"] <= line <= scope["hi"]
             ]
             if not covering:
@@ -2128,8 +2108,6 @@ def cross_declaration(sources, declaration, export_source, rule_ids):
         (sections 4.2, §HC-R004, §HC-R005)."""
         body = fdef.child_by_field_name("body")
         found = []
-        if body is None:
-            return found
 
         def gather(node):
             for child in node.named_children:
@@ -2163,8 +2141,6 @@ def cross_declaration(sources, declaration, export_source, rule_ids):
 
     def arity(fdef):
         params = fdef.child_by_field_name("parameters")
-        if params is None:
-            return 0
         return sum(1 for child in params.named_children if child.type != "comment")
 
     def calls_of(fdef):
@@ -2209,8 +2185,6 @@ def cross_declaration(sources, declaration, export_source, rule_ids):
             if fdef is None:
                 continue
             name_node = fdef.child_by_field_name("name")
-            if name_node is None:
-                continue
             line, col = line_col(fdef)
             facts.append(
                 {
@@ -2532,8 +2506,6 @@ def check_references(sources):
             if node.type != "statement":
                 continue
             tag = node.child_by_field_name("tag")
-            if tag is None:
-                continue
             keyword = tag.text.decode("utf-8")
             if keyword not in ("include", "extends"):
                 continue
@@ -2633,8 +2605,6 @@ def check_references(sources):
         ):
             return []
         arguments = call_node.child_by_field_name("arguments")
-        if arguments is None:
-            return []
         return [
             (js_string_value(argument), call_node)
             for argument in arguments.named_children
@@ -2748,8 +2718,6 @@ def check_roles(sources, declaration):
         nested helper is not read as this function's (sections 4.2, §HC-R002)."""
         body = fdef.child_by_field_name("body")
         found = []
-        if body is None:
-            return found
 
         def gather(node):
             for child in node.named_children:
@@ -2788,8 +2756,6 @@ def check_roles(sources, declaration):
             if fdef is None:
                 continue
             name_node = fdef.child_by_field_name("name")
-            if name_node is None:
-                continue
             line, col = line_col(fdef)
             facts.append(
                 {
@@ -2887,8 +2853,6 @@ def check_auth(sources):
         argument_list = call_node.child_by_field_name("arguments")
         positionals = []
         keywords = {}
-        if argument_list is None:
-            return positionals, keywords
         for child in argument_list.named_children:
             if child.type == "keyword_argument":
                 name = child.child_by_field_name("name").text.decode("utf-8")
@@ -2901,8 +2865,6 @@ def check_auth(sources):
         """The name a call invokes — a bare identifier, or the final attribute of a dotted
         call — or None (§HC-P011's called_name idiom)."""
         function = call_node.child_by_field_name("function")
-        if function is None:
-            return None
         if function.type == "identifier":
             return function.text.decode("utf-8")
         if function.type == "attribute":
@@ -2944,8 +2906,6 @@ def check_auth(sources):
         nested def, lambda or decorated def — the same read check_source's own_body does."""
         body = fdef.child_by_field_name("body")
         found = []
-        if body is None:
-            return found
 
         def gather(node):
             for child in node.named_children:
