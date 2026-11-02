@@ -284,16 +284,22 @@ def check_source(source, path, rule_config):
 
     def check_state_machine(call_node):
         """HC-SM01/02/05: a transition state or event, or the initial state, not in its
-        vocabulary (section 4.1)."""
+        vocabulary; HC-SM03/04: an unreachable or dead state (section 4.1)."""
         findings = []
-        positionals, _keywords = call_arguments(call_node)
+        positionals, keywords = call_arguments(call_node)
         if len(positionals) < 4:
             return findings
-        states = set(string_members(positionals[0]))
+        states = string_members(positionals[0])
+        state_set = set(states)
         events = set(string_members(positionals[1]))
         transitions = positionals[2]
         initial = literal_string(positionals[3]) if positionals[3].type == "string" else None
+        terminal_node = keywords.get("terminal")
+        if terminal_node is None and len(positionals) >= 5:
+            terminal_node = positionals[4]
+        terminal = set(string_members(terminal_node)) if terminal_node is not None else set()
 
+        transition_pairs = []
         for pair in transitions.named_children:
             if pair.type != "pair":
                 continue
@@ -304,7 +310,10 @@ def check_source(source, path, rule_config):
             if len(members) < 2:
                 continue
             state, event = members[0], members[1]
-            if state not in states:
+            value = pair.child_by_field_name("value")
+            target = literal_string(value) if value is not None and value.type == "string" else None
+            transition_pairs.append((state, event, target))
+            if state not in state_set:
                 findings.append(
                     diagnostic(
                         "HC-SM01",
@@ -322,7 +331,7 @@ def check_source(source, path, rule_config):
                         call_node,
                     )
                 )
-        if initial is not None and initial not in states:
+        if initial is not None and initial not in state_set:
             findings.append(
                 diagnostic(
                     "HC-SM05",
@@ -331,6 +340,45 @@ def check_source(source, path, rule_config):
                     call_node,
                 )
             )
+
+        # HC-SM03: a declared state the forward walk from the initial state never reaches,
+        # and that is not itself the initial state, is unreachable. The walk is a plain set
+        # closure over the transition edges.
+        if initial is not None:
+            reachable = {initial}
+            frontier = {initial}
+            while frontier:
+                nxt = set()
+                for state, _event, target in transition_pairs:
+                    if state in frontier and target is not None and target not in reachable:
+                        reachable.add(target)
+                        nxt.add(target)
+                frontier = nxt
+            for state in states:
+                if state not in reachable and state != initial:
+                    findings.append(
+                        diagnostic(
+                            "HC-SM03",
+                            "warning",
+                            f"State {state!r} is unreachable",
+                            call_node,
+                        )
+                    )
+
+        # HC-SM04: a declared state with no outgoing transition that is not declared terminal
+        # is a dead state.
+        states_with_outgoing = {state for state, _event, _target in transition_pairs}
+        for state in states:
+            if state not in states_with_outgoing and state not in terminal:
+                findings.append(
+                    diagnostic(
+                        "HC-SM04",
+                        "warning",
+                        f"State {state!r} has no outgoing transitions and is not "
+                        "declared terminal",
+                        call_node,
+                    )
+                )
         return findings
 
     # The construction dispatch: a call that resolves to a framework constructor runs the

@@ -63,28 +63,49 @@
       "id": "HC-SM01-001",
       "description": "A transition table names a from-state that is not in the states vocabulary.",
       "category": "HC-SM01",
-      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"idle\"], [\"go\"], {(\"running\", \"go\"): \"idle\"}, \"idle\")\n" },
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"a\", \"b\"], [\"go\", \"back\"], {(\"a\", \"go\"): \"b\", (\"b\", \"back\"): \"a\", (\"ghost\", \"go\"): \"a\"}, \"a\")\n" },
       "expected": { "diagnostics": [ { "rule": "HC-SM01", "severity": "error", "line": 2 } ] }
     },
     {
       "id": "HC-SM02-001",
       "description": "A transition table names an event that is not in the events vocabulary.",
       "category": "HC-SM02",
-      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"idle\", \"run\"], [\"go\"], {(\"idle\", \"stop\"): \"run\"}, \"idle\")\n" },
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"a\", \"b\"], [\"go\", \"back\"], {(\"a\", \"go\"): \"b\", (\"b\", \"back\"): \"a\", (\"a\", \"boom\"): \"b\"}, \"a\")\n" },
       "expected": { "diagnostics": [ { "rule": "HC-SM02", "severity": "error", "line": 2 } ] }
     },
     {
       "id": "HC-SM05-001",
       "description": "The initial state is not in the states vocabulary.",
       "category": "HC-SM05",
-      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"idle\"], [\"go\"], {}, \"missing\")\n" },
-      "expected": { "diagnostics": [ { "rule": "HC-SM05", "severity": "error", "line": 2 } ] }
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"a\"], [\"go\"], {(\"a\", \"go\"): \"a\"}, \"missing\")\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-SM05", "severity": "error", "line": 2 }, { "rule": "HC-SM03", "severity": "warning", "line": 2 } ] }
     },
     {
       "id": "HC-SM-clean-001",
-      "description": "A state machine whose states, events, transitions and initial all agree fires nothing.",
+      "description": "A state machine whose states, events, transitions, reachability and initial all agree fires nothing.",
       "category": "HC-SM01",
       "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"idle\", \"run\"], [\"go\", \"stop\"], {(\"idle\", \"go\"): \"run\", (\"run\", \"stop\"): \"idle\"}, \"idle\")\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-SM03-001",
+      "description": "A declared state no transition can reach from the initial state is unreachable.",
+      "category": "HC-SM03",
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"a\", \"b\", \"orphan\"], [\"go\", \"back\"], {(\"a\", \"go\"): \"b\", (\"b\", \"back\"): \"a\", (\"orphan\", \"go\"): \"a\"}, \"a\")\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-SM03", "severity": "warning", "line": 2 } ] }
+    },
+    {
+      "id": "HC-SM04-001",
+      "description": "A reachable state with no outgoing transition that is not declared terminal is a dead state.",
+      "category": "HC-SM04",
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"a\", \"b\"], [\"go\"], {(\"a\", \"go\"): \"b\"}, \"a\")\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-SM04", "severity": "warning", "line": 2 } ] }
+    },
+    {
+      "id": "HC-SM04-clean-001",
+      "description": "A state with no outgoing transition that is declared terminal fires nothing.",
+      "category": "HC-SM04",
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"a\", \"b\"], [\"go\"], {(\"a\", \"go\"): \"b\"}, \"a\", terminal=[\"b\"])\n" },
       "expected": { "diagnostics": [] }
     },
     {
