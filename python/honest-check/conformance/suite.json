@@ -95,6 +95,62 @@
       "expected": { "diagnostics": [ { "rule": "HC-P003", "severity": "error", "line": 1 } ] }
     },
     {
+      "id": "HC-P001-001",
+      "description": "Three branches dispatching on one variable's value is an if/elif chain that should be a dict lookup.",
+      "category": "HC-P001",
+      "input": { "language": "python", "source": "def handle(role):\n    if role == \"admin\":\n        return 1\n    elif role == \"editor\":\n        return 2\n    elif role == \"viewer\":\n        return 3\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P001", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC-P001-clean-001",
+      "description": "A single if that does not dispatch on a value over three branches fires nothing.",
+      "category": "HC-P001",
+      "input": { "language": "python", "source": "def f(x):\n    if x:\n        return 1\n    return 2\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P007-001",
+      "description": "An underscore-prefixed instance attribute set in a constructor is hidden instance state.",
+      "category": "HC-P007",
+      "input": { "language": "python", "source": "from abc import ABC\n\nclass Thing(ABC):\n    def __init__(self):\n        self._count = 0\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P007", "severity": "warning", "line": 5 } ] }
+    },
+    {
+      "id": "HC-P007-clean-001",
+      "description": "A constructor that sets no underscore-prefixed instance state fires nothing.",
+      "category": "HC-P007",
+      "input": { "language": "python", "source": "from abc import ABC\n\nclass Thing(ABC):\n    def __init__(self):\n        pass\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P011-001",
+      "description": "A call to a framework lifecycle hook is dishonest; use server-rendered HTML.",
+      "category": "HC-P011",
+      "input": { "language": "python", "source": "def setup():\n    useEffect(handler)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P011", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC-P011-clean-001",
+      "description": "An ordinary call that is not a lifecycle hook fires nothing.",
+      "category": "HC-P011",
+      "input": { "language": "python", "source": "def setup():\n    configure(handler)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P016-001",
+      "description": "An inner function that captures an enclosing name with nonlocal and mutates it hides state in a closure.",
+      "category": "HC-P016",
+      "input": { "language": "python", "source": "def outer():\n    total = 0\n    def inner():\n        nonlocal total\n        total += 1\n    return inner\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P016", "severity": "error", "line": 3 } ] }
+    },
+    {
+      "id": "HC-P016-clean-001",
+      "description": "An inner function that captures nothing mutable fires nothing.",
+      "category": "HC-P016",
+      "input": { "language": "python", "source": "def outer():\n    def inner():\n        return 1\n    return inner\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
       "id": "clean-001",
       "description": "Plain honest code fires nothing.",
       "category": "clean",

@@ -38,6 +38,23 @@ _ABSENCE_ATOMS = frozenset({"NOTHING", "Absent"})
 # (sections 4.2, §HC-R004, §HC-R005).
 _INNER_SCOPES = frozenset({"function_definition", "lambda", "decorated_definition"})
 
+# The framework lifecycle hooks HC-P011 names (§4.2). A call to any of these declares a
+# client-side initialization sequence the framework decides the order of; the honest form is
+# an HTMX attribute or server-rendered HTML that arrives ready.
+_LIFECYCLE_HOOKS = frozenset(
+    {
+        "useEffect",
+        "useLayoutEffect",
+        "componentDidMount",
+        "componentDidUpdate",
+        "componentWillUnmount",
+        "ngOnInit",
+        "ngOnDestroy",
+        "addEventListener",
+        "removeEventListener",
+    }
+)
+
 
 def check_source(source, path, rule_config):
     parsed = parse_source(source.encode("utf-8"), path)
@@ -349,7 +366,224 @@ def check_source(source, path, rule_config):
                     )
         return findings
 
-    diagnostics = list(check_classes())
+    def enclosing_function(node):
+        """The nearest enclosing function_definition of a node, climbing parents, or None at
+        module scope. A node's nearest enclosing function is the scope that owns it, so a
+        nonlocal or a mutation reads as belonging to the function it sits directly inside."""
+        parent = node.parent
+        while parent is not None:
+            if parent.type == "function_definition":
+                return parent
+            parent = parent.parent
+        return None
+
+    def dispatch_variable(condition):
+        """The variable name an `if`/`elif` condition dispatches on — the left identifier of an
+        `identifier == <value>` equality test — or None when the condition is not that shape
+        (§HC-P001)."""
+        if condition is None or condition.type != "comparison_operator":
+            return None
+        if not any(child.type == "==" for child in condition.children):
+            return None
+        operands = condition.named_children
+        if len(operands) != 2 or operands[0].type != "identifier":
+            return None
+        return operands[0].text.decode("utf-8")
+
+    def check_p001():
+        """HC-P001: an if/elif chain of three or more branches that dispatch on one variable's
+        value — three or more equality tests on the same variable across if/elif. Reported at
+        the `if` statement's line (§4.2)."""
+        findings = []
+        for node in nodes:
+            if node.type != "if_statement":
+                continue
+            conditions = [node.child_by_field_name("condition")]
+            for child in node.named_children:
+                if child.type == "elif_clause":
+                    conditions.append(child.child_by_field_name("condition"))
+            variables = [
+                variable
+                for variable in (dispatch_variable(c) for c in conditions)
+                if variable is not None
+            ]
+            if any(variables.count(variable) >= 3 for variable in set(variables)):
+                findings.append(
+                    diagnostic(
+                        "HC-P001",
+                        "error",
+                        "if/elif/else chain dispatches on value — use dict lookup. "
+                        "See honest-code-principles.md §3.",
+                        node,
+                    )
+                )
+        return findings
+
+    def underscore_self_name(target):
+        """The attribute name of a `self._name` assignment target whose name starts with an
+        underscore, or None when the target is not that shape (§HC-P007)."""
+        if target is None or target.type != "attribute":
+            return None
+        obj = target.child_by_field_name("object")
+        attr = target.child_by_field_name("attribute")
+        if obj is None or attr is None or obj.type != "identifier":
+            return None
+        if obj.text.decode("utf-8") != "self":
+            return None
+        name = attr.text.decode("utf-8")
+        if not name.startswith("_"):
+            return None
+        return name
+
+    def within_class_init(node):
+        """True when a node's nearest enclosing function is an `__init__` that is a method of a
+        class — the scope HC-P007 reads for hidden instance state (§4.2)."""
+        function = enclosing_function(node)
+        if function is None:
+            return False
+        name = function.child_by_field_name("name")
+        if name is None or name.text.decode("utf-8") != "__init__":
+            return False
+        grandparent = function.parent.parent if function.parent is not None else None
+        return grandparent is not None and grandparent.type == "class_definition"
+
+    def check_p007():
+        """HC-P007: inside a class __init__, an assignment to a `self._name` attribute whose
+        name starts with an underscore — hidden instance state. Reported at the assignment's
+        line (§4.2)."""
+        findings = []
+        for node in nodes:
+            if node.type != "assignment":
+                continue
+            name = underscore_self_name(node.child_by_field_name("left"))
+            if name is None or not within_class_init(node):
+                continue
+            findings.append(
+                diagnostic(
+                    "HC-P007",
+                    "warning",
+                    f"Instance state {name!r}. Pass as parameter or use context manager.",
+                    node,
+                )
+            )
+        return findings
+
+    def called_name(call_node):
+        """The name a call invokes — a bare identifier, or the final attribute of a dotted
+        call such as `window.addEventListener` — or None (§HC-P011)."""
+        function = call_node.child_by_field_name("function")
+        if function is None:
+            return None
+        if function.type == "identifier":
+            return function.text.decode("utf-8")
+        if function.type == "attribute":
+            attr = function.child_by_field_name("attribute")
+            return attr.text.decode("utf-8") if attr is not None else None
+        return None
+
+    def check_p011():
+        """HC-P011: a call whose name is a framework lifecycle hook (§4.2). Reported at the
+        call's line."""
+        findings = []
+        for node in nodes:
+            if node.type != "call":
+                continue
+            name = called_name(node)
+            if name in _LIFECYCLE_HOOKS:
+                findings.append(
+                    diagnostic(
+                        "HC-P011",
+                        "error",
+                        f"Lifecycle hook {name!r}. Use HTMX attributes or server-rendered "
+                        "HTML.",
+                        node,
+                    )
+                )
+        return findings
+
+    def own_body(fdef):
+        """The body descendants belonging to a function itself, not descending into a deeper
+        nested def, lambda or decorated def — those statements are the inner scope's own
+        (§4.2). A `nonlocal` and a mutation count only where they sit directly in this body."""
+        body = fdef.child_by_field_name("body")
+        found = []
+        if body is None:
+            return found
+
+        def gather(node):
+            for child in node.named_children:
+                if child.type in _INNER_SCOPES:
+                    continue
+                found.append(child)
+                gather(child)
+
+        gather(body)
+        return found
+
+    def nonlocal_names(statements):
+        """The names declared by the `nonlocal` statements directly in a function body."""
+        names = set()
+        for statement in statements:
+            if statement.type != "nonlocal_statement":
+                continue
+            for child in statement.named_children:
+                if child.type == "identifier":
+                    names.add(child.text.decode("utf-8"))
+        return names
+
+    def mutated_names(statements):
+        """The names an assignment or augmented assignment targets directly in a function
+        body — the left of each `x = ...` or `x += ...` whose target is a plain identifier."""
+        names = set()
+        for statement in statements:
+            if statement.type not in ("assignment", "augmented_assignment"):
+                continue
+            target = statement.child_by_field_name("left")
+            if target is not None and target.type == "identifier":
+                names.add(target.text.decode("utf-8"))
+        return names
+
+    def check_p016():
+        """HC-P016: an inner (nested) function that declares `nonlocal X` and mutates X by
+        assignment or augmented assignment. Reported at the inner function's `def` line
+        (§4.2)."""
+        findings = []
+        for node in nodes:
+            if node.type != "function_definition" or enclosing_function(node) is None:
+                continue
+            statements = own_body(node)
+            hit = sorted(nonlocal_names(statements) & mutated_names(statements))
+            if not hit:
+                continue
+            name_node = node.child_by_field_name("name")
+            inner = name_node.text.decode("utf-8") if name_node else "<anonymous>"
+            findings.append(
+                diagnostic(
+                    "HC-P016",
+                    "error",
+                    f"Inner function {inner!r} captures {hit[0]!r} via nonlocal and mutates "
+                    "it. Closures may not carry mutable state — use pure parameters or move "
+                    "state into persist.",
+                    node,
+                )
+            )
+        return findings
+
+    # The per-file AST rules: each reads the shared `nodes` once-walked above and returns its
+    # findings as data. check_source folds the tuple in one pass, so adding a per-file rule is
+    # adding a row. HC-P003 (check_classes) is the first row. The construction-rule dispatch
+    # below stays keyed by constructor name; this table is the structural-honesty rules.
+    per_file_rules = (
+        check_classes,
+        check_p001,
+        check_p007,
+        check_p011,
+        check_p016,
+    )
+
+    diagnostics = []
+    for rule in per_file_rules:
+        diagnostics.extend(rule())
     for node in nodes:
         if node.type != "call":
             continue
