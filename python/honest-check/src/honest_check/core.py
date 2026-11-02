@@ -55,6 +55,20 @@ _LIFECYCLE_HOOKS = frozenset(
     }
 )
 
+# The Python I/O calls HC-P004 names in a non-boundary function (§5.4). _IO_CALLS is matched
+# by whole dotted name (`open`, `print`, `os.system`); _IO_MODULE_PREFIXES is the three
+# modules whose every call reaches outside the process, matched by dotted prefix.
+_IO_CALLS = frozenset({"open", "print", "os.system"})
+_IO_MODULE_PREFIXES = ("requests.", "urllib.", "subprocess.")
+
+# The runtime type checks HC-P005 names in a non-boundary function (§5.5): a hand-written
+# check that duplicates a constraint a vocabulary should declare at the boundary.
+_TYPE_CHECK_CALLS = frozenset({"isinstance", "type"})
+
+# The cache decorators HC-P006 names (§5.6). A function carrying one with no profiling note
+# has no evidence the cache was measured, so the cache cannot be shown warranted.
+_CACHE_DECORATORS = frozenset({"lru_cache", "cache", "cached_property", "memoize"})
+
 
 def check_source(source, path, rule_config):
     parsed = parse_source(source.encode("utf-8"), path)
@@ -569,6 +583,217 @@ def check_source(source, path, rule_config):
             )
         return findings
 
+    def decorators_of(fdef):
+        """The decorator nodes applied to a function — the `decorator` children of the
+        enclosing `decorated_definition`, or an empty list for an undecorated function. The
+        boundary signal HC-P002, HC-P004 and HC-P005 read, and the cache signal HC-P006 reads,
+        both live here (§4.2)."""
+        parent = fdef.parent
+        if parent is None or parent.type != "decorated_definition":
+            return []
+        return [child for child in parent.children if child.type == "decorator"]
+
+    def decorator_expression(decorator):
+        """The expression a decorator applies — the identifier, attribute or call after the
+        `@`, or None for an empty decorator node."""
+        return decorator.named_children[0] if decorator.named_children else None
+
+    def decorator_target(decorator):
+        """The final name a decorator names — `boundary` from `@boundary`, `lru_cache` from
+        `@functools.lru_cache(maxsize=1)` — or None when it is neither a plain nor a dotted
+        name, called or bare (§4.2, §5.6)."""
+        expr = decorator_expression(decorator)
+        if expr is not None and expr.type == "call":
+            expr = expr.child_by_field_name("function")
+        if expr is None:
+            return None
+        if expr.type == "identifier":
+            return expr.text.decode("utf-8")
+        if expr.type == "attribute":
+            attr = expr.child_by_field_name("attribute")
+            return attr.text.decode("utf-8") if attr is not None else None
+        return None
+
+    def is_boundary_decorator(decorator):
+        """True when a decorator declares its function a boundary — `@boundary` (bare or
+        called) or `@link(boundary=True)` (§4.2)."""
+        expr = decorator_expression(decorator)
+        if expr is None:
+            return False
+        if expr.type == "identifier":
+            return expr.text.decode("utf-8") == "boundary"
+        if expr.type == "call":
+            function = expr.child_by_field_name("function")
+            if function is None or function.type != "identifier":
+                return False
+            name = function.text.decode("utf-8")
+            if name == "boundary":
+                return True
+            if name != "link":
+                return False
+            _positionals, keywords = call_arguments(expr)
+            value = keywords.get("boundary")
+            return value is not None and value.type == "true"
+        return False
+
+    def in_non_boundary_function(node):
+        """True when a node's nearest enclosing function exists and carries no boundary
+        decorator — the scope HC-P002, HC-P004 and HC-P005 fire in (§4.2, §5.4, §5.5). A node
+        at module scope, or in a boundary function, is not in a non-boundary function."""
+        function = enclosing_function(node)
+        if function is None:
+            return False
+        return not any(is_boundary_decorator(d) for d in decorators_of(function))
+
+    def dotted_target(call_node):
+        """The dotted name a call invokes — `open`, `os.system`, `requests.get`,
+        `urllib.request.urlopen` — or None when the target is not a plain or dotted name, such
+        as a call on a call's result (§5.4)."""
+
+        def name_of(node):
+            if node is None:
+                return None
+            if node.type == "identifier":
+                return node.text.decode("utf-8")
+            if node.type == "attribute":
+                obj = name_of(node.child_by_field_name("object"))
+                attr = node.child_by_field_name("attribute")
+                if obj is None or attr is None:
+                    return None
+                return f"{obj}.{attr.text.decode('utf-8')}"
+            return None
+
+        return name_of(call_node.child_by_field_name("function"))
+
+    def check_p002():
+        """HC-P002: a `try` with an `except` clause inside a non-boundary function — business
+        logic that swallows a fault instead of letting it raise to the boundary (§4.2, §5.2).
+        A `try`/`finally` with no `except` does not fire. Reported at the `try`'s line."""
+        findings = []
+        for node in nodes:
+            if node.type != "try_statement":
+                continue
+            if not any(child.type == "except_clause" for child in node.named_children):
+                continue
+            if not in_non_boundary_function(node):
+                continue
+            function = enclosing_function(node)
+            name_node = function.child_by_field_name("name")
+            name = name_node.text.decode("utf-8") if name_node else "<anonymous>"
+            findings.append(
+                diagnostic(
+                    "HC-P002",
+                    "error",
+                    f"Function {name!r} catches an exception in business logic. Let the "
+                    "function raise; catch at the boundary (@boundary / route handler), or "
+                    "return a fault as data.",
+                    node,
+                )
+            )
+        return findings
+
+    def check_p004():
+        """HC-P004: a call to Python I/O in a non-boundary function (§5.4) — a whole-name hit
+        on _IO_CALLS or a dotted-prefix hit on _IO_MODULE_PREFIXES. Reported at the call's
+        line."""
+        findings = []
+        for node in nodes:
+            if node.type != "call":
+                continue
+            target = dotted_target(node)
+            if target is None:
+                continue
+            is_io = target in _IO_CALLS or any(
+                target.startswith(prefix) for prefix in _IO_MODULE_PREFIXES
+            )
+            if not is_io or not in_non_boundary_function(node):
+                continue
+            findings.append(
+                diagnostic(
+                    "HC-P004",
+                    "error",
+                    f"I/O call {target!r} in a non-boundary function reaches outside the "
+                    "process off the boundary. Do the I/O at a boundary (@boundary / route "
+                    "handler) and pass the result into the pure interior.",
+                    node,
+                )
+            )
+        return findings
+
+    def check_p005():
+        """HC-P005: a call to `isinstance` or `type` in a non-boundary function — a runtime
+        type check that should be a vocabulary declared at the boundary (§5.5). Reported at
+        the call's line."""
+        findings = []
+        for node in nodes:
+            if node.type != "call":
+                continue
+            function = node.child_by_field_name("function")
+            if function is None or function.type != "identifier":
+                continue
+            if function.text.decode("utf-8") not in _TYPE_CHECK_CALLS:
+                continue
+            if not in_non_boundary_function(node):
+                continue
+            findings.append(
+                diagnostic(
+                    "HC-P005",
+                    "warning",
+                    "Runtime type check in business logic. Declare the constraint as a "
+                    "vocabulary at the boundary instead.",
+                    node,
+                )
+            )
+        return findings
+
+    def check_p006():
+        """HC-P006: a cache decorator on a function that carries no profiling note — no
+        evidence the cache was measured (§5.6). A profiling note is a `@profiled` decorator on
+        the same function, or a `# honest: profiled` comment on the contiguous line(s)
+        immediately above the construct. Reported at the cache decorator's line."""
+        comment_lines = {}
+        for node in nodes:
+            if node.type != "comment":
+                continue
+            line, _col = line_col(node)
+            raw = node.text.decode("utf-8") if node.text else ""
+            comment_lines[line] = raw.lstrip("#").strip()
+
+        def profiled_above(top_line):
+            line = top_line - 1
+            while line in comment_lines:
+                if comment_lines[line] == "honest: profiled":
+                    return True
+                line -= 1
+            return False
+
+        findings = []
+        for node in nodes:
+            if node.type != "decorated_definition":
+                continue
+            decorators = [c for c in node.children if c.type == "decorator"]
+            cache_decorators = [
+                d for d in decorators if decorator_target(d) in _CACHE_DECORATORS
+            ]
+            if not cache_decorators:
+                continue
+            has_profiled_decorator = any(
+                decorator_target(d) == "profiled" for d in decorators
+            )
+            top_line, _col = line_col(node)
+            if has_profiled_decorator or profiled_above(top_line):
+                continue
+            findings.append(
+                diagnostic(
+                    "HC-P006",
+                    "warning",
+                    "Cache decorator without a profiling note. Add a @profiled decorator or "
+                    "a '# honest: profiled' comment proving the cache was measured.",
+                    cache_decorators[0],
+                )
+            )
+        return findings
+
     # The per-file AST rules: each reads the shared `nodes` once-walked above and returns its
     # findings as data. check_source folds the tuple in one pass, so adding a per-file rule is
     # adding a row. HC-P003 (check_classes) is the first row. The construction-rule dispatch
@@ -579,6 +804,10 @@ def check_source(source, path, rule_config):
         check_p007,
         check_p011,
         check_p016,
+        check_p002,
+        check_p004,
+        check_p005,
+        check_p006,
     )
 
     diagnostics = []

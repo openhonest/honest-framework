@@ -151,6 +151,62 @@
       "expected": { "diagnostics": [] }
     },
     {
+      "id": "HC-P002-001",
+      "description": "A try/except in a non-boundary function swallows a fault that should be raised and caught at the boundary.",
+      "category": "HC-P002",
+      "input": { "language": "python", "source": "def process(x):\n    try:\n        return risky(x)\n    except ValueError:\n        return None\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P002", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC-P002-clean-001",
+      "description": "A boundary function may catch; the catch belongs at the boundary.",
+      "category": "HC-P002",
+      "input": { "language": "python", "source": "@boundary\ndef handle(x):\n    try:\n        return risky(x)\n    except ValueError:\n        return None\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P004-001",
+      "description": "I/O in a non-boundary function touches the world off the boundary.",
+      "category": "HC-P004",
+      "input": { "language": "python", "source": "def load(path):\n    return open(path).read()\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P004", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC-P004-clean-001",
+      "description": "A boundary function may perform I/O.",
+      "category": "HC-P004",
+      "input": { "language": "python", "source": "@boundary\ndef load(path):\n    return open(path).read()\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P005-001",
+      "description": "A runtime type check in business logic should be a vocabulary declaration.",
+      "category": "HC-P005",
+      "input": { "language": "python", "source": "def classify(x):\n    if isinstance(x, int):\n        return 1\n    return 0\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P005", "severity": "warning", "line": 2 } ] }
+    },
+    {
+      "id": "HC-P005-clean-001",
+      "description": "Business logic with no runtime type check fires nothing.",
+      "category": "HC-P005",
+      "input": { "language": "python", "source": "def classify(x):\n    return x + 1\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P006-001",
+      "description": "A cache decorator without a profiling note has no evidence the cache is warranted.",
+      "category": "HC-P006",
+      "input": { "language": "python", "source": "from functools import lru_cache\n\n@lru_cache\ndef compute(x):\n    return x * 2\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P006", "severity": "warning", "line": 3 } ] }
+    },
+    {
+      "id": "HC-P006-clean-001",
+      "description": "A cache with a profiling note is dismissed.",
+      "category": "HC-P006",
+      "input": { "language": "python", "source": "from functools import lru_cache\n\n# honest: profiled\n@lru_cache\ndef compute(x):\n    return x * 2\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
       "id": "clean-001",
       "description": "Plain honest code fires nothing.",
       "category": "clean",
