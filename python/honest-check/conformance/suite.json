@@ -291,6 +291,34 @@
       "expected": { "diagnostics": [] }
     },
     {
+      "id": "HC001-001",
+      "description": "A chain whose link is an ordinary function with no @link declaration cannot be contract-tested.",
+      "category": "HC001",
+      "input": { "language": "python", "source": "from honest_type import chain, link\n@link()\ndef step_one(m):\n    return m\ndef step_two(m):\n    return m\nreport = chain(step_one, step_two)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC001", "severity": "error", "line": 7 } ] }
+    },
+    {
+      "id": "HC001-clean-001",
+      "description": "A chain whose links are all declared @link fires nothing.",
+      "category": "HC001",
+      "input": { "language": "python", "source": "from honest_type import chain, link\n@link()\ndef step_one(m):\n    return m\n@link()\ndef step_two(m):\n    return m\nreport = chain(step_one, step_two)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-OR001-001",
+      "description": "An orchestrator that calls another orchestrator re-introduces the invisible nesting the architecture forbids.",
+      "category": "HC-OR001",
+      "input": { "language": "python", "source": "from honest_type import orchestrator\n@orchestrator\ndef handle_a(req):\n    return handle_b(req)\n@orchestrator\ndef handle_b(req):\n    return req\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-OR001", "severity": "error", "line": 4 } ] }
+    },
+    {
+      "id": "HC-OR001-clean-001",
+      "description": "An orchestrator that calls a non-orchestrator fires nothing.",
+      "category": "HC-OR001",
+      "input": { "language": "python", "source": "from honest_type import orchestrator\n@orchestrator\ndef handle_a(req):\n    return step(req)\n@orchestrator\ndef handle_b(req):\n    return req\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
       "id": "clean-001",
       "description": "Plain honest code fires nothing.",
       "category": "clean",

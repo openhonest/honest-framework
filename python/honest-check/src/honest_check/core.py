@@ -1069,6 +1069,11 @@ def check_source(source, path, rule_config):
                     return True
         return False
 
+    def is_link_decorated(fdef):
+        """True when a function carries a `@link` decorator, bare or called — the chain-link
+        declaration HC008 and HC001 both read for a declared link (§HC008, §4.2)."""
+        return any(decorator_target(d) == "link" for d in decorators_of(fdef))
+
     def check_hc008():
         """HC008: a non-boundary `@link` whose body calls a function on the impurity watch
         list for the file's language, or reads a module-level mutable global (§HC008). A
@@ -1089,10 +1094,9 @@ def check_source(source, path, rule_config):
         for node in nodes:
             if node.type != "function_definition":
                 continue
-            decorators = decorators_of(node)
-            if not any(decorator_target(d) == "link" for d in decorators):
+            if not is_link_decorated(node):
                 continue
-            if any(is_boundary_decorator(d) for d in decorators):
+            if any(is_boundary_decorator(d) for d in decorators_of(node)):
                 continue
             if not link_is_impure(node, watch, mutable_globals):
                 continue
@@ -1107,6 +1111,90 @@ def check_source(source, path, rule_config):
                     node,
                 )
             )
+        return findings
+
+    def local_function_links():
+        """Each function defined in this file, mapped to whether it carries a `@link`
+        decorator (§4.2, HC001). A chain positional that resolves to one of these names is a
+        local link declaration honest-check can read; a name not here is defined elsewhere, so
+        its declaration is invisible to honest-check and the positional is left alone."""
+        links = {}
+        for node in nodes:
+            if node.type != "function_definition":
+                continue
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                continue
+            links[name_node.text.decode("utf-8")] = is_link_decorated(node)
+        return links
+
+    def check_hc001():
+        """HC001: a `chain()` link that resolves to a locally-defined function carrying no
+        `@link` declaration, so its vocabulary is undeclared and the chain cannot be
+        contract-tested (§4.2). Reported at the `chain()` call's line. A positional that
+        resolves to no local function — an import or an expression — is skipped: honest-check
+        cannot see its declaration, and a miss is preferred to a false positive here."""
+        links = local_function_links()
+        findings = []
+        for node in nodes:
+            if node.type != "call" or canonical_name(node) != "chain":
+                continue
+            positionals, _keywords = call_arguments(node)
+            for argument in positionals:
+                if argument.type != "identifier":
+                    continue
+                name = argument.text.decode("utf-8")
+                if name not in links or links[name]:
+                    continue
+                findings.append(
+                    diagnostic(
+                        "HC001",
+                        "error",
+                        f"Chain link {name!r} has no vocabulary declared. Wrap it with "
+                        "@link(accepts=..., emits=...) or the link() constructor.",
+                        node,
+                    )
+                )
+        return findings
+
+    def is_orchestrator(fdef):
+        """True when a function carries an `@orchestrator` decorator, bare or called — matched
+        by decorator name the same way a boundary decorator is (§4.2, HC-OR001)."""
+        return any(decorator_target(d) == "orchestrator" for d in decorators_of(fdef))
+
+    def check_hc_or001():
+        """HC-OR001: a declared orchestrator whose own body calls another function the file
+        declares an orchestrator — orchestrator composition, the invisible nesting the
+        architecture forbids (§4.2). Reported at the calling site's line. The body walk is the
+        orchestrator's own, not a nested scope's."""
+        orchestrators = []
+        names = set()
+        for node in nodes:
+            if node.type != "function_definition" or not is_orchestrator(node):
+                continue
+            name_node = node.child_by_field_name("name")
+            name = name_node.text.decode("utf-8") if name_node else "<orchestrator>"
+            orchestrators.append((node, name))
+            names.add(name)
+        findings = []
+        for fdef, name in orchestrators:
+            for statement in own_body(fdef):
+                if statement.type != "call":
+                    continue
+                callee = called_name(statement)
+                if callee not in names:
+                    continue
+                findings.append(
+                    diagnostic(
+                        "HC-OR001",
+                        "error",
+                        f"Orchestrator {name!r} calls orchestrator {callee!r}. "
+                        "Orchestrators are the root of an operation and do not compose. "
+                        "Extract the shared logic as a pure helper (if no I/O) or as a chain "
+                        "(if I/O is involved).",
+                        statement,
+                    )
+                )
         return findings
 
     # The per-file AST rules: each reads the shared `nodes` once-walked above and returns its
@@ -1125,6 +1213,8 @@ def check_source(source, path, rule_config):
         check_p006,
         check_p015,
         check_hc008,
+        check_hc001,
+        check_hc_or001,
     )
 
     diagnostics = []
