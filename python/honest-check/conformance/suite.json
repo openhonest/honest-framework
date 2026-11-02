@@ -473,6 +473,20 @@
       "expected": { "diagnostics": [] }
     },
     {
+      "id": "HC002-001",
+      "description": "A link accepts a type the previous link in the chain does not emit, so the chain cannot be contract-tested at that seam.",
+      "category": "HC002",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, chain, link\nraw_v = vocabulary({\"raw\": {\"r\"}})\nformatted_v = vocabulary({\"formatted\": {\"f\"}})\n@link(accepts=raw_v, emits=raw_v)\ndef step_one(m):\n    return m\n@link(accepts=formatted_v, emits=formatted_v)\ndef step_two(m):\n    return m\npipe = chain(step_one, step_two)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC002", "severity": "error", "line": 10 } ] }
+    },
+    {
+      "id": "HC002-clean-001",
+      "description": "Each link accepts exactly what the previous link emits, so adjacent seams agree.",
+      "category": "HC002",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, chain, link\nraw_v = vocabulary({\"raw\": {\"r\"}})\n@link(accepts=raw_v, emits=raw_v)\ndef step_one(m):\n    return m\n@link(accepts=raw_v, emits=raw_v)\ndef step_two(m):\n    return m\npipe = chain(step_one, step_two)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
       "id": "clean-001",
       "description": "Plain honest code fires nothing.",
       "category": "clean",

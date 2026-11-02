@@ -1561,6 +1561,102 @@ def check_source(source, path, rule_config):
             )
         return findings
 
+    def check_hc002():
+        """HC002: a chain seam whose adjacent links disagree on type — a link that accepts a
+        type the previous link does not emit, so the chain cannot be contract-tested at that
+        seam (§"Chain type mismatch"). For each chain() call, its positional links resolve in
+        order to their local @link definitions; for each adjacent pair (link i-1, link i) from
+        i=1, the types link i accepts that link i-1 does not emit are missing, and a non-empty
+        missing set fires once at the chain() call's line, naming link i and the missing types.
+        A positional that resolves to no local @link is skipped, so neither pair touching it
+        fires — HC001 already reports an undeclared chain link. A keyword may name a single
+        vocabulary or a `|` union of vocabularies; a union resolves to the union of the named
+        vocabularies' base-type names (the same emits resolution HC010 reads). The first link's
+        accepts is left unchecked here: its input is the derived boundary vocabulary (spec
+        §497, the route-map/template derivation), which needs cross-artifact inputs honest-check
+        does not ingest yet."""
+        vocab_calls, _binding_calls = construction_maps()
+
+        def vocab_arg_type_names(arg):
+            """The base-type names a link's accepts or emits keyword value names (§HC002). A
+            plain identifier resolves through vocab_calls to its vocabulary's base-type names; a
+            `|` union of vocabularies resolves to the union of each operand's names; an operand
+            naming no local vocabulary contributes nothing. A value of any other shape names no
+            type here."""
+            if arg is None:
+                return set()
+            if arg.type == "identifier":
+                vocab_call = vocab_calls.get(arg.text.decode("utf-8"))
+                if vocab_call is None:
+                    return set()
+                base_names, _composed, _requires, _captures = vocabulary_types(vocab_call)
+                return base_names
+            if arg.type == "binary_operator":
+                return vocab_arg_type_names(
+                    arg.child_by_field_name("left")
+                ) | vocab_arg_type_names(arg.child_by_field_name("right"))
+            return set()
+
+        def link_call_of(fdef):
+            """The `@link(...)` call node decorating a function, or None when its @link is bare
+            or absent — the decorator call HC002 reads accepts and emits from."""
+            for decorator in decorators_of(fdef):
+                if decorator_target(decorator) != "link":
+                    continue
+                expr = decorator_expression(decorator)
+                return expr if expr is not None and expr.type == "call" else None
+            return None
+
+        def seam_types(fdef, keyword):
+            """The base-type names a link's @link decorator declares for one keyword (accepts
+            or emits), or the empty set when the link declares none honest-check can resolve."""
+            link_call = link_call_of(fdef)
+            if link_call is None:
+                return set()
+            _positionals, keywords = call_arguments(link_call)
+            return vocab_arg_type_names(keywords.get(keyword))
+
+        link_defs = {}
+        for node in nodes:
+            if node.type != "function_definition":
+                continue
+            name_node = node.child_by_field_name("name")
+            if name_node is None or not is_link_decorated(node):
+                continue
+            link_defs[name_node.text.decode("utf-8")] = node
+
+        findings = []
+        for node in nodes:
+            if node.type != "call" or canonical_name(node) != "chain":
+                continue
+            positionals, _keywords = call_arguments(node)
+            resolved = [
+                link_defs.get(argument.text.decode("utf-8"))
+                if argument.type == "identifier"
+                else None
+                for argument in positionals
+            ]
+            for i in range(1, len(resolved)):
+                previous, current = resolved[i - 1], resolved[i]
+                if previous is None or current is None:
+                    continue
+                missing = seam_types(current, "accepts") - seam_types(previous, "emits")
+                if not missing:
+                    continue
+                name_node = current.child_by_field_name("name")
+                name = name_node.text.decode("utf-8") if name_node else "<link>"
+                findings.append(
+                    diagnostic(
+                        "HC002",
+                        "error",
+                        f"Chain link {name!r} accepts types the previous link does not emit: "
+                        f"{sorted(missing)}. Change this link's accepts, change the previous "
+                        "link's emits, or insert a link between them that produces the types.",
+                        node,
+                    )
+                )
+        return findings
+
     def features_vocabulary():
         """The feature-flag vocabulary this module declares: each flag name mapped to the set
         of states its `FEATURES[flag]["states"]` set names (§7, HC-HF001/HC-HF002). Read only
@@ -1729,6 +1825,7 @@ def check_source(source, path, rule_config):
         check_p015,
         check_hc008,
         check_hc001,
+        check_hc002,
         check_hc_or001,
         check_p017,
         check_hc004,
