@@ -85,7 +85,7 @@ def _check_case(case):
     path = _path_for(case)
     if path is None:
         return False, f"suite names unknown language {case['input']['language']!r}"
-    got = check_source(case["input"]["source"], path, {})
+    got = check_source(case["input"]["source"], path, {}, None)
     got_triples = _triples_got(got)
     want_triples = _triples_expected(case)
     if got_triples == want_triples:

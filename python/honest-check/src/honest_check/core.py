@@ -36,6 +36,12 @@ _CONSTRUCTORS = frozenset({"vocabulary", "chain", "state_machine"})
 # env that may be missing. A card naming either says the answer may be absent.
 _ABSENCE_ATOMS = frozenset({"NOTHING", "Absent"})
 
+# The .hd roles that name a door (honest-check.hd, check_source's declaration argument). On
+# the error path only, HC-P002, HC-P004 and HC-P005 treat a function the decorator check
+# found non-boundary as a boundary when the declaration gives it one of these roles, so a
+# door the .hd declares but leaves undecorated is not flagged falsely.
+_DOOR_ROLES = frozenset({"boundary_in", "boundary_out", "reader"})
+
 # The node types that open an inner scope. A return, a yield or a call inside one of these
 # belongs to that inner function, so cross_declaration's bounded body search stops here
 # (sections 4.2, §HC-R004, §HC-R005).
@@ -117,7 +123,15 @@ _CLASSLIST_METHODS = frozenset({"add", "remove", "toggle", "replace", "contains"
 _INTERPOLATION_MARKERS = ("{{", "}}", "{%", "%}")
 
 
-def check_source(source, path, rule_config):
+def check_source(source, path, rule_config, declaration):
+    # The function-name -> role map the boundary rules consult on the error path. Built once
+    # here from the module's parsed .hd (honest-design's IR), and empty when declaration is
+    # NOTHING (Python None, the absence arm) — an adopter codebase or a loose snippet.
+    roles_by_name = (
+        {function["name"]: function["role"] for function in declaration["functions"]}
+        if declaration is not None
+        else {}
+    )
     parsed = parse_source(source.encode("utf-8"), path)
     if "ok" not in parsed:
         error = parsed["err"]
@@ -767,13 +781,26 @@ def check_source(source, path, rule_config):
         return False
 
     def in_non_boundary_function(node):
-        """True when a node's nearest enclosing function exists and carries no boundary
-        decorator — the scope HC-P002, HC-P004 and HC-P005 fire in (§4.2, §5.4, §5.5). A node
-        at module scope, or in a boundary function, is not in a non-boundary function."""
+        """True when a node's nearest enclosing function exists, carries no boundary decorator,
+        and the declaration gives its name no door role — the scope HC-P002, HC-P004 and
+        HC-P005 fire in (§4.2, §5.4, §5.5). A node at module scope, or in a boundary function,
+        is not in a non-boundary function.
+
+        The decorator signal is primary: a boundary decorator makes the function a boundary
+        outright. Only where the decorator check found the function non-boundary — the function
+        the rule is about to flag — is the declaration consulted, and only then: when the .hd
+        marks that same function boundary_in, boundary_out or reader, it is treated as a
+        boundary and the finding does not fire (honest-check.hd). With no declaration (the empty
+        role map) or a non-door role, the decorator verdict stands."""
         function = enclosing_function(node)
         if function is None:
             return False
-        return not any(is_boundary_decorator(d) for d in decorators_of(function))
+        if any(is_boundary_decorator(d) for d in decorators_of(function)):
+            return False
+        name_node = function.child_by_field_name("name")
+        name = name_node.text.decode("utf-8") if name_node else None
+        role = roles_by_name[name] if name in roles_by_name else None
+        return role not in _DOOR_ROLES
 
     def dotted_target(call_node):
         """The dotted name a call invokes — `open`, `os.system`, `requests.get`,

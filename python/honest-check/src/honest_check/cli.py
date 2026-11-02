@@ -6,6 +6,7 @@ it; neither holds a second copy of the checking logic. startup_check and main ca
 I/O. HonestCheckError is the one typed exception, raised at the door on on_error='raise'.
 """
 
+import os
 import sys
 
 from honest_parse import language_of
@@ -54,7 +55,7 @@ def check_paths(paths):
     rule_config = load_config()
     diagnostics = []
     for path in paths:
-        diagnostics.extend(check_source(read_source(path), path, rule_config))
+        diagnostics.extend(check_source(read_source(path), path, rule_config, None))
     return diagnostics
 
 
@@ -127,9 +128,33 @@ def run_check(argv):
         )
     else:
         rule_config = load_config()
+
+        def nearest_declaration(path):
+            """The parsed module .hd governing a discovered file: walk the file's directory
+            ancestors to the first honest-<name>/honest-<name>.hd and read it through
+            read_declaration, returning its one parsed module, or NOTHING (None) when no such
+            .hd is found or the read/parse fails. Base-mode discovery is best-effort — the
+            strict missing-declaration Fault belongs to the explicit --declaration path, not
+            here. A .hd that declares more than one module yields read_declaration's first
+            module, which is enough to recognize this file's doors by name."""
+            directory = os.path.dirname(os.path.abspath(path))
+            while True:
+                base = os.path.basename(directory)
+                candidate = os.path.join(directory, f"{base}.hd")
+                if base.startswith("honest-") and os.path.isfile(candidate):
+                    parsed = read_declaration(candidate)
+                    return None if "problem" in parsed else parsed
+                parent = os.path.dirname(directory)
+                if parent == directory:
+                    return None
+                directory = parent
+
         diagnostics = []
         for path in files:
-            diagnostics.extend(check_source(read_source(path), path, rule_config))
+            declaration = nearest_declaration(path)
+            diagnostics.extend(
+                check_source(read_source(path), path, rule_config, declaration)
+            )
         reference_sources = [
             pair_source(path, read_source(path))
             for path in files
