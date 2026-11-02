@@ -410,6 +410,34 @@
       "expected": { "diagnostics": [] }
     },
     {
+      "id": "HC010-001",
+      "description": "A link that emits a type its body never writes to the manifest and does not accept declares an emission it never produces.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\naccepts_v = vocabulary({\"raw\": {\"r\"}})\nemits_v = vocabulary({\"raw\": {\"r\"}, \"formatted\": {\"f\"}})\nb = binding({\"raw\": \"input\", \"formatted\": \"output\"})\n@link(accepts=accepts_v, emits=emits_v, binds=b)\ndef fmt(manifest):\n    return manifest\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 6 } ] }
+    },
+    {
+      "id": "HC010-clean-001",
+      "description": "A link that writes the slot its emitted type binds to produces that type; nothing is phantom.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\naccepts_v = vocabulary({\"raw\": {\"r\"}})\nemits_v = vocabulary({\"raw\": {\"r\"}, \"formatted\": {\"f\"}})\nb = binding({\"raw\": \"input\", \"formatted\": \"output\"})\n@link(accepts=accepts_v, emits=emits_v, binds=b)\ndef fmt(manifest):\n    manifest[\"output\"] = render(manifest)\n    return manifest\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC010-clean-002",
+      "description": "A link that emits only what it accepts produces nothing new and is clean.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\naccepts_v = vocabulary({\"raw\": {\"r\"}})\nemits_v = vocabulary({\"raw\": {\"r\"}})\nb = binding({\"raw\": \"input\"})\n@link(accepts=accepts_v, emits=emits_v, binds=b)\ndef fmt(manifest):\n    return manifest\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-BIND-merge-001",
+      "description": "A link's binding spans accepts and emits, so an emit-type binding entry is bound, not unused: HC004 and HC005 cross the binding against the merged vocabulary.",
+      "category": "HC005",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\naccepts_v = vocabulary({\"raw\": {\"r\"}})\nemits_v = vocabulary({\"formatted\": {\"f\"}})\nb = binding({\"raw\": \"input\", \"formatted\": \"output\"})\n@link(accepts=accepts_v, emits=emits_v, binds=b)\ndef fmt(manifest):\n    manifest[\"output\"] = render(manifest)\n    return manifest\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
       "id": "clean-001",
       "description": "Plain honest code fires nothing.",
       "category": "clean",

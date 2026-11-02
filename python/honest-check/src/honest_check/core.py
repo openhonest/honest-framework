@@ -1338,14 +1338,19 @@ def check_source(source, path, rule_config):
         return keys
 
     def vocabulary_binding_pairs():
-        """Each (vocabulary call, binding call) a classify or link pairs by name (§HC004,
+        """Each (vocabulary calls, binding call) a classify or link pairs by name (§HC004,
         §HC005). A `classify(tokens, vocab, bind=b)` pairs positional 2 with the `bind`
-        keyword; a `link(accepts=v, binds=b)` (bare or as a decorator) pairs `accepts` with
-        `binds`. A site with no binding keyword uses the identity auto_binding, which binds
-        each type to itself, so neither rule fires and the site is not a pair. A vocabulary or
-        binding argument that is not a plain name, or a name that resolves to no local
-        construction, is skipped — honest-check cannot cross what it was not handed. A pair
-        reached from two sites is crossed once."""
+        keyword, and its vocabulary list is the one vocab. A `link(accepts=v, emits=e, binds=b)`
+        (bare or as a decorator) pairs `accepts` with `binds`, and its binding legitimately
+        spans both the types it accepts and the types it emits, so its vocabulary list is
+        `accepts` followed by `emits` when `emits` resolves — the binding is crossed against the
+        union of both. A link with no `emits` keyword, or an `emits` that resolves to no local
+        vocabulary, lists `accepts` alone, so it behaves as the union with the empty set. A site
+        with no binding keyword uses the identity auto_binding, which binds each type to itself,
+        so neither rule fires and the site is not a pair. A vocabulary or binding argument that
+        is not a plain name, or a name that resolves to no local construction, is skipped —
+        honest-check cannot cross what it was not handed. A pair reached from two sites is
+        crossed once."""
         vocab_calls, binding_calls = construction_maps()
         pairs = []
         seen = set()
@@ -1356,9 +1361,11 @@ def check_source(source, path, rule_config):
             positionals, keywords = call_arguments(node)
             if canonical == "classify":
                 vocab_arg = positionals[1] if len(positionals) >= 2 else None
+                emits_arg = None
                 binding_arg = keywords.get("bind")
             elif canonical == "link":
                 vocab_arg = keywords.get("accepts")
+                emits_arg = keywords.get("emits")
                 binding_arg = keywords.get("binds")
             else:
                 continue
@@ -1374,50 +1381,67 @@ def check_source(source, path, rule_config):
             binding_call = binding_calls.get(binding_arg.text.decode("utf-8"))
             if vocab_call is None or binding_call is None:
                 continue
-            key = (id(vocab_call), id(binding_call))
+            resolved = [vocab_call]
+            if emits_arg is not None and emits_arg.type == "identifier":
+                emits_call = vocab_calls.get(emits_arg.text.decode("utf-8"))
+                if emits_call is not None:
+                    resolved.append(emits_call)
+            key = (tuple(id(call) for call in resolved), id(binding_call))
             if key in seen:
                 continue
             seen.add(key)
-            pairs.append((vocab_call, binding_call))
+            pairs.append((resolved, binding_call))
         return pairs
 
     def check_hc004():
         """HC004: a vocabulary base type the paired binding never binds and no composed type
         uses, in its requires or as its captures, is dead (§HC004). Reported at the
-        vocabulary() call's line, once per dead type. A classify with no bind, or a link with
-        no binds, pairs the identity auto_binding and does not fire."""
+        vocabulary() call that declares the dead type, once per dead type. A link crosses the
+        binding against the union of its accepts and emits vocabularies, so a composed type in
+        either rescues a base type in either. A classify with no bind, or a link with no binds,
+        pairs the identity auto_binding and does not fire."""
         findings = []
-        for vocab_call, binding_call in vocabulary_binding_pairs():
-            base_names, _composed_names, composed_requires, composed_captures = (
-                vocabulary_types(vocab_call)
-            )
+        for vocab_calls, binding_call in vocabulary_binding_pairs():
             bound = binding_keys(binding_call)
-            for type_name in sorted(base_names):
-                if type_name in bound:
-                    continue
-                if type_name in composed_requires or type_name in composed_captures:
-                    continue
-                findings.append(
-                    diagnostic(
-                        "HC004",
-                        "warning",
-                        f"Type {type_name!r} is declared in the vocabulary but no binding slot "
-                        "or composed type uses it. Bind it to a slot, use it in a composed "
-                        "type, or remove it from the vocabulary.",
-                        vocab_call,
+            composed_requires = set()
+            composed_captures = set()
+            per_vocab_bases = []
+            for vocab_call in vocab_calls:
+                base_names, _composed_names, requires, captures = vocabulary_types(vocab_call)
+                per_vocab_bases.append((vocab_call, base_names))
+                composed_requires |= requires
+                composed_captures |= captures
+            for vocab_call, base_names in per_vocab_bases:
+                for type_name in sorted(base_names):
+                    if type_name in bound:
+                        continue
+                    if type_name in composed_requires or type_name in composed_captures:
+                        continue
+                    findings.append(
+                        diagnostic(
+                            "HC004",
+                            "warning",
+                            f"Type {type_name!r} is declared in the vocabulary but no binding "
+                            "slot or composed type uses it. Bind it to a slot, use it in a "
+                            "composed type, or remove it from the vocabulary.",
+                            vocab_call,
+                        )
                     )
-                )
         return findings
 
     def check_hc005():
         """HC005: a binding key that names neither a base type nor a composed type of the
         paired vocabulary binds a type no token can carry (§HC005). Reported at the binding()
-        call's line, once per unmatched key. A classify with no bind, or a link with no binds,
-        pairs the identity auto_binding and does not fire."""
+        call's line, once per unmatched key. A link crosses the binding against the union of its
+        accepts and emits vocabularies, so an emit-type binding entry is bound, not unmatched. A
+        classify with no bind, or a link with no binds, pairs the identity auto_binding and does
+        not fire."""
         findings = []
-        for vocab_call, binding_call in vocabulary_binding_pairs():
-            base_names, composed_names, _requires, _captures = vocabulary_types(vocab_call)
-            known = base_names | composed_names
+        for vocab_calls, binding_call in vocabulary_binding_pairs():
+            known = set()
+            for vocab_call in vocab_calls:
+                base_names, composed_names, _requires, _captures = vocabulary_types(vocab_call)
+                known |= base_names | composed_names
             for type_name in sorted(binding_keys(binding_call)):
                 if type_name in known:
                     continue
@@ -1431,6 +1455,110 @@ def check_source(source, path, rule_config):
                         binding_call,
                     )
                 )
+        return findings
+
+    def check_hc010():
+        """HC010: a declared @link whose emits vocabulary names a type its body never produces
+        (§"Declared emission never produced"). For a `@link(accepts=A, emits=E, binds=B)`, a
+        type E names, that the body never writes to the manifest and A does not already carry,
+        is a phantom emission: the link promises to produce it and does not. The body produces a
+        type by writing the manifest slot that type binds to — a subscript assignment
+        `<p>["slot"] = ...` on the link's first parameter `<p>`, read back through B's
+        slot-to-type inverse. Reported once at the link's def line, naming the phantom types. A
+        link whose emits or binds argument is not a plain name, or resolves to no local
+        construction, is skipped — honest-check cannot cross what it was not handed."""
+        vocab_calls, binding_calls = construction_maps()
+        findings = []
+        for node in nodes:
+            if node.type != "function_definition":
+                continue
+            link_call = None
+            for decorator in decorators_of(node):
+                if decorator_target(decorator) != "link":
+                    continue
+                expr = decorator_expression(decorator)
+                if expr is not None and expr.type == "call":
+                    link_call = expr
+                break
+            if link_call is None:
+                continue
+            _positionals, keywords = call_arguments(link_call)
+            emits_arg = keywords.get("emits")
+            binds_arg = keywords.get("binds")
+            accepts_arg = keywords.get("accepts")
+            if (
+                emits_arg is None
+                or emits_arg.type != "identifier"
+                or binds_arg is None
+                or binds_arg.type != "identifier"
+            ):
+                continue
+            emits_call = vocab_calls.get(emits_arg.text.decode("utf-8"))
+            binding_call = binding_calls.get(binds_arg.text.decode("utf-8"))
+            if emits_call is None or binding_call is None:
+                continue
+            emitted_types, _emits_composed, _requires, _captures = vocabulary_types(emits_call)
+            accepts_types = set()
+            if accepts_arg is not None and accepts_arg.type == "identifier":
+                accepts_call = vocab_calls.get(accepts_arg.text.decode("utf-8"))
+                if accepts_call is not None:
+                    accepts_types, _a_composed, _ar, _ac = vocabulary_types(accepts_call)
+            binding_reverse = {}
+            b_positionals, _b_keywords = call_arguments(binding_call)
+            if b_positionals and b_positionals[0].type == "dictionary":
+                for pair in b_positionals[0].named_children:
+                    if pair.type != "pair":
+                        continue
+                    slot_value = pair.child_by_field_name("value")
+                    if slot_value is not None and slot_value.type == "string":
+                        binding_reverse[literal_string(slot_value)] = literal_string(
+                            pair.child_by_field_name("key")
+                        )
+            first_param = None
+            params = node.child_by_field_name("parameters")
+            if params is not None:
+                for child in params.named_children:
+                    if child.type == "comment":
+                        continue
+                    names = param_names(child)
+                    if names:
+                        first_param = next(iter(names))
+                    break
+            produced_keys = set()
+            if first_param is not None:
+                for statement in own_body(node):
+                    if statement.type != "assignment":
+                        continue
+                    target = statement.child_by_field_name("left")
+                    if target is None or target.type != "subscript":
+                        continue
+                    obj = target.child_by_field_name("value")
+                    index = target.child_by_field_name("subscript")
+                    if obj is None or obj.type != "identifier":
+                        continue
+                    if obj.text.decode("utf-8") != first_param:
+                        continue
+                    if index is None or index.type != "string":
+                        continue
+                    produced_keys.add(literal_string(index))
+            produced_types = {
+                binding_reverse[key] for key in produced_keys if key in binding_reverse
+            }
+            phantom = emitted_types - produced_types - accepts_types
+            if not phantom:
+                continue
+            name_node = node.child_by_field_name("name")
+            name = name_node.text.decode("utf-8") if name_node else "<link>"
+            findings.append(
+                diagnostic(
+                    "HC010",
+                    "warning",
+                    f"Link {name!r} declares it emits {sorted(phantom)} but its body never "
+                    "produces them: it writes no manifest slot bound to the type and does not "
+                    "accept the type. Write the slot, drop the type from emits, or accept it.",
+                    node,
+                )
+            )
         return findings
 
     # The per-file AST rules: each reads the shared `nodes` once-walked above and returns its
@@ -1454,6 +1582,7 @@ def check_source(source, path, rule_config):
         check_p017,
         check_hc004,
         check_hc005,
+        check_hc010,
     )
 
     def parse_directive(comment_node):
