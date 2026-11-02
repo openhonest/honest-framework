@@ -347,6 +347,34 @@
       "expected": { "diagnostics": [] }
     },
     {
+      "id": "HC-SUP-ignore-001",
+      "description": "An inline ignore directive on the line a rule fires downgrades that diagnostic to info; it stays visible, not dropped.",
+      "category": "HC-SUP",
+      "input": { "language": "python", "source": "def f(role):\n    if role == \"a\":  # honest: ignore HC-P001: dispatch retained pending table conversion\n        return 1\n    elif role == \"b\":\n        return 2\n    elif role == \"c\":\n        return 3\n    return 0\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P001", "severity": "info", "line": 2 } ] }
+    },
+    {
+      "id": "HC-SUP-disable-001",
+      "description": "A disable/enable block downgrades a diagnostic that fires inside its range to info.",
+      "category": "HC-SUP",
+      "input": { "language": "python", "source": "# honest: disable HC-P001: dispatch retained pending table conversion\ndef f(role):\n    if role == \"a\":\n        return 1\n    elif role == \"b\":\n        return 2\n    elif role == \"c\":\n        return 3\n    return 0\n# honest: enable HC-P001\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P001", "severity": "info", "line": 3 } ] }
+    },
+    {
+      "id": "HC-SUP001-001",
+      "description": "An ignore directive whose rule never fires on its line is dead and reported as HC-SUP001.",
+      "category": "HC-SUP001",
+      "input": { "language": "python", "source": "def f(x):\n    return x  # honest: ignore HC-P001: unnecessary\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-SUP001", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC-SUP002-001",
+      "description": "A live suppression with no reason still downgrades the diagnostic and is reported as HC-SUP002.",
+      "category": "HC-SUP002",
+      "input": { "language": "python", "source": "def g(role):\n    if role == \"a\":  # honest: ignore HC-P001\n        return 1\n    elif role == \"b\":\n        return 2\n    elif role == \"c\":\n        return 3\n    return 0\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P001", "severity": "info", "line": 2 }, { "rule": "HC-SUP002", "severity": "error", "line": 2 } ] }
+    },
+    {
       "id": "clean-001",
       "description": "Plain honest code fires nothing.",
       "category": "clean",
