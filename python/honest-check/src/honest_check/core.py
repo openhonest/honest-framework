@@ -13,9 +13,12 @@ separately declared function.
 """
 
 import ast
+import fnmatch
 import itertools
 
-from honest_parse import line_col, parse_source, walk
+from honest_parse import language_of, line_col, parse_source, walk
+
+from honest_check.watchlists import IO_WATCH_LIST, NONDETERMINISTIC_WATCH_LIST
 
 # A class is permitted only as a subclass of one of these (section 4.1, HC-P003). A bare
 # class implicitly inherits object, which is not approved, so it is a violation.
@@ -68,6 +71,11 @@ _TYPE_CHECK_CALLS = frozenset({"isinstance", "type"})
 # The cache decorators HC-P006 names (§5.6). A function carrying one with no profiling note
 # has no evidence the cache was measured, so the cache cannot be shown warranted.
 _CACHE_DECORATORS = frozenset({"lru_cache", "cache", "cached_property", "memoize"})
+
+# The builtins whose empty call stands for absence, not a baked-in value (§HC-P015). A
+# `list()`/`dict()`/`set()`/`tuple()`/`frozenset()` with no argument is the honest empty
+# default; the same name called with an argument is a real value and fires.
+_EMPTY_CONSTRUCTORS = frozenset({"list", "dict", "set", "tuple", "frozenset"})
 
 
 def check_source(source, path, rule_config):
@@ -174,9 +182,10 @@ def check_source(source, path, rule_config):
         return None
 
     def base_types_of(dictionary_node):
-        """The base-type map of a vocabulary's first argument: name -> (kind, members).
-        kind is 'set' with a frozenset of members, or 'predicate' with None (a lambda or any
-        other opaque recognizer honest-check cannot run)."""
+        """The base-type map of a vocabulary's first argument: name -> (kind, payload).
+        kind is 'set' with a frozenset of members, or 'predicate' with the recognizer's value
+        node (a lambda or any other opaque recognizer honest-check cannot run). HC009 reads
+        that node for a risky operation; HC003 and HC011 read only the kind."""
         base_types = {}
         for pair in dictionary_node.named_children:
             if pair.type != "pair":
@@ -186,8 +195,30 @@ def check_source(source, path, rule_config):
             if value.type == "set":
                 base_types[name] = ("set", frozenset(string_members(value)))
             else:
-                base_types[name] = ("predicate", None)
+                base_types[name] = ("predicate", value)
         return base_types
+
+    def predicate_is_risky(value):
+        """True when a predicate's expression holds a node that throws on a non-matching
+        input (§HC009): a call to bare `int` or `float`, a subscript access, or a `/` or `//`
+        division. A predicate that throws is a recognizer that rejects by exception rather
+        than by returning False."""
+        for node in walk(value):
+            if node.type == "call":
+                function = node.child_by_field_name("function")
+                if (
+                    function is not None
+                    and function.type == "identifier"
+                    and function.text.decode("utf-8") in ("int", "float")
+                ):
+                    return True
+            elif node.type == "subscript":
+                return True
+            elif node.type == "binary_operator" and any(
+                child.type in ("/", "//") for child in node.children
+            ):
+                return True
+        return False
 
     def check_vocabulary(call_node):
         """HC003 overlap, HC011 catch-all predicate, and HC006 unknown composed base
@@ -223,17 +254,29 @@ def check_source(source, path, rule_config):
                     )
                 )
 
-        for name, (kind, _members) in base_types.items():
-            if kind == "predicate":
+        for name, (kind, payload) in base_types.items():
+            if kind != "predicate":
+                continue
+            if payload is not None and predicate_is_risky(payload):
                 findings.append(
                     diagnostic(
-                        "HC011",
-                        "info",
-                        f"Predicate recognizer {name!r} may be a catch-all — "
-                        "verified by honest-test",
+                        "HC009",
+                        "warning",
+                        f"Predicate recognizer {name!r} may throw on non-matching input. "
+                        "Wrap in try/except or guard with isinstance() — verified by "
+                        "honest-test.",
                         call_node,
                     )
                 )
+            findings.append(
+                diagnostic(
+                    "HC011",
+                    "info",
+                    f"Predicate recognizer {name!r} may be a catch-all — "
+                    "verified by honest-test",
+                    call_node,
+                )
+            )
 
         composed_list = keywords.get("composed_types")
         if composed_list is not None:
@@ -842,6 +885,230 @@ def check_source(source, path, rule_config):
             )
         return findings
 
+    def is_empty_default(value):
+        """True when a parameter's default stands for absence rather than a baked-in value
+        (§HC-P015): None, False, a zero number, an empty string, an empty list/dict/tuple
+        literal, or an empty-constructor call. A populated literal, a non-zero number, a
+        non-empty string, True, a name or any other call is a real value and is not empty."""
+        kind = value.type
+        if kind in ("none", "false"):
+            return True
+        if kind in ("integer", "float"):
+            return ast.literal_eval(value.text.decode("utf-8")) == 0
+        if kind == "string":
+            return not any(
+                child.type in ("string_content", "interpolation")
+                for child in value.named_children
+            )
+        if kind in ("list", "dictionary", "tuple"):
+            return len(value.named_children) == 0
+        if kind == "call":
+            function = value.child_by_field_name("function")
+            if function is None or function.type != "identifier":
+                return False
+            if function.text.decode("utf-8") not in _EMPTY_CONSTRUCTORS:
+                return False
+            positionals, keywords = call_arguments(value)
+            return not positionals and not keywords
+        return False
+
+    def check_p015():
+        """HC-P015: a parameter whose default value is a real, non-empty value (§HC-P015). A
+        real-valued default absorbs the caller's omission and leaves the omitted-argument path
+        untested. Reported at the parameter's line; an empty default (the honest nothing) does
+        not fire."""
+        findings = []
+        for node in nodes:
+            if node.type not in ("default_parameter", "typed_default_parameter"):
+                continue
+            value = node.child_by_field_name("value")
+            if value is None or is_empty_default(value):
+                continue
+            name_node = node.child_by_field_name("name")
+            name = name_node.text.decode("utf-8") if name_node else "<parameter>"
+            findings.append(
+                diagnostic(
+                    "HC-P015",
+                    "warning",
+                    f"Parameter {name!r} defaults to a real value. A default hides whether "
+                    "the caller chose the value or omitted it, and leaves the omitted-argument "
+                    "path untested. Make the parameter required, or default it to empty if "
+                    "absence is the honest nothing.",
+                    node,
+                )
+            )
+        return findings
+
+    def is_immutable_value(value):
+        """True when a module-level binding's right side is provably immutable (§5.4, §872):
+        a number, a string, a bool, None, a tuple literal, a negated immutable, or a
+        `frozenset(...)` call. Everything else — a list, dict or set literal, a comprehension,
+        a name, any other call — is mutable or not provably immutable, so a read of it fires
+        HC008."""
+        kind = value.type
+        if kind in (
+            "integer",
+            "float",
+            "string",
+            "concatenated_string",
+            "true",
+            "false",
+            "none",
+            "tuple",
+        ):
+            return True
+        if kind == "unary_operator":
+            operand = value.child_by_field_name("argument")
+            return operand is not None and is_immutable_value(operand)
+        if kind == "call":
+            function = value.child_by_field_name("function")
+            return (
+                function is not None
+                and function.type == "identifier"
+                and function.text.decode("utf-8") == "frozenset"
+            )
+        return False
+
+    def module_mutable_globals():
+        """The module-level names bound to a mutable (or not provably immutable) value — the
+        globals a read of which makes a link impure (§5.4, §872). A name bound to an immutable
+        value, and an imported or def/class name (never an assignment target), are not here."""
+        names = set()
+        for top in root.named_children:
+            node = top
+            if top.type == "expression_statement" and top.named_children:
+                node = top.named_children[0]
+            if node.type != "assignment":
+                continue
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            if left is None or right is None or left.type != "identifier":
+                continue
+            if not is_immutable_value(right):
+                names.add(left.text.decode("utf-8"))
+        return names
+
+    def param_names(param):
+        """The names a single parameter node binds — a bare identifier, or the `name` of a
+        typed or defaulted parameter. A splat or other shape binds nothing here."""
+        if param.type == "identifier":
+            return {param.text.decode("utf-8")}
+        name = param.child_by_field_name("name")
+        if name is not None and name.type == "identifier":
+            return {name.text.decode("utf-8")}
+        return set()
+
+    def link_locals(fdef, body):
+        """The names local to a link — its parameters plus the names it assigns in its own
+        body. A read of one of these is not a read of a module global (§5.4)."""
+        names = set()
+        params = fdef.child_by_field_name("parameters")
+        if params is not None:
+            for child in params.named_children:
+                names |= param_names(child)
+        for node in body:
+            if node.type in ("assignment", "augmented_assignment"):
+                target = node.child_by_field_name("left")
+                if target is not None and target.type == "identifier":
+                    names.add(target.text.decode("utf-8"))
+        return names
+
+    def is_attribute_suffix(node):
+        """True when an identifier is the attribute part of an `x.name` access — the `.name`,
+        not a read of `name` itself. Reading `config.timeout` reads `config`, not a global
+        called `timeout` (§5.4)."""
+        parent = node.parent
+        return (
+            parent is not None
+            and parent.type == "attribute"
+            and parent.child_by_field_name("attribute") is node
+        )
+
+    def is_keyword_name(node):
+        """True when an identifier is a keyword argument's name — the `k` in `f(k=v)`, which
+        names a parameter of the callee, not a global read (§5.4)."""
+        parent = node.parent
+        return (
+            parent is not None
+            and parent.type == "keyword_argument"
+            and parent.child_by_field_name("name") is node
+        )
+
+    def watched(target, watch):
+        """True when a call's dotted target is on a watch list: an exact entry matches by
+        equality, and an entry carrying a `*` matches as a glob — a trailing `.*` names any
+        attribute of a module, a trailing `*` is a prefix, a `*` between dots is one segment
+        (§HC008)."""
+        for entry in watch:
+            if "*" in entry:
+                if fnmatch.fnmatchcase(target, entry):
+                    return True
+            elif target == entry:
+                return True
+        return False
+
+    def link_is_impure(fdef, watch, mutable_globals):
+        """True when a link's own body calls a watched function or reads a module-level
+        mutable global (§HC008). The body search does not descend into a nested def or
+        lambda, whose statements are that inner scope's own."""
+        body = own_body(fdef)
+        locals_bound = link_locals(fdef, body)
+        for node in body:
+            if node.type == "call":
+                target = dotted_target(node)
+                if target is not None and watched(target, watch):
+                    return True
+            elif node.type == "identifier":
+                name = node.text.decode("utf-8")
+                if (
+                    name in mutable_globals
+                    and name not in locals_bound
+                    and not is_attribute_suffix(node)
+                    and not is_keyword_name(node)
+                ):
+                    return True
+        return False
+
+    def check_hc008():
+        """HC008: a non-boundary `@link` whose body calls a function on the impurity watch
+        list for the file's language, or reads a module-level mutable global (§HC008). A
+        `@link(boundary=True)` or `@boundary` link is exempt. Reported once, at the link's
+        `def` line. The watch lists are keyed by the language honest-parse detected for this
+        path; a language with no published list has an empty watch, so the call clause is
+        inert for it."""
+        language = language_of(path).get("ok")
+        io = IO_WATCH_LIST[language] if language in IO_WATCH_LIST else frozenset()
+        nondeterministic = (
+            NONDETERMINISTIC_WATCH_LIST[language]
+            if language in NONDETERMINISTIC_WATCH_LIST
+            else frozenset()
+        )
+        watch = io | nondeterministic
+        mutable_globals = module_mutable_globals()
+        findings = []
+        for node in nodes:
+            if node.type != "function_definition":
+                continue
+            decorators = decorators_of(node)
+            if not any(decorator_target(d) == "link" for d in decorators):
+                continue
+            if any(is_boundary_decorator(d) for d in decorators):
+                continue
+            if not link_is_impure(node, watch, mutable_globals):
+                continue
+            name_node = node.child_by_field_name("name")
+            name = name_node.text.decode("utf-8") if name_node else "<link>"
+            findings.append(
+                diagnostic(
+                    "HC008",
+                    "warning",
+                    f"Link {name!r} may be impure: it calls a watched function or reads "
+                    "module-level mutable state. Add boundary=True if the I/O is intentional.",
+                    node,
+                )
+            )
+        return findings
+
     # The per-file AST rules: each reads the shared `nodes` once-walked above and returns its
     # findings as data. check_source folds the tuple in one pass, so adding a per-file rule is
     # adding a row. HC-P003 (check_classes) is the first row. The construction-rule dispatch
@@ -856,6 +1123,8 @@ def check_source(source, path, rule_config):
         check_p004,
         check_p005,
         check_p006,
+        check_p015,
+        check_hc008,
     )
 
     diagnostics = []

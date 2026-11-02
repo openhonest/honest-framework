@@ -228,6 +228,69 @@
       "expected": { "diagnostics": [] }
     },
     {
+      "id": "HC-P015-001",
+      "description": "A parameter defaulting to a real value hides whether the caller chose it and leaves the omitted path untested.",
+      "category": "HC-P015",
+      "input": { "language": "python", "source": "def f(x, timeout=30):\n    return x\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P015", "severity": "warning", "line": 1 } ] }
+    },
+    {
+      "id": "HC-P015-clean-001",
+      "description": "A default of None stands for absence, the honest nothing, and fires nothing.",
+      "category": "HC-P015",
+      "input": { "language": "python", "source": "def f(x, timeout=None):\n    return x\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC009-001",
+      "description": "A predicate that calls int() may throw on non-matching input; HC011 still reports the predicate as a possible catch-all.",
+      "category": "HC009",
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nv = vocabulary({\"n\": lambda s: int(s) > 0})\n" },
+      "expected": { "diagnostics": [ { "rule": "HC009", "severity": "warning", "line": 2 }, { "rule": "HC011", "severity": "info", "line": 2 } ] }
+    },
+    {
+      "id": "HC009-clean-001",
+      "description": "A predicate with no risky operation does not throw; only HC011's catch-all info remains.",
+      "category": "HC009",
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nv = vocabulary({\"n\": lambda s: s.isdigit()})\n" },
+      "expected": { "diagnostics": [ { "rule": "HC011", "severity": "info", "line": 2 } ] }
+    },
+    {
+      "id": "HC008-001",
+      "description": "A non-boundary link that calls a nondeterministic watch-list function may be impure.",
+      "category": "HC008",
+      "input": { "language": "python", "source": "from honest_type import link\n@link()\ndef stamp(manifest):\n    return time.time()\n" },
+      "expected": { "diagnostics": [ { "rule": "HC008", "severity": "warning", "line": 3 } ] }
+    },
+    {
+      "id": "HC008-002",
+      "description": "A non-boundary link that reads a module-level mutable container may be impure.",
+      "category": "HC008",
+      "input": { "language": "python", "source": "from honest_type import link\ncounts = []\n@link()\ndef tally(manifest):\n    return counts\n" },
+      "expected": { "diagnostics": [ { "rule": "HC008", "severity": "warning", "line": 4 } ] }
+    },
+    {
+      "id": "HC008-clean-001",
+      "description": "A link declared boundary=True may do I/O or read the clock; the watch list does not apply.",
+      "category": "HC008",
+      "input": { "language": "python", "source": "from honest_type import link\n@link(boundary=True)\ndef load(manifest):\n    return time.time()\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC008-clean-002",
+      "description": "A non-boundary link that reads a module-level constant bound to an immutable value is pure and fires nothing.",
+      "category": "HC008",
+      "input": { "language": "python", "source": "from honest_type import link\nLIMIT = 10\n@link()\ndef cap(manifest):\n    return LIMIT\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC008-clean-003",
+      "description": "A non-boundary link that only reads its argument and computes fires nothing.",
+      "category": "HC008",
+      "input": { "language": "python", "source": "from honest_type import link\n@link()\ndef add(manifest):\n    return manifest[\"a\"] + manifest[\"b\"]\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
       "id": "clean-001",
       "description": "Plain honest code fires nothing.",
       "category": "clean",
