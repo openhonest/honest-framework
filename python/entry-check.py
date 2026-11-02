@@ -67,29 +67,38 @@ def arrivals(declarations) -> list:
     """Entries that land somewhere the world is not supposed to arrive.
 
     The method says the world arrives at a door, the door hands the call to one orchestrator, and
-    the orchestrator calls the pure functions. An entry naming a pure function declares the world
-    reaching into the core with no door in between, and an entry naming an orchestrator declares a
-    door that is not there. honest-parse carried four of the first kind: node_text, line_col, walk
-    and first_error_node, each imported straight out of the module by honest-check and honest-test.
+    the orchestrator calls the pure functions. An entry naming an orchestrator declares a door that
+    is not there; an entry naming an output boundary declares the world starting an exit. Both are
+    wrong arrivals and both still fail.
 
-    A module with no boundary is the exception, because it is a pure library. honest-type is one: it
-    touches no file, database, clock or network, so the world reaches it only by importing or calling
-    its functions. There is no door to arrive at and none to bypass, so an entry landing on a pure
-    function is the right arrival, not a missing door. The rule guards a module that HAS boundaries
-    against an entry that reaches past them, so a module that declares none has nothing for it to
-    guard. That an import names a function this package exports is still checked, in findings.
+    An entry naming a pure function is a right arrival, not a missing door. A door exists to be the
+    one place a module touches the world, so that contact is contained and checked; a pure function
+    touches nothing, so there is nothing for a door to guard, and the world may call it directly.
+    This holds whether or not the module has boundaries (ruling, 2026-11-01): a module with no
+    boundary is a pure library, and a module that has boundaries may still publish pure functions for
+    another program to import and call, as honest-check publishes its integration rules for the
+    hd-check gate. The pure function's own completeness of contract, and its place in the call graph
+    (reached from an orchestrator or another pure function), are checked by the map, not here; this
+    rule asks only whether the world reached past a door it should have used. honest-parse once
+    carried four functions imported straight out of its core (node_text, line_col, walk,
+    first_error_node), which read as missing doors before that question was settled.
     """
     out = []
     for package, module, entries, roles in declarations:
-        if not any(r in ("boundary_in", "reader", "boundary_out") for r in roles.values()):
-            continue
+        has_boundary = any(r in ("boundary_in", "reader", "boundary_out") for r in roles.values())
         for entry in entries:
             target, role = entry["target"], roles.get(entry["target"])
-            if role is None or role in ("boundary_in", "reader"):
+            # A pure library (no boundary) has nothing to guard, so every entry is a right arrival.
+            if not has_boundary:
+                continue
+            # A pure function guards no world-contact, so the world may call it directly even where
+            # the module has boundaries. Only an orchestrator (door missing) or an output boundary
+            # (an exit the world should not start) is a wrong arrival.
+            if role in (None, "boundary_in", "reader", "fn"):
                 continue
             kind = ("an orchestrator, so the door the world should arrive at is missing"
                     if role == "orchestrator" else
-                    f"a {role}, so the world reaches the core with no door in between")
+                    "an output boundary, an exit the world should not start directly")
             out.append(f"  NO DOOR {package} [{module}]: entry {entry['callsite']!r} -> {target} names "
                        f"{kind}.")
     return out
