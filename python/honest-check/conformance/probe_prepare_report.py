@@ -18,15 +18,15 @@ def _diag(rule_id, severity):
     }
 
 
-def _args(threshold):
+def _args(threshold, include_rules=None, exclude_rules=None, report_mode=False):
     return {
         "paths": ["src/"],
         "format": "human",
         "severity": threshold,
-        "include_rules": [],
-        "exclude_rules": [],
+        "include_rules": include_rules or [],
+        "exclude_rules": exclude_rules or [],
         "config_path": "",
-        "report_mode": False,
+        "report_mode": report_mode,
     }
 
 
@@ -45,6 +45,36 @@ _CASES = [
         "args": _args("info"),
         "adoption": "Structural",
         "expect": {"errors": 0},
+    },
+    # A warning below an --severity error threshold is dropped: the sole finding
+    # does not survive, so every survivor count is 0.
+    {
+        "diagnostics": [_diag("HC-P001", "warning")],
+        "args": _args("error"),
+        "adoption": "Declared",
+        "expect": {"errors": 0, "warnings": 0, "infos": 0},
+    },
+    # --rule HC-P003 keeps only HC-P003: the HC-P001 finding is filtered out, so the
+    # survivor is the one error and warnings stays 0.
+    {
+        "diagnostics": [_diag("HC-P003", "error"), _diag("HC-P001", "warning")],
+        "args": _args("info", include_rules=["HC-P003"]),
+        "adoption": "Declared",
+        "expect": {"errors": 1, "warnings": 0},
+    },
+    # --no-rule HC-P003 drops HC-P003: only the HC-P001 warning survives.
+    {
+        "diagnostics": [_diag("HC-P003", "error"), _diag("HC-P001", "warning")],
+        "args": _args("info", exclude_rules=["HC-P003"]),
+        "adoption": "Declared",
+        "expect": {"errors": 0, "warnings": 1},
+    },
+    # --report mode tallies survivors per rule into rule_counts and carries the flag.
+    {
+        "diagnostics": [_diag("HC-P003", "error"), _diag("HC-P003", "error")],
+        "args": _args("info", report_mode=True),
+        "adoption": "Declared",
+        "expect": {"rule_counts": {"HC-P003": 2}, "report_mode": True},
     },
 ]
 

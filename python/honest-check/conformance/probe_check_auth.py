@@ -83,6 +83,60 @@ _CASES = [
         ],
         "want": [],
     },
+    # Provider registered by a dotted call, and an authorizing link declared with a
+    # positional argument before authorizes=True that uses the actor: the dotted call
+    # still registers the provider and the positional argument is read past, so with
+    # the actor referenced neither rule fires.
+    {
+        "name": "clean (dotted registration, positional link arg, uses actor)",
+        "sources": [
+            {"path": "a.py", "text": "auth.register_auth_provider(p)\n"},
+            {
+                "path": "b.py",
+                "text": '@link(x, authorizes=True)\ndef pay(m):\n    return charge(actor)\n',
+            },
+        ],
+        "want": [],
+    },
+    # Decorators that are not @link(authorizes=True) declare no authorizing link: a
+    # bare @link, a dotted decorator call, a non-link decorator, and @link with
+    # authorizes=False. With no authorizing link, HC-A001 does not fire despite no
+    # provider being registered.
+    {
+        "name": "clean (no decorator is an authorizing link)",
+        "sources": [
+            {
+                "path": "m.py",
+                "text": "@link\ndef a(m):\n    return m\n\n\n@a.b(authorizes=True)\ndef c(m):\n    return m\n\n\n"
+                "@other(authorizes=True)\ndef d(m):\n    return m\n\n\n@link(authorizes=False)\ndef e(m):\n    return m\n",
+            },
+        ],
+        "want": [],
+    },
+    # A source file that does not parse contributes no auth facts (a parse failure is
+    # HC-SYN's finding); the valid file holds no authorizing link, so nothing fires.
+    {
+        "name": "a non-parsing source file contributes nothing",
+        "sources": [
+            {"path": "bad.py", "text": "def (:\n"},
+            {"path": "m.py", "text": "def one(m):\n    return m\n"},
+        ],
+        "want": [],
+    },
+    # An authorizing link whose body references actor at its own level uses the actor
+    # even though a nested def sits in the body; the nested def's statements are not
+    # read as the link's. With a provider registered, HC-A002 does not fire.
+    {
+        "name": "clean (actor used at own level, nested def ignored)",
+        "sources": [
+            {"path": "a.py", "text": "register_auth_provider(p)\n"},
+            {
+                "path": "b.py",
+                "text": '@link(authorizes=True)\ndef pay(m):\n    def inner():\n        return 1\n    return actor\n',
+            },
+        ],
+        "want": [],
+    },
 ]
 
 

@@ -492,6 +492,762 @@
       "category": "clean",
       "input": { "language": "python", "source": "x = 1\n" },
       "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC003-no-import-001",
+      "description": "A constructor called by its bare name with no import still resolves (section 3.3), so an overlap fires.",
+      "category": "HC003",
+      "input": { "language": "python", "source": "vocabulary({\"a\": {\"x\"}, \"b\": {\"x\"}})\n" },
+      "expected": { "diagnostics": [ { "rule": "HC003", "severity": "error", "line": 1 } ] }
+    },
+    {
+      "id": "HC003-dict-splat-001",
+      "description": "A dictionary-splat entry in a vocabulary's base map is not a pair and is skipped; the two Set types still overlap.",
+      "category": "HC003",
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nbase = {}\nv = vocabulary({**base, \"a\": {\"x\"}, \"b\": {\"x\"}})\n" },
+      "expected": { "diagnostics": [ { "rule": "HC003", "severity": "error", "line": 3 } ] }
+    },
+    {
+      "id": "HC003-predicate-info-001",
+      "description": "Two Set/predicate types that are not both sets may overlap on a value, which only honest-test can decide, so HC003 reports info and the predicate reports HC011.",
+      "category": "HC003",
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nv = vocabulary({\"a\": {\"x\"}, \"b\": lambda s: True})\n" },
+      "expected": { "diagnostics": [ { "rule": "HC003", "severity": "info", "line": 2 }, { "rule": "HC011", "severity": "info", "line": 2 } ] }
+    },
+    {
+      "id": "HC009-subscript-001",
+      "description": "A predicate recognizer that subscripts its input throws on a non-matching value, so HC009 warns and HC011 defers the catch-all question to honest-test.",
+      "category": "HC009",
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nv = vocabulary({\"a\": lambda s: s[0] == \"x\"})\n" },
+      "expected": { "diagnostics": [ { "rule": "HC009", "severity": "warning", "line": 2 }, { "rule": "HC011", "severity": "info", "line": 2 } ] }
+    },
+    {
+      "id": "HC009-division-001",
+      "description": "A predicate recognizer that divides by a value derived from its input throws on zero, so HC009 warns.",
+      "category": "HC009",
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nv = vocabulary({\"a\": lambda s: 1 / len(s) > 0})\n" },
+      "expected": { "diagnostics": [ { "rule": "HC009", "severity": "warning", "line": 2 }, { "rule": "HC011", "severity": "info", "line": 2 } ] }
+    },
+    {
+      "id": "HC003-no-dict-arg-001",
+      "description": "A vocabulary whose first argument is not a dictionary literal cannot be read for overlap and fires nothing.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nv = vocabulary(somevar)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC003-no-arg-001",
+      "description": "A vocabulary called with no argument carries no base map and fires nothing.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nv = vocabulary()\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC006-captures-001",
+      "description": "A composed type whose captures names a base the vocabulary does not declare is an unknown capture.",
+      "category": "HC006",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, composed\nv = vocabulary({\"a\": {\"x\"}}, composed_types=[composed(\"p\", {\"a\": \"y\"}, \"missing\")])\n" },
+      "expected": { "diagnostics": [ { "rule": "HC006", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC006-short-composed-001",
+      "description": "A composed() call with fewer than two positionals carries no requires map and fires nothing.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, composed\nv = vocabulary({\"a\": {\"x\"}}, composed_types=[composed(\"p\")])\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-SM-short-001",
+      "description": "A state_machine() with fewer than four positionals cannot be read for a transition table and fires nothing.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"a\"], [\"go\"])\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-SM-terminal-positional-001",
+      "description": "A state_machine whose terminal set is a fifth positional (not the keyword) resolves cleanly: every state is reachable and the terminal has no dead-state finding.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"a\", \"b\"], [\"go\"], {(\"a\", \"go\"): \"b\"}, \"a\", [\"b\"])\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC006-requires-splat-001",
+      "description": "A dictionary-splat entry in a composed type's requires map is not a pair and is skipped; the remaining require names a declared base, so nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, composed\nextra = {}\nv = vocabulary({\"a\": {\"x\"}}, composed_types=[composed(\"p\", {**extra, \"a\": \"y\"})])\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC006-two-positional-composed-001",
+      "description": "A composed type with a requires map but no captures positional names only declared bases, so nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, composed\nv = vocabulary({\"a\": {\"x\"}}, composed_types=[composed(\"p\", {\"a\": \"y\"})])\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-SM-transitions-splat-001",
+      "description": "A dictionary-splat entry in a transition table is not a pair and is skipped; the explicit transitions resolve cleanly.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import state_machine\nbase = {}\nm = state_machine([\"a\", \"b\"], [\"go\"], {**base, (\"a\", \"go\"): \"b\"}, \"a\", [\"b\"])\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-SM-key-not-tuple-001",
+      "description": "A transition key that is not a tuple cannot name a (state, event) pair and is skipped.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"a\", \"b\"], [\"go\"], {(\"a\", \"go\"): \"b\", \"x\": \"y\"}, \"a\", [\"b\"])\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-SM-key-one-member-001",
+      "description": "A transition key tuple with fewer than two members names no (state, event) pair and is skipped.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import state_machine\nm = state_machine([\"a\", \"b\"], [\"go\"], {(\"a\", \"go\"): \"b\", (\"solo\",): \"b\"}, \"a\", [\"b\"])\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-SM-initial-not-string-001",
+      "description": "When the initial-state argument is not a string literal the initial state is unknown, so the reachability walk is skipped; the dead-state check still flags state 'b', which has no outgoing transition and is not declared terminal.",
+      "category": "HC-SM04",
+      "input": { "language": "python", "source": "from honest_type import state_machine\ninitvar = \"a\"\nm = state_machine([\"a\", \"b\"], [\"go\"], {(\"a\", \"go\"): \"b\"}, initvar)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-SM04", "severity": "warning", "line": 3 } ] }
+    },
+    {
+      "id": "HC-P003-inherits-001",
+      "description": "A class that inherits from a non-approved base fires HC-P003.",
+      "category": "HC-P003",
+      "input": { "language": "python", "source": "class Foo(Bar):\n    pass\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P003", "severity": "error", "line": 1 } ] }
+    },
+    {
+      "id": "HC-P001-non-equality-001",
+      "description": "An if whose condition is a comparison other than equality does not dispatch on a value, so HC-P001 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "def f(x):\n    if x < 3:\n        return 1\n    return 2\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P001-non-identifier-lhs-001",
+      "description": "An equality test whose left side is a call, not a bare identifier, is not a value dispatch, so HC-P001 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "def f(x):\n    if foo() == 1:\n        return 1\n    return 2\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P007-fires-001",
+      "description": "An assignment to a self._name attribute inside a class __init__ is hidden instance state.",
+      "category": "HC-P007",
+      "input": { "language": "python", "source": "class C(Protocol):\n    def __init__(self):\n        self._x = 1\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P007", "severity": "warning", "line": 3 } ] }
+    },
+    {
+      "id": "HC-P007-no-underscore-001",
+      "description": "A self.name without a leading underscore is public state, not hidden, so HC-P007 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "class C(Protocol):\n    def __init__(self):\n        self.x = 1\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P007-not-self-001",
+      "description": "An assignment to another object's underscore attribute is not instance state on self, so HC-P007 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "class C(Protocol):\n    def __init__(self):\n        other._x = 1\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P007-nested-attr-001",
+      "description": "An assignment target whose object is itself an attribute (self.a._x) is not a bare self._name, so HC-P007 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "class C(Protocol):\n    def __init__(self):\n        self.a._x = 1\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P007-module-scope-001",
+      "description": "A self._x assignment at module scope sits in no function, so HC-P007 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "self._x = 1\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P007-non-init-001",
+      "description": "A self._x assignment inside a method other than __init__ is not caught by HC-P007.",
+      "category": "clean",
+      "input": { "language": "python", "source": "class C(Protocol):\n    def foo(self):\n        self._x = 1\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P011-dotted-001",
+      "description": "A lifecycle hook reached by a dotted call (window.addEventListener) is named by its final attribute and fires HC-P011.",
+      "category": "HC-P011",
+      "input": { "language": "python", "source": "window.addEventListener(\"click\", h)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P011", "severity": "error", "line": 1 } ] }
+    },
+    {
+      "id": "HC-P006-dotted-cache-001",
+      "description": "A cache decorator named by a dotted attribute (functools.lru_cache) with no profiling note fires HC-P006.",
+      "category": "HC-P006",
+      "input": { "language": "python", "source": "import functools\n@functools.lru_cache(maxsize=1)\ndef f(x):\n    return x\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P006", "severity": "warning", "line": 2 } ] }
+    },
+    {
+      "id": "HC-P006-profiled-decorator-001",
+      "description": "A cache decorator alongside a @profiled decorator has a profiling note, so HC-P006 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "@profiled\n@lru_cache\ndef f(x):\n    return x\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P006-profiled-comment-001",
+      "description": "A '# honest: profiled' comment immediately above a cached function proves the cache was measured, so HC-P006 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "# honest: profiled\n@lru_cache\ndef f(x):\n    return x\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P002-boundary-called-001",
+      "description": "A function decorated with @boundary() (the called form) is a boundary, so a try/except in its body does not fire HC-P002.",
+      "category": "clean",
+      "input": { "language": "python", "source": "@boundary()\ndef handler(x):\n    try:\n        return x\n    except Exception:\n        return None\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P002-non-boundary-decorator-001",
+      "description": "A called decorator that is neither @boundary nor @link leaves the function non-boundary, so a try/except in its body fires HC-P002.",
+      "category": "HC-P002",
+      "input": { "language": "python", "source": "@other()\ndef handler(x):\n    try:\n        return x\n    except Exception:\n        return None\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P002", "severity": "error", "line": 3 } ] }
+    },
+    {
+      "id": "HC-P015-empty-defaults-001",
+      "description": "Parameters defaulting to the honest nothing (None, zero, empty string, empty list/dict/tuple, and empty-constructor calls) are explicit absence, so HC-P015 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "def f(a=None, b=0, c=\"\", d=[], e={}, g=(), h=list(), i=dict()):\n    return a\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P015-false-default-001",
+      "description": "A parameter defaulting to False is explicit absence, so HC-P015 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "def f(a=False):\n    return a\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P015-nonempty-list-001",
+      "description": "A parameter defaulting to a populated list is a real baked-in value, so HC-P015 fires.",
+      "category": "HC-P015",
+      "input": { "language": "python", "source": "def f(a=[1]):\n    return a\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P015", "severity": "warning", "line": 1 } ] }
+    },
+    {
+      "id": "HC-P015-nonempty-string-001",
+      "description": "A parameter defaulting to a non-empty string is a real baked-in value, so HC-P015 fires.",
+      "category": "HC-P015",
+      "input": { "language": "python", "source": "def f(a=\"x\"):\n    return a\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P015", "severity": "warning", "line": 1 } ] }
+    },
+    {
+      "id": "HC-P015-call-not-empty-ctor-001",
+      "description": "A parameter defaulting to a call that is not an empty-container constructor is a real value, so HC-P015 fires.",
+      "category": "HC-P015",
+      "input": { "language": "python", "source": "def f(a=foo()):\n    return a\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P015", "severity": "warning", "line": 1 } ] }
+    },
+    {
+      "id": "HC-P015-call-dotted-001",
+      "description": "A parameter defaulting to a dotted call (obj.method()) is not an empty-container constructor, so HC-P015 fires.",
+      "category": "HC-P015",
+      "input": { "language": "python", "source": "def f(a=obj.method()):\n    return a\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P015", "severity": "warning", "line": 1 } ] }
+    },
+    {
+      "id": "HC-P002-module-scope-001",
+      "description": "A try/except at module scope is in no function, so HC-P002 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "try:\n    x = 1\nexcept Exception:\n    x = 2\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P002-try-finally-001",
+      "description": "A try/finally with no except clause swallows nothing, so HC-P002 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "def g(x):\n    try:\n        return x\n    finally:\n        pass\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P005-module-scope-001",
+      "description": "An isinstance call at module scope is in no non-boundary function, so HC-P005 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "isinstance(x, int)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P002-dotted-called-decorator-001",
+      "description": "A called decorator whose target is a dotted name (a.b()) is not a boundary decorator, so the function stays non-boundary and a try/except in its body fires HC-P002.",
+      "category": "HC-P002",
+      "input": { "language": "python", "source": "@a.b()\ndef handler(x):\n    try:\n        return x\n    except Exception:\n        return None\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P002", "severity": "error", "line": 3 } ] }
+    },
+    {
+      "id": "HC-P002-dotted-bare-decorator-001",
+      "description": "A bare dotted decorator (a.b) is not a boundary decorator, so the function stays non-boundary and a try/except in its body fires HC-P002.",
+      "category": "HC-P002",
+      "input": { "language": "python", "source": "@a.b\ndef handler(x):\n    try:\n        return x\n    except Exception:\n        return None\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P002", "severity": "error", "line": 3 } ] }
+    },
+    {
+      "id": "HC-P006-subscript-decorator-001",
+      "description": "A decorator that is a subscript expression names no plain or dotted target, so it is not read as a cache decorator and HC-P006 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "@deco[0]\ndef f(x):\n    return x\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P006-profiled-note-above-001",
+      "description": "A '# honest: profiled' note separated from the cached function by another comment line is still found by walking the contiguous comment block upward, so HC-P006 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "# honest: profiled\n# another note\n@lru_cache\ndef f(x):\n    return x\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P015-name-default-001",
+      "description": "A parameter defaulting to a bare name (a module constant) is a real baked-in value, not the honest nothing, so HC-P015 fires.",
+      "category": "HC-P015",
+      "input": { "language": "python", "source": "def f(a=MY_CONST):\n    return a\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P015", "severity": "warning", "line": 1 } ] }
+    },
+    {
+      "id": "HC008-immutable-unary-global-001",
+      "description": "A module-level binding to a negated number is provably immutable, so it is not a mutable global and nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "z = -1\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC008-link-typed-params-001",
+      "description": "A pure @link with typed and splat parameters and a local assignment binds its locals cleanly and reads no watched call or mutable global, so HC008 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "@link\ndef f(x: int, *args):\n    y = 1\n    return y\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC001-non-identifier-link-001",
+      "description": "A chain positional that is not a bare identifier (a call expression) resolves to no local function declaration, so HC001 is not raised for it.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import chain\npipe = chain(step_one, bar())\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC008-link-no-params-001",
+      "description": "A pure @link with no parameters binds its locals from its body alone and reads nothing impure, so HC008 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "@link\ndef f():\n    y = 1\n    return y\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC008-link-default-param-001",
+      "description": "A pure @link whose parameter carries a default binds that parameter name as a local, so a read of it is not a module global and HC008 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "@link\ndef f(a=0):\n    b = a\n    return b\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P017-bare-link-001",
+      "description": "A bare @link that produces HTTP output declares no emits vocabulary, so its serialized output escapes contract testing and HC-P017 fires.",
+      "category": "HC-P017",
+      "input": { "language": "python", "source": "@link\ndef view():\n    return Response()\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P017", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC-P017-link-emits-001",
+      "description": "A @link that produces HTTP output and declares an emits vocabulary has its serialized output classified, so HC-P017 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nout = vocabulary({\"o\": {\"x\"}})\n@link(emits=out)\ndef view():\n    return Response()\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-P017-link-accepts-only-001",
+      "description": "A @link that produces HTTP output but declares only accepts, no emits, leaves its serialized output unclassified, so HC-P017 fires.",
+      "category": "HC-P017",
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nin_v = vocabulary({\"i\": {\"x\"}})\n@link(accepts=in_v)\ndef view():\n    return Response()\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P017", "severity": "error", "line": 4 } ] }
+    },
+    {
+      "id": "HC-P017-extra-decorator-001",
+      "description": "A function with an unrelated decorator above a @link(emits=...) still resolves its emits, so the non-link decorator is passed over and HC-P017 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary\nout = vocabulary({\"o\": {\"x\"}})\n@app\n@link(emits=out)\ndef view():\n    return Response()\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC004-dead-type-001",
+      "description": "A classify pairs a vocabulary and a binding; a base type the binding never binds and no composed type uses is dead and fires HC004 at the vocabulary() line.",
+      "category": "HC004",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify\nv = vocabulary({\"used\": {\"a\"}, \"dead\": {\"b\"}})\nb = binding({\"used\": \"slot1\"})\nm = classify(tokens, v, bind=b)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC004", "severity": "warning", "line": 2 } ] }
+    },
+    {
+      "id": "HC004-clean-001",
+      "description": "Every base type the vocabulary declares is bound by the paired binding, so no type is dead.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify\nv = vocabulary({\"used\": {\"a\"}})\nb = binding({\"used\": \"slot1\"})\nm = classify(tokens, v, bind=b)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC004-composed-rescue-001",
+      "description": "A base type used in a composed type's requires or captures is not dead even when the binding never binds it, so HC004 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify, composed\nv = vocabulary({\"a\": {\"x\"}, \"b\": {\"y\"}}, composed_types=[composed(\"pair\", {\"a\": \"k\"}, \"b\")])\nb = binding({\"a\": \"s\"})\nm = classify(tokens, v, bind=b)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC005-ghost-key-001",
+      "description": "A binding key that names neither a base type nor a composed type of the paired vocabulary binds a type no token can carry and fires HC005 at the binding() line.",
+      "category": "HC005",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify\nv = vocabulary({\"a\": {\"x\"}})\nb = binding({\"a\": \"slot1\", \"ghost\": \"slot2\"})\nm = classify(tokens, v, bind=b)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC005", "severity": "warning", "line": 3 } ] }
+    },
+    {
+      "id": "HC004-link-union-clean-001",
+      "description": "A link crosses its binding against the union of its accepts and emits vocabularies, so a type bound from either is not dead and nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nacc = vocabulary({\"inn\": {\"x\"}})\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"inn\": \"s1\", \"out\": \"s2\"})\n@link(accepts=acc, emits=emt, binds=b)\ndef f(m):\n    m[\"s2\"] = 1\n    return m\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC010-phantom-001",
+      "description": "A link that declares it emits a type its body never writes to the manifest and does not accept fires HC010; its accepts base type 'inn', bound to no slot, is also dead (HC004).",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nacc = vocabulary({\"inn\": {\"x\"}})\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(accepts=acc, emits=emt, binds=b)\ndef f(m):\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC004", "severity": "warning", "line": 2 }, { "rule": "HC010", "severity": "warning", "line": 6 } ] }
+    },
+    {
+      "id": "HC010-produced-001",
+      "description": "A link whose body writes the manifest slot bound to its emitted type produces that type, so HC010 does not fire; its unbound accepts type 'inn' still fires HC004.",
+      "category": "HC004",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nacc = vocabulary({\"inn\": {\"x\"}})\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(accepts=acc, emits=emt, binds=b)\ndef f(m):\n    m[\"result\"] = 1\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC004", "severity": "warning", "line": 2 } ] }
+    },
+    {
+      "id": "HC010-accepts-rescue-001",
+      "description": "An emitted type the link also accepts is not a phantom emission, so HC010 does not fire; the shared base type is bound, so HC004 is quiet too.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nacc = vocabulary({\"out\": {\"x\"}})\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(accepts=acc, emits=emt, binds=b)\ndef f(m):\n    return m\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC004-vocab-arg-not-name-001",
+      "description": "A classify whose vocabulary argument is a call, not a bare name, resolves to no local construction, so honest-check cannot cross it and nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify, composed, link\nb = binding({\"a\": \"s\"})\nm = classify(tokens, make_v(), bind=b)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC004-vocab-unresolved-001",
+      "description": "A classify whose vocabulary name resolves to no local vocabulary() assignment is skipped, so nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify, composed, link\nb = binding({\"a\": \"s\"})\nm = classify(tokens, undefined_v, bind=b)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC004-emits-unresolved-001",
+      "description": "A link whose emits name resolves to no local vocabulary lists only accepts; the accepts type is bound, so nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify, composed, link\nacc = vocabulary({\"a\": {\"x\"}})\nb = binding({\"a\": \"s\"})\n@link(accepts=acc, emits=ghost, binds=b)\ndef f(m):\n    return m\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC004-pair-dedup-001",
+      "description": "The same vocabulary/binding pair reached from two classify sites is crossed once, so no duplicate findings arise and nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify, composed, link\nv = vocabulary({\"a\": {\"x\"}})\nb = binding({\"a\": \"s\"})\nm1 = classify(t, v, bind=b)\nm2 = classify(t, v, bind=b)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC004-binding-nondict-001",
+      "description": "A binding whose first argument is not a dictionary literal binds no keys, so every base type the paired vocabulary declares is dead and fires HC004.",
+      "category": "HC004",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify, composed, link\nv = vocabulary({\"a\": {\"x\"}})\nb = binding(somevar)\nm = classify(t, v, bind=b)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC004", "severity": "warning", "line": 2 } ] }
+    },
+    {
+      "id": "HC005-binding-splat-001",
+      "description": "A dictionary-splat entry in a binding's key map is not a pair and is skipped; the explicit key is in the vocabulary, so nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify, composed, link\nextra = {}\nv = vocabulary({\"a\": {\"x\"}})\nb = binding({**extra, \"a\": \"s\"})\nm = classify(t, v, bind=b)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC004-composed-variants-001",
+      "description": "A composed_types list carrying a non-composed element and an argument-less composed() yields no composed names, requires or captures; the single base type is bound, so nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify, composed, link\nv = vocabulary({\"a\": {\"x\"}}, composed_types=[notcomposed, composed()])\nb = binding({\"a\": \"s\"})\nm = classify(t, v, bind=b)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC010-binds-unresolved-001",
+      "description": "A link whose binds name resolves to no local binding is skipped by HC010; honest-check cannot cross what it was not handed.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify, composed, link\nacc = vocabulary({\"a\": {\"x\"}})\nemt = vocabulary({\"out\": {\"y\"}})\n@link(accepts=acc, emits=emt, binds=ghostb)\ndef f(m):\n    return m\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC002-union-accepts-001",
+      "description": "A chain link whose accepts is a union (a | b) of vocabularies accepts the union of their base types; a type in the union the previous link does not emit fires HC002.",
+      "category": "HC002",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, chain, link\na = vocabulary({\"x\": {\"1\"}})\nb = vocabulary({\"y\": {\"2\"}})\n@link(accepts=a, emits=a)\ndef one(m):\n    return m\n@link(accepts=a | b, emits=a)\ndef two(m):\n    return m\npipe = chain(one, two)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC002", "severity": "error", "line": 10 } ] }
+    },
+    {
+      "id": "HC002-unresolved-accepts-001",
+      "description": "A chain link whose accepts names no local vocabulary contributes no types, so the seam has nothing missing and HC002 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, chain, link\na = vocabulary({\"x\": {\"1\"}})\n@link(accepts=a, emits=a)\ndef one(m):\n    return m\n@link(accepts=unknownvocab, emits=a)\ndef two(m):\n    return m\npipe = chain(one, two)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC002-extra-decorator-001",
+      "description": "A chained link with an unrelated decorator above its @link still resolves its accepts and emits; the seam agrees, so HC002 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, chain, link\na = vocabulary({\"x\": {\"1\"}})\n@link(accepts=a, emits=a)\ndef one(m):\n    return m\n@app\n@link(accepts=a, emits=a)\ndef two(m):\n    return m\npipe = chain(one, two)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC002-bare-link-001",
+      "description": "A chained link decorated with a bare @link (no call) declares no accepts honest-check can resolve, so the seam has nothing missing and HC002 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, chain, link\na = vocabulary({\"x\": {\"1\"}})\n@link(accepts=a, emits=a)\ndef one(m):\n    return m\n@link\ndef two(m):\n    return m\npipe = chain(one, two)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-HF001-fires-001",
+      "description": "A feature_state call naming a flag absent from the module's FEATURES vocabulary raises KeyError at runtime and fires HC-HF001.",
+      "category": "HC-HF001",
+      "input": { "language": "python", "source": "FEATURES = {\"theme\": {\"states\": {\"light\", \"dark\"}}}\nx = feature_state(s, \"unknown\")\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-HF001", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC-HF001-clean-001",
+      "description": "A feature_state call naming a declared flag resolves, so HC-HF001 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "FEATURES = {\"theme\": {\"states\": {\"light\", \"dark\"}}}\nx = feature_state(s, \"theme\")\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-HF002-fires-001",
+      "description": "A handler table dispatched on a feature flag that lacks an entry for one of the flag's declared states fires HC-HF002.",
+      "category": "HC-HF002",
+      "input": { "language": "python", "source": "FEATURES = {\"theme\": {\"states\": {\"light\", \"dark\"}}}\nHANDLERS = {\"light\": h1}\ny = HANDLERS[feature_state(s, \"theme\")]\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-HF002", "severity": "warning", "line": 3 } ] }
+    },
+    {
+      "id": "HC-HF002-clean-001",
+      "description": "A handler table with an entry for every declared state of the flag it dispatches on is complete, so HC-HF002 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "FEATURES = {\"theme\": {\"states\": {\"light\", \"dark\"}}}\nHANDLERS = {\"light\": h1, \"dark\": h2}\ny = HANDLERS[feature_state(s, \"theme\")]\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-HF001-features-splat-nonstring-001",
+      "description": "A FEATURES literal with a dictionary-splat entry and a non-string key skips both while still reading the declared flag; an unknown feature_state flag still fires HC-HF001.",
+      "category": "HC-HF001",
+      "input": { "language": "python", "source": "base = {}\nFEATURES = {**base, 1: {\"states\": {\"a\"}}, \"theme\": {\"states\": {\"light\"}}}\nx = feature_state(s, \"unknown\")\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-HF001", "severity": "error", "line": 3 } ] }
+    },
+    {
+      "id": "HC-HF-feature-state-one-arg-001",
+      "description": "A feature_state call with fewer than two positionals names no flag, so neither feature-flag rule fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "FEATURES = {\"theme\": {\"states\": {\"light\"}}}\nx = feature_state(s)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-HF002-table-splat-nonstring-001",
+      "description": "A handler table with a dictionary-splat entry and a non-string key still reads its string keys; with every declared state present, HC-HF002 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "FEATURES = {\"theme\": {\"states\": {\"light\", \"dark\"}}}\nextra = {}\nHANDLERS = {**extra, 1: h0, \"light\": h1, \"dark\": h2}\ny = HANDLERS[feature_state(s, \"theme\")]\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-HF002-index-not-call-001",
+      "description": "A table subscript whose index is a plain string, not a feature_state call, is not a feature dispatch, so HC-HF002 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "FEATURES = {\"theme\": {\"states\": {\"light\"}}}\nHANDLERS = {\"light\": h1}\ny = HANDLERS[\"light\"]\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-HF002-unknown-flag-001",
+      "description": "A table dispatched on an undeclared flag is skipped by HC-HF002 (the flag is not in FEATURES); the feature_state call itself still fires HC-HF001.",
+      "category": "HC-HF001",
+      "input": { "language": "python", "source": "FEATURES = {\"theme\": {\"states\": {\"light\"}}}\nHANDLERS = {\"light\": h1}\ny = HANDLERS[feature_state(s, \"other\")]\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-HF001", "severity": "error", "line": 3 } ] }
+    },
+    {
+      "id": "HC-HF002-table-unresolved-001",
+      "description": "A table name that resolves to no module-scope dict literal is skipped by HC-HF002.",
+      "category": "clean",
+      "input": { "language": "python", "source": "FEATURES = {\"theme\": {\"states\": {\"light\", \"dark\"}}}\ny = UNKNOWN[feature_state(s, \"theme\")]\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC002-union-non-vocab-operand-001",
+      "description": "A union accepts whose operand is a call, not a vocabulary name, contributes no types for that operand; the resolved operand's types are all emitted upstream, so HC002 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, chain, link\na = vocabulary({\"x\": {\"1\"}})\n@link(accepts=a, emits=a)\ndef one(m):\n    return m\n@link(accepts=a | make(), emits=a)\ndef two(m):\n    return m\npipe = chain(one, two)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-HF001-inner-variants-001",
+      "description": "A FEATURES flag whose value is not a dict, and a flag whose inner dict has a splat, a non-string key, a non-'states' key and a non-set states value, all read to an empty state set; an unknown feature_state flag still fires HC-HF001.",
+      "category": "HC-HF001",
+      "input": { "language": "python", "source": "extra = {}\nFEATURES = {\"a\": \"notdict\", \"b\": {**extra, 1: 2, \"other\": 3, \"states\": \"notset\"}}\nx = feature_state(s, \"unknown\")\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-HF001", "severity": "error", "line": 3 } ] }
+    },
+    {
+      "id": "HC-HF001-states-set-001",
+      "description": "A FEATURES flag whose inner dict carries a non-'states' key and a 'states' set reads the set of states; an unknown feature_state flag still fires HC-HF001.",
+      "category": "HC-HF001",
+      "input": { "language": "python", "source": "FEATURES = {\"b\": {\"other\": 3, \"states\": {\"on\"}}}\nx = feature_state(s, \"unknown\")\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-HF001", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC-HF002-nonident-module-assign-001",
+      "description": "A module-level assignment whose target is not a bare name is skipped when gathering dict literals; the handler table is still complete, so HC-HF002 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "FEATURES = {\"theme\": {\"states\": {\"light\", \"dark\"}}}\nobj.attr = 1\nHANDLERS = {\"light\": h1, \"dark\": h2}\ny = HANDLERS[feature_state(s, \"theme\")]\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-HF002-obj-not-ident-001",
+      "description": "A subscript whose object is itself a subscript, not a bare table name, is not a handler-table dispatch, so HC-HF002 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "FEATURES = {\"theme\": {\"states\": {\"light\"}}}\nHANDLERS = {\"light\": h1}\ny = data[k][feature_state(s, \"theme\")]\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC010-no-accepts-001",
+      "description": "A link that declares emits and binds but no accepts has no accepts set to rescue a type; the emitted type its body never produces is a phantom emission and fires HC010.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(emits=emt, binds=b)\ndef f(m):\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
+    },
+    {
+      "id": "HC010-accepts-unresolved-001",
+      "description": "A link whose accepts name resolves to no local vocabulary contributes no accepts types to rescue the emitted type, so HC010 fires.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(accepts=ghost, emits=emt, binds=b)\ndef f(m):\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
+    },
+    {
+      "id": "HC010-binding-nondict-001",
+      "description": "A link whose binds first argument is not a dictionary literal yields no slot-to-type inverse, so no type is produced and the emitted type fires HC010.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding(somevar)\n@link(emits=emt, binds=b)\ndef f(m):\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
+    },
+    {
+      "id": "HC010-binding-splat-001",
+      "description": "A dictionary-splat entry in a binding is not a pair and is skipped when inverting slots; the emitted type is still never produced and fires HC010.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nx = {}\nb = binding({**x, \"out\": \"result\"})\n@link(emits=emt, binds=b)\ndef f(m):\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 6 } ] }
+    },
+    {
+      "id": "HC010-slot-nonstring-001",
+      "description": "A binding entry whose slot value is not a string literal contributes no slot-to-type inverse, so the emitted type is never produced and fires HC010.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": 1})\n@link(emits=emt, binds=b)\ndef f(m):\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
+    },
+    {
+      "id": "HC010-splat-param-001",
+      "description": "A link whose first parameter is a splat binds no first-parameter name, so no manifest write is attributed to it and the emitted type fires HC010.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(emits=emt, binds=b)\ndef f(*m):\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
+    },
+    {
+      "id": "HC010-obj-subscript-001",
+      "description": "A manifest-style write whose target object is itself a subscript, not the link's first parameter, produces no tracked slot, so the emitted type fires HC010.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(emits=emt, binds=b)\ndef f(m):\n    d[k][\"result\"] = 1\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
+    },
+    {
+      "id": "HC010-wrong-param-001",
+      "description": "A subscript write on a name other than the link's first parameter does not produce a manifest slot, so the emitted type fires HC010.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(emits=emt, binds=b)\ndef f(m):\n    other[\"result\"] = 1\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
+    },
+    {
+      "id": "HC010-index-nonstring-001",
+      "description": "A subscript write on the first parameter whose index is not a string literal names no manifest slot, so the emitted type fires HC010.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(emits=emt, binds=b)\ndef f(m):\n    m[k] = 1\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
+    },
+    {
+      "id": "HC010-no-params-001",
+      "description": "A link with no parameters has no first parameter to attribute a manifest write to, so the emitted type is never produced and fires HC010.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(emits=emt, binds=b)\ndef f():\n    return 1\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
+    },
+    {
+      "id": "HC010-plain-assignment-body-001",
+      "description": "A link body whose only assignment target is a plain name, not a subscript on the first parameter, produces no manifest slot, so the emitted type fires HC010.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(emits=emt, binds=b)\ndef f(m):\n    z = 1\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
+    },
+    {
+      "id": "HC-SUP-double-disable-001",
+      "description": "A second disable of an already-open rule opens no new range, so it suppresses nothing and fires HC-SUP001; the first disable's range still downgrades the HC-P001 finding to info.",
+      "category": "HC-SUP001",
+      "input": { "language": "python", "source": "# honest: disable HC-P001: reason one\n# honest: disable HC-P001: reason two\ndef f(role):\n    if role == \"a\":\n        return 1\n    elif role == \"b\":\n        return 2\n    elif role == \"c\":\n        return 3\n    return 0\n# honest: enable HC-P001\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P001", "severity": "info", "line": 4 }, { "rule": "HC-SUP001", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC-SUP-enable-no-open-001",
+      "description": "An enable with no matching open disable closes no range and is not itself reported, so nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "# honest: enable HC-P001\ndef f(x):\n    return x\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-SUP-disable-to-eof-001",
+      "description": "A disable with no matching enable holds to end of file, so the HC-P001 finding in its range is downgraded to info.",
+      "category": "HC-SUP",
+      "input": { "language": "python", "source": "# honest: disable HC-P001: reason\ndef f(role):\n    if role == \"a\":\n        return 1\n    elif role == \"b\":\n        return 2\n    elif role == \"c\":\n        return 3\n    return 0\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-P001", "severity": "info", "line": 3 } ] }
+    },
+    {
+      "id": "HC-P016-nested-non-identifier-target-001",
+      "description": "An inner function that assigns to a subscript, not a bare name, declares no mutated plain name, so HC-P016 does not fire.",
+      "category": "clean",
+      "input": { "language": "python", "source": "def outer():\n    def inner():\n        d[\"k\"] = 1\n    return inner\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC005-crossed-vocab-non-dict-001",
+      "description": "A classify pairs a binding with a vocabulary whose first argument is not a dictionary literal, so the vocabulary names no base type and every binding key is unmatched, firing HC005.",
+      "category": "HC005",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify\nv = vocabulary(notdict)\nb = binding({\"a\": \"s\"})\nm = classify(t, v, bind=b)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC005", "severity": "warning", "line": 3 } ] }
+    },
+    {
+      "id": "HC004-composed-requires-splat-crossed-001",
+      "description": "A dictionary-splat entry in a crossed composed type's requires map is not a pair and is skipped; the single base type is used by the composed require and bound, so nothing fires.",
+      "category": "clean",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, classify, composed\nx = {}\nv = vocabulary({\"a\": {\"p\"}}, composed_types=[composed(\"c\", {**x, \"a\": \"y\"})])\nb = binding({\"a\": \"s\"})\nm = classify(t, v, bind=b)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC010-comment-in-params-001",
+      "description": "A comment among a link's parameters is skipped when finding the first parameter, so the real first parameter is read and the emitted type its body never produces fires HC010.",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import vocabulary, binding, link\nemt = vocabulary({\"out\": {\"y\"}})\nb = binding({\"out\": \"result\"})\n@link(emits=emt, binds=b)\ndef f(  # lead comment\n        m):\n    return m\n" },
+      "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
     }
   ]
 }

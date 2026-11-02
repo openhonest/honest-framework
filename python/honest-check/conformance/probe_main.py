@@ -50,4 +50,28 @@ def probe_main():
                 bad.append(
                     f"main over {case['source']!r} -> {code}, expected {case['expect']}"
                 )
+
+    # When run_check routes a declaration-read Fault outward, the door discharges it as
+    # a HonestCheckError carrying the Fault's problem and remedy (the one place a Fault
+    # crosses from a value into a world effect, §HC-R002).
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "m.py"), "w", encoding="utf-8") as fh:
+            fh.write("def present(x):\n    return x\n")
+        buf = io.StringIO()
+        raised = None
+        try:
+            os.chdir(d)
+            with contextlib.redirect_stdout(buf):
+                main(["--declaration", os.path.join(d, "missing.hd"), d])
+        except Exception as exc:
+            raised = exc
+        finally:
+            os.chdir(start)
+        if raised is None:
+            bad.append("main with a missing --declaration did not raise; expected HonestCheckError")
+        elif type(raised).__name__ != "HonestCheckError":
+            bad.append(
+                f"main with a missing --declaration raised {type(raised).__name__}, "
+                f"expected HonestCheckError"
+            )
     return bad

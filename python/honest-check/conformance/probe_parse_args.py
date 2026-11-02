@@ -24,6 +24,13 @@ _CASES = [
         "equals": {"report_mode": True},
         "contains": {},
     },
+    # An unrecognized --format word is resolved back to 'human' at the boundary
+    # (section 2.1): absence and a bad value both become the explicit default.
+    {
+        "argv": ["--format", "xml", "src/"],
+        "equals": {"format": "human", "paths": ["src/"]},
+        "contains": {},
+    },
 ]
 
 

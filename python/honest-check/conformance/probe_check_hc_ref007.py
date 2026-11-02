@@ -29,6 +29,22 @@ _CASES = [
         "callee_hd": "module callee\n\n  boundary_in fn helper : (x: str) -> str\n",
         "want_fire": False,
     },
+    # A seam naming a module and no door (door empty) is skipped: that bare-module
+    # case is HC-REF008's, not this rule's.
+    {
+        "name": "skip a bare-module seam with no door",
+        "caller_hd": 'module caller\n\n  reader fn f : (r: str) -> str side_effect reads "callee."\n',
+        "callee_hd": "module callee\n\n  fn helper : (x: str) -> str\n",
+        "want_fire": False,
+    },
+    # A seam whose named module is not in declarations is skipped, not assumed
+    # absent (§639): the caller names 'missing', only 'callee' is in view.
+    {
+        "name": "skip when the named module is not in view",
+        "caller_hd": 'module caller\n\n  reader fn f : (r: str) -> str side_effect reads "missing.helper"\n',
+        "callee_hd": "module callee\n\n  fn helper : (x: str) -> str\n",
+        "want_fire": False,
+    },
 ]
 
 

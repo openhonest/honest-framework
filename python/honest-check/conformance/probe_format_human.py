@@ -29,6 +29,31 @@ def _report():
     }
 
 
+def _report_no_context():
+    """A one-warning report whose diagnostic carries an empty context, so the
+    format drops the '  | ...' context line rather than rendering it."""
+    return {
+        "diagnostics": [
+            {
+                "rule_id": "HC-P001",
+                "severity": "warning",
+                "message": "if/elif discriminant dispatch",
+                "source_location": "src/y.py:3:1",
+                "context": "",
+                "fixable": False,
+            }
+        ],
+        "errors": 0,
+        "warnings": 1,
+        "infos": 0,
+        "rule_counts": {},
+        "adoption": "Declared",
+        "enforced_count": 50,
+        "total_count": 50,
+        "report_mode": False,
+    }
+
+
 # substrings the rendered human text must contain for a one-error report.
 _WANT = ["Found ", "HC-P003"]
 
@@ -46,4 +71,16 @@ def probe_format_human():
     for want in _WANT:
         if want not in got:
             bad.append(f"format_human(report) is missing {want!r}; got {got!r}")
+
+    # A diagnostic with an empty context renders no '  | ' context line, and the
+    # message line for its rule still appears.
+    no_context = format_human(_report_no_context())
+    if not isinstance(no_context, str):
+        return bad + [f"format_human(no-context report) -> {no_context!r}, expected a string"]
+    if "  | " in no_context:
+        bad.append(
+            f"format_human rendered a context line for an empty context; got {no_context!r}"
+        )
+    if "HC-P001" not in no_context:
+        bad.append(f"format_human(no-context report) is missing 'HC-P001'; got {no_context!r}")
     return bad

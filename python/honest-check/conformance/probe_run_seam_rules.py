@@ -63,6 +63,12 @@ _CASES = [
         "in_scope": ["a", "b"],
         "expect": {"kind": "empty"},
     },
+    {
+        "name": "an in-scope name absent from declarations is skipped",
+        "modules": {"a": _A_REALDOOR, "b": _B_REALDOOR_DOOR},
+        "in_scope": ["a", "b", "ghostmodule"],
+        "expect": {"kind": "empty"},
+    },
 ]
 
 

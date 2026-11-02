@@ -19,6 +19,12 @@ _CASES = [
         "toml": None,
         "expect": {},
     },
+    # A honest-check.toml that exists but sets no HC-OR003 min_run resolves to the
+    # empty map: there is nothing to fill in, and min_run has no default.
+    {
+        "toml": "[rules]\n",
+        "expect": {},
+    },
 ]
 
 

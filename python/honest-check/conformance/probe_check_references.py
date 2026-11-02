@@ -82,6 +82,63 @@ _CASES = [
         ],
         "want": [],
     },
+    # A file of an unplaceable extension is ignored, and a jinja tag that is not
+    # include/extends ({% if %}) carries no template target to resolve.
+    {
+        "name": "unplaceable file and non-include jinja tag are ignored",
+        "sources": [
+            {"path": "notes.txt", "text": "hello\n"},
+            {"path": "main.html", "text": "{% if x %}y{% endif %}\n"},
+        ],
+        "want": [],
+    },
+    # HTML attributes that are not class, an empty class value, and a class attribute
+    # with no value all carry no static class token to resolve.
+    {
+        "name": "non-class, empty, and valueless class attributes carry no token",
+        "sources": [
+            {
+                "path": "m.html",
+                "text": '<div id="q">z</div>\n<p class="">y</p>\n<span class>w</span>\n',
+            },
+        ],
+        "want": [],
+    },
+    # classList-shaped JavaScript that is not actually a classList.<method>(literal)
+    # call contributes no class token: a plain call, a non-classList method, an
+    # identifier receiver, the wrong receiver property, and a dynamic argument.
+    {
+        "name": "non-classList script calls contribute no class token",
+        "sources": [
+            {
+                "path": "a.js",
+                "text": 'foo("card");\nel.classList.sort("card");\nobj.add("card");\n'
+                "el.other.add(\"card\");\nel.classList.add(variant);\n",
+            },
+        ],
+        "want": [],
+    },
+    # className assignments that are not a string literal to a `.className` member:
+    # a plain name target, a non-string right side, and the wrong property.
+    {
+        "name": "non-className script assignments contribute no class token",
+        "sources": [
+            {
+                "path": "b.js",
+                "text": 'x = "card";\nel.className = foo;\nel.other = "card";\n',
+            },
+        ],
+        "want": [],
+    },
+    # HC-REF003 fires — a script assigns the literal class "card" to .className and no
+    # stylesheet defines it.
+    {
+        "name": "HC-REF003 fires (script className assignment undefined)",
+        "sources": [
+            {"path": "c.js", "text": 'el.className = "card";\n'},
+        ],
+        "want": [("HC-REF003", "error", "c.js")],
+    },
 ]
 
 

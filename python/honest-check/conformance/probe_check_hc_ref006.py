@@ -37,6 +37,14 @@ _CASES = [
         "callee_hd": None,
         "want_fire": False,
     },
+    # A seam naming a module and no door (door empty) is HC-REF008's case, not
+    # this rule's, so HC-REF006 skips it even though callee is in view.
+    {
+        "name": "skip a bare-module seam with no door",
+        "caller_hd": 'module caller\n\n  reader fn f : (r: str) -> str side_effect reads "callee."\n',
+        "callee_hd": "module callee\n\n  boundary_in fn door : (x: str) -> str\n",
+        "want_fire": False,
+    },
 ]
 
 

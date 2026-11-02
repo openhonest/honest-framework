@@ -172,6 +172,24 @@ _OR003_SHORT = (
     "    b = step_two(a)\n"
     "    return other(b)\n"
 )
+# A shared sequence that repeats a call name, so the longest-run dynamic program meets a
+# later match that does not beat the best run already found: flow_a and flow_b both call
+# step_one, step_two, step_one. The shared run is two (step_one, step_two), and the trailing
+# step_one match does not extend it.
+_OR003_REPEAT = (
+    "@orchestrator\n"
+    "def flow_a(x):\n"
+    "    a = step_one(x)\n"
+    "    b = step_two(a)\n"
+    "    c = step_one(b)\n"
+    "    return c\n"
+    "@orchestrator\n"
+    "def flow_b(x):\n"
+    "    a = step_one(x)\n"
+    "    b = step_two(a)\n"
+    "    c = step_one(b)\n"
+    "    return other(c)\n"
+)
 _OR003_CASES = [
     {"source": _OR003_SHARED, "rule_config": {"HC-OR003": {"min_run": 3}}, "want": True,
      "why": "two orchestrators share a run of three consecutive calls and min_run is 3"},
@@ -179,6 +197,8 @@ _OR003_CASES = [
      "why": "min_run is not set, so HC-OR003 does not run at all"},
     {"source": _OR003_SHORT, "rule_config": {"HC-OR003": {"min_run": 3}}, "want": False,
      "why": "the shared run is only two calls, below min_run 3"},
+    {"source": _OR003_REPEAT, "rule_config": {"HC-OR003": {"min_run": 2}}, "want": True,
+     "why": "the shared run of two repeats a call name, so a later match does not beat the best run"},
 ]
 
 

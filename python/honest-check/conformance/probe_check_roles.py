@@ -86,6 +86,69 @@ _CASES = [
         "hd": None,
         "want": [],
     },
+    # A decorated top-level node that is not a function (a decorated class) is not a
+    # function and contributes no fact; the roled handler keeps the rule in use.
+    {
+        "name": "decorated non-function top node is skipped",
+        "sources": [
+            {
+                "path": "m.py",
+                "text": "@boundary\ndef handler(m):\n    return m\n\n\n@deco\nclass C:\n    pass\n",
+            },
+        ],
+        "hd": None,
+        "want": [],
+    },
+    # A call whose function is a dotted name (obj.method()) is not a plain-identifier
+    # call and names no local function; the roled handler still reaches helper.
+    {
+        "name": "dotted call contributes no call-graph edge",
+        "sources": [
+            {
+                "path": "m.py",
+                "text": "@boundary\ndef handler(m):\n    obj.method()\n    return helper(m)\n\n\ndef helper(m):\n    return m\n",
+            },
+        ],
+        "hd": None,
+        "want": [],
+    },
+    # A source file that does not parse contributes no facts (a parse failure is
+    # HC-SYN's finding); the valid file's roled handler is clean.
+    {
+        "name": "a non-parsing source file contributes nothing",
+        "sources": [
+            {"path": "bad.py", "text": "def (:\n"},
+            {"path": "m.py", "text": "@boundary\ndef handler(m):\n    return m\n"},
+        ],
+        "hd": None,
+        "want": [],
+    },
+    # Two roled handlers both reach one shared helper, so the reachability walk meets
+    # an already-reached callee on the second handler; shared is reached and clean.
+    {
+        "name": "shared callee reached from two roled functions",
+        "sources": [
+            {
+                "path": "m.py",
+                "text": "@boundary\ndef a(m):\n    return shared(m)\n\n\n@boundary\ndef b(m):\n    return shared(m)\n\n\ndef shared(m):\n    return m\n",
+            },
+        ],
+        "hd": None,
+        "want": [],
+    },
+    # A call inside a nested def belongs to that inner scope, not the roled handler,
+    # so the handler's own call set is read without descending into the nested def.
+    {
+        "name": "nested def body is not read as the outer function's",
+        "sources": [
+            {
+                "path": "m.py",
+                "text": "@boundary\ndef handler(m):\n    def inner():\n        return orphanlike()\n    return m\n",
+            },
+        ],
+        "hd": None,
+        "want": [],
+    },
 ]
 
 

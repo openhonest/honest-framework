@@ -53,4 +53,24 @@ def probe_discover_files():
                     f"discover_files exclude={case['exclude']} -> basenames {sorted(bases)}, "
                     f"should not contain {sorted(present)}"
                 )
+
+    # A direct file path of an unrecognized extension is dropped, and a recognized
+    # one is kept: discover_files judges an explicit file, not only a walked dir.
+    with tempfile.TemporaryDirectory() as root:
+        _build_tree(root)
+        a_py = os.path.join(root, "a.py")
+        b_txt = os.path.join(root, "b.txt")
+        got = discover_files([a_py, b_txt], [])
+        bases = {os.path.basename(p) for p in got} if isinstance(got, list) else None
+        if bases != {"a.py"}:
+            bad.append(
+                f"discover_files([a.py, b.txt], []) -> {got!r}, expected only a.py kept"
+            )
+
+    # A path that is neither a file nor a directory yields nothing.
+    with tempfile.TemporaryDirectory() as root:
+        missing = os.path.join(root, "does-not-exist.py")
+        got = discover_files([missing], [])
+        if got != []:
+            bad.append(f"discover_files([missing]) -> {got!r}, expected []")
     return bad

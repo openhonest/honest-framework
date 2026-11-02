@@ -19,6 +19,9 @@ _CLASS_SOURCE = "class Report:\n    pass\n"
 _CASES = [
     {"on_error": "warn", "severity": "error", "want_rule": "HC-P003", "should_raise": False},
     {"on_error": "raise", "severity": "error", "should_raise": True},
+    # An on_error word in none of the outcomes is a program bug the door names, not a
+    # default: startup_check raises HonestCheckError before it even weighs the findings.
+    {"on_error": "bogus", "severity": "error", "should_raise": True},
 ]
 
 
@@ -76,4 +79,27 @@ def probe_startup_check():
                             f"startup_check([{path!r}], 'warn', 'error') -> rule_ids {rule_ids}, "
                             f"expected one to be {case['want_rule']!r}"
                         )
+
+    # on_error 'halt' with a blocking finding exits the process: startup_check raises
+    # SystemExit(1). SystemExit is not an Exception, so it needs its own catch.
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "source.py")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_CLASS_SOURCE)
+        stderr = io.StringIO()
+        raised = None
+        try:
+            with contextlib.redirect_stderr(stderr):
+                startup_check([path], "halt", "error")
+        except SystemExit as exc:
+            raised = exc
+        if raised is None:
+            bad.append(
+                f"startup_check([{path!r}], 'halt', 'error') did not exit; expected SystemExit(1)"
+            )
+        elif raised.code != 1:
+            bad.append(
+                f"startup_check([{path!r}], 'halt', 'error') exited with code {raised.code!r}, "
+                f"expected 1"
+            )
     return bad
