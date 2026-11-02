@@ -141,6 +141,64 @@ def _declaration_failures(check_source):
     return bad
 
 
+# ---- HC-OR003, suspected duplication between orchestrators (section 3.1, §HC-OR003) ----
+# A soft warning: two orchestrators that share a run of min_run or more consecutive equivalent
+# calls. min_run has no built-in default and reaches check_source only through rule_config, so
+# the rule runs only when a project sets [rules.HC-OR003] min_run. These cases pass that config
+# directly, which the single-source suite (always an empty config) cannot, so they live here.
+_OR003_SHARED = (
+    "@orchestrator\n"
+    "def flow_a(x):\n"
+    "    a = step_one(x)\n"
+    "    b = step_two(a)\n"
+    "    c = step_three(b)\n"
+    "    return c\n"
+    "@orchestrator\n"
+    "def flow_b(x):\n"
+    "    a = step_one(x)\n"
+    "    b = step_two(a)\n"
+    "    c = step_three(b)\n"
+    "    return other(c)\n"
+)
+_OR003_SHORT = (
+    "@orchestrator\n"
+    "def flow_a(x):\n"
+    "    a = step_one(x)\n"
+    "    b = step_two(a)\n"
+    "    return b\n"
+    "@orchestrator\n"
+    "def flow_b(x):\n"
+    "    a = step_one(x)\n"
+    "    b = step_two(a)\n"
+    "    return other(b)\n"
+)
+_OR003_CASES = [
+    {"source": _OR003_SHARED, "rule_config": {"HC-OR003": {"min_run": 3}}, "want": True,
+     "why": "two orchestrators share a run of three consecutive calls and min_run is 3"},
+    {"source": _OR003_SHARED, "rule_config": {}, "want": False,
+     "why": "min_run is not set, so HC-OR003 does not run at all"},
+    {"source": _OR003_SHORT, "rule_config": {"HC-OR003": {"min_run": 3}}, "want": False,
+     "why": "the shared run is only two calls, below min_run 3"},
+]
+
+
+def _or003_failures(check_source):
+    """HC-OR003 warns when two orchestrators share a run of min_run or more consecutive
+    equivalent calls, and runs only when min_run is set in rule_config. Read as the presence
+    of an HC-OR003 finding, so the cases do not depend on source columns."""
+    bad = []
+    for case in _OR003_CASES:
+        got = check_source(case["source"], "o.py", case["rule_config"], None)
+        fired = any(d.get("rule_id") == "HC-OR003" for d in got)
+        if fired != case["want"]:
+            bad.append(
+                f"check_source over the two-orchestrator source where {case['why']}: "
+                f"HC-OR003 {'fired' if fired else 'did not fire'}, expected it to "
+                f"{'fire' if case['want'] else 'not fire'}"
+            )
+    return bad
+
+
 def probe_check_source():
     try:
         from honest_check import check_source
@@ -166,4 +224,5 @@ def probe_check_source():
             )
     bad.extend(_watchlist_failures(check_source))
     bad.extend(_declaration_failures(check_source))
+    bad.extend(_or003_failures(check_source))
     return bad

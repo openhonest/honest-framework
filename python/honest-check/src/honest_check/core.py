@@ -1270,6 +1270,67 @@ def check_source(source, path, rule_config, declaration):
                 )
         return findings
 
+    def longest_shared_run(calls_a, calls_b):
+        """The length of the longest run of consecutive equivalent call names two call
+        sequences share (§HC-OR003). A contiguous common substring over the two lists, found
+        by the standard row-by-row dynamic program; 0 when they share no adjacent run."""
+        best = 0
+        previous = [0] * (len(calls_b) + 1)
+        for name_a in calls_a:
+            current = [0] * (len(calls_b) + 1)
+            for index, name_b in enumerate(calls_b, start=1):
+                if name_a == name_b:
+                    current[index] = previous[index - 1] + 1
+                    if current[index] > best:
+                        best = current[index]
+            previous = current
+        return best
+
+    def check_hc_or003():
+        """HC-OR003: two orchestrators that share a run of `min_run` or more consecutive
+        equivalent calls — latent duplication evolving toward a shared pattern the architecture
+        would extract (§HC-OR003). A soft warning. `min_run` has no built-in default: it reaches
+        the rule only through rule_config, and when it is absent the rule does not run and emits
+        nothing, so a chosen threshold is never confused with one nobody set. Each orchestrator's
+        body is normalized to the sequence of call names it makes, in source order; the shared
+        run is the longest contiguous common run of those names. Reported once per pair, at the
+        later orchestrator's `def` line."""
+        min_run = rule_config.get("HC-OR003", {}).get("min_run")
+        if min_run is None:
+            return []
+        orchestrators = []
+        for node in nodes:
+            if node.type != "function_definition" or not is_orchestrator(node):
+                continue
+            name_node = node.child_by_field_name("name")
+            name = name_node.text.decode("utf-8") if name_node else "<orchestrator>"
+            calls = [
+                called_name(statement)
+                for statement in own_body(node)
+                if statement.type == "call"
+            ]
+            orchestrators.append((node, name, calls))
+        findings = []
+        for (_node_a, name_a, calls_a), (node_b, name_b, calls_b) in itertools.combinations(
+            orchestrators, 2
+        ):
+            run = longest_shared_run(calls_a, calls_b)
+            if run < min_run:
+                continue
+            findings.append(
+                diagnostic(
+                    "HC-OR003",
+                    "warning",
+                    f"Orchestrators {name_a!r} and {name_b!r} share {run} consecutive "
+                    "operations. Consider extracting the shared sequence as a pure helper "
+                    "(if side-effect-free) or as a chain (if I/O is involved). Orchestrators "
+                    "are not composable (HC-OR001); reusable orchestration logic belongs in "
+                    "helpers or chains.",
+                    node_b,
+                )
+            )
+        return findings
+
     def link_declares_emits(fdef):
         """True when a function carries a `@link` decorator that passes an `emits` keyword — the
         emits vocabulary HC-P017 requires of an HTTP-producing link (§HC-P017). Read the same
@@ -1876,6 +1937,7 @@ def check_source(source, path, rule_config, declaration):
         check_hc001,
         check_hc002,
         check_hc_or001,
+        check_hc_or003,
         check_p017,
         check_hc004,
         check_hc005,
