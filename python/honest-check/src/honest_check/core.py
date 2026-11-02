@@ -1561,6 +1561,157 @@ def check_source(source, path, rule_config):
             )
         return findings
 
+    def features_vocabulary():
+        """The feature-flag vocabulary this module declares: each flag name mapped to the set
+        of states its `FEATURES[flag]["states"]` set names (§7, HC-HF001/HC-HF002). Read only
+        from a module-scope `FEATURES = {...}` dict literal — the same top-level-assignment
+        walk module_mutable_globals uses. Absent such a literal, an empty map, so both
+        feature-flag rules have nothing to verify against and fire nothing (the spec's 'IF
+        features is empty: RETURN')."""
+        for top in root.named_children:
+            node = top
+            if top.type == "expression_statement" and top.named_children:
+                node = top.named_children[0]
+            if node.type != "assignment":
+                continue
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            if left is None or right is None or left.type != "identifier":
+                continue
+            if left.text.decode("utf-8") != "FEATURES" or right.type != "dictionary":
+                continue
+            features = {}
+            for pair in right.named_children:
+                if pair.type != "pair":
+                    continue
+                key = pair.child_by_field_name("key")
+                if key is None or key.type != "string":
+                    continue
+                value = pair.child_by_field_name("value")
+                states = set()
+                if value is not None and value.type == "dictionary":
+                    for inner in value.named_children:
+                        if inner.type != "pair":
+                            continue
+                        inner_key = inner.child_by_field_name("key")
+                        if inner_key is None or inner_key.type != "string":
+                            continue
+                        if literal_string(inner_key) != "states":
+                            continue
+                        inner_value = inner.child_by_field_name("value")
+                        if inner_value is not None and inner_value.type == "set":
+                            states = set(string_members(inner_value))
+                features[literal_string(key)] = states
+            return features
+        return {}
+
+    def feature_state_flag(call_node):
+        """The flag a `feature_state(state, "flag")` call names — its second positional, a
+        string literal — or None when the call names fewer than two positionals or a dynamic
+        (non-literal) flag (§7). The call is resolved by name through called_name."""
+        if called_name(call_node) != "feature_state":
+            return None
+        positionals, _keywords = call_arguments(call_node)
+        if len(positionals) < 2 or positionals[1].type != "string":
+            return None
+        return literal_string(positionals[1])
+
+    def module_dict_literals():
+        """Each module-scope name bound to a dict literal, mapped to the set of string keys the
+        literal declares (§7, HC-HF002). A name bound to anything but a module-scope dict
+        literal is not here, so a handler table that resolves to no such name is skipped."""
+        tables = {}
+        for top in root.named_children:
+            node = top
+            if top.type == "expression_statement" and top.named_children:
+                node = top.named_children[0]
+            if node.type != "assignment":
+                continue
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            if left is None or right is None or left.type != "identifier":
+                continue
+            if right.type != "dictionary":
+                continue
+            keys = set()
+            for pair in right.named_children:
+                if pair.type != "pair":
+                    continue
+                key = pair.child_by_field_name("key")
+                if key is not None and key.type == "string":
+                    keys.add(literal_string(key))
+            tables[left.text.decode("utf-8")] = keys
+        return tables
+
+    def check_hf001():
+        """HC-HF001: a `feature_state(state, "flag")` call whose flag is not a key of the
+        module's FEATURES vocabulary — an undeclared flag that raises KeyError at runtime (§7).
+        Reported at the call's line. When FEATURES is not a readable module-scope dict literal
+        the vocabulary is empty and the rule fires nothing."""
+        features = features_vocabulary()
+        if not features:
+            return []
+        findings = []
+        for node in nodes:
+            if node.type != "call":
+                continue
+            flag = feature_state_flag(node)
+            if flag is None or flag in features:
+                continue
+            findings.append(
+                diagnostic(
+                    "HC-HF001",
+                    "error",
+                    f"feature_state references {flag!r}, which is not a declared flag in "
+                    "FEATURES.",
+                    node,
+                )
+            )
+        return findings
+
+    def check_hf002():
+        """HC-HF002: a handler-table dispatch `TABLE[feature_state(state, "flag")]` whose table
+        dict literal is missing an entry for one of the flag's FEATURES-declared states — that
+        state raises KeyError when the flag enters it (§7). The subscript's index is a
+        feature_state call naming a declared flag, and its object is a module-scope name bound
+        to a dict literal. Reported at the subscript's line. When FEATURES is not a readable
+        module-scope dict literal, or the table resolves to no module-scope dict literal, the
+        rule fires nothing."""
+        features = features_vocabulary()
+        if not features:
+            return []
+        tables = module_dict_literals()
+        findings = []
+        for node in nodes:
+            if node.type != "subscript":
+                continue
+            obj = node.child_by_field_name("value")
+            index = node.child_by_field_name("subscript")
+            if obj is None or index is None or obj.type != "identifier":
+                continue
+            if index.type != "call":
+                continue
+            flag = feature_state_flag(index)
+            if flag is None or flag not in features:
+                continue
+            table = tables.get(obj.text.decode("utf-8"))
+            if table is None:
+                continue
+            missing = features[flag] - table
+            if not missing:
+                continue
+            findings.append(
+                diagnostic(
+                    "HC-HF002",
+                    "warning",
+                    f"Handler table {obj.text.decode('utf-8')!r} dispatched on feature "
+                    f"{flag!r} has no entry for state(s) {sorted(missing)}; the flag entering "
+                    "that state raises KeyError. Add the missing entry, or handle the state.",
+                    node,
+                )
+            )
+        return findings
+
     # The per-file AST rules: each reads the shared `nodes` once-walked above and returns its
     # findings as data. check_source folds the tuple in one pass, so adding a per-file rule is
     # adding a row. HC-P003 (check_classes) is the first row. The construction-rule dispatch
@@ -1583,6 +1734,8 @@ def check_source(source, path, rule_config):
         check_hc004,
         check_hc005,
         check_hc010,
+        check_hf001,
+        check_hf002,
     )
 
     def parse_directive(comment_node):

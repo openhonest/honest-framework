@@ -438,6 +438,41 @@
       "expected": { "diagnostics": [] }
     },
     {
+      "id": "HC-HF001-001",
+      "description": "A feature_state call naming a flag absent from FEATURES raises KeyError at runtime.",
+      "category": "HC-HF001",
+      "input": { "language": "python", "source": "FEATURES = {\"dark_mode\": {\"states\": {\"on\", \"off\"}, \"initial_value\": \"off\"}}\nresult = feature_state(state, \"new_checkout\")\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-HF001", "severity": "error", "line": 2 } ] }
+    },
+    {
+      "id": "HC-HF001-clean-001",
+      "description": "A feature_state call naming a declared flag is clean.",
+      "category": "HC-HF001",
+      "input": { "language": "python", "source": "FEATURES = {\"dark_mode\": {\"states\": {\"on\", \"off\"}, \"initial_value\": \"off\"}}\nresult = feature_state(state, \"dark_mode\")\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-HF001-clean-002",
+      "description": "With no readable FEATURES dict literal in the module, HF001 has nothing to verify against and fires nothing.",
+      "category": "HC-HF001",
+      "input": { "language": "python", "source": "result = feature_state(state, \"anything\")\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
+      "id": "HC-HF002-001",
+      "description": "A handler table dispatched on a flag state misses an entry for one of the flag's declared states, so that state raises KeyError.",
+      "category": "HC-HF002",
+      "input": { "language": "python", "source": "FEATURES = {\"new_checkout\": {\"states\": {\"on\", \"off\"}, \"initial_value\": \"off\"}}\nCHECKOUT_HANDLERS = {\"on\": handle_on}\ndef view(state, manifest):\n    return CHECKOUT_HANDLERS[feature_state(state, \"new_checkout\")](manifest)\n" },
+      "expected": { "diagnostics": [ { "rule": "HC-HF002", "severity": "warning", "line": 4 } ] }
+    },
+    {
+      "id": "HC-HF002-clean-001",
+      "description": "A handler table with an entry for every declared state of the flag is clean.",
+      "category": "HC-HF002",
+      "input": { "language": "python", "source": "FEATURES = {\"new_checkout\": {\"states\": {\"on\", \"off\"}, \"initial_value\": \"off\"}}\nCHECKOUT_HANDLERS = {\"on\": handle_on, \"off\": handle_off}\ndef view(state, manifest):\n    return CHECKOUT_HANDLERS[feature_state(state, \"new_checkout\")](manifest)\n" },
+      "expected": { "diagnostics": [] }
+    },
+    {
       "id": "clean-001",
       "description": "Plain honest code fires nothing.",
       "category": "clean",
