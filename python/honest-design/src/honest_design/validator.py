@@ -236,7 +236,7 @@ def _held_not_read(module):
     handles = _handles(module)
     faults = []
     for f in module["functions"]:
-        if f["role"] != "fn":
+        if f["role"] not in PURE_ROLES:
             continue
         named = _type_names(f["ret"])
         for p in f["params"]:
@@ -273,6 +273,11 @@ def _callees(module):
 # place an exception is permitted (framework spec: "Faults as data through chains, exceptions only
 # at boundary", stated there in four places).
 BOUNDARY_ROLES = frozenset({"boundary_in", "boundary_out"})
+
+# The pure roles: a plain fn and an edge. An edge is a pure function a module with boundaries
+# exposes as an import surface, so it keeps every pure discipline — it declares no side effect
+# and names no handle — and differs from a fn only in that the world reaches it by import.
+PURE_ROLES = frozenset({"fn", "edge"})
 
 
 def _fault_swallowed(module):
@@ -514,11 +519,11 @@ def _unawaited_caller(module):
 
 
 def _impure_pure_functions(module):
-    """A pure `fn` declares no side effect — only a boundary may."""
+    """A pure `fn` or `edge` declares no side effect — only a boundary may."""
     return [
         fault("impure_pure_function", f"Pure function '{f['name']}' declares a side effect", "server", {"function": f["name"]})
         for f in module["functions"]
-        if f["role"] == "fn" and f["side_effects"]
+        if f["role"] in PURE_ROLES and f["side_effects"]
     ]
 
 

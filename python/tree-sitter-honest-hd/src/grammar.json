@@ -1079,6 +1079,10 @@
         {
           "type": "STRING",
           "value": "orchestrator"
+        },
+        {
+          "type": "STRING",
+          "value": "edge"
         }
       ]
     },

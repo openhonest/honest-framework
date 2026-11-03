@@ -78,6 +78,12 @@ def arrivals(declarations) -> list:
     function is the right arrival, not a missing door. The rule guards a module that HAS boundaries
     against an entry that reaches past them, so a module that declares none has nothing for it to
     guard. That an import names a function this package exports is still checked, in findings.
+
+    An `edge` is the second exception, and it is for the hybrid the first does not cover: a module
+    that HAS boundaries and also publishes a pure import surface. honest-check is one, exposing five
+    extraction functions honest-test imports. An edge is a pure function the world reaches by import,
+    so an entry landing on one is the right arrival, the same as for a pure library, declared
+    per-function by the role rather than inferred from the whole module having no boundary.
     """
     out = []
     for package, module, entries, roles in declarations:
@@ -85,7 +91,11 @@ def arrivals(declarations) -> list:
             continue
         for entry in entries:
             target, role = entry["target"], roles.get(entry["target"])
-            if role is None or role in ("boundary_in", "reader"):
+            # An edge is a pure function the module exposes as an import surface, so the world
+            # reaching it by import is the right arrival, not a door bypassed. It is the hybrid of
+            # the pure-library case: a module with boundaries may still publish a pure import edge,
+            # and the edge role is where the author put that on the record.
+            if role is None or role in ("boundary_in", "reader", "edge"):
                 continue
             kind = ("an orchestrator, so the door the world should arrive at is missing"
                     if role == "orchestrator" else

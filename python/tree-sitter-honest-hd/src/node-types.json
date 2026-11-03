@@ -1154,6 +1154,10 @@
     "named": false
   },
   {
+    "type": "edge",
+    "named": false
+  },
+  {
     "type": "entry",
     "named": false
   },

@@ -62,7 +62,9 @@ The reference implementation is `python/honest-design/`, with the tree-sitter `.
 | 3. Pure functions | The grid of pure transforms — recognizers, classifiers, folds | `fn ...` |
 | 4. Output boundary | Writes to the outside world — responses, persistence, event emits | `boundary_out fn ... side_effect writes "..."` |
 
-Every declared function carries its column in its **role keyword**: `boundary_in` (column 1), `orchestrator` (column 2), `fn` (column 3), `boundary_out` (column 4). The role is not decoration — it is a claim the validator and honest-check enforce: a plain `fn` that does I/O is a violation; an `orchestrator` that reaches the outside world off a boundary is a violation; only a `boundary_in`/`boundary_out` function may name a `side_effect`.
+Every declared function carries its column in its **role keyword**: `boundary_in` (column 1), `reader` (column 1), `orchestrator` (column 2), `fn` (column 3), `boundary_out` (column 4), `edge` (column 1). The role is not decoration — it is a claim the validator and honest-check enforce: a plain `fn` that does I/O is a violation; an `orchestrator` that reaches the outside world off a boundary is a violation; only a `boundary_in`/`boundary_out` function may name a `side_effect`.
+
+An `edge` is a pure function a module with boundaries exposes as an import surface: the world reaches it by import, named by an `entry`, it may call into the core, and nothing inside the module invokes it. It keeps every pure discipline — a side effect on it or a handle in its signature is a violation, exactly as for a plain `fn` — and differs from a `fn` only in that the world arrives at it directly. It stands in column 1 with the doors because it is a way in, drawn under its own "imported (pure)" heading. A boundary-less pure library does not need `edge`: its whole surface is already exempt because it has no door for the world to bypass. `edge` is for the hybrid, a module that has real boundaries and also publishes a pure import surface.
 
 **The four columns are the functions. `.hd` also names the data those functions move and the sources they pull it from.** A **type** is a named shape a value must match. It is a record of named fields, a union of alternatives, or a vocabulary, which is a closed set of allowed words (§3). A **data structure** is a record type: the shape of a request, a result, or a row, named once and used by that name wherever it crosses a column, so the file says what passes between the functions and not only that something passes. A **source** is a thing outside the module that a function pulls a value from rather than receiving it as an argument, such as the clock, the schema the database holds, a file, or an environment variable. A reader names the source it pulls from, and the orchestrator that needs the value invokes the reader. So a reader of the file sees the whole architecture: the functions by column, the types and data structures they move, and the sources they pull from.
 
@@ -182,7 +184,7 @@ Store    = { name, fn, why }      # fn: the pure function whose answers are held
 Function = { name, role, params, ret, side_effects, invokes, raises, column, note, awaited }
              # note: the declaration's note, "" when it has none; also on Module, TypeDecl, Env, SetDecl, Vocabulary, Dispatch, Chain
              # awaited: false when the word is absent. Absence alone cannot tell a function nobody awaits from one whose author had no word for it, so honest-check HC-R003 verifies it against the code: an async def declared without the word, or the word on a plain def, is a fault. The default is verified, not assumed.
-             # role: "boundary_in" | "orchestrator" | "fn" | "boundary_out"
+             # role: "boundary_in" | "reader" | "orchestrator" | "fn" | "boundary_out" | "edge"
              # params: [ { name, type } ] ; ret: type (possibly a union)
              # side_effects: [ { direction: "reads"|"writes"|"reads_writes", target } ]
              # invokes, raises: [ name ]
@@ -193,7 +195,7 @@ Example  = { name, chain, text }
 
 Two workspace files fold into their own IR: `Rule = { id, module, statement }` (module is null for a global rule) and `Flow = { name, group, steps }` with `Actor = { name }` for the non-module participants.
 
-`column` is derived from the role keyword, not authored: `boundary_in → 1`, `reader → 1`, `orchestrator → 2`, `fn → 3`, `boundary_out → 4`. Deriving it in the reader keeps the diagram and the checks reading one field, so they cannot disagree about where a function sits. The IR is byte-stable for a given `.hd` file across every language target.
+`column` is derived from the role keyword, not authored: `boundary_in → 1`, `reader → 1`, `orchestrator → 2`, `fn → 3`, `boundary_out → 4`, `edge → 1`. Deriving it in the reader keeps the diagram and the checks reading one field, so they cannot disagree about where a function sits. The IR is byte-stable for a given `.hd` file across every language target.
 
 ---
 

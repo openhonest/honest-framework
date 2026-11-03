@@ -348,6 +348,8 @@ FUNCTION matches_watchlist(name, watchlist) -> bool
 
 `ChainDecl`, `MachineDecl`, and `ClassRef` are records (a name, and for a chain its ordered link names). The functions open no file and execute none of the code they read; a construct that cannot be recognized is absent from the returned list, never an exception. honest-test's runner calls `resolve_aliases` once per file, then `extract_chains` and `extract_state_machines` with that alias map, binds each returned name to a live object through the imported module, and enumerates it.
 
+**These five functions carry the `edge` role.** honest-check is a hybrid: a tool with real boundaries (`startup_check`, `main`, the readers) that also publishes this pure import surface, which honest-test reaches directly by `import`. Declaring each as a plain `fn` left the world arriving at a pure function with no door between, which the declaration gate reads as the core reached past its boundaries. An `edge` is the honest name for that surface: a pure function (no I/O, every pure discipline enforced) that the world reaches by import, named by an `entry`. It is not a `boundary_in`, because no I/O happens at it, and the no-boundary library exemption does not apply, because honest-check has doors. The declaration gate accepts an `entry` landing on an `edge` as a valid arrival, and the map draws it on the input side under an "imported (pure)" heading, so every way into the module stays a named seam. The role is defined in honest-design's architecture (§ the role keywords).
+
 ---
 
 ## 4. Rules by Firing Time

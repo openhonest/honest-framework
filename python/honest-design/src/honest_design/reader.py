@@ -123,7 +123,10 @@ def _read_example(node, source) -> ir.Example:
 
 # --- functions -----------------------------------------------------------------
 
-_ROLE_COLUMN = {"boundary_in": 1, "reader": 1, "orchestrator": 2, "boundary_out": 4}
+# edge stands on the input side (column 1) with the doors and readers: it is a way into the
+# module, a pure function the world reaches by import. It differs from a door in that no I/O
+# happens at it, and build-map sections it under its own "imported (pure)" heading.
+_ROLE_COLUMN = {"boundary_in": 1, "reader": 1, "orchestrator": 2, "boundary_out": 4, "edge": 1}
 
 
 def _read_param(node, source) -> ir.Param:

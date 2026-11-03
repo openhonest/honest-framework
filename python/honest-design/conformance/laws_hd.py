@@ -1010,8 +1010,36 @@ def _probe_couples_on():
     return bad
 
 
+def _probe_edge():
+    """An edge is a pure function a module with boundaries exposes as an import surface. It folds
+    to role 'edge' in column 1 with the doors, renders there so a reader counts it among the
+    module's entrances, keeps the pure discipline (a side effect on it is impure, a handle in its
+    signature is read), and validates clean when the world reaches it by an import entry."""
+    bad = []
+    src = ('module m\n  type Node = foreign "tree-sitter"\n'
+           '  edge fn resolve : (root: Node) -> str note "test"\n'
+           '  entry "import m.g" -> resolve\n')
+    m = _module(src)
+    fn = {f["name"]: f for f in m["functions"]}["resolve"]
+    if (fn["role"], fn["column"]) != ("edge", 1):
+        bad.append(f"an edge should fold to role 'edge' in column 1: {(fn['role'], fn['column'])}")
+    if validate(m) != []:
+        bad.append(f"an edge reached by an import entry validates clean: {validate(m)}")
+    col1 = {c["index"]: c for c in render(m)["columns"]}[1]
+    if "resolve" not in {n["name"] for n in col1["nodes"]}:
+        bad.append(f"an edge renders in the input-boundary column: {col1['nodes']}")
+    impure = validate(_module('module m\n  edge fn e : (x: str) -> str side_effect reads "X" note "test"\n  entry "import m.g" -> e\n'))
+    if impure != [{"code": "impure_pure_function", "message": "Pure function 'e' declares a side effect", "category": "server", "detail": {"function": "e"}}]:
+        bad.append(f"an edge declaring a side effect is impure: {impure}")
+    handle = validate(_module('module m\n  type Conn = handle\n  edge fn e : (c: Conn) -> str note "test"\n  entry "import m.g" -> e\n'))
+    if not any(f["code"] == "handle_read" for f in handle):
+        bad.append(f"an edge naming a handle in its signature is a handle_read: {handle}")
+    return bad
+
+
 def run():
     probes = {
+        "edge": _probe_edge(),
         "couples_on": _probe_couples_on(),
         "side_kinds": _probe_side_kinds(),
         "door_orchestrator": _probe_door_orchestrator(),

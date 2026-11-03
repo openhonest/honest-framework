@@ -163,10 +163,13 @@ module.exports = grammar({
       repeat($._annotation),
     )),
 
-    // Four roles. boundary_in is a door: the world calls in and nothing inside calls it. reader is
+    // Five roles. boundary_in is a door: the world calls in and nothing inside calls it. reader is
     // the program asking the world for something, a clock, a file it chose to open: an orchestrator
     // invokes it, it invokes nothing. Both stand on the input side; they differ in who initiates.
-    role: $ => choice('boundary_in', 'reader', 'boundary_out', 'orchestrator'),
+    // edge is a pure function a module with boundaries exposes as an import surface: the world
+    // reaches it by import (named by an entry), it may call the core, and nothing inside calls it.
+    // A boundary-less pure library needs no edge, since its whole surface is already exempt.
+    role: $ => choice('boundary_in', 'reader', 'boundary_out', 'orchestrator', 'edge'),
 
     signature: $ => seq(':', $.params, '->', field('ret', $.type)),
 
