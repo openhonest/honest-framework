@@ -544,7 +544,7 @@ payload: {
 }
 ```
 
-`hf.app.error` replaces unhandled exception logging. Any exception that escapes `@catch_at_boundary` or occurs outside a chain is caught at the application supervisor level and written as `hf.app.error`.
+`hf.app.error` replaces unhandled exception logging. Any exception that escapes `@catch_at_boundary` or occurs outside a chain is caught at the host application's outermost handler and written as `hf.app.error`.
 
 ### 4.8 Proof Events
 

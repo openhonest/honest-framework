@@ -21,8 +21,8 @@ The DOM *is* the state. Instead of Redux/MobX/Zustand synchronizing a shadow cop
 ## HTML Attributes Over Imperative DOM Manipulation
 Instead of `addEventListener`, `querySelector`, `innerHTML` in JavaScript, use `hx-post="/endpoint"`, `hx-target="#result"`, `hf-format="currency"`. The attribute declares intent; the library handles mechanism. Seventy-three lines of JS become six attributes.
 
-## Typed Exceptions at the Boundary
-Don't catch inside business logic. Let functions raise. The route handler (or supervisor) catches, inspects the exception type (`ValidationError`, `GatewayTimeout`), and returns the appropriate status code. Retry logic belongs in the task queue infrastructure, not inline in the function.
+## Faults as Values, Exceptions Only at a Boundary
+Don't raise inside business logic, and don't catch there either. A function that cannot do what it was asked returns a `Fault`, a record that says what went wrong and what to do instead. Each caller returns that fault in turn, up the tree to the orchestrator. The orchestrator decides what happens next: it raises the fault through a boundary, or it logs it by invoking the output boundary that writes the log. Only a boundary that declares what it `raises` may throw. A door that must stop a server starting is the case that needs one, because a caller is free to ignore a returned value, and a server that boots on an ignored return serves requests against nothing. Retry logic belongs in the task queue infrastructure, not inline in the function.
 
 ## SQL Over Application Caches
 Before adding a cache, profile the query. A single SQL join with proper indexes runs under 3ms. The cache adds invalidation bugs, stale data, and a second source of truth. Fix the query or the schema first. Only cache after measurement proves it necessary.

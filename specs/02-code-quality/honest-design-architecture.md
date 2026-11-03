@@ -116,8 +116,8 @@ module honest-type
   # Column 1 — input boundary: reads the outside world.
   boundary_in fn extract_http_tokens : (request: Request) -> list<str> side_effect reads "HTTP"
 
-  # Column 2 — orchestrator: runs chains, invokes other declarations, may raise faults.
-  orchestrator fn classify_and_dispatch : (tokens: list<str>, vocab: Vocabulary) -> Manifest invokes classify_pipeline, classify raises unbound_type
+  # Column 2 — orchestrator: runs chains, invokes other declarations, and returns the faults they return.
+  orchestrator fn classify_and_dispatch : (tokens: list<str>, vocab: Vocabulary) -> Manifest | Fault invokes classify_pipeline, classify
 
   # Column 3 — pure function.
   fn classify_token : (token: str, vocab: Vocabulary) -> Ticket
@@ -149,11 +149,11 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `dispatch <name> = { "k" -> handler, ... }` | A dict-dispatch table — the honest replacement for `if/elif`. |
 | `dispatch <name> = { "k" -> handler from <field>, ... }` | The same, where each entry names the slice of the caller's input its handler is fed. `from` is optional per entry. Without it every handler in a table must declare the same wide input, which hides which field each one actually reads. |
 | `example <name> of <chain> = "..."` | A living-spec example bound to a chain. |
-| `boundary_in fn <name> : (args) -> ret side_effect reads "<source>"` | Column 1. A door: the world calls in here, and nothing inside the module calls it. It invokes the orchestrator that owns the sequence, or heads a chain to it. |
+| `boundary_in fn <name> : (args) -> ret side_effect reads "<source>" [raises <faults>]` | Column 1. A door: the world calls in here, and nothing inside the module calls it. It invokes the orchestrator that owns the sequence, or heads a chain to it. A door that must stop a server starting raises, and names what it raises. |
 | `reader fn <name> : (args) -> ret side_effect reads "<source>"` | Column 1. A read the program initiates, a clock, a file it chose to open, the environment mid-run. An orchestrator invokes it; it invokes nothing and heads no chain. It stands on the input side with the doors because it reads the world and writes nothing, and it differs from a door in who asks. |
-| `orchestrator fn <name> : (args) -> ret invokes <list> [raises <faults>]` | Column 2. Runs chains; names what it invokes and the faults it may raise. |
-| `fn <name> : (args) -> ret [raises <faults>]` | Column 3. A pure function. |
-| `boundary_out fn <name> : (args) -> ret side_effect writes "<sink>"` | Column 4. Output boundary; declares what it writes. |
+| `orchestrator fn <name> : (args) -> ret invokes <list>` | Column 2. Runs chains and names what it invokes. A fault it receives comes back in its return type (`-> Manifest \| Fault`), and it decides whether a boundary raises the fault or an output boundary logs it. |
+| `fn <name> : (args) -> ret` | Column 3. A pure function. A fault comes back in its return type, never as a raise. |
+| `boundary_out fn <name> : (args) -> ret side_effect writes "<sink>" [raises <faults>]` | Column 4. Output boundary; declares what it writes, and names what it raises if it throws. |
 | `chain <name> = a -> b -> c` | An ordered composition of functions. |
 | `route "METHOD /path" -> fn` | An input-boundary route binding. |
 | `entry "<callsite>" -> fn` | An entry point whose call-site shape is a string — a decorator, a context manager, a middleware registration — dispatching to a function. |
@@ -161,7 +161,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `awaited` | Among a function's annotations: the caller gets a promise of the answer and must await it. The word states the caller's obligation, not the host's mechanism, and a host with blocking calls has no equivalent, which is why it is a word on the card rather than a return type. An awaited callee makes its caller awaited, along the edges a fault travels, out to the door. |
 | `note "..."` | The one comment the reader keeps. It sits at module scope to say in one line what the module is for, trails a `type`, `env`, `set`, `vocabulary`, `dispatch` or `chain`, or sits among a function's annotations, and it is drawn on that declaration's card. The module's own note is drawn on the system card and at the head of the module page, so the module is no longer the one declared thing that cannot say what it is. It is optional, the way a note is optional everywhere else. A `#` comment is for the file and never reaches the IR. |
 
-A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, an environment variable by name as `env:<NAME>`, a store by name as `store:<name>`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls; `raises` lists the fault codes it can return, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). A dispatch entry may add `from <field>`, naming the slice of the caller's input that entry's handler is fed; the handler then declares that field's type instead of the whole record, so a predicate reading one field of sixteen says so in its signature rather than in a comment. There is exactly one way to say each thing.
+A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, an environment variable by name as `env:<NAME>`, a store by name as `store:<name>`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls. `raises` lists the codes of the faults a boundary throws, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). Only a `boundary_in` or `boundary_out` throws, so only one of them carries `raises`; a fault anywhere else comes back in the return type. A dispatch entry may add `from <field>`, naming the slice of the caller's input that entry's handler is fed; the handler then declares that field's type instead of the whole record, so a predicate reading one field of sixteen says so in its signature rather than in a comment. There is exactly one way to say each thing.
 
 ### 3.3 Workspace files
 
