@@ -35,6 +35,7 @@
               {
                 "name": "x",
                 "layer": "foundation",
+                "note": "",
                 "envs": [],
                 "stores": [],
                 "inputs": [],
@@ -126,7 +127,8 @@
               ],
               "column": 3,
               "raises": [],
-              "awaited": false
+              "awaited": false,
+              "note": "test"
             }
           ],
           "types": [],
@@ -138,6 +140,7 @@
           "dispatches": [],
           "name": "m",
           "layer": "",
+          "note": "",
           "surfaces": [],
           "examples": [],
           "html_attrs": [],
@@ -162,7 +165,9 @@
               "side_effects": [
                 {
                   "direction": "reads",
-                  "target": "X"
+                  "target": "X",
+                  "module": "",
+                  "door": ""
                 }
               ],
               "invokes": [],
@@ -175,7 +180,8 @@
               ],
               "column": 3,
               "raises": [],
-              "awaited": false
+              "awaited": false,
+              "note": "test"
             }
           ],
           "types": [],
@@ -187,6 +193,7 @@
           "dispatches": [],
           "name": "m",
           "layer": "",
+          "note": "",
           "surfaces": [],
           "examples": [],
           "html_attrs": [],
@@ -222,7 +229,9 @@
               "side_effects": [
                 {
                   "direction": "reads",
-                  "target": "HTTP"
+                  "target": "HTTP",
+                  "module": "",
+                  "door": ""
                 }
               ]
             },
@@ -361,6 +370,7 @@
         "input": {
           "name": "m",
           "layer": "",
+          "note": "",
           "envs": [
             {
               "name": "A",
@@ -390,19 +400,43 @@
                   "args": []
                 }
               ],
-              "invokes": [],
+              "invokes": [
+                "run"
+              ],
               "raises": [],
               "side_effects": [
                 {
                   "direction": "reads",
-                  "target": "env:A"
+                  "target": "env:A",
+                  "module": "",
+                  "door": ""
                 },
                 {
                   "direction": "reads",
-                  "target": "env:GHOST"
+                  "target": "env:GHOST",
+                  "module": "",
+                  "door": ""
                 }
               ],
-              "awaited": false
+              "awaited": false,
+              "note": "test"
+            },
+            {
+              "name": "run",
+              "role": "orchestrator",
+              "column": 2,
+              "params": [],
+              "ret": [
+                {
+                  "name": "str",
+                  "args": []
+                }
+              ],
+              "side_effects": [],
+              "invokes": [],
+              "raises": [],
+              "awaited": false,
+              "note": "test"
             }
           ],
           "chains": [],
@@ -434,6 +468,7 @@
         "input": {
           "name": "m",
           "layer": "",
+          "note": "",
           "envs": [],
           "types": [
             {
@@ -477,7 +512,8 @@
               "side_effects": [],
               "invokes": [],
               "raises": [],
-              "awaited": false
+              "awaited": false,
+              "note": "test"
             }
           ],
           "chains": [],
@@ -509,6 +545,7 @@
         "input": {
           "name": "m",
           "layer": "",
+          "note": "",
           "envs": [],
           "types": [
             {
@@ -558,7 +595,8 @@
                 "fails"
               ],
               "raises": [],
-              "awaited": false
+              "awaited": false,
+              "note": "test"
             },
             {
               "name": "fails",
@@ -578,7 +616,8 @@
               "side_effects": [],
               "invokes": [],
               "raises": [],
-              "awaited": false
+              "awaited": false,
+              "note": "test"
             }
           ],
           "chains": [],
@@ -617,6 +656,7 @@
         "input": {
           "name": "m",
           "layer": "",
+          "note": "",
           "envs": [],
           "types": [],
           "sets": [],
@@ -641,7 +681,8 @@
                 "door"
               ],
               "raises": [],
-              "awaited": false
+              "awaited": false,
+              "note": "test"
             },
             {
               "name": "door",
@@ -657,12 +698,34 @@
               "side_effects": [
                 {
                   "direction": "reads",
-                  "target": "HTTP"
+                  "target": "HTTP",
+                  "module": "",
+                  "door": ""
                 }
               ],
+              "invokes": [
+                "serve"
+              ],
+              "raises": [],
+              "awaited": false,
+              "note": "test"
+            },
+            {
+              "name": "serve",
+              "role": "orchestrator",
+              "column": 2,
+              "params": [],
+              "ret": [
+                {
+                  "name": "str",
+                  "args": []
+                }
+              ],
+              "side_effects": [],
               "invokes": [],
               "raises": [],
-              "awaited": false
+              "awaited": false,
+              "note": "test"
             }
           ],
           "chains": [],

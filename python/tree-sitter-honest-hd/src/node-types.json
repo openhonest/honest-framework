@@ -516,6 +516,10 @@
           "named": true
         },
         {
+          "type": "note",
+          "named": true
+        },
+        {
           "type": "outputs_decl",
           "named": true
         },

@@ -1,27 +1,96 @@
-# honest-design declared in its own .hd — the read path declaring itself, the first dogfood of the
-# .hd layer. Read it with read_hd, check it with validate, draw it with render.
+# honest-design declared in its own .hd — the reader, checker and renderer of .hd itself, declared
+# the way it makes every other module declare itself. The first dogfood of the .hd layer: read it
+# with read_hd, check it with validate, draw it with render, trace it with reach.
+#
+# Written in the order the hd skill sets: the world first, then the path each door takes, then the
+# types the paths carry, then the pure functions the orchestrators reach.
 
 module honest-design
 
-  layer tooling
+  layer correctness
 
-  # --- The Result shape and the IR the read path produces ------------------
+  # Step 1. The world. Another module hands honest-design .hd source text, or an IR module it has
+  # already read, and asks it to read, check, draw or trace. The one thing honest-design reaches
+  # for is the syntax tree, which honest-parse builds. honest-design writes nothing anywhere: every
+  # answer travels back through a door, and a return is not a write.
+  #
+  # Four doors face the caller. read_hd is the one a sibling package imports, so it carries an
+  # import entry. validate, render and reach are called by the Architecture Explorer and the
+  # hd-check gate, which run honest-design from outside the framework, so they carry host-loop
+  # call: entries that the checker notes and does not verify.
+  inputs  = { "caller" : "another module handing .hd source or an IR module to read, check, draw or trace",
+              "honest-parse" : "the syntax tree honest-parse builds from .hd source" }
+  outputs = { }
+
+  # --- the result a caller reads, and the fault it may hold --------------------
 
   type Fault = {
     code: str
     message: str
     category: str
     detail: dict<str, str>
-  }
+  } note "a failure on its way back to a caller: a code, a message, a category, and the detail that names what it refused"
 
   type Result = {
     ok: any
     err: Fault
+  } note "the union 'value | Fault' carried as a dict: ok holds the value or err holds the fault, never both; ok, err and fault build it and honest-check and honest-estimate reuse those constructors"
+
+  # --- the syntax tree, which belongs to honest-parse and tree-sitter ----------
+
+  # The tree node is tree-sitter's own object, handed through honest-parse. Declared foreign: the
+  # source it comes from and no fields, because describing another library's object is a copy that
+  # drifts. The fold reads it and never holds it past the read.
+  type Node = foreign "tree-sitter"
+
+  type Tree = {
+    root_node: Node
+  }
+
+  # --- the intermediate representation the read path produces ------------------
+
+  # A type is a union of atoms (Manifest | Fault is two atoms); an atom is a name with generic
+  # arguments, each argument a type in its own right, so dict<str, set<str>> nests.
+  type Atom = {
+    name: str
+    args: list<Type>
+  }
+  type Type = list<Atom>
+
+  type Field = {
+    name: str
+    type: Type
+  }
+
+  type Param = {
+    name: str
+    type: Type
+  }
+
+  type SideEffect = {
+    direction: str
+    target: str
+    module: str
+    door: str
+  } note "one side of the world a function touches; module and door carry the halves of a dotted target, each an empty string when the target has no dot"
+
+  type Function = {
+    name: str
+    role: str
+    params: list<Param>
+    ret: Type
+    side_effects: list<SideEffect>
+    invokes: list<str>
+    raises: list<str>
+    column: int
+    awaited: bool
+    note: str
   }
 
   type Env = {
     name: str
-    type: list<any>
+    type: Type
+    note: str
   }
 
   type Store = {
@@ -30,73 +99,309 @@ module honest-design
     why: str
   }
 
+  type TypeDecl = {
+    name: str
+    record: list<Field>
+    alias: Type
+    foreign: str
+    note: str
+  }
+
+  type SetMember = {
+    value: str
+    description: str
+  }
+
+  type SetDecl = {
+    name: str
+    members: list<SetMember>
+    note: str
+  }
+
+  type Vocabulary = {
+    name: str
+    sets: list<str>
+    note: str
+  }
+
+  type DispatchEntry = {
+    key: str
+    handler: str
+    projection: str
+  }
+
+  type Dispatch = {
+    name: str
+    entries: list<DispatchEntry>
+    note: str
+  }
+
+  type SurfaceMember = {
+    id: str
+    element: str
+  }
+
+  type Surfaces = {
+    name: str
+    members: list<SurfaceMember>
+  }
+
+  type Example = {
+    name: str
+    chain: str
+    text: str
+  }
+
+  type Chain = {
+    name: str
+    links: list<str>
+    note: str
+  }
+
+  type Route = {
+    method: str
+    path: str
+    target: str
+    label: str
+  }
+
+  type Entry = {
+    callsite: str
+    target: str
+  }
+
+  type HtmlAttr = {
+    attr: str
+    description: str
+  }
+
   type Module = {
     name: str
     layer: str
+    note: str
     envs: list<Env>
     stores: list<Store>
-    inputs: list<any>
-    outputs: list<any>
+    inputs: list<SetMember>
+    outputs: list<SetMember>
     surface_declared: bool
-    types: list<any>
-    functions: list<any>
-    chains: list<any>
+    types: list<TypeDecl>
+    sets: list<SetDecl>
+    vocabularies: list<Vocabulary>
+    dispatches: list<Dispatch>
+    surfaces: list<Surfaces>
+    examples: list<Example>
+    functions: list<Function>
+    chains: list<Chain>
+    routes: list<Route>
+    entries: list<Entry>
+    html_attrs: list<HtmlAttr>
+  }
+
+  type Rule = {
+    id: str
+    module: str
+    statement: str
+  }
+
+  type Actor = {
+    name: str
+  }
+
+  type Flow = {
+    name: str
+    group: str
+    steps: list<str>
   }
 
   type Document = {
     modules: list<Module>
-    rules: list<any>
-    actors: list<any>
-    flows: list<any>
+    rules: list<Rule>
+    actors: list<Actor>
+    flows: list<Flow>
+  }
+
+  # --- the rendered four-column diagram ----------------------------------------
+
+  type DiagramNode = {
+    name: str
+    role: str
+    effects: list<str>
+  }
+
+  type Column = {
+    index: int
+    title: str
+    nodes: list<DiagramNode>
+  }
+
+  type Edge = {
+    chain: str
+    src: str
+    dst: str
   }
 
   type Diagram = {
     module: str
-    columns: list<any>
-    edges: list<any>
+    columns: list<Column>
+    edges: list<Edge>
   }
 
-  # --- The read path: pure functions over the parse tree -------------------
+  # --- what reach reports, and the helpers that build it -----------------------
 
-  fn read_hd : (source: str) -> Result
-  fn _note : (node: any, source: bytes) -> str
+  type Reached = {
+    direct: list<str>
+    through: list<str>
+    unfollowed: int
+    without_a_door: int
+  } note "what one door's path touches: the world it reads directly, the world it reaches past a seam, and the seams it could not follow"
+  type Reach = dict<str, Reached>
 
-  fn _read_env : (node: any, source: bytes) -> Env
-  fn _read_store : (node: any, source: bytes) -> Store
-  fn _read_surface : (node: any, source: bytes) -> list<any>
-  fn _world_targets : (f: any, directions: any) -> list<str>
-  fn _boundaries : (module: Module) -> list<any>
-  fn _surface_undeclared : (module: Module) -> list<Fault>
-  fn _surface_unknown : (module: Module) -> list<Fault>
-  fn _surface_unused : (module: Module) -> list<Fault>
-  fn _boundary_without_surface : (module: Module) -> list<Fault>
-  fn _door_takes_readable : (module: Module) -> list<Fault>
-  fn _store_reads : (module: Module) -> list<any>
-  fn _store_of_impure : (module: Module) -> list<Fault>
-  fn _unknown_stores : (module: Module) -> list<Fault>
-  fn _store_not_orchestrator : (module: Module) -> list<Fault>
-  fn _env_reads : (module: Module) -> list<any>
-  fn _unknown_envs : (module: Module) -> list<Fault>
-  fn _type_names : (parts: list<any>) -> set<str>
-  fn _reaches_handle : (name: str, aliases: dict<str, any>, budget: int) -> bool
-  fn _handles : (module: Module) -> set<str>
-  fn _held_not_read : (module: Module) -> list<Fault>
-  fn _can_fault : (module: Module) -> set<str>
-  fn _callees : (module: Module) -> list<any>
-  fn _fault_swallowed : (module: Module) -> list<Fault>
-  fn _fault_shape : (module: Module) -> list<Fault>
-  fn _unawaited_caller : (module: Module) -> list<Fault>
-  fn _door_called : (module: Module) -> list<Fault>
-  fn _reader_calls : (module: Module) -> list<Fault>
-  fn _read_surface_member : (node: any, source: bytes) -> SurfaceMember
-  fn _read_surfaces : (node: any, source: bytes) -> Surfaces
-  fn _bad_surfaces : (module: Module) -> list<Fault>
-  fn validate : (module: Module) -> list<Fault>
+  type Seam = {
+    module: str
+    door: str
+  } note "a side of a function that enters another module, named module and door; door is empty when the side names a module and no door"
 
-  fn render : (module: Module) -> Diagram
+  type Call = {
+    caller: str
+    callee: str
+  } note "one edge whose answer comes back to the caller: an invoke, a dispatch handler, or a chain link to the next"
 
-  fn ok : (value: any) -> Result
+  # --- Step 1, the cards: the four doors and the one reader --------------------
 
-  fn err : (failure: Fault) -> Result
+  boundary_in fn read_hd : (source: str) -> Document | Fault side_effect reads "caller" invokes read_declaration note "the door for reading: hands the source to one orchestrator and adds nothing of its own"
 
-  fn fault : (code: str, message: str, category: str, detail: dict<str, str>) -> Fault
+  boundary_in fn validate : (module: Module) -> list<Fault> side_effect reads "caller" invokes check_module note "the door for checking: hands one module's IR to one orchestrator"
+
+  boundary_in fn render : (module: Module) -> Diagram side_effect reads "caller" invokes draw_module note "the door for drawing: hands one module's IR to one orchestrator"
+
+  boundary_in fn reach : (module: Module, declarations: dict<str, Module>) -> Reach side_effect reads "caller" invokes trace_reach note "the door for tracing what each door reaches"
+
+  reader fn parse : (source: bytes) -> Tree | Fault side_effect reads "honest-parse" note "the one place honest-parse is asked for the hd syntax tree, located fault and all; a pull the read orchestrator makes"
+
+  # --- Step 2, the paths: one orchestrator per door ----------------------------
+
+  orchestrator fn read_declaration : (source: str) -> Document | Fault invokes parse, _read_module, _read_rule, _read_actor, _read_flow, _document, ok, err, fault note "refuses a non-text source, asks honest-parse for the tree, and folds its top level into a Document; a malformed source comes back as a located fault"
+
+  orchestrator fn check_module : (module: Module) -> list<Fault> invokes _bad_surfaces, _missing_note, _unknown_links, _unknown_targets, _unknown_envs, _unknown_layer, _duplicate_names, _impure_pure_functions, _held_not_read, _fault_swallowed, _fault_shape, _unawaited_caller, _door_called, _door_orchestrator, _reader_calls, _store_of_impure, _unknown_stores, _store_not_orchestrator, _surface_undeclared, _surface_unknown, _surface_unused, _boundary_without_surface, _door_takes_readable, _bad_projections, fault note "runs every check over one module and gathers the faults; refuses a document handed where a single module belongs"
+
+  orchestrator fn draw_module : (module: Module) -> Diagram invokes _column, _edges note "builds the four columns and the chain edges"
+
+  orchestrator fn trace_reach : (module: Module, declarations: dict<str, Module>) -> Reach invokes _walk note "walks each door's path and reports what it touches"
+
+  # --- Step 5, the pure core: the read fold ------------------------------------
+
+  fn _document : (groups: dict<str, any>) -> Document note "assembles the four top-level lists into a Document"
+
+  fn _read_module : (node: Node, source: bytes) -> Module invokes _read_layer, _read_env, _read_store, _read_surface, _read_type_decl, _read_set, _read_vocab, _read_dispatch, _read_surfaces, _read_example, _read_function, _read_chain, _read_route, _read_entry, _read_html_attr, _note note "folds one module node, each body declaration through its own reader"
+
+  fn _read_rule : (node: Node, source: bytes) -> Rule note "reads a workspace rule: its id, the module it binds when it names one, and the statement it makes"
+  fn _read_actor : (node: Node, source: bytes) -> Actor note "reads an actor, a person or system the workspace names by name alone"
+  fn _read_flow : (node: Node, source: bytes) -> Flow note "reads a flow: its name, the group it belongs to, and its steps in order"
+  fn _read_layer : (node: Node, source: bytes) -> str note "reads the layer a module says it sits in"
+
+  fn _read_env : (node: Node, source: bytes) -> Env invokes _read_type, _note note "reads an environment variable the deployment must supply, with its type and note"
+  fn _read_store : (node: Node, source: bytes) -> Store note "reads a store: the state held between calls, the pure function whose answers it keeps, and why"
+  fn _read_surface : (node: Node, source: bytes) -> list<SetMember> note "reads one inputs or outputs list as the sides of the world the module touches; several blocks read as one list"
+  fn _read_surfaces : (node: Node, source: bytes) -> Surfaces invokes _read_surface_member note "reads a surfaces block, keeping its members in the order written, because that order is the contract a page renders in"
+  fn _read_surface_member : (node: Node, source: bytes) -> SurfaceMember note "reads one surface: the id a rendered element must carry and the element it lives in"
+
+  fn _read_type_decl : (node: Node, source: bytes) -> TypeDecl invokes _read_field, _read_type, _note note "reads a type declaration as a record of fields, an alias of another type, or a foreign type named by its source"
+  fn _read_field : (node: Node, source: bytes) -> Field invokes _read_type note "reads one field of a record: its name and its type"
+  fn _read_type : (node: Node, source: bytes) -> Type invokes _read_atom note "reads a type as the union of the atoms it joins"
+  fn _read_atom : (node: Node, source: bytes) -> Atom invokes _read_type note "reads one atom of a type: a name and the generic arguments it carries, each a type in its own right"
+
+  fn _read_set : (node: Node, source: bytes) -> SetDecl invokes _read_member, _note note "reads a closed set of values, each with an optional description"
+  fn _read_member : (node: Node, source: bytes) -> SetMember note "reads one value of a set and its description, empty when none is written"
+  fn _read_vocab : (node: Node, source: bytes) -> Vocabulary invokes _note note "reads a vocabulary: its name and the sets it draws on"
+  fn _read_dispatch : (node: Node, source: bytes) -> Dispatch invokes _read_dispatch_entry, _note note "reads a dispatch table and its entries, each key paired with the handler it runs"
+  fn _read_dispatch_entry : (node: Node, source: bytes) -> DispatchEntry note "reads one dispatch entry: the key, the handler it runs, and the field of the input the handler is fed, empty when none is declared"
+  fn _read_example : (node: Node, source: bytes) -> Example note "reads an example: its name, the chain it runs, and its text"
+
+  fn _read_function : (node: Node, source: bytes) -> Function invokes _read_param, _read_side_effect, _read_type, _note note "reads a function in full: its role and the column that role sets, its signature, the sides of the world it touches, what it invokes and raises, whether it is awaited, and its note"
+  fn _read_param : (node: Node, source: bytes) -> Param invokes _read_type note "reads one parameter: its name and its type"
+  fn _read_side_effect : (node: Node, source: bytes) -> SideEffect note "splits a dotted target into the module and the door it enters; a colon names a kind, a dot names a path"
+  fn _read_chain : (node: Node, source: bytes) -> Chain invokes _note note "reads a chain as its links in the order they run"
+  fn _read_route : (node: Node, source: bytes) -> Route note "reads a route: its method, its path, the function it targets, and an optional label"
+  fn _read_entry : (node: Node, source: bytes) -> Entry note "reads an entry: where a caller comes in from and the function it calls"
+  fn _read_html_attr : (node: Node, source: bytes) -> HtmlAttr note "reads an HTML attribute the module defines and what it means"
+
+  fn _note : (node: Node, source: bytes) -> str note "reads a declaration's note, empty when it has none, joining a function's several note clauses into one"
+
+  # --- the pure core: the checks, and the helpers they share -------------------
+
+  fn _bad_surfaces : (module: Module) -> list<Fault> invokes fault note "every surfaces block declares at least one surface and names each id once, since an id names one element"
+  fn _missing_note : (module: Module) -> list<Fault> invokes fault note "every function carries a note, the domain description written once at authoring time and read by every downstream tool"
+  fn _unknown_links : (module: Module) -> list<Fault> invokes _declared_functions, fault note "every chain link names a function the module declares"
+  fn _unknown_targets : (module: Module) -> list<Fault> invokes _declared_functions, fault note "every route and entry targets a function the module declares"
+  fn _unknown_envs : (module: Module) -> list<Fault> invokes _env_reads, fault note "every environment read names a declared env, so the deployment knows what it must supply"
+  fn _unknown_layer : (module: Module) -> list<Fault> invokes fault note "a module's layer is one of the fixed set, never a word someone coined; a module with no layer is not this fault"
+  fn _duplicate_names : (module: Module) -> list<Fault> invokes fault note "names are unique within each kind of declaration"
+  fn _impure_pure_functions : (module: Module) -> list<Fault> invokes fault note "a pure function touches no side of the world; only a boundary may"
+  fn _held_not_read : (module: Module) -> list<Fault> invokes _handles, _type_names, fault note "a pure function never names a handle in its own signature, since a handle is held and passed to a boundary, never read"
+  fn _fault_swallowed : (module: Module) -> list<Fault> invokes _can_fault, _callees, fault note "a caller of a function that can fail can fail too, so the fault travels back by return to the door; only a door that says what it raises may stop it there"
+  fn _fault_shape : (module: Module) -> list<Fault> invokes _can_fault, fault note "a module whose functions can fail declares Fault as a record with fields enough to say what went wrong and what to do instead"
+  fn _unawaited_caller : (module: Module) -> list<Fault> invokes _callees, fault note "a caller of an awaited function is awaited too, along every path an answer travels back to the door"
+  fn _door_called : (module: Module) -> list<Fault> invokes fault note "nothing inside the module calls a door; the world calls a door, and a read the program asks for is a reader"
+  fn _door_orchestrator : (module: Module) -> list<Fault> invokes _callees, fault note "every door hands its input to exactly one orchestrator: none puts logic in the wall, two split the single path the world takes in"
+  fn _reader_calls : (module: Module) -> list<Fault> invokes fault note "a reader answers the program and asks nothing of it: it invokes nothing and heads no chain"
+  fn _store_of_impure : (module: Module) -> list<Fault> invokes _store_reads, fault note "a store keeps only a pure function's answers, since an answer from the world goes stale and an orchestrator's is a sequence"
+  fn _unknown_stores : (module: Module) -> list<Fault> invokes _store_reads, fault note "every store a function reaches is one the module declares"
+  fn _store_not_orchestrator : (module: Module) -> list<Fault> invokes _store_reads, fault note "only an orchestrator or a pure function reaches a store; a boundary that does has mistaken the world for the program's own memory"
+  fn _surface_undeclared : (module: Module) -> list<Fault> invokes _boundaries, _world_targets, fault note "a module with boundaries lists its inputs or outputs, and one fault covers the module because one declaration fixes it"
+  fn _surface_unknown : (module: Module) -> list<Fault> invokes _world_targets, fault note "every side a boundary reads is listed in inputs and every side it writes in outputs"
+  fn _surface_unused : (module: Module) -> list<Fault> invokes _world_targets, fault note "every listed side is one some boundary touches, so a stale entry shows; a module still waiting on its boundaries is spared"
+  fn _boundary_without_surface : (module: Module) -> list<Fault> invokes _boundaries, fault note "a boundary touches a side of the world: a reader reads one, an output boundary writes one, and a door reads one or is named by an entry or route"
+  fn _door_takes_readable : (module: Module) -> list<Fault> invokes _boundaries, fault note "a door does not take what a reader in the module returns, which would let a caller hand the module a second truth"
+  fn _bad_projections : (module: Module) -> list<Fault> invokes _callers_of, _record_fields, fault note "a dispatch entry that feeds its handler a slice names a real field of the caller's input, and the handler takes exactly that field"
+
+  fn _declared_functions : (module: Module) -> set<str> note "the names of every function the module declares, which references are checked against"
+  fn _env_reads : (module: Module) -> list<str> note "every function paired with each environment variable it reads by name"
+  fn _type_names : (parts: Type) -> set<str> note "every type name a type mentions, at any depth of nesting"
+  fn _reaches_handle : (name: str, aliases: dict<str, Type>, budget: int) -> bool note "whether a name is the handle, or an alias that leads to it within a set number of steps, so a loop of aliases ends"
+  fn _handles : (module: Module) -> set<str> invokes _reaches_handle note "the names that mean a handle in this module: the handle itself and every alias that leads to it"
+  fn _can_fault : (module: Module) -> set<str> invokes _type_names note "the functions whose return says they can fail"
+  fn _callees : (module: Module) -> list<Call> note "every caller and callee pair whose answer comes back to the caller, through an invoke, a dispatch handler, or the next link of a chain, each pair once"
+  fn _store_reads : (module: Module) -> list<str> note "every function paired with each store it reaches by name"
+  fn _world_targets : (f: Function, directions: list<str>) -> set<str> note "the sides of the world a function touches in the given directions, naming another module by the module and leaving out env and store, which their own declarations cover"
+  fn _boundaries : (module: Module) -> list<Function> note "the functions that stand at the module's edge: doors, readers, and output boundaries"
+  fn _callers_of : (module: Module, dispatch_name: str) -> list<str> note "the functions that invoke a dispatch table, whose input the table's entries take their slices from"
+  fn _record_fields : (module: Module) -> dict<str, list<Field>> note "every declared record's fields and their types, by type name"
+
+  # --- the pure core: the renderer ---------------------------------------------
+
+  fn _node : (f: Function) -> DiagramNode note "draws one function as a box on the diagram: its name, its role, and the sides of the world it touches"
+  fn _column : (module: Module, index: int) -> Column invokes _node note "fills one of the four columns with the functions whose role places them there"
+  fn _edges : (module: Module) -> list<Edge> note "draws each chain as arrows from each link to the next"
+
+  # --- the pure core: reach ----------------------------------------------------
+
+  fn _world : (function: Function, modules: dict<str, Module>) -> set<str> note "the sides of the world a function touches directly, leaving out seams, its own env and store, and the caller it was called by"
+  fn _seams : (function: Function, modules: dict<str, Module>) -> list<Seam> note "every side of a function that enters another module, named by module and door; the door is empty when the side names only the module"
+  fn _onward : (module: Module) -> dict<str, list<str>> note "who each function hands on to: what it invokes and the next link of any chain it is on, since a path written as a chain is still a path"
+  fn _walk : (module: Module, start: str, declarations: dict<str, Module>, seen: set<str>) -> Reached invokes _world, _seams, _onward note "follows one path from a function and gathers what it touches directly, what it reaches past a seam, and what it could not follow, entering each function once so a loop between modules ends"
+
+  # --- the pure core: the Result constructors ----------------------------------
+  # honest-check and honest-estimate import these three directly, so the world reaches the core
+  # here with no door in between. They are declared as what they are, pure functions the read path
+  # and the checks reach through their invokes, and the map says so.
+
+  fn ok : (value: any) -> Result note "wraps a value as a success"
+  fn err : (failure: Fault) -> Result note "wraps a fault as a failure"
+  fn fault : (code: str, message: str, category: str, detail: dict<str, str>) -> Fault note "builds a fault as data, never raised: a code, a message, whether the client or the server is at fault, and the detail that names what went wrong"
+
+  # --- the pure core: the coupling question ------------------------------------
+  # couples_on is the one home for HC-REF009's question, whether a world side couples two modules
+  # through a shared resource. A caller imports it directly, as it imports the Result constructors
+  # above, so it is declared as what it is: a pure function with no door in front of it.
+
+  fn couples_on : (target: str) -> bool note "whether a world-side target couples two modules: a bare kind is ambient and couples nobody, a named kind couples, and the reserved name given never matches another"
+
+  # --- the ways in -------------------------------------------------------------
+  # read_hd is imported by honest-estimate and honest-check, so this entry is verifiable. validate,
+  # render and reach are started by the Architecture Explorer, the host that runs honest-design from
+  # outside the framework, so they carry call: entries the checker notes and does not verify.
+
+  entry "import honest_design" -> read_hd
+  entry "call:architecture-explorer" -> validate
+  entry "call:architecture-explorer" -> render
+  entry "call:architecture-explorer" -> reach

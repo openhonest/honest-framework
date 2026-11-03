@@ -37,6 +37,17 @@ def _unknown_links(module):
     ]
 
 
+def _missing_note(module):
+    """Every function carries a note: the domain description a person already had to write once,
+    read by every downstream tool instead of re-derived or guessed. The optimal moment to require
+    it is at authoring time, while the author still has the context; it is not recoverable later."""
+    return [
+        fault("missing_note", f"Function '{f['name']}' has no note; every function needs one", "client", {"function": f["name"]})
+        for f in module["functions"]
+        if not f["note"].strip()
+    ]
+
+
 def _unknown_targets(module):
     """Every route and entry targets a declared function (dual of HC001 for the input boundary)."""
     declared = _declared_functions(module)
@@ -76,6 +87,96 @@ def _env_reads(module):
     return [(f, se["target"][len(ENV_TARGET):])
             for f in module["functions"] for se in f["side_effects"]
             if se["target"].startswith(ENV_TARGET)]
+
+
+# The layers a module may declare, in the order a layered system's seams run: a module calls
+# toward the foundation and not away from it. The word was free text and nothing read it, so
+# values ran by convention and one more was always one keystroke away. It is closed because
+# measures are keyed on it, and a measure keyed on a word anyone may coin measures nothing.
+# correctness sits below foundation: the pure substrate is foundation, and the checker, the test
+# harness, the declaration layer, the BDD engine, and the error-policy leaf are correctness.
+LAYERS = ("foundation", "correctness", "data", "domain", "application", "ui", "tooling")
+
+
+# The sides of the world are a closed set of kinds, closed the way LAYERS is and for the same
+# reason: a coupling measure keyed on a word anyone may coin measures nothing. A module writes
+# the kind, such as "file:design/data". The rendered system view shows the full family path, so
+# KIND_FAMILIES maps each kind to the families that hold it, and the map reads it home the way it
+# reads LAYERS, so the page and the gate cannot disagree. "file" maps to two families, because a
+# config file read at startup and a data directory written as a store are two uses of one
+# mechanism (Adam, 22 October 2026), which is why the mapping runs one kind to many families
+# rather than one to one. "store" and the module's own held state are not here: they are inside
+# the module, not sides of the world. A runtime is not here either (Adam, 23 October 2026): a host
+# that owns the main loop and calls into the module is a caller, not a side the module pulls or
+# pushes, so it is named on an entry or route and never in a side_effect. A side_effect naming one
+# is therefore an unknown side kind. This set is published for the map today; the fault for a side
+# whose kind the set does not carry (unknown_side_kind) waits on the honest-framework-j15 review.
+KIND_FAMILIES = {
+    "clock": ("OS",),
+    "random": ("OS",),
+    "signal": ("OS",),
+    "env": ("OS",),
+    "process": ("OS",),
+    "file": ("OS", "persistence"),
+    "stdin": ("console",),
+    "stdout": ("console",),
+    "stderr": ("console",),
+    "argv": ("console",),
+    "exit": ("console",),
+    "database": ("persistence",),
+    "cache": ("persistence",),
+    "index": ("persistence",),
+    "HTTP": ("network",),
+    "socket": ("network",),
+    "DNS": ("network",),
+    "mail": ("network",),
+    "API": ("API",),
+    "messages": ("messages",),
+    "DOM": ("browser",),
+    "localStorage": ("browser",),
+    "sessionStorage": ("browser",),
+    "cookies": ("browser",),
+    "history": ("browser",),
+    "clipboard": ("browser",),
+    "camera": ("device",),
+    "microphone": ("device",),
+    "screen": ("device",),
+    "location": ("device",),
+    "serial": ("device",),
+    "keychain": ("identity",),
+    "secrets": ("identity",),
+    "token": ("identity",),
+}
+SIDE_KINDS = tuple(KIND_FAMILIES)
+
+
+def couples_on(target):
+    """Whether a world side can couple two modules through a shared resource (HC-REF009).
+
+    A bare kind is ambient and couples nobody, so a target with no colon returns False. A kind
+    that carries a name couples, because two modules naming the same one meet there. The reserved
+    name "given" is the exception: a run-time name never matches another, so it returns False.
+    The caller passes a world-side target; a seam is not one and is filtered before this.
+
+    One home for two rules: honest-check's HC-REF009 and the system map both call this, so neither
+    keeps its own copy of "a bare kind is ambient" or "given never matches given".
+    """
+    _kind, colon, name = target.partition(":")
+    if not colon:
+        return False
+    return name != "given"
+
+
+def _unknown_layer(module):
+    """A module's layer is one of the declared set, or it is a word somebody coined.
+
+    A module declaring no layer at all is a different fact and not this fault: the corpus has
+    modules without one, and silence is not a coined word.
+    """
+    layer = module["layer"]
+    if not layer or layer in LAYERS:
+        return []
+    return [fault("unknown_layer", f"Layer '{layer}' is not one of {', '.join(LAYERS)}", "client", {"layer": layer})]
 
 
 def _unknown_envs(module):
@@ -168,17 +269,34 @@ def _callees(module):
     return list(dict.fromkeys(pairs))
 
 
+# The two roles that stand at the edge. The chain carries faults as data; the boundary is the one
+# place an exception is permitted (framework spec: "Faults as data through chains, exceptions only
+# at boundary", stated there in four places).
+BOUNDARY_ROLES = frozenset({"boundary_in", "boundary_out"})
+
+
 def _fault_swallowed(module):
     """A fault bubbles up through returns: as the return value of each function, back through
-    its callers, out to the boundary. Never a log line, never an exception past the signatures,
-    never a flag on something shared. So if a callee's return says it can fault, its caller's
-    return must say so too. A caller invoking a dispatch table inherits every handler's answer,
-    because it cannot know which one ran."""
+    its callers, out to the boundary. Never a log line, never a flag on something shared. So if a
+    callee's return says it can fault, its caller's return must say so too. A caller invoking a
+    dispatch table inherits every handler's answer, because it cannot know which one ran.
+
+    A boundary discharges that last fault by raising it, and says what it raises. Some failures
+    cannot be carried by a return at all, because a caller is free to ignore one: a door that must
+    stop a server starting has to raise, and a server that boots on an ignored return serves
+    requests against nothing. A caller inside the chain has no such excuse. A pure function or an
+    orchestrator returns the fault or has swallowed it, and a raises clause does not answer for it.
+    """
     fails = _can_fault(module)
+    discharged = {
+        f["name"]
+        for f in module["functions"]
+        if f.get("role") in BOUNDARY_ROLES and f.get("raises")
+    }
     return [
         fault("fault_swallowed", f"Function '{caller}' calls '{callee}', which can fault, and cannot return one", "server", {"function": caller, "callee": callee})
         for caller, callee in _callees(module)
-        if callee in fails and caller not in fails
+        if callee in fails and caller not in fails and caller not in discharged
     ]
 
 
@@ -203,6 +321,24 @@ def _door_called(module):
         for caller, callee in _callees(module)
         if callee in doors
     ]
+
+
+def _door_orchestrator(module):
+    """Every door hands its input to exactly one orchestrator, which runs the core. A door reaching
+    no orchestrator has put logic in the wall or wired itself straight to a pure function; a door
+    reaching two has split the single path the world takes in. One door, one orchestrator."""
+    role = {f["name"]: f["role"] for f in module["functions"]}
+    doors = [f["name"] for f in module["functions"] if f["role"] == "boundary_in"]
+    handoffs: dict = {}
+    for caller, callee in _callees(module):
+        if caller in doors:
+            handoffs.setdefault(caller, []).append(callee)
+    out = []
+    for door in doors:
+        orchestrators = [c for c in handoffs.get(door, []) if role.get(c) == "orchestrator"]
+        if len(orchestrators) != 1:
+            out.append(fault("door_orchestrator", f"Door '{door}' hands to {len(orchestrators)} orchestrator(s); every door hands its input to exactly one, which runs the core", "server", {"function": door, "orchestrators": orchestrators}))
+    return out
 
 
 def _reader_calls(module):
@@ -269,8 +405,14 @@ _OWN = (ENV_TARGET, STORE_TARGET)
 
 def _world_targets(f, directions):
     """The sides of the world a function's side effects touch in the given directions, leaving
-    out env: and store: targets, which their own declarations close."""
-    return [se["target"] for se in f["side_effects"]
+    out env: and store: targets, which their own declarations close.
+
+    A side naming another module's door answers by its module. The surface lists what is outside
+    the module, which is the module; which door a function enters is that function's business. So
+    `reads "honest-parse.parse_source"` is listed in the surface as `honest-parse`, and matching
+    the whole string would make the surface hold the door as well, which is one fact in two places.
+    """
+    return [se["module"] or se["target"] for se in f["side_effects"]
             if se["direction"] in directions and not se["target"].startswith(_OWN)]
 
 
@@ -320,14 +462,21 @@ def _surface_unused(module):
 
 
 def _boundary_without_surface(module):
-    """A boundary touches a side of the world, or it is not a boundary: a door or reader reads
-    something, an output boundary writes something. The environment is the world, so a reader
-    of nothing but env: variables reads."""
+    """A boundary touches a side of the world, or it is not a boundary, with one case the direction
+    of initiation settles. A reader reads something and an output boundary writes something. A door
+    (boundary_in) either reads a side or is called by a named host: a boundary_in that an entry or a
+    route names receives its data as arguments from that caller, so it touches no side on the way in
+    and is honest without one (Adam, 23 October 2026). A boundary_in with no side and no caller is a
+    door nobody can reach that touches nothing, and it is the fault it always was. The environment is
+    the world, so a reader of nothing but env: variables reads."""
+    called = {e["target"] for e in module["entries"]} | {r["target"] for r in module["routes"]}
     faults = []
     for f in _boundaries(module):
         reads = [se for se in f["side_effects"] if se["direction"] in _READS and not se["target"].startswith(STORE_TARGET)]
-        if f["role"] in _INPUT_ROLES and not reads:
-            faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a {f['role']} that reads nothing; a boundary touches a side of the world", "server", {"function": f["name"]}))
+        if f["role"] == "reader" and not reads:
+            faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a reader that reads nothing; a boundary touches a side of the world", "server", {"function": f["name"]}))
+        if f["role"] == "boundary_in" and not reads and f["name"] not in called:
+            faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a boundary_in that reads no side and no entry or route names it; a door reads a side or is called by a named host", "server", {"function": f["name"]}))
         if f["role"] == "boundary_out" and not _world_targets(f, _WRITES):
             faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a boundary_out that writes nothing; a boundary that only reads is a reader", "server", {"function": f["name"]}))
     return faults
@@ -433,9 +582,11 @@ def _bad_projections(module):
 
 _CHECKS = (
     _bad_surfaces,
+    _missing_note,
     _unknown_links,
     _unknown_targets,
     _unknown_envs,
+    _unknown_layer,
     _duplicate_names,
     _impure_pure_functions,
     _held_not_read,
@@ -443,6 +594,7 @@ _CHECKS = (
     _fault_shape,
     _unawaited_caller,
     _door_called,
+    _door_orchestrator,
     _reader_calls,
     _store_of_impure,
     _unknown_stores,

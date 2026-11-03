@@ -37,6 +37,7 @@ module.exports = grammar({
 
     _body_decl: $ => choice(
       $.layer_decl,
+      $.note,
       $.env_decl,
       $.store_decl,
       $.inputs_decl,
@@ -57,13 +58,17 @@ module.exports = grammar({
     layer_decl: $ => seq('layer', field('name', $.identifier)),
 
     // A note is the one comment the parser keeps. It rides on the declaration it explains and is
-    // drawn on that card; a `#` comment is for the file's reader and never reaches the map.
+    // drawn on that card; a `#` comment is for the file's reader and never reaches the map. A note
+    // is also a body declaration in its own right (see `_body_decl`): a bare `note` at module scope
+    // says what the module is for. Because a trailing `note` on a declaration that allows one reads
+    // the same as a fresh module-scope note, every such declaration is `prec.right`, so the note
+    // binds to the declaration it follows and a module note is written before the functions.
     note: $ => seq('note', field('text', $.string)),
 
     // An environment variable the module reads: the name the deployment must supply and its
     // type. A union with Absent says the variable may be missing and the boundary that reads
     // it must handle that case; a bare type means required.
-    env_decl: $ => seq('env', field('name', $.identifier), ':', field('type', $.type), optional($.note)),
+    env_decl: $ => prec.right(seq('env', field('name', $.identifier), ':', field('type', $.type), optional($.note))),
 
     // The module's I/O surface, closed. inputs names every side of the world the module reads,
     // outputs every side it writes, each a set member with an optional description. A boundary
@@ -82,7 +87,7 @@ module.exports = grammar({
 
     // --- Types ---------------------------------------------------------------
 
-    type_decl: $ => seq('type', field('name', $.identifier), '=', field('value', $._type_expr), optional($.note)),
+    type_decl: $ => prec.right(seq('type', field('name', $.identifier), '=', field('value', $._type_expr), optional($.note))),
 
     _type_expr: $ => choice($.foreign_type, $.record_type, $.type),
 
@@ -105,7 +110,7 @@ module.exports = grammar({
 
     // --- Sets and vocabularies ----------------------------------------------
 
-    set_decl: $ => seq('set', field('name', $.identifier), '=', '{', commaSep($.set_member), '}', optional($.note)),
+    set_decl: $ => prec.right(seq('set', field('name', $.identifier), '=', '{', commaSep($.set_member), '}', optional($.note))),
 
     // --- Surfaces ------------------------------------------------------------
 
@@ -124,11 +129,11 @@ module.exports = grammar({
 
     set_member: $ => seq(field('value', $.string), optional(seq(':', field('description', $.string)))),
 
-    vocabulary_decl: $ => seq('vocabulary', field('name', $.identifier), '=', '{', commaSep($.identifier), '}', optional($.note)),
+    vocabulary_decl: $ => prec.right(seq('vocabulary', field('name', $.identifier), '=', '{', commaSep($.identifier), '}', optional($.note))),
 
     // --- Dispatch tables -----------------------------------------------------
 
-    dispatch_decl: $ => seq('dispatch', field('name', $.identifier), '=', '{', commaSep($.dispatch_entry), '}', optional($.note)),
+    dispatch_decl: $ => prec.right(seq('dispatch', field('name', $.identifier), '=', '{', commaSep($.dispatch_entry), '}', optional($.note))),
 
     // A dispatch entry may name the slice of its input that the handler is fed. Without it every
     // handler in a table must declare the same wide input, which hides which field each one
@@ -146,13 +151,17 @@ module.exports = grammar({
 
     // --- Functions (the four columns) ---------------------------------------
 
-    function_decl: $ => seq(
+    // A note after a function's signature is its annotation, never a new module-scope note. The
+    // two read the same at the token `note`, so prec.right tells the parser to keep extending the
+    // function with its annotations rather than end it and start a module note. A module note is
+    // written before the functions, beside `layer`, which is where it belongs.
+    function_decl: $ => prec.right(seq(
       optional(field('role', $.role)),
       'fn',
       field('name', $.identifier),
       $.signature,
       repeat($._annotation),
-    ),
+    )),
 
     // Four roles. boundary_in is a door: the world calls in and nothing inside calls it. reader is
     // the program asking the world for something, a clock, a file it chose to open: an orchestrator
@@ -180,7 +189,7 @@ module.exports = grammar({
 
     // --- Chains --------------------------------------------------------------
 
-    chain_decl: $ => seq('chain', field('name', $.identifier), '=', $.chain_body, optional($.note)),
+    chain_decl: $ => prec.right(seq('chain', field('name', $.identifier), '=', $.chain_body, optional($.note))),
 
     chain_body: $ => seq($.identifier, repeat(seq('->', $.identifier))),
 

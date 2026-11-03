@@ -6,9 +6,18 @@ than importing honest-type's Result. The IR is what honest-design's validator an
 and honest-check's conformance tier, consume — none of them touches the tree-sitter grammar.
 """
 
+from honest_design.reach import reach
 from honest_design.reader import read_hd
 from honest_design.renderer import render
 from honest_design.validator import validate
 from honest_design.result import err, fault, ok
 
-__all__ = ["read_hd", "validate", "render", "ok", "err", "fault"]
+__all__ = [
+    "err",
+    "fault",
+    "ok",
+    "reach",
+    "read_hd",
+    "render",
+    "validate",
+]

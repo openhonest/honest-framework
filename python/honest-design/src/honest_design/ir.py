@@ -143,6 +143,7 @@ class HtmlAttr(TypedDict):
 class Module(TypedDict):
     name: str
     layer: str
+    note: str  # one line saying what the module is for; "" when the module declares none
     envs: list  # list[Env]
     stores: list  # list[Store]
     inputs: list  # list[SetMember]: every side of the world the module reads

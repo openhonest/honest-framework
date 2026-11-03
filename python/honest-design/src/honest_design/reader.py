@@ -131,20 +131,28 @@ def _read_param(node, source) -> ir.Param:
 
 
 def _read_side_effect(node, source) -> ir.SideEffect:
-    """One side of the world, with a dotted target split into the module and the door it enters.
+    """One side of the world, with a dotted seam target split into the module and the door it enters.
 
-    The target keeps its whole text either way. A single dot splits it; no dot, or more than one,
-    leaves both halves "". A colon is the other qualifier and names a kind, not a path, so
-    `env:DATABASE_URL` splits into nothing here and is read by the rules that own that kind.
+    The colon decides first. A target that carries a colon is a kind and a free name,
+    `HTTP:studio.local` or `file:design/data`, and the whole name after the first colon is free
+    text, so no dot or slash in it splits and both halves stay "". A target with no colon is a
+    seam when it carries exactly one dot, `honest-parse.parse_source`, which splits into the module
+    and the door; no dot, or more than one, leaves both halves "". The number of dots in a host
+    name or a file name is not a fact about the format, so the colon, not the dot count, tells a
+    named side from a seam.
     """
     target = _unquote(_field_text(node, "target", source))
-    module, dot, door = target.partition(".")
-    qualified = bool(dot) and "." not in door
+    if ":" in target:
+        module = door = ""
+    else:
+        module, dot, door = target.partition(".")
+        if not (dot and "." not in door):
+            module = door = ""
     return {
         "direction": _field_text(node, "direction", source),
         "target": target,
-        "module": module if qualified else "",
-        "door": door if qualified else "",
+        "module": module,
+        "door": door,
     }
 
 
@@ -257,6 +265,7 @@ def _read_module(node, source) -> ir.Module:
     return {
         "name": _field_text(node, "name", source),
         "layer": (groups.get("layer") or [""])[0],
+        "note": _note(node, source),
         "envs": groups.get("envs", []),
         "stores": groups.get("stores", []),
         "inputs": [m for block in groups.get("inputs", []) for m in block],
@@ -322,8 +331,8 @@ def read_hd(source):
     This is a boundary: the source arrives from outside and its type is not something the
     module can assume. A non-text source is refused by name here rather than allowed to fail
     as an AttributeError from inside the parse, which is what the promise above means."""
-    if not isinstance(source, str):  # honest: ignore HC-P005: this line is the boundary the docstring describes
-        return err(fault("hd_source_not_text", f"read_hd takes .hd source as text, not {type(source).__name__}", "client", {}))  # honest: ignore HC-P005: the fault names the type it refused (honest-type 9.5)
+    if not isinstance(source, str):
+        return err(fault("hd_source_not_text", f"read_hd takes .hd source as text, not {type(source).__name__}", "client", {}))
     source = source.encode("utf-8")
     root = honest_parse.parse(source, "hd").root_node
     error = honest_parse.first_error_node(root)
