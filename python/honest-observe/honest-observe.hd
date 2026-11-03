@@ -1,60 +1,488 @@
-# honest-observe declared in .hd — event-sourced observability. emit writes through an injected
-# runtime; projections are pure folds; the rest builds events and metrics as pure data.
+# honest-observe declared in .hd — the observability layer of the Honest Framework: one append-only,
+# immutable event log is the source of truth for everything that happened, and every read back is a pure
+# projection over it (spec section 1, section 6). emit is the thin door onto the log; it hands to the
+# record_event orchestrator, which assembles an event purely (build_event) and appends it through
+# append_event, the one boundary_out writer, via an injected runtime collaborator — never an import of
+# honest-persist and never a direct clock or global — so the dependency runs one way, persist stores
+# observe and observe never imports persist (section 3, OB-AD-10, OB-AD-37). The rest is pure data: builders that shape each framework and browser event
+# (sections 4, 8), projections and metrics that fold the log into derived views (sections 6, 8b), hybrid
+# logical clocks and identity binding for external ingestion (section 8c), the OTel signal projection
+# (section 7, observe owning no OTel SDK, OB-AD-22), the typed config resolvers (section 11), and the
+# development-tool formatters behind one CLI door (tail, inspect, query — section 9). The CLI door reads
+# argv and holds no logic; one orchestrator pulls the config and the log and runs the pure devtools core;
+# one output boundary is the sole writer of stdout.
 
 module honest-observe
 
   layer tooling
 
-  # The surface, closed: every side of the world a boundary here touches, and no other.
-  outputs = { "honest-persist" }
+  note "the event-sourced observability layer: one append-only log is the source of truth, emit is its one writer through an injected runtime, and every read back is a pure projection; observe is stored by honest-persist and never imports it."
+
+  # The surface, closed: every side of the world a boundary here touches, and no other. emit does not
+  # import honest-persist; it reaches the log only through the runtime collaborator's injected append, so
+  # "honest-persist" is an output observe writes via that seam, never a module it calls directly (OB-AD-10).
+  inputs  = { "filesystem"    : "read_config reads the honest-observe.toml bytes from disk so load_config can resolve them (section 11)",
+              "honest-persist" : "read_event_log reads the append-only honest_event_log back through the runtime's injected reader, so the devtools core can project it (section 10, OB-AD-10)" }
+  outputs = { "honest-persist" : "append_event appends each assembled event to the honest_event_log through the runtime's injected append — the sole writer, reached via emit -> record_event (section 3); a write observe makes via the injected seam, never an import of persist (OB-AD-10, OB-AD-37)",
+              "stdout"         : "write_output writes the rendered tail/inspect/query text to standard output; the one stdout writer on the CLI path (section 9)" }
+
+  # ============================================================================================
+  # Types — the event envelope and every declared return (spec sections 2, 4.6, 6, 7, 8c, 10, 11).
+  # ============================================================================================
 
   type Event = {
+    event_id: str
     event_type: str
+    event_version: str
+    timestamp: str
+    sequence: int
+    aggregate_type: str
     aggregate_id: str
     payload: dict<str, any>
-    sequence: int
-  }
+    auth: dict<str, any>
+    meta: dict<str, any>
+  } note "the event envelope every event in the log carries, whether the framework emitted it automatically or application code emitted it explicitly (section 2). Every builder in this module returns one of these, and every projection folds over a list of them. event_id is a time-ordered UUID v7 that is never reused and orders events globally (section 2.1). event_type is a dot-namespaced identifier naming what happened, for example 'hf.chain.completed' or 'order.placed' — the framework's own types live under the 'hf.' prefix and application types use a '{app}.{aggregate}.{verb}' namespace (section 5.1). event_version is the schema version of this event type as a string, for example '1.0' — a STRING and never an int, because versions like '1.0' and '2.1' are not integers (OB-AD-19, section 2.1). timestamp is an ISO 8601 UTC string with microsecond precision, the operator wall-clock view. sequence is an always-increasing integer per aggregate_id that fixes order within one aggregate without a global lock (section 3.2); two events with the same aggregate_id have different sequences, two with different aggregate_ids may share one. aggregate_type names the kind of thing the event is about ('order', 'user', 'chain', 'link', 'request', 'app', 'state_machine', 'classify', 'persist', 'pool', 'schema', 'function'). aggregate_id identifies the specific thing. payload is the event-type-specific data, an open dict whose shape is defined per event type in sections 4, 4.6, 5 and 8. auth is the auth partition carried forward verbatim and never read by the framework for any purpose but attaching it (section 2.2); it is the empty dict when no auth block is present. meta is the optional application-metadata partition — environment, release, correlation_id, and for external events the section 8c conventions source, source_hlc and translator_version (section 2.3, section 8c.7); it is the empty dict when none is attached."
+
+  type Fold = foreign "python" note "a caller-supplied pure function value a projection or metric carries as data: an accumulator (state, event) -> state, a reducer (state) -> number, or a group key extractor (event) -> key (section 6.1, 8b.5). It is foreign because it is an opaque function object the application wrote — honest-observe holds it and calls it, never inspects or constructs it — and it is NOT a framework handle (a driver connection or file passed only to boundaries): a Fold is read (called) by the pure projection and metric functions, which is exactly what a handle may never be. Every Fold is pure: it does no I/O and no mutation (section 6.1). Declared once here and carried in Projection.fold, Metric.fold, Metric.value, Metric.group and passed to apply_projection, resume_from_snapshot, declare_projection and custom_metric."
 
   type Projection = {
-    id: str
+    projection_id: str
     event_types: list<str>
-  }
+    fold: Fold
+    initial_state: any
+    snapshot_interval: int
+  } note "a declared projection: a pure fold over a filtered subset of the event log that builds a derived read model (section 6). Projections are the only way to read from honest-observe; there is no direct query interface on the raw log (section 6). projection_id identifies this projection in the registry honest-observe query resolves names against (section 9.4) and keys its snapshots (section 6.3). event_types is the closed list of event_type strings this projection reads; an event whose type is not in this list is skipped. fold is the pure accumulator (state, event) -> state, a Fold — a caller-supplied pure function value honest-observe calls but never inspects — that takes the current accumulated state and one event and returns the new state, doing no I/O and no mutation (section 6.1). initial_state is the starting accumulator the fold builds on, any shape the projection chooses (a dict of counters, a mapping, a list). snapshot_interval is the event count between persisted snapshots when the projection is snapshot-managed (section 6.3), and is 0 when the projection takes no snapshots. declare_projection and threshold_projection both return one of these."
 
   type Metric = {
     name: str
-    value: any
-  }
+    event_types: list<str>
+    fold: Fold
+    value: Fold
+    initial_state: any
+    group: Fold
+  } note "a named metric a threshold projection watches: a projection that folds the log to an accumulator and then reduces that accumulator to one number, or to one number per group (section 8b.5). name is the metric identifier a threshold projection names in its 'metric' field, for example 'request.error_rate' or a custom 'payment.failure_rate' (section 8b.3, 8b.5). event_types is the list of event_type strings the metric reads. fold is the pure accumulator (state, event) -> state, a Fold. value is the pure reducer (state) -> number that turns the folded accumulator into the metric's numeric value, a Fold. initial_state is the fold's starting accumulator. group is the optional pure key extractor (event) -> key that makes the metric grouped: when present, compute_metric folds each group's events separately and returns one value per group (a {group_key: number} mapping) rather than one aggregate number; it is a Fold, absent for an ungrouped metric. The built-in link.fault_rate and link.p99_duration_ns are grouped by link name (section 8b.5). custom_metric and builtin_metrics return these."
 
-  boundary_out fn emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, runtime: any) -> Event awaited side_effect writes "honest-persist"
+  type Snapshot = {
+    projection_id: str
+    snapshot_at: str
+    state: any
+  } note "a persisted projection state at one log position, so a replay can resume from it rather than from the beginning of the log (section 6.3). For aggregates with millions of events, replaying the full log on every request is too slow, so the projection state is periodically persisted and subsequent replays start from the snapshot. projection_id identifies which projection this snapshot belongs to (it matches the Projection's projection_id). snapshot_at is the ISO 8601 timestamp of the log position this snapshot covers — events at or before it are folded into state, events after it are replayed on top. state is the folded accumulator at that position, the same shape the projection's initial_state and fold produce. build_snapshot returns one of these; resume_from_snapshot takes one and the events after it."
 
-  fn build_event : (event_type: str, event_version: int, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, event_id: str, timestamp: str, sequence: int) -> Event
+  type Rejection = {
+    rejection_id: str
+    received_at: str
+    source: str
+    reason_code: RejectionReason
+    reason_detail: dict<str, any>
+    raw_event: dict<str, any>
+    translator_version: str
+  } note "one raw external event that failed translation or identity resolution, captured in the honest_rejection_log (section 8c.5). Rejections are data, not exceptions — a core Honest Code principle — so a translator that cannot convert a source event returns one of these rather than raising. rejection_id is a time-ordered UUID v7 identifying this rejection. received_at is the server wall-clock ISO timestamp stamped when the external event arrived. source is the external source identifier the event came from, for example 'stripe'. reason_code is why it was rejected, exactly one of the closed RejectionReason set ('unrecognized_shape', 'identity_unknown', 'conflict', 'auth_failed'). reason_detail is an open dict carrying the specifics of the rejection for a developer reading the rejection log. raw_event is the source-native event preserved verbatim for forensics and for replay through a fixed translator. translator_version is the version string of the translator that rejected it, so a developer who patches a translator and bumps its version can replay the matching rejections. rejection returns one of these."
 
-  fn apply_projection : (events: list<Event>, fold: Callable, initial_state: any) -> any
+  type HLC = {
+    physical: int
+    logical: int
+    source: str
+  } note "a hybrid logical clock reading: a total order across sources that respects causality without synchronized time (section 8c.2). timestamp + sequence order events within one aggregate on one clock, but external sources do not share a clock, so a strict wall-clock sort is not a causal order; an HLC is. physical is the local best-guess milliseconds since epoch. logical is an always-increasing counter that breaks ties between events in the same physical millisecond. source is the source_id used as the final tiebreaker when two readings share both physical and logical. It is stored in meta.source_hlc and left out of the operator-facing timestamp field; projections that need causal order sort by it. hlc_send and hlc_receive each return one of these, and hlc_compare orders two of them."
 
-  fn matches : (event: Event, event_types: list<str>) -> bool
+  type Bindings = {
+    table: dict<str, dict<str, str>>
+  } note "the identity-binding lookup table: a projection of every identity.claimed event reduced to a NESTED mapping, external_system -> (external_id -> canonical_id) (section 8c.3, OB-AD-20). The same entity has different IDs in different systems — 'user-42' here is 'cus_Nx3a9c' in Stripe — and this table resolves one back to the other. table is NESTED (OB-AD-20): the outer key is the external_system name (for example 'stripe'), and the value is that system's own map from external_id to canonical_id, so a lookup is table[source][external_id]. The nesting keeps each source's id space separate, which is why a conflict is two claims giving the same external_id under one system two different canonical_ids. fold_identity_claims returns one of these; resolve_identity reads it."
 
-  fn declare_projection : (projection_id: str, event_types: list<str>, fold: Callable, initial_state: any) -> Projection
+  type CanonicalRequest = {
+    http_method: str
+    http_path: str
+    http_status: int
+    caller_id: str
+    session_id: str
+    chain_name: str
+    link_count: int
+    link_sequence: list<LinkSummary>
+    token_count: int
+    rejection_count: int
+    query_count: int
+    query_duration_ns: int
+    result: Outcome
+    fault_code: str
+    fault_category: FaultCategory
+    duration_ns: int
+    request_id: str
+    source: str
+  } note "the dense, structured payload of the one canonical request event emitted at the end of every request (section 4.6, OB-AD-21). It colocates every meaningful fact about a request in one record so operational questions need no join — the honest-framework equivalent of Stripe's canonical log line. request_canonical assembles it purely from the events already in the log for one request_id. http_method, http_path and http_status are the HTTP line. caller_id and session_id come from the auth partition, the empty string when absent. chain_name is the primary chain executed, the empty string when none. link_count is how many links ran; link_sequence is the ordered per-link summary (one LinkSummary each), denormalized here so inspect needs no read-time join over individual hf.link.executed events (section 9.3). token_count and rejection_count are the intake classification counts. query_count and query_duration_ns are the persistence totals. result is the outcome, exactly 'ok' or 'err' (Outcome). fault_code is the fault identifier when result is 'err', the empty string otherwise; fault_category is 'client' or 'server' when result is 'err' (FaultCategory). duration_ns is the total request duration on the server clock. request_id is the X-Request-ID join key with browser events. source is always 'server' for this event."
 
-  fn build_snapshot : (projection_id: str, snapshot_at: str, state: any) -> any
+  type LinkSummary = {
+    link_name: str
+    duration_ns: int
+    result: Outcome
+    fault_code: str
+  } note "one link's result inside a CanonicalRequest's link_sequence (section 4.6, OB-AD-21): the denormalized per-link record the boundary writes into the canonical event so a request's link timeline reads from one place. link_name is the link function's name. duration_ns is how long that link ran, on the server clock. result is the link's outcome, exactly 'ok' or 'err' (Outcome). fault_code is the fault identifier when the link faulted, the empty string when it succeeded. link_summary builds one of these from an hf.link.executed event; request_canonical collects them into the ordered list."
 
-  fn resume_from_snapshot : (snapshot: any, events: list<Event>, fold: Callable) -> any
+  type OTelSignal = {
+    kind: OTelSignalKind
+    attributes: dict<str, any>
+    name: str
+    status: str
+  } note "one OpenTelemetry signal produced purely from one framework event — the whole of observe's OTel surface, and observe owns nothing else OTel (section 7, OB-AD-22). The OTel exporter is a projection: it reads the log and emits standard OTel signals to any compatible backend, but installing an SDK exporter and running the export loop is boundary I/O reached through an injected exporter, so observe never imports the OpenTelemetry SDK (section 7.4). otel_signal maps one hf.* event to one of these pure records. kind is the signal kind the event maps to, exactly one of the closed OTelSignalKind set (trace span start/end, a child span, a span event, a metric counter), chosen by the by_otel_kind dispatch on the event_type (section 7.1). attributes is the map of OTel semantic-convention attributes for this signal — the standard db.*/http.* conventions and the hf.* honest-framework conventions of sections 7.2 and 7.3. name is the signal's name (the span or metric name). status is the signal status, for example 'ERROR' on a faulted link's span event and the empty string when the signal carries no status. otel_signal returns one of these."
 
-  fn request_canonical : (request_id: str, http_method: str, http_path: str, http_status: int, link_count: int, result: str, duration_ns: int) -> Event
+  type Config = {
+    event_log: dict<str, any>
+    auth: dict<str, any>
+    framework_events: dict<str, bool>
+    otel: dict<str, any>
+    snapshots: dict<str, any>
+    development: dict<str, any>
+  } note "the complete, typed configuration load_config resolves from a parsed honest-observe.toml (section 11). Every documented key has a default and those defaults live in one defaults table the loader merges the supplied values over, so a missing key is resolved once here and never as a scattered call-site fallback; a missing file is the empty table, which resolves to the all-defaults configuration. The result always carries all six sections fully populated. event_log holds the table name, db_id and retention_days. auth holds provider (one of 'honest-auth', 'custom', 'none') and, for 'custom', the declared field names. framework_events holds the per-kind emit toggles (chain_events, link_events, persist_events, migration_events, pool_events, state_events, classify_events) as booleans. otel holds enabled, service and environment. snapshots holds enabled, default_interval and storage_table. development holds enabled, auto_tail, manifests and tracebacks, the override layer section 9.5 and 11 describe. The config resolvers (development_mode, framework_event_enabled, include_manifests, include_tracebacks, auto_tail) read this record and return the effective toggle."
 
-  fn otel_signal : (event: Event) -> any
+  # OB-AD-35: observe-local schema/manifest types, SHAPED TO MATCH honest-persist's
+  # `type Schema = { tables: list<any> }` (python/honest-persist/honest-persist.hd:12) so that persist can
+  # read what observe returns, while observe never imports persist. The shape-match is the ruling; the
+  # one `tables` field of `list<any>` mirrors persist's Schema exactly.
+  type LogSchema = {
+    tables: list<any>
+  } note "an observe-local schema describing one append-only log table, shaped to match honest-persist's `type Schema = { tables: list<any> }` (honest-persist.hd:12) so persist can read what observe returns without observe ever importing persist (OB-AD-35). tables is the list of table descriptions — one table per schema here, honest_event_log for the event log (section 10) or honest_rejection_log for the rejection log (section 8c.5) — mirroring persist's `tables: list<any>` field exactly. event_log_schema and rejection_log_schema each return one of these. The field is `list<any>` and not a narrower type because the ruling is to match persist's Schema shape, and persist declares its tables as `list<any>`; observe does not re-narrow a shape persist owns."
 
-  fn threshold_projection : (projection_id: str, metric: Metric, condition: any, window: any, cooldown: any, alert: any) -> Projection
+  type LogManifest = {
+    table: str
+    append_only: bool
+    schema: LogSchema
+  } note "an observe-local table manifest for one append-only log, shaped to match honest-persist's table manifest (section 10, honest-persist.hd:1571, OB-AD-35) so persist can read what observe returns while observe never imports persist. table is the table name ('honest_event_log' or 'honest_rejection_log'). append_only is true for both logs, declaring that UPDATE and DELETE against the table produce a server fault — the log is immutable (section 10). schema is the LogSchema describing the table's columns. event_log_manifest and rejection_log_manifest each return one of these."
 
-  fn evaluate_threshold : (threshold: Projection, metric: Metric, events: list<Event>) -> any
+  # OB-AD-18/OB-AD-46: emit returns an Emitted ({event_id}) on success / a Fault on write failure or an
+  # empty required field, NOT an Event. observe declares its OWN Fault record (local), shaped with
+  # honest-errors' fields (honest-errors.hd:53) — the way OB-AD-35 gave observe a local LogSchema shaped to
+  # persist's Schema. A foreign Fault fails the validator's fault_shape rule (a module that can fault must
+  # declare Fault as a record with its fields; validator.py:308-315), so observe owns the shape and mirrors
+  # errors'. Emitted stays observe's own. (Flag to Adam in PR-1: validator.py:313's comment says a foreign
+  # Fault is checked elsewhere, but the code still flags it — a comment-vs-code mismatch, OB-AD-46.)
+  type Fault = {
+    code: str
+    message: str
+    category: str
+    results: list<any>
+    detail: dict<str, any>
+  } note "the failure arm emit, record_event, append_event and load_config return (section 3, OB-AD-18/OB-AD-46): a fault as data, travelling by return, never thrown. Its fields mirror honest-errors' Fault (honest-errors.hd:53) so a value composed from honest-errors drops straight in, but observe declares the record locally rather than importing it foreign — a type named Fault must carry its own fields (the validator's fault_shape rule, validator.py:308-315), exactly as observe declares a local LogSchema shaped to persist's Schema (OB-AD-35). code is the fault identifier — 'emit_failed' when runtime.append reports a write failure, or the envelope validation fault code when a required field is empty (section 3). message is the human sentence naming what went wrong. category grades it, 'server' for an append failure (section 3). results carries any partial results (honest-errors' field; empty here). detail is the open dict with the underlying failure the append reported. honest-errors owns the canonical shape; observe mirrors it and reads errors only through errors' declared interface — it never imports or constructs an honest-errors Fault."
 
-  fn compute_metric : (metric: Metric, events: list<Event>) -> any
+  # OB-AD-47: the app-error payload is honest-errors' ExceptionReport, imported foreign (observe reads errors
+  # only through its declared types, the honest-check Declaration pattern, honest-check.hd:30). observe
+  # invokes NO honest-errors function: the application supervisor runs classify_py_payload / classify_js_payload
+  # to normalize the raw exception, then calls observe's app_error edge with the report and emit to write it
+  # (honest-errors spec section 7 Composition Contracts; honest-errors.hd:66,68).
+  type ExceptionReport = foreign "honest-errors" note "honest-errors' declared ExceptionReport (honest-errors.hd:29), imported foreign (OB-AD-47): the normalized form of one caught exception and the payload of an hf.app.error event (observe spec section 4.7). observe neither owns nor constructs it; the application supervisor composes honest-errors' classify_py_payload or classify_js_payload (honest-errors.hd:66,68) on the raw payload to produce it, then hands it to observe's app_error edge. Imported foreign the way honest-check imports honest-design's Declaration (honest-check.hd:30), because honest-errors is a pure leaf with no door and observe calls none of its functions — a cross-module use of its type, not a seam. (Spec note for Adam/docs track: honest-errors spec section 7 names this event 'he.error.captured'; observe spec section 4.7 names it 'hf.app.error'; the .hd follows the observe spec — OB-AD-47.)"
 
-  fn hlc_send : (local: dict<str, int>, physical_now: int) -> dict<str, int>
+  type Emitted = {
+    event_id: str
+  } note "the success arm emit returns (section 3, OB-AD-18): emit returns `Emitted({ event_id })` when the event was appended to the log. event_id is the time-ordered UUID v7 of the event just written, so the caller can correlate it. emit's full return is `Emitted | Fault` — this success arm on a completed append, the Fault arm on an append failure or an empty required field (OB-AD-18). The type is named Emitted, not Result, so it cannot be misread as a generic ok|err Result wrapper (lead review 2026-11-03). OPEN (OB-AD-30): if the errors seam represents the success/err arms differently once honest-errors.hd lands, this pairing is revised then; the two-arm success/err contract itself is the ruling (OB-AD-18) and does not change."
 
-  fn hlc_receive : (local: dict<str, int>, incoming: dict<str, int>, physical_now: int) -> dict<str, int>
+  # ============================================================================================
+  # Sets / vocabularies / dispatch — the bounded words, declared as data (spec sections 2.1, 4, 7, 8c.5).
+  # ============================================================================================
 
-  fn fold_identity_claims : (events: list<Event>) -> dict<str, any>
+  # (Removed per OB-AD-48: the framework_event_types/FrameworkEventType catalogue and the
+  # builtin_metric_names catalogue were declared but no function's signature genuinely takes or returns
+  # them — Event.event_type is str (app events share the field) and Metric.name is str — so they were
+  # unused data. Removed rather than kept, and not reached by a faked parameter. They can return in
+  # WP-20/WP-12 if a genuine field or dispatch key-space comes to use them.)
 
-  fn resolve_identity : (external_id: str, source: str, bindings: dict<str, any>) -> str
+  set rejection_reasons = {
+    "unrecognized_shape" : "the translator did not recognize the source event's shape (section 8c.5)",
+    "identity_unknown"   : "the external id could not be resolved to a canonical id (section 8c.3, 8c.5)",
+    "conflict"           : "two identity claims gave the same external id two different canonical ids, needing human adjudication (section 8c.3, 8c.5)",
+    "auth_failed"        : "the source-specific ingest auth (HMAC, shared secret, mTLS) failed (section 8c.4, 8c.5)"
+  } note "the four reason codes a Rejection carries (section 8c.5): why a raw external event failed translation or identity resolution and landed in the honest_rejection_log. Declared as a set so the reason space is closed and named; a Rejection's reason_code is exactly one of these, and rejection stamps the matching one. unrecognized_shape and identity_unknown are what a translator returns; conflict is what the identity-binding projection writes when two claims collide; auth_failed is what the ingest endpoint records on an auth failure."
+  vocabulary RejectionReason = { rejection_reasons } note "the closed set of rejection reason codes (section 8c.5), the one value a Rejection's reason_code field may hold."
 
-  fn event_log_schema : () -> any
+  set outcomes = {
+    "ok"  : "the chain, link or request succeeded (sections 4.1, 4.2, 4.6)",
+    "err" : "the chain, link or request faulted (sections 4.1, 4.2, 4.6)"
+  } note "the two outcome words a result field carries across framework events (sections 4.1, 4.2, 4.6): 'ok' or 'err'. Declared as a set so the result field on an Event payload, a LinkSummary and a CanonicalRequest is a bounded word, never a loose str."
+  vocabulary Outcome = { outcomes } note "the closed set of outcome words — 'ok' or 'err' — a result field on a framework event, a LinkSummary or a CanonicalRequest holds."
+
+  set fault_categories = {
+    "client" : "the fault was the caller's — a bad request (sections 4.1, 4.2, 4.6)",
+    "server" : "the fault was the system's — an internal failure (sections 4.1, 4.2, 4.6, section 3's emit_failed)"
+  } note "the two fault-category words a fault_category field carries (sections 4.1, 4.2, 4.6): 'client' or 'server'. Declared as a set so fault_category on an Event payload, a CanonicalRequest and a Fault is bounded, never a loose str. An emit append failure is category 'server' (section 3)."
+  vocabulary FaultCategory = { fault_categories } note "the closed set of fault-category words — 'client' or 'server' — a fault_category field holds when a result is 'err'."
+
+  set otel_signal_kinds = {
+    "span_start"   : "an OTel trace span start, from hf.chain.started (section 7.1)",
+    "span_end"     : "an OTel trace span end (ok or error), from hf.chain.completed (section 7.1)",
+    "child_span"   : "an OTel trace child span, from hf.link.executed or hf.persist.query (section 7.1)",
+    "span_event"   : "an OTel span event, from hf.link.faulted (status ERROR) or hf.state.transitioned (section 7.1)",
+    "metric_counter" : "an OTel metric counter, from hf.classify.completed (section 7.1)"
+  } note "the five OTel signal kinds a framework event maps to (section 7.1). Declared as a set so the signal space is closed and named; an OTelSignal's kind is exactly one of these. The mapping from event_type to kind is the by_otel_kind dispatch, so the choice is a table, never an if/elif chain (HC-P001)."
+  vocabulary OTelSignalKind = { otel_signal_kinds } note "the closed set of OTel signal kinds (section 7.1), the one value an OTelSignal's kind field may hold."
+
+  # (Removed per OB-AD-48: cli_commands/CliCommand were declared but no function genuinely takes or returns
+  # a CliCommand — main/run_cli parse the subcommand from argv (list<str>), and there is no per-command
+  # handler to dispatch to without new WP-15 CLI functions. Removed rather than reached by a faked
+  # parameter; a by_command dispatch keyed on CliCommand can reintroduce it genuinely when WP-15 builds
+  # the CLI command handlers.)
+
+  # The OTel signal-kind dispatch (section 7.1): the framework event_type picks the signal kind, so
+  # _otel_signal_kind is a table and never an if/elif chain (HC-P001). The key space is the framework
+  # event_type catalogue (the 'hf.*' names); only the subset section 7.1 maps appears here, and an
+  # event_type with no OTel mapping is not a key.
+  dispatch by_otel_kind = {
+    "hf.chain.started"      -> span_start_kind,
+    "hf.chain.completed"    -> span_end_kind,
+    "hf.link.executed"      -> child_span_kind,
+    "hf.persist.query"      -> child_span_kind,
+    "hf.link.faulted"       -> span_event_kind,
+    "hf.state.transitioned" -> span_event_kind,
+    "hf.classify.completed" -> metric_counter_kind
+  } note "picks the OTel signal kind for a framework event by its event_type (section 7.1), so _otel_signal_kind reads a table rather than branching. The key space is the framework event_type catalogue; only the seven types section 7.1 maps to a signal are keys, and an event_type with no OTel mapping (for example hf.app.started) is absent, which is how _otel_signal_kind reports that an event projects to no OTel signal. hf.link.executed and hf.persist.query both map to a child span, so the table names child_span_kind twice; each handler yields its OTelSignalKind member."
+
+  # ============================================================================================
+  # U1 — events + envelope (spec sections 2, 3, 10). 5 functions, all pure.
+  # ============================================================================================
+
+  fn build_event : (event_type: str, event_version: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, event_id: str, timestamp: str, sequence: int, auth: dict<str, any>, meta: dict<str, any>) -> Event | Fault note "the pure assembly and validation of one event envelope (section 2, section 3's algorithm). record_event calls it with the impure values already pulled from the runtime AND with the auth and meta partitions record_event already extracted, so build_event itself reads no clock and no global, does no I/O, and does not extract — it shapes the arguments into an Event and validates that every required field is non-empty. event_type is the dot-namespaced type string; event_version is the schema version as a STRING, for example '1.0' (OB-AD-19); aggregate_type and aggregate_id name the thing the event is about; payload is the event-type-specific dict; event_id is the UUID v7 the runtime generated; timestamp is the ISO 8601 UTC string the runtime read; sequence is the per-aggregate counter the runtime supplied. auth and meta are the already-extracted partitions record_event passes in: per the section 3 algorithm record_event invokes _extract_auth(context, runtime.auth_fields) and _extract_meta(context, runtime.meta_fields) and hands the results here, so build_event receives them and never calls the extractors itself (the extraction is record_event's, not build_event's — OB-AD-37, so the call graph matches the section 3 algorithm). It returns the assembled Event on success, or a Fault (the envelope validation fault, OB-AD-18) when a required field is empty — a value, not an exception, so emit threads it (section 3: 'IF err IN built: RETURN built; nothing is written'). It raises nothing."
+
+  fn event_log_schema : () -> LogSchema note "returns the observe-local LogSchema for the honest_event_log table (section 10, OB-AD-35). The event log is a table in honest-persist with append-only semantics — no UPDATE or DELETE is ever issued against it — and this schema describes its columns: event_id (primary key), event_type, event_version, timestamp, sequence, aggregate_type, aggregate_id, payload (JSON), auth (JSON, nullable) and meta (JSON, nullable), with the section 10 indexes. It takes no argument because the event-log shape is fixed. It returns a LogSchema whose single tables entry describes honest_event_log, shaped to match honest-persist's Schema (honest-persist.hd:12) so persist can read it without observe importing persist. It reads nothing and raises nothing."
+
+  edge fn event_log_manifest : () -> LogManifest invokes event_log_schema note "returns the observe-local LogManifest for the honest_event_log table (section 10, OB-AD-35). honest-persist enforces append-only semantics from this manifest, rejecting UPDATE and DELETE against the table (section 10's event_log_manifest example). It invokes event_log_schema for the schema field. It takes no argument. It returns a LogManifest with table 'honest_event_log', append_only true (UPDATE and DELETE produce a server fault), and the event-log schema — shaped to match persist's manifest so persist can read it without observe importing persist. It reads nothing and raises nothing."
+
+  fn _extract_auth : (context: dict<str, any>, auth_fields: list<str>) -> dict<str, any> note "INTERNAL helper (OB-AD-33/34): underscore-private in code, reached only via build_event, never exported. Extracts the auth partition from the request manifest using the configured field names, so the envelope carries exactly the auth fields the application declared (section 2.2, section 3's extract_auth). context is the current manifest emit received; auth_fields is the list of field names the runtime's auth config names (honest-auth's own fields, or a custom provider's declared fields). The framework never reads auth fields for any purpose but attaching them (section 2.2), so this helper only copies the named fields out of context into the auth dict. It returns the auth partition as a dict, the empty dict when no auth block applies (no-auth mode, section 2.2). It reads nothing and raises nothing."
+
+  fn _extract_meta : (context: dict<str, any>, meta_fields: list<str>) -> dict<str, any> note "INTERNAL helper (OB-AD-33/34): underscore-private in code, reached only via build_event, never exported. Extracts the application-metadata partition from the request manifest using the configured field names (section 2.3, section 3's extract_meta). context is the current manifest; meta_fields is the list of meta field names the runtime's config names (environment, release, correlation_id, tenant_id, feature_flags, and for external events source, source_hlc and translator_version — section 2.3, section 8c.7). It copies the named fields out of context into the meta dict. It returns the meta partition as a dict, the empty dict when none applies. It reads nothing and raises nothing."
+
+  # ============================================================================================
+  # U2 — projections + snapshots (spec section 6). 6 functions, all pure.
+  # ============================================================================================
+
+  fn matches : (event: Event, event_types: list<str>) -> bool note "the pure filter predicate at the heart of every projection (section 6.1): answers whether one event belongs to a projection's filtered subset. event is the event under test; event_types is the projection's filter list of event_type strings. It returns true when event.event_type is in event_types and false otherwise — the empty list matches nothing, since a projection always names the types it reads. It reads nothing, does no I/O, and raises nothing. apply_projection uses it to keep only the events a projection folds."
+
+  fn apply_projection : (events: list<Event>, event_types: list<str>, fold: Fold, initial_state: any) -> any invokes matches note "runs one projection: folds a filtered subset of the event log into a derived state (section 6.1). This is the core read operation — projections are the only way to read from honest-observe. events is the event list to project over (the log, or a --since-narrowed slice); event_types is the projection's filter; fold is the pure accumulator handle (state, event) -> state the caller supplied; initial_state is the starting accumulator. It invokes matches to drop every event whose type is not in event_types, then folds the survivors left to right through fold starting from initial_state, returning the final accumulated state. The fold does no I/O and no mutation (section 6.1). It returns the folded state, whose shape is the projection's own (any). It reads nothing itself — events are handed in — and raises nothing."
+
+  edge fn build_snapshot : (projection_id: str, snapshot_at: str, state: any, interval: int, events_since: int) -> Snapshot | NOTHING invokes _should_snapshot note "builds a snapshot of a projection's folded state at one log position, but only when the snapshot interval has been reached (section 6.3). projection_id identifies the projection; snapshot_at is the ISO timestamp of the log position this covers; state is the folded accumulator at that position; interval is the projection's snapshot_interval (how many events between snapshots); events_since is how many events have been folded since the last snapshot. It invokes _should_snapshot to decide whether a snapshot is due. It returns a Snapshot carrying projection_id, snapshot_at and state when _should_snapshot says the interval has been reached, and NOTHING when it has not — so a caller folding the log takes a snapshot only at the declared cadence, never on every event. It reads nothing and raises nothing."
+
+  edge fn declare_projection : (projection_id: str, event_types: list<str>, fold: Fold, initial_state: any, snapshot_interval: int) -> Projection note "declares a projection as data (section 6.3): packages a projection_id, its filter, its fold, its initial state and its snapshot cadence into a Projection record the registry can hold and honest-observe query can resolve by name. projection_id identifies it; event_types is its filter list; fold is the pure accumulator handle; initial_state is its starting accumulator; snapshot_interval is the event count between persisted snapshots, 0 when the projection takes none. It returns the Projection record. It reads nothing and raises nothing. A projection declared with a non-zero snapshot_interval is snapshot-managed (section 6.3)."
+
+  edge fn resume_from_snapshot : (snapshot: Snapshot, events: list<Event>, fold: Fold) -> any note "resumes a projection from a persisted snapshot rather than from the start of the log (section 6.3): the optimization that makes projections over millions of events affordable. snapshot is the persisted Snapshot to start from; events is the list of events that occurred AFTER the snapshot's snapshot_at position, in order; fold is the same pure accumulator handle the projection uses. It folds events left to right through fold starting from snapshot.state, returning the accumulated state as if the whole log had been replayed — the snapshot stands in for every event up to its position. It returns the resumed state (any). It reads nothing and raises nothing."
+
+  fn _should_snapshot : (interval: int, events_since: int) -> bool note "INTERNAL helper (OB-AD-33/34): underscore-private in code, reached only via build_snapshot, never exported. Decides whether a snapshot is due (section 6.3). interval is the projection's snapshot_interval (events between snapshots); events_since is how many events have been folded since the last snapshot. It returns true when interval is non-zero and events_since has reached interval, and false otherwise — so a projection with interval 0 never snapshots, and one with interval N snapshots every N events. It reads nothing and raises nothing."
+
+  # ============================================================================================
+  # U3 — metrics + thresholds (spec section 8b). 6 functions, all pure.
+  # ============================================================================================
+
+  edge fn custom_metric : (name: str, event_types: list<str>, fold: Fold, value: Fold, initial_state: any, group: Fold) -> Metric note "declares a custom threshold metric as data (section 8b.5): packages a metric name, its filter, its fold, its value reducer, its initial state and an optional group key extractor into a Metric a threshold projection can watch. A developer calls it only for a metric outside the built-in set; the built-ins need no definition (section 8b.5). name is the metric identifier; event_types is its filter; fold is the pure accumulator (state, event) -> state; value is the pure reducer (state) -> number; initial_state is the fold's start; group is the optional pure key extractor (event) -> key that makes the metric grouped, carried as a handle and absent for an ungrouped metric. It returns the Metric. It reads nothing and raises nothing."
+
+  edge fn compute_metric : (metric: Metric, events: list<Event>) -> any invokes apply_projection note "computes a metric's value over a set of events (section 8b.5): folds the filtered events to the metric's accumulator, then reduces that accumulator to the metric's number — or, when the metric is grouped, to one number per group. metric is the Metric to compute; events is the event list to compute it over (a --since/window-narrowed slice). It invokes apply_projection to fold the events through the metric's fold and filter. For an ungrouped metric it then applies the metric's value reducer to the folded state and returns one number. For a grouped metric (metric.group present) it folds each group's events separately and returns a {group_key: number} mapping, applying value per group (section 8b.5). It returns either one number or the per-group mapping (any). It reads nothing itself and raises nothing."
+
+  edge fn builtin_metrics : () -> list<Metric> note "returns the thirteen built-in threshold metrics as data (section 8b.3), one Metric per built-in metric, so any threshold projection can name one without custom projection code. It takes no argument. It returns the list of built-in Metrics: request.error_rate, request.p99_duration_ns, request.rate_per_minute, link.fault_rate (grouped by link), link.p99_duration_ns (grouped by link), persist.query.p99_duration_ns, persist.query.error_rate, persist.pool.exhaustion_rate, persist.queue.stall_count, classify.rejection_rate, browser.response.p99_duration_ms, honesty.mutation_count and honesty.nondeterminism_count — each carrying the fold, value, initial_state and (for the two grouped ones) group that computes it from its source events (section 8b.3). It reads nothing and raises nothing."
+
+  edge fn threshold_projection : (projection_id: str, metric: Metric, condition: dict<str, any>, window: str, cooldown: str, alert: dict<str, any>, remediation: str, enabled: bool) -> Projection note "declares a threshold projection as data (section 8b.2): a projection that watches a metric and fires an alert when a condition is crossed. Threshold projections are stored as honest-persist records and can be toggled, adjusted and created by operators at runtime without code changes. projection_id uniquely identifies it; metric is the Metric to watch (a built-in or custom one); condition is the firing condition, a dict carrying the operator ('gt', etc.), the value, and an optional 'per' window; window is the time window the metric is computed over ('1m' | '5m' | '1h' | '24h'); cooldown is the minimum time between firings; alert is the alert spec (message_type, recipient, optional dom_surface and reply_options); remediation is the name of a chain to execute on an affirmative reply, the empty string when none; enabled toggles the projection without redeployment. It returns a Projection record. It reads nothing and raises nothing — observe declares the threshold; honest-alerts sends and the remediation chain runs elsewhere (section 8b.6)."
+
+  edge fn evaluate_threshold : (threshold: Projection, metric_value: any, condition: dict<str, any>) -> dict<str, any> invokes _condition_met note "decides whether a threshold projection fires, over an ungrouped or a grouped metric value (section 8b.5). threshold is the declared threshold projection; metric_value is the value compute_metric produced — one number for an ungrouped metric, or a {group_key: number} mapping for a grouped one; condition is the firing condition (operator, value, optional per). It invokes _condition_met to test one value against the condition. For an ungrouped metric it returns {fired, firings} where fired is _condition_met(metric_value) and firings is a single-record list. For a grouped metric it tests each group's value and returns {fired, firings} where fired is true when ANY group crosses the line and firings carries one {group, fired, value} record per group — so a grouped threshold fires once for every group over the line (section 8b.5). The per-group firing is declared, never hardcoded. It returns the firing decision dict. It reads nothing and raises nothing."
+
+  fn _condition_met : (value: any, condition: dict<str, any>) -> bool note "INTERNAL helper (OB-AD-33/34): underscore-private in code, reached only via evaluate_threshold, never exported. Tests one metric value against a threshold condition (section 8b.2, 8b.5). value is the single number to test; condition is the firing condition carrying an operator (for example 'gt') and a comparison value. It applies the operator to value and the condition's value and returns true when the condition is met. It reads nothing and raises nothing."
+
+  # ============================================================================================
+  # U4a — hybrid logical clocks (spec section 8c.2). 3 functions, all pure.
+  # ============================================================================================
+
+  edge fn hlc_send : (local: HLC, physical_now: int) -> HLC note "advances a hybrid logical clock on send (section 8c.2): produces the HLC to stamp on an outgoing event so events from one source preserve their causal order. local is the sender's current HLC; physical_now is the sender's local best-guess physical time in milliseconds. It returns a new HLC whose physical is max(local.physical, physical_now); its logical is incremented when physical time did not advance (physical_now <= local.physical) and reset to 0 when it did; its source is carried from local. It reads no clock itself — physical_now is handed in, keeping the function pure — and raises nothing. The result is stored in meta.source_hlc (section 8c.2)."
+
+  edge fn hlc_receive : (local: HLC, incoming: HLC, physical_now: int) -> HLC note "advances a hybrid logical clock on receive (section 8c.2): the receiver advances its local HLC against an incoming event's HLC so causal order is preserved across sources. local is the receiver's current HLC; incoming is the HLC carried on the received event; physical_now is the receiver's local best-guess physical time in milliseconds. It returns a new HLC whose physical is max(local.physical, incoming.physical, physical_now); its logical advances per the HLC receive rule (incremented above the relevant counter when physical time did not advance, 0 when it did); its source is the receiver's own source. It reads no clock itself — physical_now is handed in — and raises nothing."
+
+  edge fn hlc_compare : (a: HLC, b: HLC) -> int note "orders two hybrid logical clocks into a total causal order (section 8c.2): the comparison projections use to sort events by meta.source_hlc. a and b are the two HLCs to compare. It returns a negative number when a precedes b, zero when they are equal, and a positive number when a follows b — comparing physical first, then logical to break a same-millisecond tie, then source as the final tiebreaker (section 8c.2). It reads nothing and raises nothing."
+
+  # ============================================================================================
+  # U4b — identity binding + rejection (spec section 8c). 7 functions, all pure.
+  # ============================================================================================
+
+  edge fn rejection : (source: str, reason_code: RejectionReason, reason_detail: dict<str, any>, raw_event: dict<str, any>, translator_version: str, rejection_id: str, received_at: str) -> Rejection note "builds one rejection record for the honest_rejection_log (section 8c.5): the data a translator or the ingest endpoint returns when a raw external event cannot be translated or its identity cannot be resolved. Rejections are data, not exceptions. source is the external source identifier; reason_code is why it failed, one of the RejectionReason set; reason_detail is the open dict of specifics; raw_event is the source-native event preserved verbatim for forensics and replay; translator_version is the version string of the translator that rejected it; rejection_id is the UUID v7 the caller generated; received_at is the server wall-clock ISO timestamp. It returns the Rejection record. It reads nothing and raises nothing."
+
+  fn rejection_log_schema : () -> LogSchema note "returns the observe-local LogSchema for the honest_rejection_log table (section 8c.5, OB-AD-35). The rejection log is an append-only table alongside honest_event_log capturing every raw event that failed translation, with its reason. This schema describes its columns: rejection_id, received_at, source, reason_code, reason_detail (JSON), raw_event (JSON) and translator_version. It takes no argument. It returns a LogSchema whose single tables entry describes honest_rejection_log, shaped to match honest-persist's Schema (honest-persist.hd:12) so persist can read it without observe importing persist. It reads nothing and raises nothing."
+
+  edge fn rejection_log_manifest : () -> LogManifest invokes rejection_log_schema note "returns the observe-local LogManifest for the honest_rejection_log table (section 8c.5, OB-AD-35). It invokes rejection_log_schema for the schema field. It takes no argument. It returns a LogManifest with table 'honest_rejection_log', append_only true (the rejection log is immutable — the original rejections remain for audit even after replay, section 8c.5), and the rejection-log schema — shaped to match persist's manifest so persist can read it without observe importing persist. It reads nothing and raises nothing."
+
+  edge fn identity_claimed : (canonical_id: str, external_system: str, external_id: str, evidence: str, asserted_by: str) -> Event note "builds an identity.claimed event (section 8c.3): an append-only record asserting that one external id maps to one canonical id. Claims are events — identity resolution is a projection of claims, not a mutable table. canonical_id is the id in this system (for example 'user-42'); external_system is the foreign system ('stripe'); external_id is the id in that system ('cus_Nx3a9c'); evidence is why the claim is trusted (for example 'webhook_signature_verified'); asserted_by is who made the claim (for example 'system:stripe_translator'). It returns an Event of type 'identity.claimed' carrying these in its payload. It reads nothing and raises nothing."
+
+  edge fn identity_unknown : (external_id: str, source: str) -> Event note "builds an identity.unknown event (section 8c.3): what a translator emits when it encounters an external id it cannot resolve to a canonical id, before returning a rejection. A background link later attempts resolution and emits new claims. external_id is the unresolvable id; source is the external system it came from. It returns an Event of type 'identity.unknown' carrying these in its payload. It reads nothing and raises nothing."
+
+  edge fn fold_identity_claims : (events: list<Event>) -> Bindings note "folds every identity.claimed event into the identity-binding lookup table (section 8c.3): the projection that reduces all claims to a NESTED external_system -> (external_id -> canonical_id) mapping (OB-AD-20). events is the event list to fold (the identity.claimed events in the log). It returns a Bindings whose NESTED table (OB-AD-20) maps each external_system to that system's own map from external_id to canonical_id, so a later lookup is table[source][external_id]. A conflict — two claims giving the same external id under one system two different canonical ids — is the condition that writes a 'conflict' rejection elsewhere; this fold itself keeps the mapping it builds. It reads nothing and raises nothing."
+
+  edge fn resolve_identity : (external_id: str, source: str, bindings: Bindings) -> str | NOTHING note "resolves one external id to its canonical id through the identity-binding table (section 8c.3). external_id is the foreign id to resolve; source is the external system it belongs to; bindings is the Bindings table fold_identity_claims produced. It returns the canonical id string when bindings.table[source] holds external_id, and NOTHING when it does not (OB-AD-20) — an unresolvable id, which is what makes a translator emit identity.unknown and return a rejection (section 8c.3). It returns a bounded str-or-absence so no caller confuses a missing mapping with an empty id. It reads nothing and raises nothing."
+
+  # ============================================================================================
+  # U5a — OTel + browser events (spec sections 7, 8). 8 functions, all pure. Observe owns only the
+  # pure OTel signal projection and never imports the OpenTelemetry SDK (OB-AD-22, section 7.4).
+  # ============================================================================================
+
+  edge fn otel_signal : (event: Event) -> OTelSignal | NOTHING invokes _otel_signal_kind, _otel_attributes note "projects one framework event to one pure OTel signal (section 7.1, 7.4): the whole of observe's OTel surface. The OTel exporter is a projection — observe produces OTel signals as pure data, and installing an SDK exporter and running the export loop is boundary I/O reached through an injected exporter at the spoke's application boundary, so observe never imports the OpenTelemetry SDK (OB-AD-22). event is the framework event to project. It invokes _otel_signal_kind to pick the signal kind by event_type and _otel_attributes to build the semantic-convention attributes. It returns an OTelSignal carrying the kind, the attributes, the signal name and status, and NOTHING when the event_type maps to no OTel signal (for example hf.app.started, which the by_otel_kind dispatch does not key). It reads nothing and raises nothing."
+
+  fn build_browser_event : (event_type: str, event_id: str, timestamp: str, session_id: str, request_id: str, payload: dict<str, any>) -> Event note "assembles one browser event envelope (section 8.2): the same envelope as a server event with the browser's two additions, source 'browser' and session_id, beaconed to the same log and joined to server events by request_id. event_type is the dot-namespaced browser type ('hf.browser.*' or 'hf.dom.*'); event_id is the UUID v4 the browser generated; timestamp is the ISO 8601 string from performance.timeOrigin + performance.now(); session_id is from the honest-auth session cookie (read-only, not secret); request_id is from the last X-Request-ID response header, the empty string when the browser has seen no response yet; payload is the event-type-specific data. It returns an Event with source 'browser' in its meta and the given fields. It reads nothing and raises nothing — the browser emits these, this builder only shapes them."
+
+  edge fn browser_classify : (element: str, attribute: str, tokens: list<str>, manifest: dict<str, any>, duration_ns: int, request_id: str) -> Event invokes build_browser_event note "builds an hf.browser.classify event (section 8.4): emitted by the bootloader on every attribute classification in the browser. element is the CSS selector or element description; attribute is the h*- attribute name classified; tokens is the input token list; manifest is the classification result dict; duration_ns is how long the classification took; request_id is the current request context, the empty string when none. It invokes build_browser_event to wrap these into the browser envelope. It returns the Event. It reads nothing and raises nothing."
+
+  edge fn browser_request : (method: str, url: str, trigger: str, target: str, manifest_keys: list<str>, request_id: str) -> Event invokes build_browser_event note "builds an hf.browser.request event (section 8.4): emitted by domx on every HTMX request. method is the HTTP method; url is the request URL; trigger is the HTMX trigger event; target is the HTMX swap target selector; manifest_keys is the keys collected from DOM state; request_id is the X-Request-ID sent with the request. It invokes build_browser_event to wrap these into the browser envelope. It returns the Event. It reads nothing and raises nothing."
+
+  edge fn browser_response : (request_id: str, status: int, swap_target: str, duration_ms: int) -> Event invokes build_browser_event note "builds an hf.browser.response event (section 8.4): emitted by domx when an HTMX response arrives, joining to hf.browser.request and the server events by request_id. request_id is the join key; status is the HTTP status code; swap_target is the element swapped into; duration_ms is the round-trip time (network plus server) measured on the browser clock — inspect subtracts the server duration from it to attribute network time (section 9.3). It invokes build_browser_event to wrap these into the browser envelope. It returns the Event. It reads nothing and raises nothing."
+
+  edge fn dom_changed : (changed_keys: list<str>, to: dict<str, any>, request_id: str) -> Event invokes build_browser_event note "builds an hf.dom.changed event (section 8.4): emitted by domx's MutationObserver when manifest state changes in the browser. changed_keys is which manifest slots changed; to is the new values for those keys; request_id is the current request context, the empty string when outside one. The browser sends NEW values only, never the previous ones — the DOM keeps no shadow copy of prior state (DATAOS forbids it), so the previous value is already in the log and observe supplies it as a projection when needed (section 8.4). It invokes build_browser_event to wrap these into the browser envelope. It returns the Event. It reads nothing and raises nothing."
+
+  fn _otel_signal_kind : (event_type: str) -> OTelSignalKind | NOTHING invokes by_otel_kind note "INTERNAL helper (OB-AD-33/34): underscore-private in code, reached only via otel_signal, never exported. Picks the OTel signal kind for a framework event_type (section 7.1). event_type is the event's type string. It invokes the by_otel_kind dispatch — a table, never an if/elif chain (HC-P001) — which maps each of the seven OTel-relevant framework types to its signal-kind handler. It returns the OTelSignalKind the event maps to, and NOTHING when the event_type has no OTel mapping (for example hf.app.started), which is how otel_signal reports that an event projects to no signal. It reads nothing and raises nothing."
+
+  fn _otel_attributes : (event: Event) -> dict<str, any> note "INTERNAL helper (OB-AD-33/34): underscore-private in code, reached only via otel_signal, never exported. Builds the OTel semantic-convention attributes for one framework event (sections 7.2, 7.3). event is the framework event. It returns the attribute map: the standard OTel conventions (service.name, service.version from meta.release, http.method/http.route/http.status_code, db.system/db.operation/db.name — section 7.2) and the honest-framework hf.* conventions (hf.chain.name, hf.link.name, hf.link.boundary, hf.link.mutations, hf.link.singletons, hf.link.nondeterminism, hf.link.io_calls, hf.state.*, hf.auth.* — section 7.3), drawn from the event's payload, meta and auth. It reads nothing and raises nothing."
+
+  # ============================================================================================
+  # U5b — chain / link / classify / state events (spec section 4). 8 functions, all pure.
+  # ============================================================================================
+
+  edge fn chain_started : (chain_name: str, link_count: int, input_types: list<str>, event_id: str, timestamp: str, sequence: int) -> Event | Fault invokes build_event note "builds an hf.chain.started event (section 4.1): recorded automatically when a chain begins executing, no developer code required. chain_name is the chain; link_count is how many links it has; input_types is the vocabulary type names in the input manifest. event_id, timestamp and sequence are the impure values the caller pulled from the runtime (build_event itself stays pure). It invokes build_event to assemble the envelope with aggregate_type 'chain' and aggregate_id the chain_name. It returns the Event on success, or the Fault build_event returns when a required field is empty — the fault travels by return, never thrown. It raises nothing."
+
+  edge fn chain_completed : (chain_name: str, duration_ns: int, link_count: int, result: Outcome, fault_code: str, fault_category: FaultCategory, event_id: str, timestamp: str, sequence: int) -> Event | Fault invokes build_event note "builds an hf.chain.completed event (section 4.1): recorded when a chain finishes. chain_name is the chain; duration_ns is how long it ran; link_count is how many links ran; result is the outcome, 'ok' or 'err' (Outcome); fault_code is the fault identifier when result is 'err', the empty string otherwise; fault_category is 'client' or 'server' when result is 'err' (FaultCategory). event_id, timestamp and sequence are the runtime-supplied impure values. It invokes build_event to assemble the envelope with aggregate_type 'chain' and aggregate_id the chain_name. It returns the Event on success, or the Fault build_event returns when a required field is empty — the fault travels by return, never thrown. It raises nothing."
+
+  edge fn link_executed : (link_name: str, chain_name: str, duration_ns: int, result: Outcome, fault_code: str, boundary: bool, mutations: int, singletons: int, nondeterminism: bool, io_calls: int, event_id: str, timestamp: str, sequence: int) -> Event | Fault invokes build_event note "builds an hf.link.executed event (section 4.2): recorded for every link, carrying the honest-framework honesty measurements no other framework produces. link_name and chain_name name the link and its chain; duration_ns is its runtime; result is 'ok' or 'err' (Outcome); fault_code is the fault identifier or empty string; boundary says whether the link is declared boundary=True; mutations is the count of manifest field mutations detected (a non-zero value is architectural dishonesty, section 8b.7); singletons is the count of singleton accesses; nondeterminism is true if a time/random/uuid call was detected; io_calls is the I/O call count (boundary links only). event_id, timestamp and sequence are the runtime-supplied impure values. It invokes build_event to assemble the envelope with aggregate_type 'link' and aggregate_id the link_name. It returns the Event on success, or the Fault build_event returns when a required field is empty — the fault travels by return, never thrown. It raises nothing."
+
+  edge fn link_faulted : (link_name: str, chain_name: str, fault_code: str, fault_category: FaultCategory, fault_message: str, input_manifest: dict<str, any>, event_id: str, timestamp: str, sequence: int) -> Event | Fault invokes build_event note "builds an hf.link.faulted event (section 4.2): recorded when a link faults. link_name and chain_name name the link and its chain; fault_code is the fault identifier; fault_category is 'client' or 'server' (FaultCategory); fault_message is the human fault sentence; input_manifest is the link's input, included at ERROR severity only and configurable (section 4.2) — the empty dict when not included. event_id, timestamp and sequence are the runtime-supplied impure values. It invokes build_event to assemble the envelope with aggregate_type 'link' and aggregate_id the link_name. It returns the Event on success, or the Fault build_event returns when a required field is empty — the fault travels by return, never thrown. It raises nothing."
+
+  fn link_summary : (event: Event) -> LinkSummary note "derives one LinkSummary from an hf.link.executed event (section 4.6, OB-AD-21): the per-link record request_canonical denormalizes into a canonical request's link_sequence. event is the hf.link.executed event. It returns a LinkSummary carrying link_name, duration_ns, result ('ok' or 'err') and fault_code read from the event's payload. It reads nothing and raises nothing. request_canonical collects these into the ordered link_sequence."
+
+  edge fn classify_completed : (vocabulary_name: str, token_count: int, rejection_count: int, duration_ns: int, rejection_reasons: dict<str, int>, event_id: str, timestamp: str, sequence: int) -> Event | Fault invokes build_event note "builds an hf.classify.completed event (section 4.3): recorded when a classification finishes (off by default in production, on in development — high volume, section 9.5). vocabulary_name is the vocabulary classified against; token_count is how many tokens were classified; rejection_count is how many were rejected; duration_ns is how long it took; rejection_reasons is the map from reason_code to count. event_id, timestamp and sequence are the runtime-supplied impure values. It invokes build_event to assemble the envelope with aggregate_type 'classify' and aggregate_id the vocabulary_name. It returns the Event on success, or the Fault build_event returns when a required field is empty — the fault travels by return, never thrown. It raises nothing."
+
+  edge fn state_transitioned : (machine_name: str, entity_id: str, from_state: str, event_name: str, to_state: str, duration_ns: int, event_id: str, timestamp: str, sequence: int) -> Event | Fault invokes build_event note "builds an hf.state.transitioned event (section 4.4): recorded when a state machine takes a transition. machine_name is the machine; entity_id is the specific entity; from_state and to_state are the states; event_name is the triggering event (named event_name here so it does not shadow the envelope's event fields); duration_ns is how long the transition took. event_id, timestamp and sequence are the runtime-supplied impure values. It invokes build_event to assemble the envelope with aggregate_type 'state_machine' and aggregate_id machine_name + ':' + entity_id (section 4.4). It returns the Event on success, or the Fault build_event returns when a required field is empty — the fault travels by return, never thrown. It raises nothing."
+
+  edge fn state_rejected : (machine_name: str, entity_id: str, current_state: str, event_name: str, fault_code: str, event_id: str, timestamp: str, sequence: int) -> Event | Fault invokes build_event note "builds an hf.state.rejected event (section 4.4): recorded when a state machine rejects an event. machine_name is the machine; entity_id is the specific entity; current_state is the state it was in; event_name is the rejected event; fault_code is why it was rejected, one of 'no_transition', 'invalid_state', 'invalid_event' or 'terminal_state' (section 4.4). event_id, timestamp and sequence are the runtime-supplied impure values. It invokes build_event to assemble the envelope with aggregate_type 'state_machine' and aggregate_id machine_name + ':' + entity_id. It returns the Event on success, or the Fault build_event returns when a required field is empty — the fault travels by return, never thrown. It raises nothing."
+
+  # ============================================================================================
+  # U5c — lifecycle + request_canonical (spec sections 4.6, 4.7). 4 functions, all pure.
+  # ============================================================================================
+
+  edge fn app_started : (app_name: str, release: str, environment: str, chains_loaded: int, links_loaded: int, vocabs_loaded: int, event_id: str, timestamp: str, sequence: int) -> Event | Fault invokes build_event note "builds an hf.app.started event (section 4.7): the lifecycle event emitted at startup that replaces ad-hoc startup logging. app_name is the application; release is its release version, the empty string when none; environment is 'production', 'staging' or 'development'; chains_loaded, links_loaded and vocabs_loaded are the counts loaded at startup. event_id, timestamp and sequence are the runtime-supplied impure values. It invokes build_event to assemble the envelope with aggregate_type 'app' and aggregate_id the app_name. It returns the Event on success, or the Fault build_event returns when a required field is empty — the fault travels by return, never thrown. It raises nothing."
+
+  edge fn app_stopped : (app_name: str, uptime_ns: int, reason: str, event_id: str, timestamp: str, sequence: int) -> Event | Fault invokes build_event note "builds an hf.app.stopped event (section 4.7): the lifecycle event emitted at shutdown. app_name is the application; uptime_ns is how long it ran; reason is why it stopped, one of 'graceful', 'signal' or 'crash' (section 4.7). event_id, timestamp and sequence are the runtime-supplied impure values. It invokes build_event to assemble the envelope with aggregate_type 'app' and aggregate_id the app_name. It returns the Event on success, or the Fault build_event returns when a required field is empty — the fault travels by return, never thrown. It raises nothing."
+
+  edge fn app_error : (report: ExceptionReport, app_name: str, event_id: str, timestamp: str, sequence: int) -> Event | Fault invokes build_event note "builds an hf.app.error event (section 4.7) from a normalized ExceptionReport (OB-AD-47): replaces unhandled-exception logging — any exception that escapes the supervision boundary or occurs outside a chain is written as one of these. report is honest-errors' ExceptionReport (imported foreign): the APPLICATION SUPERVISOR produced it by composing honest-errors' classify_py_payload or classify_js_payload (honest-errors.hd:66,68; honest-errors spec section 7 Composition Contracts) on the raw exception payload, then calls this edge with the finished report — observe invokes NO honest-errors function. app_name is the application; event_id, timestamp and sequence are the runtime-supplied impure values. It invokes build_event to assemble the envelope with aggregate_type 'app', aggregate_id the app_name, and the ExceptionReport as the payload. It returns the Event on success, or the Fault build_event returns when a required field is empty — the fault travels by return, never thrown. It raises nothing. (We placed OB-AD-44's 'composes the normalizers' note here, on the builder edge, because observe has no app-error orchestrator; the composition is the supervisor's — OB-AD-47, to confirm with Adam in PR-1.)"
+
+  edge fn request_canonical : (request_id: str, link_events: list<Event>, http_method: str, http_path: str, http_status: int, caller_id: str, session_id: str, chain_name: str, token_count: int, rejection_count: int, query_count: int, query_duration_ns: int, result: Outcome, fault_code: str, fault_category: FaultCategory, duration_ns: int) -> CanonicalRequest invokes link_summary note "assembles the dense canonical request event's payload from the events already in the log for one request (section 4.6, OB-AD-21): the one record that colocates every meaningful fact about a request so no join is needed. It is pure and log-assembled — the boundary passes the request's own link events in, and this function derives link_count and link_sequence from them rather than reading the log itself. request_id is the join key with browser events; link_events is the ordered list of this request's hf.link.executed events; http_method, http_path and http_status are the HTTP line; caller_id and session_id come from the auth partition (empty string when absent); chain_name is the primary chain; token_count and rejection_count are the intake counts; query_count and query_duration_ns are the persistence totals; result is 'ok' or 'err' (Outcome); fault_code and fault_category carry the fault when result is 'err'; duration_ns is the total request duration on the server clock. It invokes link_summary on each link event to build the link_sequence, and sets link_count to its length. It returns a CanonicalRequest with source 'server'. It reads nothing itself and raises nothing."
+
+  # ============================================================================================
+  # U6a — boundaries + the CLI door (spec sections 3, 9). TWO door splits, same shape (OB-AD-37):
+  # the LOG door  emit -> record_event (orchestrator) -> build_event (+ _extract_*) -> append_event
+  # (the sole "honest-persist" writer, a terminus); and the CLI door  main -> run_cli (orchestrator)
+  # -> the devtools core -> write_output (the sole stdout writer). Both modelled on honest-check.hd's
+  # main :312 -> run_check :308 -> write_report :302. Two readers pull the config and the log.
+  # ============================================================================================
+
+  # emit is the thin LOG door (OB-AD-37, option B): it holds no logic and hands its input to exactly one
+  # orchestrator, record_event, which runs the core — the shape honest-design's door rule requires
+  # (_door_orchestrator, validator.py:326), the same as main -> run_cli and Adam's startup_check ->
+  # check_paths. (The earlier "emit invokes build_event itself" reading was INVALID: a door hands to an
+  # orchestrator, never calls pure functions directly.) emit carries no side_effect — append_event writes.
+  boundary_in fn emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, runtime: handle) -> Emitted | Fault awaited invokes record_event note "the module's door onto the log (section 3): the function an application chain link calls to record an event, always inside a link declared boundary=True (section 3.1 — calling it in a non-boundary link is an HC-P004 violation). It is thin and carries only routing — it hands its arguments to the one orchestrator record_event and returns record_event's answer, holding no extraction, assembly or writing of its own (those live on record_event's path, the door split OB-AD-37 mirrors from main -> run_cli). event_type is the dot-namespaced type; aggregate_type and aggregate_id name the thing the event is about; payload is the event-type-specific dict; context is the current manifest carrying the auth and meta fields; runtime is the one injected collaborator (an opaque handle) supplying the impure values (event_id(), timestamp(), sequence(aggregate_id)), the config (version(event_type), auth_fields, meta_fields) and the log writer append(event) — injecting it keeps observe a leaf above persist (OB-AD-10), and emit passes it straight through to record_event. It returns Emitted carrying the event_id on success, or a Fault on an append failure or an empty required field (OB-AD-18) — exactly what record_event returns. It is awaited because record_event awaits the append (HC-R003). It has NO side_effect of its own — the write is append_event's — and raises nothing; the fault travels by return."
+
+  orchestrator fn record_event : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, runtime: handle) -> Emitted | Fault awaited invokes _extract_auth, _extract_meta, build_event, append_event note "the orchestrator the emit door hands its input to (section 3's algorithm, lines ~209-231): it runs the record-an-event core and returns the result as data. It invokes _extract_auth(context, runtime.auth_fields) and _extract_meta(context, runtime.meta_fields) to pull the auth and meta partitions from the manifest using the runtime's configured field names; then build_event to assemble and validate the envelope from the runtime-supplied impure values (runtime.event_id(), runtime.timestamp(), runtime.sequence(aggregate_id)), the version from runtime.version(event_type), and those extracted partitions. If build_event returns a Fault — an empty required field — record_event returns that Fault and nothing is written (section 3: 'IF err IN built: RETURN built; nothing is written'). Otherwise it invokes append_event to write the assembled event through the injected runtime and returns append_event's answer: an Emitted carrying the event_id on success, or a Fault with code 'emit_failed' and category 'server' when the append fails (OB-AD-18). event_type, aggregate_type, aggregate_id, payload and context are the event's facts the door passed through; runtime is the injected collaborator. It has no memory between calls and no side_effect of its own — the one write is append_event's. It is awaited because append_event's write is I/O (HC-R003). It does not catch; the fault travels by return (section 3), and it raises nothing. OPEN (OB-AD-30): the exact Emitted/Fault representation is the errors seam, revised when honest-errors.hd lands."
+
+  boundary_out fn append_event : (event: Event, runtime: handle) -> Emitted | Fault awaited side_effect writes "honest-persist" note "the one writer to the log (section 3): the output boundary that appends one assembled event through the injected runtime, and the only function in the module that writes 'honest-persist'. It is a terminus — it calls nothing inward. event is the validated envelope build_event produced; runtime is the injected collaborator whose append(event) is the one I/O step. It awaits runtime.append(event) and returns an Emitted carrying event.event_id on success, or a Fault with code 'emit_failed' and category 'server' when the append reports a failure (OB-AD-18) — the fault travels by return, it does not catch. Injecting append is what keeps observe a leaf above persist: observe is stored by persist and never imports it, so the dependency runs persist-to-observe only (OB-AD-10). It is awaited because the append is I/O (HC-R003). Its one side effect is writing 'honest-persist' through the injected append — never an import of persist. OPEN (OB-AD-30): the exact Emitted/Fault representation is the errors seam, revised when honest-errors.hd lands."
+
+  boundary_in fn main : (argv: list<str>, registry: dict<str, Projection>) -> int awaited invokes run_cli note "the honest-observe CLI door (section 9), the command-line entry point for the development tools. The developer runs 'honest-observe tail', 'honest-observe inspect <request_id>' or 'honest-observe query <name>' and this door receives the argument vector. It carries only I/O: it hands argv straight to run_cli and turns run_cli's answer into the process exit code — it holds NO parsing, no filtering, no formatting and no log reading, all of which live on run_cli's path (modelled on honest-check's main at :312). argv is the raw argument vector the module's __main__ shim read from the process and passed in; the first token names the subcommand ('tail' | 'inspect' | 'query'). registry is the adopter-supplied projection registry (section 9.4), a map from projection name to Projection, received at the door and passed straight to run_cli for the query command to resolve names against (the old cli.py door took the same registry argument). It returns the process exit code: 0 on success, non-zero when a command fails — an unknown projection name for query is a client fault surfaced as data and exits non-zero (section 9.4). It is awaited because run_cli reads the log, which is I/O (HC-R003). It raises nothing; a command failure comes back as an exit code, not an exception."
+
+  orchestrator fn run_cli : (argv: list<str>, registry: dict<str, Projection>) -> int awaited invokes read_config, read_event_log, parse_window, since_cutoff, tail_matches, format_tail_line, format_inspect, run_named_projection, run_bucketed_projection, write_output note "the orchestrator the CLI door hands the argument vector and the projection registry to (section 9). It parses the subcommand and flags from argv, pulls the resolved configuration with read_config, and reads the event log back with read_event_log through the injected reader (OB-AD-10). It then runs the pure devtools core for the chosen command and writes the result: for 'tail' it narrows the stream with parse_window and since_cutoff, keeps the events each flag matches with tail_matches, and renders each with format_tail_line (section 9.2); for 'inspect' it renders one request's execution tree with format_inspect (section 9.3); for 'query' it runs a named projection with run_named_projection, or run_bucketed_projection when --bucket is given (section 9.4). It writes the rendered text to stdout exactly once through write_output, the sole stdout writer, and returns the exit code write_output's success and the command's own outcome decide. argv is the raw argument vector from the door. It returns the process exit code — 0 on success, non-zero on a client fault such as an unknown projection name (section 9.4). The config and the log are pulled once per run. It is awaited because read_event_log is I/O (HC-R003). It raises nothing."
+
+  reader fn read_event_log : (reader: handle, event_types: list<str>, since: str) -> list<Event> awaited side_effect reads "honest-persist" note "reads the append-only event log back through the runtime's injected reader (section 10, OB-AD-10): the pull that gives the devtools core the events to project, without observe importing honest-persist. reader is the injected log reader (a handle), the read-side counterpart of append_event's injected append — observe is stored by persist and reaches it only through this seam. event_types narrows the read to the given event_type strings, the empty list meaning every type. since is the ISO timestamp lower bound, the empty string meaning the whole log. It returns the matching events in log order. It is awaited because reading the log is I/O (HC-R003). Its one side effect is reading 'honest-persist' through the injected reader. It raises nothing."
+
+  reader fn read_config : (path: str) -> dict<str, any> side_effect reads "filesystem" note "reads the honest-observe.toml bytes from disk and parses them into a plain dict (section 11): the boundary read that precedes the pure load_config resolver. path is the filesystem path to honest-observe.toml. It returns the parsed TOML as a plain dict, the empty dict when the file is missing — which load_config resolves to the all-defaults configuration (section 11). Reading the file is the boundary's concern; resolving the dict to a typed Config is load_config's pure job. Its one side effect is reading 'filesystem'. It raises nothing — a missing file is the empty dict, not an error."
+
+  boundary_out fn write_output : (text: str) -> bool side_effect writes "stdout" note "the stdout writer, the CLI path's one output boundary (section 9, modelled on honest-check's write_report at :302). It writes the already-rendered tail/inspect/query text to standard output and returns whether the write completed. text is the finished output a devtools formatter produced (format_tail_line, format_inspect, run_named_projection or run_bucketed_projection); write_output neither formats nor decides anything, it only writes. It is a terminus: it calls nothing inward. It is the ONLY stdout writer on the CLI path — main and run_cli print nothing. Its one side effect is writing 'stdout'. It raises nothing."
+
+  # ============================================================================================
+  # U6b — config resolvers (spec section 11). 6 functions, all pure.
+  # ============================================================================================
+
+  edge fn load_config : (raw: dict<str, any>) -> Config | Fault note "turns a parsed honest-observe.toml dict into a complete, typed configuration (section 11): a dict in, a validated configuration out, pure. read_config does the file read; this resolver does the merge and validation. raw is the parsed TOML as a plain dict, the empty dict for a missing file. It merges raw over a single defaults table so every documented key is resolved once here — never a scattered call-site fallback — producing a Config with all six sections (event_log, auth, framework_events, otel, snapshots, development) fully populated. Validation is a fault as data: auth.provider must be one of 'honest-auth', 'custom' or 'none', and 'custom' requires a non-empty fields list; an unrecognised provider or 'custom' without fields returns a Fault with code 'invalid_config', and a well-formed table returns the Config. It returns the resolved Config on success or a Fault on invalid config — the ok arm's payload is the Config itself (not emit's Emitted), mirroring section 11's ok(config)/err shape. OPEN (OB-AD-30): the exact ok/err representation follows the errors seam when honest-errors.hd lands. It reads nothing and raises nothing."
+
+  fn development_mode : (config: Config) -> bool note "answers whether development mode is active (section 9.5, 11): the override layer that turns on the development conveniences. config is the loaded configuration. It returns config.development.enabled — true when the [development] section's enabled flag is set, false otherwise. When true, framework_event_enabled reads true for every kind regardless of the base toggles, and the three convenience resolvers follow their own [development] sub-toggles (section 11). It reads nothing and raises nothing — the decision is pure data, there is no 'if DEBUG' anywhere."
+
+  edge fn framework_event_enabled : (config: Config, kind: str) -> bool invokes development_mode note "answers whether a given framework event kind is emitted (section 11): the per-kind emit toggle, read as data so the decision is the same everywhere it is asked. config is the loaded configuration; kind is the event kind ('chain', 'link', 'persist', 'migration', 'pool', 'state', 'classify'). It invokes development_mode: when development mode is on, it reads true for every kind — in particular 'classify', which is off in the base config but on in development (section 9.5, 11) — overriding the base toggle. When development mode is off, it reads the matching base framework_events toggle (chain_events, link_events, persist_events, migration_events, pool_events, state_events, classify_events). It returns the effective boolean. It reads nothing and raises nothing."
+
+  edge fn include_manifests : (config: Config) -> bool invokes development_mode note "answers whether link and browser event payloads carry full manifest values (section 9.5, 11): production omits them for privacy, development includes them. config is the loaded configuration. It invokes development_mode: with development mode off it returns false (manifests omitted); with development mode on it follows the development.manifests sub-toggle. It returns the effective boolean. It reads nothing and raises nothing."
+
+  edge fn include_tracebacks : (config: Config) -> bool invokes development_mode note "answers whether hf.app.error payloads carry full tracebacks (section 9.5, 11): development includes them, production omits them. config is the loaded configuration. It invokes development_mode: with development mode off it returns false (tracebacks omitted); with development mode on it follows the development.tracebacks sub-toggle. It returns the effective boolean. It reads nothing and raises nothing."
+
+  edge fn auto_tail : (config: Config) -> bool invokes development_mode note "answers whether tail auto-streams to the terminal without an explicit command (section 9.5, 11): a development convenience. config is the loaded configuration. It invokes development_mode: with development mode off it returns false; with development mode on it follows the development.auto_tail sub-toggle. It returns the effective boolean. It reads nothing and raises nothing."
+
+  # ============================================================================================
+  # U6c — development-tool core (spec section 9). 7 functions, all pure.
+  # ============================================================================================
+
+  fn format_tail_line : (event: Event) -> str note "renders one event as a structured key=value tail line (section 9.2): the development replacement for a log tail. event is the event to render. It returns one line in the section 9.2 format — timestamp, source, event_type, then the event's salient fields as key=value pairs (link=, chain=, result=, duration=, table=, op=, rows=, etc. per event type), with durations rendered in their natural unit. It reads nothing and raises nothing. run_cli calls it per surviving event and writes each through write_output."
+
+  fn parse_window : (window: str) -> int note "parses a time-window string into a number of seconds (section 9.2): the window grammar tail --since and query --since/--bucket share. window is a whole number followed by a unit, one of 's', 'm', 'h' or 'd' (for example '5m', '1h', '30m'). It returns the window's length in seconds. It reads nothing — it does not read the clock — and raises nothing. since_cutoff and the bucketing use the result."
+
+  fn since_cutoff : (now: str, window_seconds: int) -> str note "computes the lower-bound timestamp a --since filter keeps events at or after (section 9.2): the current time minus the window. now is the current time as an ISO 8601 string, handed in by the caller so this function reads no clock; window_seconds is the window length parse_window produced. It returns the cutoff as an ISO 8601 string — events at or after it pass the --since filter. It reads nothing and raises nothing."
+
+  fn tail_matches : (event: Event, source: str, event_type: str, chain: str, request: str, cutoff: str) -> bool note "the tail filter predicate (section 9.2): answers whether one event passes all the active tail filters, which combine with AND. event is the event under test; the remaining arguments are the filter values, the empty string meaning the flag was not given and so does not narrow. source matches the event source ('server' when the event carries none); event_type matches the event_type; chain matches the payload's chain_name; request matches the request_id wherever it appears (§9.3); cutoff is the since_cutoff timestamp, keeping events at or after it. An event missing the field a filter names does not match that filter (section 9.2). It returns true when the event passes every active filter and false otherwise. It reads nothing and raises nothing."
+
+  fn format_inspect : (request_id: str, events: list<Event>) -> str note "renders the complete execution tree for one request (section 9.3): the development replacement for attaching a debugger. request_id is the request to reconstruct; events is the log slice read back for it (run_cli pulls it via read_event_log, so format_inspect takes the events, NOT a CanonicalRequest nothing on the CLI path produces — OB-AD / lead review 2026-11-03). It LOCATES the server trace in the request's hf.request.canonical event, found among events by its aggregate_id, which is the request_id; the boundary already denormalized the ordered links into that event's link_sequence, so no read-time join over individual hf.link.executed events is needed and no rebuild is done — request_canonical builds that event at request time on the application path (@catch_at_boundary), never here (section 9.3, lines 1482-1489). The browser trace is the events whose envelope request_id equals the target. It renders the browser run emitted before the server processed the request, then the server trace, then the browser run emitted after — BROWSER then SERVER then BROWSER, each run in timestamp order, an empty browser run omitted (section 9.3) — and a timing-breakdown footer attributing elapsed time across the three tiers using only single-clock durations: server is the canonical duration_ns, network is the browser response duration_ms minus server, browser is the sum of the browser events' own local durations, total is their sum (section 9.3). It returns the rendered trace text. It reads nothing and raises nothing."
+
+  fn run_named_projection : (projection: Projection, events: list<Event>) -> str invokes apply_projection note "runs one named projection over a narrowed event stream and renders its result (section 9.4): the non-bucketed query path. projection is the Projection resolved from the registry by name; events is the --since-narrowed event list. It invokes apply_projection to fold the whole narrowed stream to the projection's final state, then renders that single state as the printed result. It returns the rendered result text. It reads nothing itself and raises nothing — an unknown projection name is caught at the boundary (run_cli) as a client fault, not here."
+
+  fn run_bucketed_projection : (projection: Projection, events: list<Event>, bucket_seconds: int) -> str invokes apply_projection note "runs one named projection independently over consecutive time buckets and renders one line per non-empty bucket (section 9.4): the query --bucket path. projection is the Projection resolved by name; events is the already --since-narrowed event list; bucket_seconds is the bucket window parse_window produced. It partitions events into consecutive buckets of bucket_seconds (a bucket start is an event timestamp floored to the bucket window), invokes apply_projection over each bucket's events independently, and renders one 'bucket_start state' line per non-empty bucket in ascending time order (section 9.4). It returns the rendered multi-line result text. It reads nothing itself and raises nothing."
+
+  # ============================================================================================
+  # Entries — how the world reaches honest-observe (OB-AD-38, OB-AD-43). Three ways in: the two doors
+  # (the CLI door main as a host-loop call: entry; the log door emit as a call: entry — the adopter's
+  # chain links call it), and the pure import surface, one `import` entry per `edge fn` naming the
+  # submodule it lives in, exactly as honest-check declares its edges (honest-check.hd:441-445). The
+  # entry-check prints a call:/import entry UNCHECKED until a consumer imports it and never fails the
+  # commit; an entry onto an edge is accepted (OB-AD-43). Internal cores (build_event, link_summary,
+  # build_browser_event, the *_log_schema, matches, apply_projection, development_mode, the private
+  # _helpers) carry no entry — their callers reach them. HLC (hlc_send/receive/compare) has no entry
+  # yet: still unreached, role not guessed (B2.5 / held for Adam).
+  # ============================================================================================
+
+  # The two doors (call: — the host loop / adopter calls them; UNCHECKED, non-blocking).
+  entry "cli:__main__" -> main
+  entry "call:emit" -> emit
+
+  # The pure import surface — one import entry per edge, by submodule (reference src file names).
+  # framework events (section 4):
+  entry "import honest_observe.framework_events" -> chain_started
+  entry "import honest_observe.framework_events" -> chain_completed
+  entry "import honest_observe.framework_events" -> link_executed
+  entry "import honest_observe.framework_events" -> link_faulted
+  entry "import honest_observe.framework_events" -> classify_completed
+  entry "import honest_observe.framework_events" -> state_transitioned
+  entry "import honest_observe.framework_events" -> state_rejected
+  entry "import honest_observe.framework_events" -> request_canonical
+  entry "import honest_observe.framework_events" -> app_started
+  entry "import honest_observe.framework_events" -> app_stopped
+  entry "import honest_observe.framework_events" -> app_error
+  # browser events (section 8):
+  entry "import honest_observe.browser" -> browser_classify
+  entry "import honest_observe.browser" -> browser_request
+  entry "import honest_observe.browser" -> browser_response
+  entry "import honest_observe.browser" -> dom_changed
+  # identity + rejection ingest (section 8c):
+  entry "import honest_observe.ingest" -> rejection
+  entry "import honest_observe.ingest" -> rejection_log_manifest
+  entry "import honest_observe.ingest" -> identity_claimed
+  entry "import honest_observe.ingest" -> identity_unknown
+  entry "import honest_observe.ingest" -> fold_identity_claims
+  entry "import honest_observe.ingest" -> resolve_identity
+  # projections + snapshots (section 6):
+  entry "import honest_observe.snapshot" -> build_snapshot
+  entry "import honest_observe.snapshot" -> declare_projection
+  entry "import honest_observe.snapshot" -> resume_from_snapshot
+  # metrics + thresholds (section 8b):
+  entry "import honest_observe.thresholds" -> custom_metric
+  entry "import honest_observe.thresholds" -> compute_metric
+  entry "import honest_observe.thresholds" -> builtin_metrics
+  entry "import honest_observe.thresholds" -> threshold_projection
+  entry "import honest_observe.thresholds" -> evaluate_threshold
+  # config resolvers (section 11):
+  entry "import honest_observe.config" -> load_config
+  entry "import honest_observe.config" -> framework_event_enabled
+  entry "import honest_observe.config" -> include_manifests
+  entry "import honest_observe.config" -> include_tracebacks
+  entry "import honest_observe.config" -> auto_tail
+  # OTel projection (section 7):
+  entry "import honest_observe.otel" -> otel_signal
+  # event-log schema/manifest (section 10):
+  entry "import honest_observe.event_log" -> event_log_manifest
+  # hybrid logical clocks — other nodes and ingest import these (section 8c.2, OB-AD-48):
+  entry "import honest_observe.hlc" -> hlc_send
+  entry "import honest_observe.hlc" -> hlc_receive
+  entry "import honest_observe.hlc" -> hlc_compare
