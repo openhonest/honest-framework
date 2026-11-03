@@ -129,7 +129,7 @@ Additional FP from infrastructure (CI/CD, containerization, documentation system
 
 Real FP is not read off one method. The framework triangulates correctness across three mutually-confirming lenses (static check, exhaustive auto-generation, behavioral gherkin); it triangulates function points the same way, across three independent measures of delivered functionality:
 
-- **M1: Gherkin count.** Every roled function carries exactly one gherkin (honest-gherkin-architecture.md §9). The count of passing gherkins is a direct FP count at the finest granularity. No backfiring, no estimation.
+- **M1: Function count.** Every roled function carries at least one gherkin, more where it branches (honest-gherkin-architecture.md §9); `feature-gate.sh` enforces it. The count of functions — each specified by its scenarios and proven by their tests — is a direct FP count at the finest granularity. No backfiring, no estimation.
 - **M2: Conformance-law / IFPUG count.** Each passing conformance law contributes the function points of the IFPUG elementary processes it maps to (Appendix A). Framework-self-conformance granularity.
 - **M3: Feature/screen count.** The Paper 1 method, counted at the application surface.
 

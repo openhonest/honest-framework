@@ -558,7 +558,7 @@ aggregate_type: "function"
 aggregate_id:   function_fqn            // e.g. "honest_test.honesty._finding"
 payload: {
     function:        String,            // fully-qualified function name (= aggregate_id)
-    gherkin:         String,            // the one gherkin scenario stating this behaviour
+    gherkin:         String,            // the gherkin scenario(s) stating this behaviour (a function may carry several)
     module:          String,            // owning module
     cases:           Integer,           // generated + contract cases run for this function
     result:          "proved" | "failed",  // "proved" requires all of: honesty, full coverage,
@@ -569,7 +569,7 @@ payload: {
 }
 ```
 
-The proof event is emitted through the injected runtime (section 3), exactly as any other `emit`: honest-test does not import honest-observe; the conformance runner wires `emit` in, and a pure local run with no runtime injected emits nothing. Because every function carries exactly one gherkin (HC-P009) and the run emits exactly one proof event per function, the proof events form a complete, gap-free **requirement → proof → result** matrix. It is read with the same tools as the runtime log (section 9), and the function-point count (honest-gherkin §9.2) is itself a projection over it: count the `hf.proof.checked` events, partition `proved` from `failed`.
+The proof event is emitted through the injected runtime (section 3), exactly as any other `emit`: honest-test does not import honest-observe; the conformance runner wires `emit` in, and a pure local run with no runtime injected emits nothing. Because every function carries at least one gherkin (HC-P009) and the run emits a proof event per function, the proof events form a complete, gap-free **requirement → proof → result** matrix. It is read with the same tools as the runtime log (section 9). The function-point measure (honest-gherkin §9.2) is the function count, not a tally of these events; coverage is the projection over them — count the `hf.proof.checked` events, partition `proved` from `failed`.
 
 ---
 

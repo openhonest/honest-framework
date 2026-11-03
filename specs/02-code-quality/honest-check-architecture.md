@@ -1617,7 +1617,7 @@ The documented threshold is 10 lines, resolved at the boundary and passed in, ne
 
 #### HC-P009 — Roled function without a gherkin
 
-**Severity: Warning.** Every roled function carries exactly one gherkin scenario stating its behaviour (honest-test-architecture.md §8.3). That one-to-one mapping is what lets the gherkin count serve as a direct function-point count, so a roled function with no scenario breaks the count as well as the coverage.
+**Severity: Warning.** Every roled function carries at least one gherkin scenario stating its behaviour (honest-test-architecture.md §8.3); a function that branches carries more, one per branch or decision path, and an orchestrator one per routing path. One is the floor. The live enforcer is `feature-gate.sh`, which reads the function names from `src/` and the scenario subjects from the `.feature` files and fails a written function with no scenario; the function count, not the gherkin count, is the function-point measure (honest-gherkin §9.2). A roled function with no scenario is behaviour that is neither specified nor counted.
 
 ```
 FUNCTION check_HC_P009(roled_functions, feature_files):

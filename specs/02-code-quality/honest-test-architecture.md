@@ -23,7 +23,7 @@ honest-test tests a function according to **what kind of function it is** — th
 
 3. **I/O boundary functions** — `@link(boundary=True)` / `@boundary`: the actual reads and writes (database, DOM, network). They touch the outside world, so they cannot be run purely, but nothing about them is simulated. Their input is closed like every other input: the manifest that reaches them was derived at intake from the templates. Their output is checked against the **real mechanism, never a mock**. The one seam is the injected connection, and what gets injected is a genuine driver: a real in-memory database, recreated fresh for each test, with the declared schema applied and the genuine query builders and `execute` run against it. The assertion is what the real store actually did, so there is nothing standing in that could drift from how the real thing behaves. This works for any store because what is injected is the store instance, not a substitute for its behaviour. (Sections 5, 6.)
 
-Sitting above all three is **BDD**: developer-authored Gherkin `.feature` files. Every roled function carries **exactly one gherkin scenario** stating its behaviour, so the mapping is one function, one gherkin, and a roled function without one is an HC-P009 diagnostic. That one-to-one mapping is what lets the gherkin count serve as a direct function-point count. Chain-level gherkins are filed one file per chain and carry the multi-step journeys no single function's test can express; function-level gherkins are filed alongside their function. Scaffolding is auto-generated from `@link` declarations; the developer writes only the `.feature` files. (Section 8.)
+Sitting above all three is **BDD**: developer-authored Gherkin `.feature` files. Every roled function carries **at least one gherkin scenario** stating its behaviour — more where it branches, so an orchestrator carries one per routing path and per decision — and a roled function without one is an HC-P009 diagnostic, enforced by `feature-gate.sh`. Each scenario is in turn implemented by one or more tests. The function count, not the gherkin count, is the direct function-point measure (honest-gherkin §9.2). Chain-level gherkins are filed one file per chain and carry the multi-step journeys no single function's test can express; function-level gherkins are filed alongside their function. Scaffolding is auto-generated from `@link` declarations; the developer writes only the `.feature` files. (Section 8.)
 
 All of it shares one runner and one coverage model. Coverage is **structural, not audited**: HC-R001 (enforced in honest-check) guarantees every function has a declared role or is reachable from one, so the strategy for its kind reaches it. If auto-generation completes, coverage is complete by construction.
 
@@ -772,7 +772,7 @@ Feature: Create user
 
 ### 8.3 Convention: universal gherkin coverage
 
-A gherkin is not reserved for chains. **Every roled function — `@link`, `@recognizer`, `@boundary`, `@helper` — carries exactly one gherkin scenario** stating its behavior. A pure internal helper is specified by a gherkin just as a top-level chain is. The governing model is honest-gherkin-architecture.md §9.
+A gherkin is not reserved for chains. **Every roled function — `@link`, `@recognizer`, `@boundary`, `@helper` — carries at least one gherkin scenario** stating its behavior, more where the function branches, and each scenario is implemented by one or more tests. A pure internal helper is specified by a gherkin just as a top-level chain is. The governing model is honest-gherkin-architecture.md §9.
 
 Chain-level gherkins are filed one `.feature` file per chain, named after the chain; function-level gherkins are filed alongside their function (a spoke fixes the exact layout). Either way the mapping is one function, one gherkin.
 
@@ -783,7 +783,7 @@ features/
   reset_password_pipeline.feature
 ```
 
-A roled function without a gherkin produces an **HC-P009** diagnostic from honest-check. This makes coverage one-to-one, which is what lets the gherkin count serve as a direct function-point count (honest-gherkin-architecture.md §9.2) and lets real FP be triangulated against the conformance-law and feature/screen counts (research-protocol.md §3.4).
+A roled function without a gherkin produces an **HC-P009** diagnostic, enforced by `feature-gate.sh`. This makes coverage universal — every function specified by at least one scenario — so the function count is a direct function-point count (honest-gherkin-architecture.md §9.2) and real FP can be triangulated against the conformance-law and feature/screen counts (research-protocol.md §3.4).
 
 ### 8.4 Standard Protocol-Level Assertion Library
 
@@ -841,7 +841,7 @@ For each roled function it proves, honest-test emits `hf.proof.checked` (honest-
 
 **Emitted through an injected runtime, never an import.** honest-test's core does not depend on honest-observe. The conformance runner wires an observe `emit` (honest-observe §3) into the run; honest-test calls it per function. A pure local run with no runtime injected emits nothing — the dependency runs one way (test → observe, at the run boundary only), with no cycle and no build-order change to honest-test's module dependencies.
 
-**The traceability matrix is complete by construction.** HC-P009 guarantees exactly one gherkin per function, and the run emits exactly one proof event per function, so the proof events are a gap-free **requirement → proof → result** record. Two threads then read from one log: the static thread (is requirement X proved? at what coverage?) is a projection over `hf.proof.checked` keyed by function name; the runtime thread (what happened to request Y?) is a projection keyed by `request_id`. The directly-counted function-point measure (honest-gherkin §9.2) is itself a projection over `hf.proof.checked`.
+**The traceability matrix is complete by construction.** HC-P009 guarantees at least one gherkin per function, and the run emits a proof event per function, so the proof events are a gap-free **requirement → proof → result** record. Two threads then read from one log: the static thread (is requirement X proved? at what coverage?) is a projection over `hf.proof.checked` keyed by function name; the runtime thread (what happened to request Y?) is a projection keyed by `request_id`. The directly-counted function-point measure is the function count (honest-gherkin §9.2); the `hf.proof.checked` events project the coverage over those functions.
 
 **What earns `proved`.** A function is `proved` only when three things hold together: it passes the honesty checks (§4), it is fully covered (§9 — 100% line and branch), **and** its gherkin's `Then` steps — the value oracle — pass. Coverage and honesty alone do not earn `proved`: auto-generation checks *properties* (purity, idempotency) and *shape* (§6.1 confirms output conforms to the declared schema, not which value it is), so a pure, idempotent, fully-covered function can still return the wrong value, and only the `Then` assertion catches that. A run where any of the three does not hold emits `proved: false`. The per-function gherkin's `Then` is made checkable through the value-assertion step library (§8.6), a small standard vocabulary — not a bespoke handler per phrasing. Bespoke step-handlers remain only for the integration- and HTTP-level features of §8.4, which auto-generation cannot reach.
 
@@ -940,7 +940,7 @@ Exhaustive transition testing drives this to 100%.
 
 ### 9.5 Coverage Data Format
 
-honest-test writes `coverage.json` that honest-check reads for HC-P009 (chain missing .feature file) and other cross-tool checks:
+honest-test writes `coverage.json` that honest-check reads for HC-P009 (roled function without a gherkin) and other cross-tool checks:
 
 ```json
 {

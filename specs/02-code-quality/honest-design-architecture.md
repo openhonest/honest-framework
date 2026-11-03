@@ -296,7 +296,7 @@ honest-design is held to the same five gates as every module:
 - **100% line + branch coverage.**
 - **A portable value oracle** — `conformance/suite.json`: `.hd` source → expected IR, and IR → expected validator fault set. The same file proves any language implementation of the reader/validator conformant, with no host language in the loop.
 - **A generative proof** — `conformance/laws_hd.py`: reader and validator laws across generated `.hd` inputs (round-trip stability of the IR, fault-as-data on every malformed input class, column-derivation totality).
-- **Feature bijection** — one gherkin scenario per reader/validator/renderer function point.
+- **Feature coverage** — at least one gherkin scenario per reader/validator/renderer function, more where it branches.
 
 ---
 

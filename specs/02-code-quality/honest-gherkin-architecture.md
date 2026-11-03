@@ -37,7 +37,7 @@ Every property in this spec follows from that one sentence. A step handler recei
 | Tool | Role |
 |---|---|
 | **honest-test** | Generates step scaffolding from `@link` declarations (honest-test §8.2) and ships the standard protocol-level assertion steps (honest-test §8.4). The developer authors only `.feature` files; honest-gherkin runs them. |
-| **honest-check** | Consumes the bounded vocabularies (`STEP_KINDS`, status sets, `FAULT_CODES`) as discriminant sets. Enforces **universal gherkin coverage**: every roled function carries exactly one gherkin (§9; honest-test §8.3, diagnostic HC-P009). |
+| **honest-check** | Consumes the bounded vocabularies (`STEP_KINDS`, status sets, `FAULT_CODES`) as discriminant sets. Enforces **universal gherkin coverage**: every roled function carries at least one gherkin, more where it branches (§9; honest-test §8.3, diagnostic HC-P009, enforced by `feature-gate.sh`). |
 
 ### 1.4 What honest-gherkin covers
 
@@ -318,17 +318,17 @@ It calls `register_step` once per pattern and returns the accumulated registry. 
 
 ## 9. Universal Gherkin Coverage and Function-Point Velocity
 
-### 9.1 Every function carries exactly one gherkin
+### 9.1 Every function carries at least one gherkin
 
-A gherkin is not reserved for user-facing chains. **Every function in every honest-check role — `@link`, `@recognizer`, `@boundary`, `@helper` — carries exactly one gherkin scenario** stating its behavior in `Given`/`When`/`Then`. A pure internal helper is specified by a gherkin just as a top-level chain is.
+A gherkin is not reserved for user-facing chains. **Every function in every honest-check role — `@link`, `@recognizer`, `@boundary`, `@helper` — carries at least one gherkin scenario** stating its behavior in `Given`/`When`/`Then`. One is the floor, not the ceiling: a function that branches needs a scenario per branch, and an orchestrator needs one per routing path and per decision in its tree, since a single scenario cannot state behavior the function only exhibits down one arm. A pure internal helper is specified by a gherkin just as a top-level chain is. **Each scenario, in turn, is implemented by one or more tests** — the scenario states the behavior and the tests prove it (honest-test §8).
 
-This generalizes honest-test §8.3, which previously scoped `.feature` files to chains. The narrower rule is withdrawn for the same reason the wrap-an-existing-framework deferral was: a partial discipline leaves behavior unspecified and uncounted exactly where it is hardest to see — inside the helpers.
+This generalizes honest-test §8.3, which previously scoped `.feature` files to chains. The narrower rule is withdrawn for the same reason the wrap-an-existing-framework deferral was: a partial discipline leaves behavior unspecified and uncounted exactly where it is hardest to see — inside the helpers. Exactly-one-per-function was tried and abandoned as unsustainable: a function with several branches cannot be honestly stated in one scenario, so the rule is at-least-one.
 
-A roled function without a gherkin is a violation of the same kind as an orphan under **HC-R001** (a function with no role and no reachable-from-roled caller). HC-R001 guarantees every function is *reached* by auto-generation; universal gherkin coverage guarantees every function is *specified and counted*. The diagnostic is **HC-P009**, generalized from "chain without `.feature`" to "roled function without a gherkin."
+A roled function without a gherkin is a violation of the same kind as an orphan under **HC-R001** (a function with no role and no reachable-from-roled caller). HC-R001 guarantees every function is *reached* by auto-generation; universal gherkin coverage guarantees every function is *specified*. The diagnostic is **HC-P009**, generalized from "chain without `.feature`" to "roled function without a gherkin," and the live enforcer of it is `feature-gate.sh` (§9.2).
 
-### 9.2 The gherkin is the function-point unit
+### 9.2 The function is the function-point unit
 
-Because coverage is universal and one-to-one, **the count of gherkins is a direct function-point count.** Not backfired from lines of code, not estimated by expert judgment: counted. Function-point velocity is gherkins-passing per unit time — a measured rate, not a projected one. This is the per-function realization of the "spec-as-FP-count" question posed in `research-protocol.md`: it pushes that model from conformance-law granularity down to every-function granularity.
+**The function-point unit is the function, and its count is the direct function-point measure:** the column-0 function definitions a module declares, counted straight from the source. Not backfired from lines of code, not estimated by expert judgment: counted. `feature-gate.sh` is the live gate — it reads the function names from `src/` and the scenario subjects from the `.feature` files and requires every written function to carry at least one scenario (a declared-but-unwritten function may lag, per the `.hd` → feature → test → code order). Function-point velocity is functions-specified-and-proven per unit time — a measured rate, not a projected one. This is the per-function realization of the "spec-as-FP-count" question posed in `research-protocol.md`: it pushes that model from conformance-law granularity down to every-function granularity. The gherkin count is no longer the measure — abandoning one-to-one made scenarios a coverage count, at least one per function and more for a function that branches, rather than a tally of functions.
 
 ### 9.3 Gherkin and auto-generation are complementary
 
@@ -343,14 +343,14 @@ Requiring a gherkin per function does not replace auto-generation. It is the spe
 
 A single counting method is a single point of failure, exactly as a single correctness check would be. The framework cross-checks correctness three independent ways that must agree: static (honest-check), run-every-case (honest-test auto-generation), and behavioral (the gherkin). It cross-checks **function points** the same way, across independent measures that must track each other:
 
-1. the per-function gherkin count (§9.2, finest granularity);
+1. the per-function count — the functions a module declares, counted straight from source (§9.2, finest granularity);
 2. the conformance-law → IFPUG elementary-process mapping (`research-protocol.md` §3.4 / Appendix A);
 3. the feature/screen count (Paper 1 method).
 
 These cover overlapping but non-identical scopes, so they are never numerically identical. The discipline is to treat their agreement, and the shape of their disagreement, as a signal:
 
 - **Mild divergence is acceptable**: measurement noise from differing granularity (one chain is several functions is several gherkins, but maps to fewer IFPUG elementary processes). Recorded, not actioned.
-- **Wild divergence is a defect signal**, and its *direction* localizes the defect (gherkin count far above the others → over-decomposition or trivial-function inflation; far below → claimed behavior with no specifying function).
+- **Wild divergence is a defect signal**, and its *direction* localizes the defect (function count far above the others → over-decomposition or trivial-function inflation; far below → claimed behavior with no specifying function).
 
 The thresholds that separate mild from wild, and the triage by direction, are normative in `research-protocol.md` §3.4. This section only fixes the unit (the gherkin) and the requirement (universal coverage) that make the triangulation possible.
 
@@ -367,7 +367,7 @@ A language spoke's honest-gherkin is conformant iff:
 5. **No global registration.** Steps are registered only through `register_step` on a `StepRegistry` value; no decorator or module-global registry exists.
 6. **Exception boundary.** The only exception caught is one thrown by a developer's handler, classified per §7.1. Engine-internal control flow uses Results.
 7. **Single I/O boundary.** Only `run_feature_file` and the CLI read the filesystem.
-8. **Universal coverage.** Every roled function (`@link`, `@recognizer`, `@boundary`, `@helper`) carries exactly one gherkin (§9.1); a roled function without one raises HC-P009. The gherkin count is exposed as the direct function-point count (§9.2).
+8. **Universal coverage.** Every roled function (`@link`, `@recognizer`, `@boundary`, `@helper`) carries at least one gherkin, more where it branches (§9.1); a roled function without one raises HC-P009, enforced by `feature-gate.sh`. The function count — not the gherkin count — is the direct function-point measure (§9.2), and every scenario is implemented by one or more tests.
 
 The cross-tier test-of-record for these requirements lives in `specs/honest-conformance-suite.md`.
 
