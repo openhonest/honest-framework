@@ -270,3 +270,257 @@ Feature: honest-check — the static checker, the honesty gate
     And it is exposed for honest-test so honest-test checks its own non-determinism watchlist against honest-check's and the two tools trap exactly the same calls
     And it returns true when name matches any entry and false when it matches none
     But it reads nothing, opens nothing, executes nothing, and raises nothing
+  Scenario: diagnostic is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When diagnostic is called
+    Then diagnostic: a helper of the split check_source rule engine (section 3.4).
+
+  Scenario: literal_string is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When literal_string is called
+    Then The Python string a `string` node spells, quotes stripped.
+
+  Scenario: string_members is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When string_members is called
+    Then The string values a set/list/tuple node holds, in source order.
+
+  Scenario: call_arguments is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When call_arguments is called
+    Then The (positional nodes, keyword name -> value node) of a call.
+
+  Scenario: import_aliases is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When resolve_aliases is called
+    Then Map each local name bound by a honest_type import to its canonical constructor name (section 3.3), so a call under an alias resolves to the real constructor.
+
+  Scenario: canonical_name is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When canonical_name is called
+    Then The constructor name a call resolves to, or None when the call is not a framework constructor. A direct constructor-name call counts, and an aliased one resolves through the import (section 3.3).
+
+  Scenario: base_types_of is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When base_types_of is called
+    Then The base-type map of a vocabulary's first argument: name -> (kind, payload). kind is 'set' with a frozenset of members, or 'predicate' with the recognizer's value node (a lambda or any other opaque recognizer honest-check cannot run). HC009
+
+  Scenario: predicate_is_risky is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When predicate_is_risky is called
+    Then True when a predicate's expression holds a node that throws on a non-matching input (§HC009): a call to bare `int` or `float`, a subscript access, or a `/` or `//` division. A predicate that throws is a recognizer that rejects by exception 
+
+  Scenario: enclosing_function is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When enclosing_function is called
+    Then The nearest enclosing function_definition of a node, climbing parents, or None at module scope. A node's nearest enclosing function is the scope that owns it, so a nonlocal or a mutation reads as belonging to the function it sits directly i
+
+  Scenario: underscore_self_name is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When underscore_self_name is called
+    Then The attribute name of a `self._name` assignment target whose name starts with an underscore, or None when the target is not that shape (§HC-P007).
+
+  Scenario: called_name is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When called_name is called
+    Then The name a call invokes — a bare identifier, or the final attribute of a dotted call such as `window.addEventListener` — or None (§HC-P011).
+
+  Scenario: own_body is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When own_body is called
+    Then The body descendants belonging to a function itself, not descending into a deeper nested def, lambda or decorated def — those statements are the inner scope's own (§4.2). A `nonlocal` and a mutation count only where they sit directly in thi
+
+  Scenario: nonlocal_names is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When nonlocal_names is called
+    Then The names declared by the `nonlocal` statements directly in a function body.
+
+  Scenario: decorators_of is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When decorators_of is called
+    Then The decorator nodes applied to a function — the `decorator` children of the enclosing `decorated_definition`, or an empty list for an undecorated function. The boundary signal HC-P002, HC-P004 and HC-P005 read, and the cache signal HC-P006 
+
+  Scenario: decorator_expression is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When decorator_expression is called
+    Then The expression a decorator applies — the identifier, attribute or call after the `@`. A parsed decorator always carries that expression as its first named child.
+
+  Scenario: decorator_target is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When decorator_target is called
+    Then The final name a decorator names — `boundary` from `@boundary`, `lru_cache` from `@functools.lru_cache(maxsize=1)` — or None when it is neither a plain nor a dotted name, called or bare (§4.2, §5.6).
+
+  Scenario: is_boundary_decorator is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When is_boundary_decorator is called
+    Then True when a decorator declares its function a boundary — `@boundary` (bare or called) or `@link(boundary=True)` (§4.2).
+
+  Scenario: in_non_boundary_function is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When in_non_boundary_function is called
+    Then True when a node's nearest enclosing function exists, carries no boundary decorator, and the declaration gives its name no door role — the scope HC-P002, HC-P004 and HC-P005 fire in (§4.2, §5.4, §5.5). A node at module scope, or in a bounda
+
+  Scenario: is_immutable_value is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When is_immutable_value is called
+    Then True when a module-level binding's right side is provably immutable (§5.4, §872): a number, a string, a bool, None, a tuple literal, a negated immutable, or a `frozenset(...)` call. Everything else — a list, dict or set literal, a comprehen
+
+  Scenario: module_mutable_globals is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When module_mutable_globals is called
+    Then The module-level names bound to a mutable (or not provably immutable) value — the globals a read of which makes a link impure (§5.4, §872). A name bound to an immutable value, and an imported or def/class name (never an assignment target), 
+
+  Scenario: param_names is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When param_names is called
+    Then The names a single parameter node binds — a bare identifier, or the `name` of a typed or defaulted parameter. A splat or other shape binds nothing here.
+
+  Scenario: link_locals is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When link_locals is called
+    Then The names local to a link — its parameters plus the names it assigns in its own body. A read of one of these is not a read of a module global (§5.4).
+
+  Scenario: is_attribute_suffix is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When is_attribute_suffix is called
+    Then True when an identifier is the attribute part of an `x.name` access — the `.name`, not a read of `name` itself. Reading `config.timeout` reads `config`, not a global called `timeout` (§5.4).
+
+  Scenario: is_keyword_name is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When is_keyword_name is called
+    Then True when an identifier is a keyword argument's name — the `k` in `f(k=v)`, which names a parameter of the callee, not a global read (§5.4).
+
+  Scenario: watched is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When watched is called
+    Then True when a call's dotted target is on a watch list: an exact entry matches by equality, and an entry carrying a `*` matches as a glob — a trailing `.*` names any attribute of a module, a trailing `*` is a prefix, a `*` between dots is one 
+
+  Scenario: dispatch_variable is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When dispatch_variable is called
+    Then The variable name an `if`/`elif` condition dispatches on — the left identifier of an `identifier == <value>` equality test — or None when the condition is not that shape (§HC-P001).
+
+  Scenario: within_class_init is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When within_class_init is called
+    Then True when a node's nearest enclosing function is an `__init__` that is a method of a class — the scope HC-P007 reads for hidden instance state (§4.2).
+
+  Scenario: mutated_names is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When mutated_names is called
+    Then The names an assignment or augmented assignment targets directly in a function body — the left of each `x = ...` or `x += ...` whose target is a plain identifier.
+
+  Scenario: is_empty_default is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When is_empty_default is called
+    Then True when a parameter's default stands for absence rather than a baked-in value (§HC-P015): None, False, a zero number, an empty string, an empty list/dict/tuple literal, or an empty-constructor call. A populated literal, a non-zero number,
+
+  Scenario: dotted_target is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When dotted_target is called
+    Then The dotted name a call invokes — `open`, `os.system`, `requests.get`, `urllib.request.urlopen` — or None when the target is not a plain or dotted name, such as a call on a call's result (§5.4).
+
+  Scenario: link_is_impure is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When link_is_impure is called
+    Then True when a link's own body calls a watched function or reads a module-level mutable global (§HC008). The body search does not descend into a nested def or lambda, whose statements are that inner scope's own.
+
+  Scenario: is_link_decorated is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When is_link_decorated is called
+    Then True when a function carries a `@link` decorator, bare or called — the chain-link declaration HC008 and HC001 both read for a declared link (§HC008, §4.2).
+
+  Scenario: local_function_links is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When local_function_links is called
+    Then Each function defined in this file, mapped to whether it carries a `@link` decorator (§4.2, HC001). A chain positional that resolves to one of these names is a local link declaration honest-check can read; a name not here is defined elsewhe
+
+  Scenario: is_orchestrator is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When is_orchestrator is called
+    Then True when a function carries an `@orchestrator` decorator, bare or called — matched by decorator name the same way a boundary decorator is (§4.2, HC-OR001).
+
+  Scenario: longest_shared_run is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When longest_shared_run is called
+    Then The length of the longest run of consecutive equivalent call names two call sequences share (§HC-OR003). A contiguous common substring over the two lists, found by the standard row-by-row dynamic program; 0 when they share no adjacent run.
+
+  Scenario: link_declares_emits is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When link_declares_emits is called
+    Then True when a function carries a `@link` decorator that passes an `emits` keyword — the emits vocabulary HC-P017 requires of an HTTP-producing link (§HC-P017). Read the same way is_boundary_decorator reads `boundary`: from the decorator call'
+
+  Scenario: construction_maps is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When construction_maps is called
+    Then Each file-local variable bound to a `vocabulary(...)` or a `binding(...)` call, mapped to that construction call node (§HC004, §HC005). A name bound to anything else is not here; a name honest-check cannot resolve to one of these two constr
+
+  Scenario: features_vocabulary is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When features_vocabulary is called
+    Then The feature-flag vocabulary this module declares: each flag name mapped to the set of states its `FEATURES[flag]["states"]` set names (§7, HC-HF001/HC-HF002). Read only from a module-scope `FEATURES = {...}` dict literal — the same top-leve
+
+  Scenario: feature_state_flag is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When feature_state_flag is called
+    Then The flag a `feature_state(state, "flag")` call names — its second positional, a string literal — or None when the call names fewer than two positionals or a dynamic (non-literal) flag (§7). The call is resolved by name through called_name.
+
+  Scenario: module_dict_literals is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When module_dict_literals is called
+    Then Each module-scope name bound to a dict literal, mapped to the set of string keys the literal declares (§7, HC-HF002). A name bound to anything but a module-scope dict literal is not here, so a handler table that resolves to no such name is 
+
+  Scenario: vocabulary_types is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When vocabulary_types is called
+    Then The type surface of a `vocabulary(...)` call: its base-type names, its composed-type names, the base names its composed types require, and the base names its composed types capture (§HC004, §HC005). base_types_of reads the first-argument di
+
+  Scenario: binding_keys is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When binding_keys is called
+    Then The type names a `binding(...)` call binds — the keys of its first-argument table (§HC004, §HC005).
+
+  Scenario: vocabulary_binding_pairs is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When vocabulary_binding_pairs is called
+    Then Each (vocabulary calls, binding call) a classify or link pairs by name (§HC004, §HC005). A `classify(tokens, vocab, bind=b)` pairs positional 2 with the `bind` keyword, and its vocabulary list is the one vocab. A `link(accepts=v, emits=e, b
+
+  Scenario: check_construction is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When check_construction is called
+    Then Construction-time rules (section 4.1): HC001/HC003/HC006/HC007/HC011 and the HC-SM rules, dispatched by the framework constructor each call site resolves to. The per-rule logic nests here as data; ctx carries the parse.
+
+  Scenario: check_per_file is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When check_per_file is called
+    Then Per-file rules (section 4.2): the HC-P purity rules, the HC chain/link rules, and the HC-HF feature rules, folded over the declaration graph. The per-rule logic nests here as data; ctx carries the parse.
+
+  Scenario: apply_suppression is part of the split check_source rule engine
+    Given a parsed source and its check context
+    When apply_suppression is called
+    Then Apply inline/file suppression to the raw diagnostics (section 7): downgrade a suppressed finding to info, and flag a directive that suppressed nothing (HC-SUP001) or carries no reason (HC-SUP002). The directive parsers nest here; ctx carrie
+
+  Scenario: _canonical_name resolves a call to its framework constructor name
+    Given a call node and the import-alias map
+    When _canonical_name is called
+    Then it returns the constructor name the call resolves to through the alias map, or NOTHING when the call is not a recognized construction
+
+  Scenario: _constructor_assignments finds module-level name = constructor(...) assignments
+    Given the parsed root, the alias map, and a constructor name
+    When _constructor_assignments is called
+    Then it returns the (call, target-name) pairs for each module-level assignment whose right side is that constructor, in source order
+
+  Scenario: _positional_identifiers reads a call's positional identifier arguments
+    Given a call node
+    When _positional_identifiers is called
+    Then it returns the identifier names of the call's positional arguments in source order, skipping keyword and non-identifier arguments
+
+  Scenario: _first_child_of_type returns the first named child of a given type
+    Given a node and a type name
+    When _first_child_of_type is called
+    Then it returns the first named child whose type matches, or NOTHING when the node has none
+
+  Scenario: _is_interpolated detects a dynamic class value
+    Given a class attribute value text
+    When _is_interpolated is called
+    Then it returns whether the value carries a jinja interpolation marker, making it dynamic and skipped whole

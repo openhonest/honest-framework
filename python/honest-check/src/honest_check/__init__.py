@@ -19,14 +19,11 @@ from honest_check.cli import (
     run_check,
     startup_check,
 )
-from honest_check.core import (
-    check_auth,
-    check_references,
-    check_roles,
-    check_source,
-    cross_declaration,
-    pair_source,
-)
+from honest_check.auth import check_auth
+from honest_check.core import check_source, pair_source
+from honest_check.crossing import cross_declaration
+from honest_check.references import check_references
+from honest_check.roles import check_roles
 from honest_check.readers import (
     discover_files,
     load_config,
