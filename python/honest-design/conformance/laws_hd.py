@@ -21,7 +21,7 @@ def _module(src):
 _MODULE = """module m
   layer foundation
   inputs = { "HTTP", "database" }
-  outputs = { "database", "network" }
+  outputs = { "database", "socket" }
   env DATABASE_URL : str
   env POOL_SIZE : int | Absent
   type Rec = { a: str
@@ -34,7 +34,7 @@ _MODULE = """module m
   boundary_in fn read_it : (r: Request) -> list<str> | Fault side_effect reads "HTTP" invokes run note "test"
   orchestrator fn run : (t: T) -> M | Fault invokes c, classify raises bad_input note "test"
   fn classify : (t: str) -> T | Fault note "test"
-  boundary_out fn write_it : (t: T) -> Resp raises "io.failed" side_effect reads_writes "database" side_effect writes "network" note "test"
+  boundary_out fn write_it : (t: T) -> Resp raises "io.failed" side_effect reads_writes "database" side_effect writes "socket" note "test"
   chain c = classify -> write_it
   route "POST /orders" -> read_it
   entry "decorator:@h" -> run
@@ -118,7 +118,7 @@ def _probe_functions():
         bad.append(f"role -> column mapping wrong: {columns}")
     if fns["read_it"]["side_effects"] != [{"direction": "reads", "target": "HTTP", "module": "", "door": ""}]:
         bad.append(f"boundary_in side_effect wrong: {fns['read_it']['side_effects']}")
-    if fns["write_it"]["side_effects"] != [{"direction": "reads_writes", "target": "database", "module": "", "door": ""}, {"direction": "writes", "target": "network", "module": "", "door": ""}]:
+    if fns["write_it"]["side_effects"] != [{"direction": "reads_writes", "target": "database", "module": "", "door": ""}, {"direction": "writes", "target": "socket", "module": "", "door": ""}]:
         bad.append(f"multiple side_effects / reads_writes wrong: {fns['write_it']['side_effects']}")
     if fns["run"]["invokes"] != ["c", "classify"] or fns["run"]["raises"] != ["bad_input"]:
         bad.append(f"invokes / bare raises wrong: {fns['run']}")
@@ -365,9 +365,9 @@ def _probe_envs():
 def _probe_handles():
     """A handle is held and passed, never read: the scalar and its aliases, through records and generics."""
     bad = []
-    src = ("module m\n  outputs = { \"network\" }\n  type Connection = handle\n  type Conn2 = Connection\n  type Database = { conn: Connection }\n"
-           "  boundary_out fn open_it : (target: str) -> Connection side_effect writes \"network\" note \"test\"\n"
-           "  boundary_out fn close_it : (c: Conn2) -> bool side_effect writes \"network\" note \"test\"\n"
+    src = ("module m\n  outputs = { \"socket\" }\n  type Connection = handle\n  type Conn2 = Connection\n  type Database = { conn: Connection }\n"
+           "  boundary_out fn open_it : (target: str) -> Connection side_effect writes \"socket\" note \"test\"\n"
+           "  boundary_out fn close_it : (c: Conn2) -> bool side_effect writes \"socket\" note \"test\"\n"
            "  fn carry : (db: Database) -> Database note \"test\"\n"
            "  fn peek : (c: Connection) -> str note \"test\"\n"
            "  fn peek_all : (cs: list<Conn2>) -> handle note \"test\"\n")
@@ -445,11 +445,11 @@ def _probe_faults():
 def _probe_readers():
     """A door is called by the world only; a reader is called by the program and calls nothing."""
     bad = []
-    src = ("module m\n  inputs = { \"HTTP\", \"clock\", \"filesystem\" }\n  outputs = { \"stdout\" }\n"
+    src = ("module m\n  inputs = { \"HTTP\", \"clock\", \"file\" }\n  outputs = { \"stdout\" }\n"
            "  boundary_in fn door : (r: str) -> str side_effect reads \"HTTP\" note \"test\"\n"
            "  boundary_in fn side_door : (r: str) -> str side_effect reads \"HTTP\" invokes serve note \"test\"\n"
            "  reader fn read_clock : () -> float side_effect reads \"clock\" note \"test\"\n"
-           "  reader fn read_dir : (p: str) -> list<str> side_effect reads \"filesystem\" invokes shape note \"test\"\n"
+           "  reader fn read_dir : (p: str) -> list<str> side_effect reads \"file\" invokes shape note \"test\"\n"
            "  orchestrator fn run : (r: str) -> str invokes read_clock, side_door, shape note \"test\"\n"
            "  fn shape : (r: str) -> str note \"test\"\n"
            "  boundary_out fn sink : (s: str) -> bool side_effect writes \"stdout\" note \"test\"\n"
@@ -639,9 +639,15 @@ def _probe_validate():
     dup = validate(_module("module m\n  fn a : (x: str) -> str note \"test\"\n  fn a : (y: str) -> str note \"test\"\n"))
     if dup != [{"code": "duplicate_name", "message": "Duplicate function name 'a'", "category": "client", "detail": {"kind": "functions", "name": "a"}}]:
         bad.append(f"duplicate_name wrong: {dup}")
-    impure = validate(_module("module m\n  fn a : (x: str) -> str side_effect reads \"X\" note \"test\"\n"))
+    impure = validate(_module("module m\n  fn a : (x: str) -> str side_effect reads \"clock\" note \"test\"\n"))
     if impure != [{"code": "impure_pure_function", "message": "Pure function 'a' declares a side effect", "category": "server", "detail": {"function": "a"}}]:
         bad.append(f"impure_pure_function wrong: {impure}")
+    # A side whose kind is not in the closed world-side set faults (the dual of unknown_layer). The
+    # store and seam exclusions are proven by _probe_stores and _probe_seams validating clean.
+    side = validate(_module("module m\n  reader fn r : () -> str side_effect reads \"filesystem\" note \"test\"\n"))
+    side_kinds = [f for f in side if f["code"] == "unknown_side_kind"]
+    if side_kinds != [{"code": "unknown_side_kind", "message": "Function 'r' names side 'filesystem', whose kind 'filesystem' is not one of the declared world sides", "category": "client", "detail": {"function": "r", "target": "filesystem", "kind": "filesystem"}}]:
+        bad.append(f"unknown_side_kind wrong: {side_kinds}")
     return bad
 
 
@@ -655,7 +661,7 @@ def _probe_render():
             {"index": 1, "title": "Input boundary", "nodes": [{"name": "read_it", "role": "boundary_in", "effects": ["HTTP"]}]},
             {"index": 2, "title": "Orchestrators", "nodes": [{"name": "run", "role": "orchestrator", "effects": []}]},
             {"index": 3, "title": "Pure functions", "nodes": [{"name": "classify", "role": "fn", "effects": []}]},
-            {"index": 4, "title": "Output boundary", "nodes": [{"name": "write_it", "role": "boundary_out", "effects": ["database", "network"]}]},
+            {"index": 4, "title": "Output boundary", "nodes": [{"name": "write_it", "role": "boundary_out", "effects": ["database", "socket"]}]},
         ],
         "edges": [{"chain": "c", "src": "classify", "dst": "write_it"}],
     }
@@ -1028,7 +1034,7 @@ def _probe_edge():
     col1 = {c["index"]: c for c in render(m)["columns"]}[1]
     if "resolve" not in {n["name"] for n in col1["nodes"]}:
         bad.append(f"an edge renders in the input-boundary column: {col1['nodes']}")
-    impure = validate(_module('module m\n  edge fn e : (x: str) -> str side_effect reads "X" note "test"\n  entry "import m.g" -> e\n'))
+    impure = validate(_module('module m\n  edge fn e : (x: str) -> str side_effect reads "clock" note "test"\n  entry "import m.g" -> e\n'))
     if impure != [{"code": "impure_pure_function", "message": "Pure function 'e' declares a side effect", "category": "server", "detail": {"function": "e"}}]:
         bad.append(f"an edge declaring a side effect is impure: {impure}")
     handle = validate(_module('module m\n  type Conn = handle\n  edge fn e : (c: Conn) -> str note "test"\n  entry "import m.g" -> e\n'))
