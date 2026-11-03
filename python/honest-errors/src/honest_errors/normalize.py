@@ -32,7 +32,7 @@ def classify_js_payload(payload, environment, timestamp):
     """Normalize a browser error payload to an ExceptionReport (section 3). Pure."""
     missing = _missing(payload, _JS_REQUIRED)
     if missing:
-        return err(fault("malformed_payload", f"JS error payload missing key(s): {missing}", "client", {"missing": missing}))
+        return err(fault("malformed_payload", f"JS error payload missing key(s): {missing}", "client", [], {"missing": missing}))
     return ok(
         {
             "exception_type": "JavaScriptError",
@@ -54,7 +54,7 @@ def classify_py_payload(payload, environment, timestamp):
     the Python path defaults to error."""
     missing = _missing(payload, _PY_REQUIRED)
     if missing:
-        return err(fault("malformed_payload", f"Python exception payload missing key(s): {missing}", "server", {"missing": missing}))
+        return err(fault("malformed_payload", f"Python exception payload missing key(s): {missing}", "server", [], {"missing": missing}))
     return ok(
         {
             "exception_type": payload["exception_type"],
