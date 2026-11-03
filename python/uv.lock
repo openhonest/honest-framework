@@ -256,17 +256,17 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "tree-sitter", specifier = ">=0.23" },
-    { name = "tree-sitter-css", specifier = ">=0.23" },
-    { name = "tree-sitter-elixir", specifier = ">=0.3" },
-    { name = "tree-sitter-go", specifier = ">=0.23" },
+    { name = "tree-sitter", specifier = "==0.25.2" },
+    { name = "tree-sitter-css", specifier = "==0.25.0" },
+    { name = "tree-sitter-elixir", specifier = "==0.3.5" },
+    { name = "tree-sitter-go", specifier = "==0.25.0" },
     { name = "tree-sitter-honest-hd", editable = "tree-sitter-honest-hd" },
     { name = "tree-sitter-honest-jinja", editable = "tree-sitter-honest-jinja" },
-    { name = "tree-sitter-html", specifier = ">=0.23" },
-    { name = "tree-sitter-javascript", specifier = ">=0.23" },
-    { name = "tree-sitter-php", specifier = ">=0.23" },
-    { name = "tree-sitter-python", specifier = ">=0.23" },
-    { name = "tree-sitter-ruby", specifier = ">=0.23" },
+    { name = "tree-sitter-html", specifier = "==0.23.2" },
+    { name = "tree-sitter-javascript", specifier = "==0.25.0" },
+    { name = "tree-sitter-php", specifier = "==0.24.1" },
+    { name = "tree-sitter-python", specifier = "==0.25.0" },
+    { name = "tree-sitter-ruby", specifier = "==0.23.1" },
 ]
 
 [[package]]
