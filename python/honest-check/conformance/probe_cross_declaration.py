@@ -56,14 +56,16 @@ _CASES = [
         "rule_ids": ["HC-R005"],
         "want_rule": "HC-R005",
     },
-    # HC-REF005 — ghost is declared and defined nowhere across the sources.
+    # HC-REF005 — ghost is declared in the .hd and the code has not written it yet. The build
+    # order writes the .hd before the code, so a declared-but-unwritten function is the allowed
+    # lag and fires nothing; present is written, exported and declared, so it is clean too.
     {
-        "name": "HC-REF005 fires",
+        "name": "HC-REF005 passes a declared-but-unwritten function",
         "hd": "module m\n\n  fn present : (x: str) -> str\n  fn ghost : (x: str) -> str\n",
         "sources": [{"path": "m.py", "text": "def present(x):\n    return x\n"}],
         "export_source": '__all__ = ["present"]\n',
         "rule_ids": ["HC-REF005"],
-        "want_rule": "HC-REF005",
+        "want_rule": None,
     },
     # clean — roles, awaiting, absence, non-generator body and defined/exported
     # names all agree; all five rules selected; no diagnostics.
@@ -342,12 +344,15 @@ _MSG_CASES = [
         "expected": [],
     },
     {
+        # With no sources, module_root falls back to "exports.py"; present is declared but not
+        # yet written (the allowed lag, no finding), while ghost is exported and declared in no
+        # .hd, so the exported-not-declared finding reports at that fallback location.
         "id": 'check_ref005-module-root',
-        "hd": 'module m\n\n  fn ghost : (x: str) -> str\n',
+        "hd": 'module m\n\n  fn present : (x: str) -> str\n',
         "sources": [],
-        "export_source": '__all__ = []\n',
+        "export_source": '__all__ = ["present", "ghost"]\n',
         "rule_ids": ['HC-REF005'],
-        "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': "'ghost' is declared and defined nowhere. Implement it, or remove the declaration.", 'source_location': 'exports.py', 'context': '', 'fixable': False}],
+        "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': "'ghost' is exported by the module and declared in no .hd. Declare it, or stop exporting it.", 'source_location': 'exports.py', 'context': '', 'fixable': False}],
     },
     {
         "id": 'check_ref005-module-root-first',
@@ -398,12 +403,13 @@ _MSG_CASES = [
         "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': "'extra' is exported by the module and declared in no .hd. Declare it, or stop exporting it.", 'source_location': 'm.py', 'context': '', 'fixable': False}],
     },
     {
-        "id": 'HC-REF005-defined-nowhere',
+        # ghost is declared and not yet written: the allowed lag, so the record is empty.
+        "id": 'HC-REF005-declared-unwritten',
         "hd": 'module m\n\n  fn present : (x: str) -> str\n  fn ghost : (x: str) -> str\n',
         "sources": [{'path': 'm.py', 'text': 'def present(x):\n    return x\n'}],
         "export_source": '__all__ = ["present"]\n',
         "rule_ids": ['HC-REF005'],
-        "expected": [{'rule_id': 'HC-REF005', 'severity': 'error', 'message': "'ghost' is declared and defined nowhere. Implement it, or remove the declaration.", 'source_location': 'm.py', 'context': '', 'fixable': False}],
+        "expected": [],
     },
     {
         "id": 'HC-REF005-arity',

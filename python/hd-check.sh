@@ -110,8 +110,10 @@ for hd in honest-*/honest-*.hd; do
 done
 
 # HC-REF005 crosses the same declaration with the package's own export list: an exported function no
-# .hd names, a declared name defined nowhere, a declared parameter count that disagrees. It needs the
-# export list as well as the declaration, so it runs per package here rather than beside the two above.
+# .hd names, or a declared parameter count that disagrees with the code. It is one-directional — the
+# build order writes the .hd first, so a declared function the code has not written yet is the allowed
+# lag and is not a finding. It needs the export list as well as the declaration, so it runs per package
+# here rather than beside the two above.
 #
 # NOT_CROSSED names the packages whose declaration and code do not yet agree, each with its count read
 # on 2026-10-02. A package absent from this list is gated. A package on it is on the record as ungated,

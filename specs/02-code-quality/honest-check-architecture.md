@@ -602,7 +602,7 @@ FUNCTION check_HC_REF004(vocabulary, scanned_templates):
 
 #### HC-REF005 — Declaration and implementation resolve to each other
 
-A module's `.hd` declares its surface: `fn name : (params) -> result` for each function the module offers. HC-REF005 applies "Every reference resolves" between that declaration and the code. The declaration then states what the module is, not what an earlier version of it was. A declaration naming no implementation is an unbuilt promise. An exported function no declaration names is undeclared surface. That is the same defect as an unmodelled route: it exists, it is callable, and nobody chose it on the record.
+A module's `.hd` declares its surface: `fn name : (params) -> result` for each function the module offers. HC-REF005 applies "Every reference resolves" between that declaration and the code. The declaration then states what the module is, not what an earlier version of it was. The build order writes the `.hd` before the code, so the check is one-directional: a declared function the code has not written yet is the allowed lag, the declaration simply running ahead of the implementation it will get. An exported function no declaration names is the defect, code that ran ahead of the record. That is the same defect as an unmodelled route: it exists, it is callable, and nobody chose it on the record.
 
 **The rule reads three sets, and the host language supplies the third.** The declared set is the `fn` names in the module's `.hd`, read through honest-design. The defined set is the functions the module's source defines, read through honest-parse. The exported set is the surface the module publishes. It is read from the export declaration the host language already carries: Python's `__all__`, JavaScript's `export`, Rust's `pub`. That export declaration is the module's internal marker, and it is a list the author wrote. A function is internal because it is absent from that list, never because of the shape of its name. A leading underscore is a convention, and a convention cannot carry a gate: `parse` is public by any reading and carries no underscore.
 
@@ -623,10 +623,7 @@ FUNCTION check_HC_REF005(hd_module, source_functions, export_declaration):
             f"'{name}' is exported by the module and declared in no .hd. "
             "Declare it, or stop exporting it.")
 
-    FOR EACH name IN declared - defined:
-        EMIT error(HC-REF005, hd_module.location_of(name),
-            f"'{name}' is declared in {hd_module.path} and defined nowhere. "
-            "Implement it, or remove the declaration.")
+    # declared - defined is the allowed lag (the .hd runs ahead of the code) and emits nothing.
 
     FOR EACH name IN declared & defined:
         IF arity(hd_module.declaration(name)) ≠ arity(source_function(name)):
@@ -634,7 +631,7 @@ FUNCTION check_HC_REF005(hd_module, source_functions, export_declaration):
                 f"'{name}' is declared with {n} parameters and defined with {m}.")
 ```
 
-**Declaring more than you export is allowed; exporting more than you declare is not.** The two directions are not symmetric, because they answer different questions. Every exported name must be declared, since an unlisted export is surface nobody chose. A declared name need not be exported, because the `.hd` is also the module's architecture diagram, and a module may put its internal structure on the record deliberately. honest-design declares its own private readers and validators, and the diagram is better for it. What a declared name may never be is undefined: whether exported or internal, a declaration that resolves to no function is false.
+**Declaring more than you build or export is allowed; building or exporting more than you declare is not.** The two directions are not symmetric, because they answer different questions. Every exported name must be declared, since an unlisted export is surface nobody chose. A declared name need not be exported, because the `.hd` is also the module's architecture diagram, and a module may put its internal structure on the record deliberately. honest-design declares its own private readers and validators, and the diagram is better for it. A declared name also need not yet be defined: the build order writes the `.hd` first, so between declaring a function and implementing it the declaration legitimately names code that does not exist yet. The rule holds the surface to the declaration, not the declaration to the surface.
 
 **An absent or computed export list fails the rule rather than passing it.** A list built by a call is inferred, not declared, so the surface it names is whatever the call happens to return on the day. The rule has nothing to read and says so, in place of returning clean, the same posture the checker takes on source it cannot fully parse (HC-SYN). A module whose declaration names a surface in another language, with no source of this language behind it, likewise reports that it did not run; a rule that treats absent input as agreement is the defect this whole tier exists to remove.
 

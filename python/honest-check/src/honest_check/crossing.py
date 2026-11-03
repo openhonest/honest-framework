@@ -256,10 +256,12 @@ def cross_declaration(sources, declaration, export_source, rule_ids):
         return findings
 
     def check_ref005():
-        """The declared, defined and exported sets resolve to each other (§HC-REF005): an
-        exported name the declaration does not name, a declared name defined nowhere, or a
-        declared parameter count that disagrees. An absent or non-literal __all__ fails the
-        rule rather than passing it."""
+        """The exported and defined surface resolves into the declaration (§HC-REF005): an
+        exported name the declaration does not name, or a declared parameter count that
+        disagrees with the code. The build order writes the .hd before the code, so a declared
+        name the code has not written yet is the allowed lag and passes — the rule is one-
+        directional, catching code that runs ahead of the .hd, never a .hd that runs ahead of
+        the code. An absent or non-literal __all__ fails the rule rather than passing it."""
         module_root = sources[0]["path"] if sources else "exports.py"
         exported = literal_all(export_source)
         if exported is None:
@@ -282,15 +284,6 @@ def cross_declaration(sources, declaration, export_source, rule_ids):
                     f"'{name}' is exported by the module and declared in no .hd. Declare it, "
                     "or stop exporting it.",
                     location_of.get(name, module_root),
-                )
-            )
-        for name in sorted(declared_names - defined_names):
-            findings.append(
-                finding(
-                    "HC-REF005",
-                    f"'{name}' is declared and defined nowhere. Implement it, or remove the "
-                    "declaration.",
-                    module_root,
                 )
             )
         for name in sorted(declared_names & defined_names):
