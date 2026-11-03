@@ -8,7 +8,7 @@ module honest-errors
 
   set SEVERITIES = { "critical", "error", "warning", "info" }
   set ENVIRONMENTS = { "development", "production", "test" }
-  set BEHAVIOR_NAMES = { "log", "email", "reraise" }
+  set BEHAVIOR_NAMES = { "log", "email" }
   set SUPPRESS_REASONS = { "rate_limit_hourly", "rate_limit_dedup" }
 
   type JSErrorPayload = {
@@ -50,26 +50,15 @@ module honest-errors
     line: int
   }
 
-  type Fault = {
-    code: str
-    message: str
-    category: str
-    results: list<any>
-    detail: dict<str, any>
-  }
+  # Fault is honest-type's, referenced by name and not redeclared here.
 
-  type Result = {
-    ok: ExceptionReport
-    err: Fault
-  }
+  fn classify_js_payload : (payload: JSErrorPayload, environment: str, timestamp: str) -> ExceptionReport | Fault note "normalizes a browser error payload to an ExceptionReport, critical when the message says so, or a malformed_payload fault naming the missing keys"
 
-  fn classify_js_payload : (payload: JSErrorPayload, environment: str, timestamp: str) -> Result note "normalizes a browser error payload to an ExceptionReport, critical when the message says so, or a malformed_payload fault naming the missing keys"
-
-  fn classify_py_payload : (payload: PythonExceptionPayload, environment: str, timestamp: str) -> Result note "normalizes a server exception payload to an ExceptionReport at error severity, or a malformed_payload fault naming the missing keys"
+  fn classify_py_payload : (payload: PythonExceptionPayload, environment: str, timestamp: str) -> ExceptionReport | Fault note "normalizes a server exception payload to an ExceptionReport at error severity, or a malformed_payload fault naming the missing keys"
 
   fn should_bypass_dedup : (severity: str) -> bool note "tells whether a severity skips the throttle; only critical does"
 
-  fn behaviors_for : (environment: str) -> list<HandlerBehavior> note "looks up the ordered behaviors for an environment, falling back to the development policy for an unknown one"
+  fn behaviors_for : (environment: str) -> list<HandlerBehavior> | Fault note "looks up the ordered behaviors for an environment, or an unknown_environment fault naming the environment given and the ones accepted"
 
   fn dedup_key : (report: ExceptionReport) -> DedupKey note "takes the throttle's identity for a report: its exception type, file and line"
 

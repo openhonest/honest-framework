@@ -109,8 +109,8 @@ LAYERS = ("foundation", "correctness", "data", "domain", "application", "ui", "t
 # the module, not sides of the world. A runtime is not here either (Adam, 23 October 2026): a host
 # that owns the main loop and calls into the module is a caller, not a side the module pulls or
 # pushes, so it is named on an entry or route and never in a side_effect. A side_effect naming one
-# is therefore an unknown side kind. This set is published for the map today; the fault for a side
-# whose kind the set does not carry (unknown_side_kind) waits on the honest-framework-j15 review.
+# is therefore an unknown side kind. The validator faults a side whose kind this set does not carry
+# (unknown_side_kind), the dual of unknown_layer (honest-framework-j15, enforced).
 KIND_FAMILIES = {
     "clock": ("OS",),
     "random": ("OS",),
@@ -177,6 +177,30 @@ def _unknown_layer(module):
     if not layer or layer in LAYERS:
         return []
     return [fault("unknown_layer", f"Layer '{layer}' is not one of {', '.join(LAYERS)}", "client", {"layer": layer})]
+
+
+def _unknown_side_kind(module):
+    """A side_effect names a world side whose kind is one of the declared set, the dual of
+    unknown_layer. The kind is the target up to any colon: a bare kind is ambient (`clock`), a
+    kind with a `:name` is a specific resource (`database:mockument`, `env:DATABASE_URL`). Two
+    targets are not world sides and are left to their own rules: a seam into another module (the
+    `module.door` form the reader marks with a module name) and the module's own held state (a
+    `store:` target). Closing the set the way LAYERS is closed means a resource named one way, so
+    two modules naming it meet on one side rather than on two spellings the gate cannot join."""
+    faults = []
+    for f in module["functions"]:
+        for se in f["side_effects"]:
+            if se["module"] or se["target"].startswith(STORE_TARGET):
+                continue
+            kind = se["target"].partition(":")[0]
+            if kind not in SIDE_KINDS:
+                faults.append(fault(
+                    "unknown_side_kind",
+                    f"Function '{f['name']}' names side '{se['target']}', whose kind '{kind}' is not one of the declared world sides",
+                    "client",
+                    {"function": f["name"], "target": se["target"], "kind": kind},
+                ))
+    return faults
 
 
 def _unknown_envs(module):
@@ -592,6 +616,7 @@ _CHECKS = (
     _unknown_targets,
     _unknown_envs,
     _unknown_layer,
+    _unknown_side_kind,
     _duplicate_names,
     _impure_pure_functions,
     _held_not_read,

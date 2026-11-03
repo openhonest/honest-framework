@@ -990,7 +990,7 @@ Detection: three or more string/enum equality tests on the same variable, e.g. `
 
 #### HC-P002 — Exception caught in non-boundary function
 
-Honest Code principle *Typed Exceptions at the Boundary*: business logic does not catch. Functions raise; the boundary (route handler, supervisor, or any `@boundary` / `@link(boundary=True)` function) catches, inspects the typed exception, and maps it to a response. A `try`/`except` inside a non-boundary function is a structural violation — it swallows faults, hides control flow inside the raise/catch pair, and produces a result auto-generation cannot verify, because the caught path is invisible to the manifest. Faults inside business logic must be **data** (rejections, faults), not exceptions.
+Honest Code principle *Faults as Values, Exceptions Only at a Boundary*: business logic neither raises nor catches. A function that cannot do what it was asked returns a `Fault` that says what went wrong and what to do instead, and each caller returns it in turn, up to the orchestrator. The orchestrator decides what happens next: a boundary raises the fault, or an output boundary the orchestrator invokes logs it. Only a boundary that declares what it `raises` may throw. A `try`/`except` inside a non-boundary function is a structural violation — it swallows faults, hides control flow inside the raise/catch pair, and produces a result auto-generation cannot verify, because the caught path is invisible to the manifest. Faults inside business logic must be **data** (rejections, faults), not exceptions.
 
 > **Note.** This rule was formerly "class with mutating methods." That rule was redundant: Honest Code admits no classes (HC-P003 permits only TypedDict / Protocol / ABC / Exception bases, none of which carry mutating behaviour), so there is no "class with mutating methods" to police. The poka-yoke inventory always assigned HC-P002 to *typed faults at the boundary*; the rule now matches the inventory.
 
@@ -1617,7 +1617,7 @@ The documented threshold is 10 lines, resolved at the boundary and passed in, ne
 
 #### HC-P009 — Roled function without a gherkin
 
-**Severity: Warning.** Every roled function carries exactly one gherkin scenario stating its behaviour (honest-test-architecture.md §8.3). That one-to-one mapping is what lets the gherkin count serve as a direct function-point count, so a roled function with no scenario breaks the count as well as the coverage.
+**Severity: Warning.** Every roled function carries at least one gherkin scenario stating its behaviour (honest-test-architecture.md §8.3); a function that branches carries more, one per branch or decision path, and an orchestrator one per routing path. One is the floor. The live enforcer is `feature-gate.sh`, which reads the function names from `src/` and the scenario subjects from the `.feature` files and fails a written function with no scenario; the function count, not the gherkin count, is the function-point measure (honest-gherkin §9.2). A roled function with no scenario is behaviour that is neither specified nor counted.
 
 ```
 FUNCTION check_HC_P009(roled_functions, feature_files):

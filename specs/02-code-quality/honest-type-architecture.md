@@ -1105,7 +1105,7 @@ These are the only two valid return values from a link. There is no third option
 
 ### 12.2 The Manifest as Data Dictionary
 
-The chain passes the **full manifest** to every link. The manifest is the master data dictionary. The chain is the supervisor. Links declare what they need for static verification, but receive everything because:
+The chain passes the **full manifest** to every link. The manifest is the master data dictionary. The chain is the coordinator. Links declare what they need for static verification, but receive everything because:
 
 1. Nested sub-functions within a link may need upstream context their parent didn't anticipate
 2. The chain's type system has already verified that everything in the manifest is typed and bound — there are no surprises to protect against

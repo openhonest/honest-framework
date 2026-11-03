@@ -33,7 +33,7 @@ honest-errors is a leaf; both of these compose it. It depends on neither.
 | Consumer | What it composes from honest-errors |
 |---|---|
 | **honest-observe** | The normalizers. A raw failure payload is classified into an `ExceptionReport`, which observe records as an error event in its log (observe owns `@catch_at_boundary` and the event envelope; honest-errors owns the *shape* of the report). |
-| **honest-alerts** | The behavior table and the rate-limiter. The supervisor (honest-alerts §1.1) reads `behaviors_for(environment)` to decide whether a report warrants a notification, and `check_rate_limit(...)` to decide whether to suppress a repeat. An `email` behavior becomes an alerts `Message` routed by the `AlertRoute` table. |
+| **honest-alerts** | The behavior table and the rate-limiter. The orchestrator that handles a report reads `behaviors_for(environment)` to decide whether the report warrants a notification, and `check_rate_limit(...)` to decide whether to suppress a repeat. It hands an `email` behavior to honest-alerts as a `Message`, which the `AlertRoute` table routes. |
 
 ### 1.4 What honest-errors covers
 
@@ -49,6 +49,7 @@ honest-errors is a leaf; both of these compose it. It depends on neither.
 - **Recording the report.** honest-observe writes it to the event log. honest-errors never logs.
 - **Sending a notification.** honest-alerts' supervisor delivers it over a channel. honest-errors never sends.
 - **Reading the environment or the clock.** These are passed in as arguments by the composing boundary. honest-errors never calls `os.getenv` or reads a wall clock inside a policy function.
+- **Capturing a fault.** A fault in the tree is never caught. It comes back to the orchestrator as a returned `Fault`, and the orchestrator decides whether a boundary raises it or an output boundary logs it. honest-errors makes neither decision.
 - **Capturing the exception.** The boundary (`@catch_at_boundary`, an HTTP error handler, a browser hook) catches; honest-errors only normalizes what it is handed.
 
 ---
@@ -89,7 +90,7 @@ The two payload shapes collapse to one report so that every downstream consumer 
 ```
 SEVERITIES       = { debug, info, warning, error, critical }   # frozenset
 ENVIRONMENTS     = { development, production, test }           # frozenset
-BEHAVIOR_NAMES   = { log, email, reraise }                     # frozenset
+BEHAVIOR_NAMES   = { log, email }                              # frozenset
 SUPPRESS_REASONS = { rate_limit_hourly, rate_limit_dedup }     # frozenset
 ```
 
@@ -130,17 +131,19 @@ What should happen to a report is a list of named behaviors, looked up by enviro
 HandlerBehavior = { name: String, order: Integer }   # name in BEHAVIOR_NAMES
 
 BEHAVIORS_BY_ENV = {
-    development: [ {log, 0}, {reraise, 1} ],
-    production:  [ {log, 0}, {email,   1} ],
+    development: [ {log, 0} ],
+    production:  [ {log, 0}, {email, 1} ],
     test:        [ {log, 0} ],
 }
 
-behaviors_for(environment) -> list[HandlerBehavior]
+behaviors_for(environment) -> list[HandlerBehavior] | Fault
 ```
 
-`behaviors_for` is a pure dict lookup with a declared default (development). Adding an environment or changing a policy is editing the table, never editing control flow. The list is *data*: the composing boundary interprets each behavior — `log` is handed to honest-observe, `email` to honest-alerts, `reraise` to the boundary itself. honest-errors does not execute behaviors; it declares them.
+`behaviors_for` is a pure dict lookup. Adding an environment or changing a policy is editing the table, never editing control flow. An environment the table does not carry has no policy, so `behaviors_for` returns `Fault(code="unknown_environment", ...)`, whose message names the environment it was given and the environments it accepts. It does not fall back to another environment's policy: a fallback files an environment nobody wrote a rule for under a rule written for a different one. The list is *data*: the composing orchestrator interprets each behavior, handing `log` to the output boundary that writes honest-observe's log and `email` to honest-alerts. honest-errors does not execute behaviors; it declares them.
 
-**Normative change from the prototype.** The `select_behaviors = behaviors_for` alias is removed; there is exactly one name.
+Whether a failure is raised is not a behavior and not a function of the environment. The orchestrator decides whether to raise or log, and only a boundary that declares `raises` may throw.
+
+**Normative change from the prototype.** The `select_behaviors = behaviors_for` alias is removed; there is exactly one name. The `reraise` behavior and the development default are removed as well (§9).
 
 ---
 
@@ -213,10 +216,10 @@ honest-alerts' supervisor (honest-alerts §1.1) is the general delivery mechanis
 A spoke's honest-errors is conformant iff:
 
 1. **One report shape.** Both normalizers produce the `ExceptionReport` of §2 with identical field decomposition.
-2. **Faults as data.** `classify_js_payload` / `classify_py_payload` **return** a `Result`; a malformed payload yields `{ "err": Fault }`, never a raised exception.
+2. **Faults as data.** `classify_js_payload` / `classify_py_payload` **return** a `Result`; a malformed payload yields `{ "err": Fault }`, never a raised exception. `behaviors_for` returns a `Fault` for an unknown environment, never a raised exception.
 3. **No hidden I/O.** No policy function reads the environment, the clock, or any external source; `environment`, `timestamp`, and `now` are arguments.
 4. **Bounded vocabularies.** `SEVERITIES`, `ENVIRONMENTS`, `BEHAVIOR_NAMES`, `SUPPRESS_REASONS` match this spec exactly and are frozensets.
-5. **Dispatch, not ladders.** `behaviors_for` is a dict lookup with a declared default; severity derivation is a predicate, not an `if/elif` discriminant chain.
+5. **Dispatch, not ladders.** `behaviors_for` is a dict lookup that returns an `unknown_environment` fault for an environment the table does not carry, never a default; severity derivation is a predicate, not an `if/elif` discriminant chain.
 6. **Pure throttle.** `check_rate_limit` returns `(decision, new_state)`, never mutates its state argument, takes `now` as an argument, and reports suppression as data.
 7. **No delivery, no recording.** The module never logs and never sends; those are honest-observe and honest-alerts respectively.
 
@@ -232,6 +235,7 @@ The Python reference at `python/honest-errors/` predates this spec (distilled fr
 - The translators raise nothing but also cannot signal a malformed payload; §3 requires a `Result` return.
 - The closed sets (severity, environment, behavior name, reason) are free `str`; §2.1 requires frozensets.
 - The `select_behaviors = behaviors_for` alias is removed (§4).
+- The prototype's development policy carries a `reraise` behavior, and an unknown environment falls back to that policy; §4 removes `reraise` and returns an `unknown_environment` fault instead.
 - The bespoke `RateLimitDecision` reason is bounded to `SUPPRESS_REASONS` (§5).
 
 These are the corrections the spec-first rebuild applies. Everything else in the prototype stands.

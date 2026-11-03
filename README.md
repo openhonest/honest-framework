@@ -2,7 +2,7 @@
 
 **Honest Framework isn't a framework you switch to. It's a discipline you switch on, inside the one you already use.**
 
-Keep the framework you build on — Rails, Django, Spring. Move your business logic out of your models and into plain functions, drop the callbacks and signals that bite you at 3am, and let a linter keep you honest. Whole classes of bug stop happening, and your tests stop needing a database. Nothing new to learn — a few habits to unlearn.
+Keep the framework you build on — Rails, Django, Spring. Move your business logic out of your models and into plain functions, drop the callbacks and signals that bite you at 3am, and let a checker keep you honest. Whole classes of bug stop happening, and your tests stop needing a database. Nothing new to learn — a few habits to unlearn.
 
 Language-agnostic framework specification for code that is correct by design. The structural-correctness side of the Open Honest Foundation's three-standard portfolio.
 
@@ -12,7 +12,7 @@ Language-agnostic framework specification for code that is correct by design. Th
 
 > **Any code that passes `honest-check` is, by definition, structurally Honest Code.**
 
-The linter is the operational definition of Honest Code. Code that passes cannot represent the bug categories the framework eliminates: hidden state via classes, if/elif/else value-dispatch, I/O off the boundary, catching exceptions in business logic, indiscriminate mutable state, recognizer reuse, and the rest. There is no "mostly honest." Code passes the gate, or it is rejected as dishonest.
+The checker is the operational definition of Honest Code. Code that passes cannot represent the bug categories the framework eliminates: hidden state via classes, if/elif/else value-dispatch, I/O off the boundary, catching exceptions in business logic, indiscriminate mutable state, recognizer reuse, and the rest. There is no "mostly honest." Code passes the gate, or it is rejected as dishonest.
 
 This is enforced at commit time: a pre-commit hook runs `honest-check` over every module, so **no dishonest code can land**. Enable it once per clone:
 
@@ -26,21 +26,21 @@ It points git at the in-repo hooks, verifies `uv`, and syncs the workspace. Idem
 
 ## What's here
 
+- `specs/READING-ORDER.md` — start here. Four reading tracks by what you came for, a one-line key per document, and which passages are superseded.
 - `specs/` — Honest Framework specifications, tiered:
-  - `specs/01-framework/` — core framework spec + conformance suite   - `specs/02-code-quality/` — code-quality dimension   - `specs/03-application-production/` — application-production dimension
+  - `specs/01-framework/` — core framework spec + conformance suite   - `specs/02-code-quality/` — code-quality dimension, including `honest-code-principles.md`, the twenty Honest Code practices   - `specs/03-application-production/` — application-production dimension
 - `articles/` — three canonical articles (honest-advantages, honest-testing, honest-type-magic)
 - `principles/` — foundational philosophy
-  - `poka-yoke.md` — velocity-multiplier manifesto: which categories of bug each design decision eliminates structurally   - `honest-code-principles.md` — nineteen Honest Code practices
+  - `poka-yoke.md` — velocity-multiplier manifesto: which categories of bug each design decision eliminates structurally
 - `methodology/` — verification approach
   - `contract-testing.md` — user-journey-to-function contract mapping methodology
 - `python/` — Python reference implementation (in active development)
 - `javascript/`, `ruby/` — placeholders for additional language implementations
 - `integration-test-challenge.md` — public unbreakable-todo-app challenge (a marketing activity for the framework whose results feed back into research)
 - `INSTRUMENT_CONE_SYNTHESIS.md` — epistemic anchor: the instrument defines what is visible. A reminder that current code-quality metrics can't find what they aren't looking for; the framework's value is partly about expanding the cone of what's visible.
-- `analyst-strategy-handoff.md` — industry analyst landscape positioning
 - `bootstrap.sh` — one-time setup after clone (idempotent): enables the git hooks, verifies uv, syncs the workspace. Turns on the honesty gate (see above).
-- `.githooks/` — the tracked source of `pre-commit` (the **honesty gate**: on the modules with staged changes it runs `honest-check` (structural) **and** their conformance suite (behavioral), blocking either failure) and `commit-msg` (enforces commit-message prefixes for research instrumentation). Git runs whatever `core.hooksPath` points at, which is not always this directory: tools that manage hooks (beads, for one) repoint it and copy the hook in, after which editing `.githooks/pre-commit` changes nothing that runs. `./bootstrap.sh` reads the configured path, checks the hook git will actually execute really invokes the gate, and fails if it does not — run it after any change to the hook.
-- `python/lint-affected.sh` / `python/lint-all.sh` — structural gate: `honest-check` over the changed modules (pre-commit) / every module (CI).
+- `.githooks/` — the tracked source of `pre-commit` (the **honesty gate**: on the modules with staged changes it runs `honest-check` (structural) **and** their conformance suite (behavioral), blocking either failure) and `commit-msg` (enforces commit-message prefixes for research instrumentation). Git runs whatever `core.hooksPath` points at, which is not always this directory: tools that manage hooks (beads, for one) repoint it, here at `.beads/hooks`. The hook there **sources** `.githooks/pre-commit` rather than copying it, so this file stays the single source of truth and an edit to it takes effect with nothing to re-sync; beads' own section rides on top between its markers. A copy, by contrast, silently drifts — editing `.githooks/pre-commit` would change nothing that runs. `./bootstrap.sh` reads the configured path, checks the hook git will actually execute really invokes the gate (by carrying its body or by sourcing it), fails if it does not, and warns if it is a drifted copy — run it after any change to the hook.
+- `python/check-affected.sh` / `python/check-all.sh` — structural gate: `honest-check` over the changed modules (pre-commit) / every module (CI).
 - `python/test-affected.sh` / `python/test-all.sh` — behavioral gate: the conformance suite over the changed modules (pre-commit) / every module (CI).
 - `python/honest-check/conformance/suite.json` — honest-check's conformance suite (section 9.2): each case is source-as-data plus the diagnostics it must produce. `run_conformance.py` runs it. The test-of-record, with no hand-coded per-rule tests.
 

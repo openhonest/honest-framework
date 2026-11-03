@@ -18,8 +18,7 @@ module honest-design
   # import entry. validate, render and reach are called by the Architecture Explorer and the
   # hd-check gate, which run honest-design from outside the framework, so they carry host-loop
   # call: entries that the checker notes and does not verify.
-  inputs  = { "caller" : "another module handing .hd source or an IR module to read, check, draw or trace",
-              "honest-parse" : "the syntax tree honest-parse builds from .hd source" }
+  inputs  = { "honest-parse" : "the syntax tree honest-parse builds from .hd source" }
   outputs = { }
 
   # --- the result a caller reads, and the fault it may hold --------------------
@@ -268,15 +267,15 @@ module honest-design
 
   # --- Step 1, the cards: the four doors and the one reader --------------------
 
-  boundary_in fn read_hd : (source: str) -> Document | Fault side_effect reads "caller" invokes read_declaration note "the door for reading: hands the source to one orchestrator and adds nothing of its own"
+  boundary_in fn read_hd : (source: str) -> Document | Fault invokes read_declaration note "the door for reading: hands the source to one orchestrator and adds nothing of its own"
 
-  boundary_in fn validate : (module: Module) -> list<Fault> side_effect reads "caller" invokes check_module note "the door for checking: hands one module's IR to one orchestrator"
+  boundary_in fn validate : (module: Module) -> list<Fault> invokes check_module note "the door for checking: hands one module's IR to one orchestrator"
 
-  boundary_in fn render : (module: Module) -> Diagram side_effect reads "caller" invokes draw_module note "the door for drawing: hands one module's IR to one orchestrator"
+  boundary_in fn render : (module: Module) -> Diagram invokes draw_module note "the door for drawing: hands one module's IR to one orchestrator"
 
-  boundary_in fn reach : (module: Module, declarations: dict<str, Module>) -> Reach side_effect reads "caller" invokes trace_reach note "the door for tracing what each door reaches"
+  boundary_in fn reach : (module: Module, declarations: dict<str, Module>) -> Reach invokes trace_reach note "the door for tracing what each door reaches"
 
-  reader fn parse : (source: bytes) -> Tree | Fault side_effect reads "honest-parse" note "the one place honest-parse is asked for the hd syntax tree, located fault and all; a pull the read orchestrator makes"
+  reader fn parse : (source: bytes) -> Tree | Fault side_effect reads "honest-parse.parse_source" note "the one place honest-parse is asked for the hd syntax tree, located fault and all; a pull the read orchestrator makes"
 
   # --- Step 2, the paths: one orchestrator per door ----------------------------
 
