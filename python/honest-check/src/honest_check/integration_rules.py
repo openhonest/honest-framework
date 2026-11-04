@@ -12,14 +12,14 @@ These three are pure. They open no file and execute no application code — the 
 declarations and the rule judges only those. They raise nothing: a dead or misdirected seam
 comes back as a Diagnostic, because a violation is data (section 8).
 
-The hd-check gate imports the two check functions and declared_seams from this submodule by
+The honest-pre-commit gate imports the two check functions and declared_seams from this submodule by
 path; they are defined here (so HC-REF005's "defined somewhere" holds) and not re-exported from
 the package __init__ (so no export the .hd does not declare).
 """
 
 
 def check_seams(declarations, paths, in_scope):
-    """The door the hd-check dogfood gate calls to run honest-check's cross-module seam checks
+    """The door the honest-pre-commit dogfood gate calls to run honest-check's cross-module seam checks
     (section 8, §HC-REF006/§HC-REF007). It is the single entry point the external gate reaches
     into these checks.
 
@@ -128,14 +128,20 @@ def check_hc_ref006(module, declarations, path):
 
 def check_hc_ref007(module, declarations, path):
     """Run HC-REF007 over the seams one module declares: a seam whose door name IS declared in
-    the named module but whose role is not boundary_in reaches that module somewhere other than
-    its entrance, and emits one HC-REF007 error (§HC-REF007, §615, §633-636).
+    the named module but whose role is neither boundary_in nor edge reaches that module somewhere
+    other than its entrance, and emits one HC-REF007 error (§HC-REF007, §615, §633-636).
+
+    A module has two kinds of entrance. A boundary_in is a door where the world calls in; an edge
+    is the pure import surface a library publishes and names with an entry. A seam landing on
+    either lands on a declared entrance, so both are accepted. A pure library with no boundaries,
+    like honest-type, has only edges. The fault is a seam landing on a plain fn that no entry
+    names: that function is interior, so the seam uses the core directly.
 
     The same two skips HC-REF006 applies hold here: a seam whose door is the empty string is
     skipped (HC-REF008's case), and a seam whose named module is not a key in declarations is
     skipped, not assumed absent (§639). Only a seam whose named module is in declarations AND
-    declares a function of the seam's door name is resolved; if that function's role is not
-    boundary_in, it emits one HC-REF007 error naming the role the module gave that door.
+    declares a function of the seam's door name is resolved; if that function's role is neither
+    boundary_in nor edge, it emits one HC-REF007 error naming the role the module gave that door.
     """
     findings = []
     for seam in declared_seams(module):
@@ -145,7 +151,7 @@ def check_hc_ref007(module, declarations, path):
             continue
         callee = declarations[seam["module"]]
         role_of = {function["name"]: function["role"] for function in callee["functions"]}
-        if seam["door"] in role_of and role_of[seam["door"]] != "boundary_in":
+        if seam["door"] in role_of and role_of[seam["door"]] not in ("boundary_in", "edge"):
             findings.append(
                 {
                     "rule_id": "HC-REF007",
@@ -153,7 +159,7 @@ def check_hc_ref007(module, declarations, path):
                     "message": (
                         f"'{seam['caller']}' {seam['direction']} "
                         f"'{seam['module']}.{seam['door']}', which {seam['module']} declares as "
-                        f"a {role_of[seam['door']]} and not a door."
+                        f"a {role_of[seam['door']]} and not an entrance."
                     ),
                     "source_location": path,
                     "context": "",

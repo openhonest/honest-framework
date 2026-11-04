@@ -78,29 +78,29 @@ module honest-type
 
   fn recognize : (token: str, recognizer: Recognizer) -> bool
 
-  fn vocabulary : (base_declarations: dict<str, any>, composed_types: list<ComposedType>) -> Vocabulary
+  edge fn vocabulary : (base_declarations: dict<str, any>, composed_types: list<ComposedType>) -> Vocabulary
 
   fn merge : (vocab_a: Vocabulary, vocab_b: Vocabulary) -> Vocabulary
 
   fn composed : (name: str, requires: dict<str, str>, captures: str) -> ComposedType
 
-  fn binding : (table: dict<str, str>) -> Binding
+  edge fn binding : (table: dict<str, str>) -> Binding
 
   fn auto_binding : (vocab: Vocabulary) -> Binding
 
-  fn maybe : (slot: str) -> Recognizer
+  edge fn maybe : (slot: str) -> Recognizer
 
-  fn classify : (tokens: list<str>, vocab: Vocabulary, bind: Binding) -> Manifest
+  edge fn classify : (tokens: list<str>, vocab: Vocabulary, bind: Binding) -> Manifest
 
-  fn link : (accepts: Vocabulary, binds: Binding, boundary: bool, authorizes: bool, emits: list<str>) -> Link
+  edge fn link : (accepts: Vocabulary, binds: Binding, boundary: bool, authorizes: bool, emits: list<str>) -> Link
 
   fn is_link : (fn: Callable) -> bool
 
-  fn link_meta : (fn: Callable) -> Link
+  edge fn link_meta : (fn: Callable) -> Link
 
   fn chain : (links: list<Link>) -> Chain
 
-  fn execute_chain : (links: list<Link>, initial_manifest: Manifest) -> Result
+  edge fn execute_chain : (links: list<Link>, initial_manifest: Manifest) -> Result
 
   fn execute_chain_async : (links: list<Link>, initial_manifest: Manifest) -> Result awaited
 
@@ -110,9 +110,9 @@ module honest-type
 
   fn check_rejections : (manifest: Manifest, policy: dict<str, str>) -> Result
 
-  fn state_machine : (states: Vocabulary, events: Vocabulary, transitions: dict<str, str>, initial: str, terminal: list<str>) -> StateMachine
+  edge fn state_machine : (states: Vocabulary, events: Vocabulary, transitions: dict<str, str>, initial: str, terminal: list<str>) -> StateMachine
 
-  fn transition : (machine: StateMachine, current_state: str, event: str) -> Result
+  edge fn transition : (machine: StateMachine, current_state: str, event: str) -> Result
 
   fn is_reserved : (token: str) -> bool
 

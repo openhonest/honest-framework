@@ -651,7 +651,7 @@ Measured across the framework on 6 October 2026, before the word existed: 74 dis
 
 **HC-REF006, the named module declares no such door.** The caller says it enters `M.d`, the declaration of `M` names no function `d`, and the reference is dead. This is the same fault as a template naming a route nothing mounts: the artifact reads as working and the thing it points at is absent.
 
-**HC-REF007, the name is there and is not a door.** The declaration of `M` does have a function `d`, and `d` is not a `boundary_in`. The world is reaching that module somewhere other than its entrance. A pure function is the common case and the worst one, because it means the core is being used directly: honest-check imports `node_text`, `line_col` and `first_error_node` out of honest-parse, and those three are red in honest-parse today for the matching reason, that nothing inside the module calls them.
+**HC-REF007, the name is there and is not an entrance.** The declaration of `M` does have a function `d`, and `d` is neither a `boundary_in` nor an `edge`. A module has two kinds of entrance: a `boundary_in`, where the world calls in through a door, and an `edge`, the pure import surface a library publishes and names with an `entry`. A seam landing on either lands on a declared entrance. A pure library with no boundaries, like honest-type, has only edges, so a seam into it lands on an edge; that is correct, not a fault. The fault, and the worst case, is a seam landing on a plain pure `fn` that no `entry` names: that function is interior, reached from inside the module, so the seam is using the core directly. honest-check imports `node_text`, `line_col` and `first_error_node` out of honest-parse, and those three are red in honest-parse today for the matching reason, that nothing inside the module calls them.
 
 The two are separate codes because they call for different repairs. The first is a wrong name and someone corrects it. The second is a name that is right and a shape that is wrong, and correcting it means either giving that module a door or moving the function to something that is a library by design. Reporting both as one finding would hand a reader a repair that fits half the cases.
 
@@ -669,10 +669,10 @@ FUNCTION check_seams(caller, declarations, path):
                 EMIT error(HC-REF006, path, function.location,
                     f"'{function.name}' {side.direction} '{side.module}.{side.door}', and "
                     f"{side.module} declares no function of that name.")
-            ELSE IF target.role IS NOT "boundary_in":
+            ELSE IF target.role IS NOT "boundary_in" AND target.role IS NOT "edge":
                 EMIT error(HC-REF007, path, function.location,
                     f"'{function.name}' {side.direction} '{side.module}.{side.door}', which "
-                    f"{side.module} declares as a {target.role} and not a door.")
+                    f"{side.module} declares as a {target.role} and not an entrance.")
 ```
 
 **A module not in view is skipped, not assumed absent.** A workspace holds the modules it holds, and a declaration may name one from outside it. Reporting a dead reference because the file was not loaded would make the rule depend on how it was invoked, and a gate whose answer changes with its arguments is not a gate. The caller supplies the declarations and the rule judges only those.
@@ -1387,6 +1387,32 @@ FUNCTION check_HC_R005(source_tree, declaration):
 
 Two exemptions, each needed. A context manager yields exactly once and hands back a value for the length of a block, so it is not a stream; a `contextmanager` decorator on the enclosing definition marks it. A yield inside a function defined within the declared one belongs to that inner function, so the search stops at a nested definition. A function the declaration does not name is a private helper whose laziness is its own business, as in HC-R002, HC-R003 and HC-R004.
 
+#### HC-R006: a door that transforms its input
+
+A door is a declarative surface. honest-design places a `boundary_in`, a `reader` and a `boundary_out` at the edge to touch the world and hand the value on, and the hd authoring rule is that such a card is a signature and a side effect and nothing more. The transforming — parsing decoded data into the module's own records, deriving a representation from them, interpreting, branching on content — belongs to the pure functions the orchestrator calls, where it is enumerable and testable. A door that transforms its input has an orchestrator hiding in it, and nothing in the declaration shows it: the card reads the same whether the body passes the world's value through or reshapes it first. So the lie lives only in the code, and like HC-R002 through HC-R005 only a rule that reads the body against the declared role can catch it.
+
+This rule crosses the declared boundary role with the body. A function the declaration gives a boundary role has a body that does its one declared I/O and then passes the result through: the value read from the world is returned, or handed to the single orchestrator the card names, without being reshaped into the module's records; the value written to the world is the one the caller handed in, not one the body derived. Anything else is a transformation the pure core should own, and the rule fires on it.
+
+```
+FUNCTION check_HC_R006(source_tree, declaration):
+    doors ← declared_boundaries(declaration)   // name -> boundary_in | reader | boundary_out
+    FOR EACH function IN source_tree.all_functions:
+        IF function.name NOT IN doors: CONTINUE
+        residue ← body_minus_io_and_handoff(function)   // what is left after the one I/O and the return or handoff
+        IF residue_builds_a_record_or_representation(residue):
+            EMIT error(HC-R006, function.location,
+                f"'{name}' is a declared {doors[name]} and its body reshapes its data "
+                "(parses into a record, renders, interprets or derives) rather than only touching the "
+                "world and handing off. Move the transformation into a pure function the orchestrator calls.")
+```
+
+Two carve-outs draw the line between a door that touches the world and a door doing the core's work. Each is needed, and each is decided from the source.
+
+- **Reading a handle is part of the I/O.** A live object the world just produced — a database connection, an open file, a module freshly imported — can only be read at the boundary, because a pure function that names a handle is refused (honest-design's `handle_read`). So a door that obtains a handle and reads data off it, including through a pure library that reads the handle for it, is touching the world, not reshaping in-memory data. honest-test's `load_under_test`, which imports the modules under test and reads each one's declared vocabulary and link metadata off the live objects, is a door by this carve-out, not a violation.
+- **Encoding to or decoding from a standard data format is part of the I/O.** Turning the world's bytes into the text or the plain values they already are, and turning a value into the bytes a format demands, is the format boundary: a utf-8 decode, a `json.load` of a file just read, a `json.dump` of a record on the way out. It is mechanical and reversible, so it is not the forbidden reshaping. honest-test's `write_coverage`, which dumps the already-measured coverage record as `coverage.json`, is clean by this carve-out. What the rule forbids is the step past the format: building the module's own record from the decoded data, or deriving a new representation from a record the core already holds — a config reader that resolves a parsed table into the module's supplied-values record, or a report sink that renders a result record into the human layout of §11.
+
+The residue test is decided from the source, like `is_async` and `code_returns_nothing`: with the declared I/O call and the single return or handoff removed, a clean door has nothing left but the names flowing through and at most a format encode or decode, while a transforming door has the comprehension, the record it assembles, or the representation it renders. A function the declaration does not name is skipped, as in the rules above.
+
 #### HC-R001 — Orphan function (no role, not reachable from any role)
 
 Every function in source must have exactly one of the declared roles — `@link`, `@recognizer`, `@boundary`, `@helper` — or must be reachable by static call analysis from a function that does. Auto-generation exercises all roled functions through vocabulary enumeration; helpers are exercised transitively via call graphs. A function with no role and no reachable-from-roled caller is an orphan — auto-generation does not reach it, so it has no test coverage, so the code is dishonest.
@@ -1932,6 +1958,7 @@ src/pipelines/user.py:42: info
 | HC-R003 | Error | Static | — | Declaration and code disagree about awaiting (async def without `awaited`, or `awaited` over a plain def) |
 | HC-R004 | Error | Static | — | Declaration and code disagree about absence (code returns nothing with no declared absence arm, or the reverse) |
 | HC-R005 | Error | Static | — | Declared function answers with a stream (a declared value whose body yields) |
+| HC-R006 | Error | Static | — | A door transforms its input (a declared boundary whose body builds a record or renders a representation rather than only touching the world and handing off) |
 | HC-OR001 | Error | Static | — | Orchestrator calls another orchestrator |
 | HC-OR003 | Warning | Static | — | Suspected duplication between orchestrators |
 | HC-A001 | Warning | Static | — | No AuthProvider registered |
@@ -1947,7 +1974,7 @@ src/pipelines/user.py:42: info
 | HC-REF004 | Error | Static | — | Behavioural attribute value is not a declared vocabulary member |
 | HC-REF005 | Error | Static | — | Declaration and implementation do not resolve to each other |
 | HC-REF006 | Error | Static | — | A seam enters `M.d` but module `M` declares no function `d` |
-| HC-REF007 | Error | Static | — | A seam enters `M.d` but `d` is not a door |
+| HC-REF007 | Error | Static | — | A seam enters `M.d` but `d` is not an entrance (`boundary_in` or `edge`) |
 | HC-REF008 | Error | Static | — | A cross-module side effect names a module but no door |
 | HC-REF009 | Question | Static | — | Two modules meet at a named resource and neither names the other |
 | HC-REF010 | Question | Static | — | A world-less module that exactly one module calls |

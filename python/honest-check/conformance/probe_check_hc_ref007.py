@@ -12,7 +12,7 @@ On the firing case the probe also pins the diagnostic's fields, not just that it
 fired: the exact source_location ("caller.hd"), that context is the empty string
 and present as a key, that fixable is the bool False and present as a key, and
 that the message names the caller function, the direction, the module and door,
-the role the module gave the door, and the not-a-door tail verbatim. This holds
+the role the module gave the door, and the not-an-entrance tail verbatim. This holds
 the message text, the source_location, the context and fixable fields against a
 rule that fires with an empty or mislabelled diagnostic.
 
@@ -33,7 +33,7 @@ _CASES = [
         "want_message_parts": [
             "'f' reads ",
             "'callee.helper', which callee declares as ",
-            "a fn and not a door.",
+            "a fn and not an entrance.",
         ],
     },
     # callee declares 'helper' as a boundary_in -> the seam enters a door, no finding.
@@ -41,6 +41,15 @@ _CASES = [
         "name": "clean when the target is a boundary_in",
         "caller_hd": 'module caller\n\n  reader fn f : (r: str) -> str side_effect reads "callee.helper"\n',
         "callee_hd": "module callee\n\n  boundary_in fn helper : (x: str) -> str\n",
+        "want_fire": False,
+    },
+    # callee declares 'helper' as an edge -> the pure import surface a library
+    # publishes is a declared entrance, so the seam lands on it cleanly. This is
+    # honest-type's case: no boundaries, only edges.
+    {
+        "name": "clean when the target is an edge",
+        "caller_hd": 'module caller\n\n  reader fn f : (r: str) -> str side_effect reads "callee.helper"\n',
+        "callee_hd": "module callee\n\n  edge fn helper : (x: str) -> str\n",
         "want_fire": False,
     },
     # A seam naming a module and no door (door empty) is skipped: that bare-module
