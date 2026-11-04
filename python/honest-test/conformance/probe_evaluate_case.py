@@ -2,130 +2,85 @@
 
 Scenario: evaluate_case runs one portable value-oracle case and compares the
   output against the known-good value.
-  Then it walks the input expression bottom-up — a literal is itself, a list
-  evaluates its elements, a reference resolves a callable, a call applies a named
-  function to its evaluated arguments — invokes the function under test, runs an
-  awaitable result to completion, and returns the function's Result.
-  And function_map maps each name a reference or call expression can hold to its
-  callable, so a function that takes another function is reachable by naming its
-  argument with no callable embedded in the data.
-  And it returns a Fault when an expression names a function the map does not hold.
-  And it performs no I/O of its own; the functions under test are injected.
+  Then it builds the call from the portable case — a single `input`, positional
+  `args`, or keyword `kwargs`, each entry a literal, a `$ref` naming a callable,
+  or a `$call` applying a named function to its resolved arguments — invokes the
+  function under test, runs an awaitable result to completion, and judges the
+  output against the `expected` value: the ok Result on a match, the err Result
+  carrying expected-vs-got on a mismatch, and a Fault when a named function is
+  absent. This is the leg that earns a function proved (section 8.5).
 
 Cases are data; one pure probe feeds them to the real honest_test.evaluate_case
 and returns a list of failure strings (empty when every case holds). No classes,
 no mocks: the functions in function_map are ordinary pure functions passed as
-data (a real test input, not a stand-in), and the probe calls the real
-honest_type.ok / err / fault to build the Result it compares against.
+data. The case shape is the portable suite.json format every module uses, not a
+bespoke grammar: {function, input|args|kwargs, expected} with $ref/$call.
 
 This is its own fragment file so the other scenarios' fragments never collide
 with it. run_conformance.py / laws_htest.py are untouched.
-
-Result is honest-type's Result: an ok arm {"ok": value} or an err arm
-{"err": fault} (honest-type/src/honest_type/types.py, def ok / def err). The
-Fault path is honest-test's own Fault record {problem, remedy} (honest-test.hd,
-type Fault), a different shape from a Result.
 """
-
-from honest_type import err, fault, ok
 
 from honest_test import evaluate_case
 
 
-# ---- Expression constructors (section 8.6 grammar; a plain dict per the .hd) ----
-def _lit(value):
-    return {"kind": "literal", "literal": value, "elements": [], "name": "", "args": []}
-
-
-def _ref(name):
-    return {"kind": "reference", "literal": None, "elements": [], "name": name, "args": []}
-
-
-def _call(name, args):
-    return {"kind": "call", "literal": None, "elements": [], "name": name, "args": args}
-
-
 # ---- Functions under test: real pure functions injected through the map ----
-def _wrap_ok(n):
-    """A function under test that returns its argument in the ok arm."""
-    return ok(n)
-
-
-def _add(a, b):
-    """A plain helper a call-expression applies while building the argument."""
-    return a + b
-
-
 def _double(n):
-    """A plain callable a reference-expression resolves and hands on as data."""
+    """Doubles its argument."""
     return n * 2
 
 
-def _apply_to_five(f):
-    """A function-taking function: it calls the callable it was handed on 5."""
-    return ok(f(5))
+def _add(a, b):
+    """Adds two arguments — reached by positional args and by kwargs."""
+    return a + b
 
 
-_FAULT = fault("value_oracle", "boom", "server", [], {})
+def _apply_fn(f, x):
+    """A function-taking function: applies the callable it is handed to x."""
+    return f(x)
 
 
-def _always_err(n):
-    """A function under test that returns the err arm."""
-    return err(_FAULT)
+async def _aid(n):
+    """An async function under test, to exercise run-to-completion."""
+    return n
 
 
-_FAULT_EXPECTED = object()  # sentinel: expect a honest-test Fault, not a Result
+_MAP = {"double": _double, "add": _add, "apply_fn": _apply_fn, "aid": _aid}
+
+_MATCH = "match"
+_MISMATCH = "mismatch"
+_FAULT = "fault"
 
 _CASES = [
-    # literal input, ok-returning function -> the function's ok Result, verbatim.
-    {
-        "given": {
-            "case": {"function": "wrap_ok", "input": _lit(42), "expected": _lit(42)},
-            "function_map": {"wrap_ok": _wrap_ok},
-        },
-        "expect": {"ok": 42},
-    },
-    # call input: add(2, 3) is evaluated bottom-up to 5, then wrap_ok(5) -> ok(5).
-    {
-        "given": {
-            "case": {
-                "function": "wrap_ok",
-                "input": _call("add", [_lit(2), _lit(3)]),
-                "expected": _lit(5),
-            },
-            "function_map": {"wrap_ok": _wrap_ok, "add": _add},
-        },
-        "expect": {"ok": 5},
-    },
-    # reference input: "double" resolves to a callable from the map and is handed
-    # to the function-taking function under test. apply_to_five(double) -> ok(10).
-    {
-        "given": {
-            "case": {
-                "function": "apply_to_five",
-                "input": _ref("double"),
-                "expected": _lit(10),
-            },
-            "function_map": {"apply_to_five": _apply_to_five, "double": _double},
-        },
-        "expect": {"ok": 10},
-    },
-    # err-returning function under test -> evaluate_case returns that err Result.
-    {
-        "given": {
-            "case": {"function": "always_err", "input": _lit(1), "expected": _lit(1)},
-            "function_map": {"always_err": _always_err},
-        },
-        "expect": {"err": _FAULT},
-    },
-    # the absence case: the named function under test is not in the map -> a Fault.
-    {
-        "given": {
-            "case": {"function": "missing_fn", "input": _lit(1), "expected": _lit(1)},
-            "function_map": {},
-        },
-        "expect": _FAULT_EXPECTED,
-    },
+    # single `input`, output equals expected -> ok(42).
+    {"case": {"function": "double", "input": 21, "expected": 42},
+     "verdict": _MATCH, "output": 42},
+    # positional `args` -> add(2, 3) -> 5 -> ok(5).
+    {"case": {"function": "add", "args": [2, 3], "expected": 5},
+     "verdict": _MATCH, "output": 5},
+    # keyword `kwargs` -> add(a=2, b=3) -> 5 -> ok(5).
+    {"case": {"function": "add", "kwargs": {"a": 2, "b": 3}, "expected": 5},
+     "verdict": _MATCH, "output": 5},
+    # `$ref` resolves a callable handed to a function-taking function:
+    # apply_fn(double, 21) -> 42 -> ok(42).
+    {"case": {"function": "apply_fn", "args": [{"$ref": "double"}, 21], "expected": 42},
+     "verdict": _MATCH, "output": 42},
+    # `$call` applies a named function while building an argument:
+    # add($call double(10), 5) -> add(20, 5) -> 25 -> ok(25).
+    {"case": {"function": "add", "args": [{"$call": "double", "args": [10]}, 5], "expected": 25},
+     "verdict": _MATCH, "output": 25},
+    # async function run to completion -> aid(7) -> 7 -> ok(7).
+    {"case": {"function": "aid", "input": 7, "expected": 7},
+     "verdict": _MATCH, "output": 7},
+    # output differs from expected -> the err arm carrying expected-vs-got.
+    {"case": {"function": "double", "input": 21, "expected": 99},
+     "verdict": _MISMATCH, "expected_value": 99, "got_value": 42},
+    # the absence case: the named function is not in the map -> a Fault.
+    {"case": {"function": "missing_fn", "input": 1, "expected": 1},
+     "verdict": _FAULT, "map": {}},
+    # the could-not-run case: the function is present but the case gives the wrong
+    # arity, so invoking it throws -> a Fault, never a crash of the gate.
+    {"case": {"function": "double", "args": [1, 2], "expected": 0},
+     "verdict": _FAULT},
 ]
 
 
@@ -141,22 +96,29 @@ def _is_fault(got):
 
 
 def probe_evaluate_case():
-    """evaluate_case walks the input expression bottom-up, invokes the function under test, and returns its Result — or a Fault when a named function is absent."""
+    """evaluate_case builds the call from the portable case, invokes the function, and judges its output against the expected value: ok on a match, err carrying expected-vs-got on a mismatch, a Fault when a named function is absent."""
     bad = []
-    for case in _CASES:
-        got = evaluate_case(case["given"]["case"], case["given"]["function_map"])
-        expect = case["expect"]
-        if expect is _FAULT_EXPECTED:
-            if not _is_fault(got):
+    for entry in _CASES:
+        case = entry["case"]
+        function_map = entry.get("map", _MAP)
+        got = evaluate_case(case, function_map)
+        label = case["function"]
+        if entry["verdict"] == _MATCH:
+            if got != {"ok": entry["output"]}:
+                bad.append(f"evaluate_case({label}, match) -> {got}, expected {{'ok': {entry['output']!r}}}")
+        elif entry["verdict"] == _MISMATCH:
+            if not (isinstance(got, dict) and "err" in got and "ok" not in got):
+                bad.append(f"evaluate_case({label}, mismatch) -> {got}, expected an err Result")
+                continue
+            detail = got["err"].get("detail", {})
+            if detail.get("expected") != entry["expected_value"] or detail.get("got") != entry["got_value"]:
                 bad.append(
-                    f"evaluate_case({case['given']['case']}) -> {got}, "
-                    f"expected a Fault with problem and remedy fields"
+                    f"evaluate_case({label}, mismatch) err detail {detail}, "
+                    f"expected expected={entry['expected_value']!r} got={entry['got_value']!r}"
                 )
-            continue
-        if got != expect:
-            bad.append(
-                f"evaluate_case({case['given']['case']}) -> {got}, expected {expect}"
-            )
+        else:  # _FAULT
+            if not _is_fault(got):
+                bad.append(f"evaluate_case({label}, unknown) -> {got}, expected a Fault with problem and remedy")
     return bad
 
 

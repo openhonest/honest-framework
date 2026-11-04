@@ -28,7 +28,9 @@ import time
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from honest_test import enumerate_mutants, mutation_adequacy
+import honest_parse
+
+from honest_test import classify_mutant_result, mutate_source, parse_source
 
 ROOT = Path(__file__).resolve().parent
 # In-worker SIGALRM is the fast path for a Python-level non-terminating mutant; the parent's hard
@@ -313,16 +315,89 @@ def _baseline_verdict(module, only=None):
         worker.stop()
 
 
+def _spans(source):
+    """Every tree-sitter node's span in the source, keyed by the location string mutate_source
+    stamps on a Mutant (start_point-end_point), each carrying the node's byte range and its text so
+    a Mutant can be located even when two nodes share a span (the text disambiguates)."""
+    out = {}
+    for node in honest_parse.walk(parse_source(source)):
+        key = f"{node.start_point}-{node.end_point}"
+        out.setdefault(key, []).append((node.start_byte, node.end_byte, node.text.decode("utf-8")))
+    return out
+
+
+def _apply(source_bytes, spans, mutant):
+    """Produce the mutated source by splicing a Mutant's replacement in at its node's byte span.
+    mutate_source returns the change (location, original, replacement), not the mutated source, so
+    the gate applies it here. Returns None when the span cannot be located (the mutant is skipped)."""
+    for start, end, text in spans.get(mutant["location"], []):
+        if text == mutant["original"]:
+            return (source_bytes[:start] + mutant["replacement"].encode("utf-8") + source_bytes[end:]).decode("utf-8")
+    return None
+
+
 def _mutants(module, only=None):
     """Every mutant of every source file, each tagged with the dotted module name and real path so a
-    worker can override it in memory. `only` (a filename substring) narrows to one file for fast iteration."""
+    worker can override it in memory. mutate_source yields the change descriptors (§9.6); the gate
+    splices each into the source here. A file that does not parse comes back as a Fault, which is
+    surfaced and the file skipped. `only` (a filename substring) narrows to one file for fast iteration."""
     mutants = []
     for path in _src_files(module, only):
         source = path.read_text(encoding="utf-8")
         relpath, fqmn = str(path.relative_to(ROOT)), _fqmn(path, module)
-        for mutant in enumerate_mutants(source):
-            mutants.append({"fqmn": fqmn, "path": str(path), "source": mutant["source"], "operator": mutant["operator"], "label": f"{relpath}:{mutant['label']}"})
+        changes = mutate_source(source)
+        if isinstance(changes, dict) and "problem" in changes:
+            print(f"mutate: honest-{module} — {relpath} did not parse, no mutants: {changes['problem']}", file=sys.stderr)
+            continue
+        spans = _spans(source)
+        source_bytes = source.encode("utf-8")
+        for change in changes:
+            mutated = _apply(source_bytes, spans, change)
+            if mutated is None:
+                continue
+            label = f"{relpath}:{change['change_kind']} {change['original']}->{change['replacement']}@{change['location']}"
+            mutants.append({"fqmn": fqmn, "path": str(path), "source": mutated,
+                            "operator": change["change_kind"], "label": label})
     return mutants
+
+
+def _adequacy(mutants, survivors, undecided, declared):
+    """Aggregate the run into the gate report (spec §9.6). The baseline suite passed, so each mutant's
+    observed output is its own run's outcome: a survivor's suite also passed (output identical to the
+    baseline), a caught mutant's suite failed (output differs), and an undecided mutant's run did not
+    complete. classify_mutant_result turns those observations into the closed verdict — caught,
+    set_aside, undecided — the single definition shared with honest-test. A set_aside or undecided
+    verdict counts toward adequacy only when it is declared in mutants_setaside.json with a reason;
+    otherwise it is an undeclared survivor or undecided that fails the gate. Adequacy holds iff caught
+    plus declared set_aside equals the total and nothing is left undeclared."""
+    survivor_labels = {s["label"] for s in survivors}
+    undecided_by_label = {u["label"]: u for u in undecided}
+    caught = 0
+    set_aside = 0
+    undeclared = []
+    undecided_report = []
+    for mutant in mutants:
+        label = mutant["label"]
+        if label in undecided_by_label:
+            verdict = classify_mutant_result("suite passed", "", False)["verdict"]
+        elif label in survivor_labels:
+            verdict = classify_mutant_result("suite passed", "suite passed", True)["verdict"]
+        else:
+            verdict = classify_mutant_result("suite passed", "suite failed", True)["verdict"]
+        if verdict == "caught":
+            caught += 1
+        elif verdict == "set_aside":
+            if label in declared:
+                set_aside += 1
+            else:
+                undeclared.append({"operator": mutant["operator"], "label": label})
+        else:
+            stalled = undecided_by_label[label]
+            undecided_report.append({"operator": mutant["operator"], "label": label,
+                                     "reason": stalled.get("reason", ""), "declared": label in declared})
+    adequate = not undeclared and all(u["declared"] for u in undecided_report)
+    return {"total": len(mutants), "caught": caught, "set_aside": set_aside,
+            "undeclared": undeclared, "undecided": undecided_report, "adequate": adequate}
 
 
 def _run_module(module, only=None):
@@ -378,7 +453,7 @@ def _run_module(module, only=None):
             time.sleep(0.002)
     for worker in workers:
         worker.stop()
-    return mutation_adequacy(mutants, survivors, undecided, _set_aside(module))
+    return _adequacy(mutants, survivors, undecided, _set_aside(module))
 
 
 def main(modules):

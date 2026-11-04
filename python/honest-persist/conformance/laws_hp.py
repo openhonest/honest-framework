@@ -523,9 +523,9 @@ def _probe_check():
         if "err" not in result or result["err"]["code"] != "uncompilable_check":
             bad.append(f"parse_check({expression!r}) should be uncompilable: {result}")
     # The two parse faults are named in full: an unsupported token and an otherwise-uncompilable parse.
-    if parse_check("age @ 1").get("err") != {"code": "uncompilable_check", "message": "CHECK uses an unsupported token: age @ 1", "category": "server", "detail": {"expression": "age @ 1"}}:
+    if parse_check("age @ 1").get("err") != {"code": "uncompilable_check", "message": "CHECK uses an unsupported token: age @ 1", "category": "server", "results": [], "detail": {"expression": "age @ 1"}}:
         bad.append(f"an unsupported token should fault in full: {parse_check('age @ 1')}")
-    if parse_check("age >").get("err") != {"code": "uncompilable_check", "message": "CHECK cannot be compiled: age >", "category": "server", "detail": {"expression": "age >"}}:
+    if parse_check("age >").get("err") != {"code": "uncompilable_check", "message": "CHECK cannot be compiled: age >", "category": "server", "results": [], "detail": {"expression": "age >"}}:
         bad.append(f"an uncompilable parse should fault in full: {parse_check('age >')}")
 
     # _number reads an int or a float by the presence of a decimal point.
@@ -621,7 +621,7 @@ def _probe_enforce_checks():
     if "ok" not in enforce_checks(schema, "products", {"price": 5, "qty": 10}, "turso"):
         bad.append("a row satisfying every CHECK should pass enforcement")
     violation = enforce_checks(schema, "products", {"price": 0, "qty": 10}, "turso")
-    if violation.get("err") != {"code": "check_violation", "message": "Row violates CHECK (price > 0)", "category": "client", "detail": {"expression": "price > 0", "row": {"price": 0, "qty": 10}}}:
+    if violation.get("err") != {"code": "check_violation", "message": "Row violates CHECK (price > 0)", "category": "client", "results": [], "detail": {"expression": "price > 0", "row": {"price": 0, "qty": 10}}}:
         bad.append(f"a row violating a CHECK should be a full client check_violation: {violation}")
 
     # Native dialect: the database enforces, so the pure layer trusts it (no row evaluation).
@@ -635,7 +635,7 @@ def _probe_enforce_checks():
         bad.append(f"an uncompilable CHECK on a non-native dialect should fault: {uncompilable}")
     # validate_checks names the construction-time fault in full (table, expression, dialect).
     from honest_persist import validate_checks
-    if validate_checks(bad_schema, "turso").get("err") != {"code": "uncompilable_check", "message": "CHECK on 't' can be neither natively enforced on 'turso' nor compiled: x @ 1", "category": "server", "detail": {"table": "t", "expression": "x @ 1", "dialect": "turso"}}:
+    if validate_checks(bad_schema, "turso").get("err") != {"code": "uncompilable_check", "message": "CHECK on 't' can be neither natively enforced on 'turso' nor compiled: x @ 1", "category": "server", "results": [], "detail": {"table": "t", "expression": "x @ 1", "dialect": "turso"}}:
         bad.append(f"validate_checks should name the uncompilable CHECK in full: {validate_checks(bad_schema, 'turso')}")
     # On a native dialect validate_checks trusts the database (no compilation attempted).
     if "ok" not in validate_checks(bad_schema, "postgresql"):
@@ -921,9 +921,9 @@ def _probe_checked():
         bad.append("unknown where column should fault unknown_column")
     if checked_select(schema, "users", order_by=["-ghost"]).get("err", {}).get("code") != "unknown_column":
         bad.append("unknown order_by column should fault unknown_column")
-    if checked_select(schema, "ghost").get("err") != {"code": "unknown_table", "message": "Table 'ghost' is not declared in the schema", "category": "server", "detail": {"table": "ghost"}}:
+    if checked_select(schema, "ghost").get("err") != {"code": "unknown_table", "message": "Table 'ghost' is not declared in the schema", "category": "server", "results": [], "detail": {"table": "ghost"}}:
         bad.append(f"an unknown table should fault unknown_table in full: {checked_select(schema, 'ghost')}")
-    if checked_select(schema, "users", joins=[{"table": "ghost", "on": "x"}]).get("err") != {"code": "unknown_table", "message": "Join table 'ghost' is not declared in the schema", "category": "server", "detail": {"table": "ghost"}}:
+    if checked_select(schema, "users", joins=[{"table": "ghost", "on": "x"}]).get("err") != {"code": "unknown_table", "message": "Join table 'ghost' is not declared in the schema", "category": "server", "results": [], "detail": {"table": "ghost"}}:
         bad.append(f"an unknown join table should fault unknown_table in full: {checked_select(schema, 'users', joins=[{'table': 'ghost', 'on': 'x'}])}")
     # the unknown_column fault names the offending column(s), the table, and the declared set, with the
     # server category and the full message.
@@ -2675,7 +2675,7 @@ def _probe_migrate():
         # An unsupported dialect has no inspector.
         nodb = _SqliteConn()
         unknown = await migrate({}, nodb, "oracle")
-        if unknown.get("err") != {"code": "unsupported_dialect", "message": "no schema inspector for dialect 'oracle'", "category": "server", "detail": {}}:
+        if unknown.get("err") != {"code": "unsupported_dialect", "message": "no schema inspector for dialect 'oracle'", "category": "server", "results": [], "detail": {}}:
             bad.append(f"the unsupported-dialect fault should be fully named: {unknown}")
 
         # §6.2: a CHECK that can be neither natively enforced nor compiled is refused at construction,
@@ -3584,8 +3584,8 @@ def _probe_migrate_remote():
 
 def run():
     groups = [
-        verify_laws(HP_LAWS, [(p[0] + "->" + p[1], p) for p in _PAIRS]),
-        verify_laws(RENDER_LAWS, [(op[0], op) for op in _RENDER_OPS]),
+        verify_laws(HP_LAWS, [{"name": p[0] + "->" + p[1], "params": p} for p in _PAIRS]),
+        verify_laws(RENDER_LAWS, [{"name": op[0], "params": op} for op in _RENDER_OPS]),
     ]
     probes = {
         "apply": _probe_apply(),

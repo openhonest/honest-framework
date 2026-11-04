@@ -17,19 +17,14 @@ monitor is a real recording function injected as the io_monitor plug. A Manifest
 a plain dict (honest-type's manifest shape). It calls the real
 honest_test.verify_boundary_isolation.
 
-ASSUMED INTERFACE (flagged as a gap in the report): the .hd note commits to an
-INJECTED monitor callable ("passed in as a callable so honest-test runs the link
-under it and takes back the record of detected calls"), but does not pin the exact
-calling convention or the record shape. This probe assumes:
-  - honest-test invokes `monitor(link, test_manifest)`;
-  - the monitor runs `link(test_manifest)` and returns a record dict whose
-    "detected_io" flag is True iff a watched I/O call happened, and whose "result"
-    holds the link's return value;
-  - verify_boundary_isolation reads the boundary flag through honest-type's
-    link_meta()/__honest_link__ metadata the @link() decorator attaches.
-If the real function expects a different convention (context-manager monitor, a
-different record key, or a `link.boundary` attribute instead of link metadata),
-this probe will need to follow it once that interface is pinned.
+MONITOR INTERFACE (pinned at the code stage, shared with verify_determinism §4.5):
+the injected monitor is a callable `monitor(link, test_manifest)` that runs the link
+and returns the record of detected calls as a collection. An empty record means
+nothing was detected; a non-empty record means it was. verify_boundary_isolation
+warns when the record is non-empty and the link is not a declared boundary. The
+boundary flag is read through honest-type's link metadata the @link() decorator
+attaches. The sibling determinism check uses the same collection interface, so one
+monitor shape serves both.
 
 This is its own fragment file so the other scenarios' fragments never collide with
 it. run_conformance.py / laws_htest.py are untouched.
@@ -52,13 +47,15 @@ def watched_write(payload):
 
 
 def recording_monitor(link_fn, manifest):
-    """The injected io_monitor plug: runs the link and reports whether any watched
-    I/O call happened. Record-and-restore in spirit — it reads the length of the
-    watch log before and after the run, so it changes no result and reaches for no
-    global state of its own. Returns the record honest-test takes back."""
+    """The injected io_monitor plug: runs the link and returns the record of the
+    watched I/O calls that happened during the run. Record-and-restore in spirit:
+    it reads the watch log before and after, so it changes no result and reaches for
+    no global state of its own. An empty record means no I/O; a non-empty record
+    means I/O was detected. honest-test takes this record back and warns when it is
+    non-empty for a non-boundary link."""
     before = len(_IO_LOG)
-    result = link_fn(manifest)
-    return {"detected_io": len(_IO_LOG) > before, "result": result}
+    link_fn(manifest)
+    return _IO_LOG[before:]
 
 
 # A non-boundary link that performs I/O: it calls the watched sink. The monitor

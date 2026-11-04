@@ -1,7 +1,7 @@
 """honest-type conformance: the HT laws (honest-conformance-suite.md), generated.
 
 This is the behavioural circle for honest-type. Instead of a human enumerating tokens and
-expected manifests, honest-test's generators (enumerate_sets, adversarial_neighbours) build
+expected manifests, honest-test's generators (enumerate_sets, adversarial_neighbors) build
 the bounded input space from each subject vocabulary's own declarations, and the HT laws are
 asserted across that space. The classification behaviour the JSON suite could not express —
 predicates, case-insensitive Sets, composed types, Maybe binding, throwing predicates — is
@@ -18,7 +18,7 @@ directory is outside the honest-check gate (it builds throwing predicates on pur
 is free to construct adversarial fixtures.
 """
 
-from honest_test import adversarial_neighbours, enumerate_sets, law, verify_laws
+from honest_test import adversarial_neighbors, enumerate_sets, law, verify_laws
 
 from honest_type import (
     binding,
@@ -31,8 +31,8 @@ from honest_type import (
 )
 from honest_type.recognizers import recognize
 from honest_type.reserved import _LAYER1, _LAYER2, _LAYER3_PYTHON, reservation_layer
-from honest_type.state_machine import StateMachineError, state_machine, transition
-from honest_type.vocabulary import VocabularyError, merge
+from honest_type.state_machine import state_machine, transition
+from honest_type.vocabulary import merge
 
 
 def _raiser(_token):
@@ -69,7 +69,7 @@ def _generated_tokens(subject):
     members = _set_members(subject["vocab"])
     tokens = list(members) + list(subject.get("valid", []))
     for member in members:
-        tokens.extend(adversarial_neighbours(member))
+        tokens.extend(adversarial_neighbors(member))
     return tokens
 
 
@@ -146,18 +146,17 @@ def _ht8_purity(subject):
 
 
 def _construction_rejected(subject):
-    """The subject is a (build thunk, expected-substring(s)) pair; constructing it must raise
-    VocabularyError carrying every expected substring."""
+    """The subject is a (build thunk, expected-substring(s)) pair; building it must return a fault
+    value (section 11.2: a construction error is data, not a raise) whose message carries every
+    expected substring."""
     build, expect = subject["build"], subject["expect"]
     expects = [expect] if isinstance(expect, str) else expect
-    try:
-        build()
-    except VocabularyError as exc:
-        missing = [needle for needle in expects if needle not in str(exc)]
-        if missing:
-            return [f"raised VocabularyError but message missing {missing}: {exc}"]
-        return []
-    return ["construction succeeded; expected VocabularyError"]
+    result = build()
+    if not (isinstance(result, dict) and "code" in result):
+        return ["construction succeeded; expected a fault value"]
+    message = result.get("message", "")
+    missing = [needle for needle in expects if needle not in message]
+    return [f"returned a fault but message missing {missing}: {message!r}"] if missing else []
 
 
 def _catch_all_admits_discriminating():
@@ -165,10 +164,9 @@ def _catch_all_admits_discriminating():
     catch-all, and must construct (section 13.3). Pins the 95% threshold's acceptance count — a doubled
     or off-by-one count would wrongly reject it. A live predicate, so it lives here, not in suite.json."""
     bad = []
-    try:
-        vocabulary({"midfreq": predicate(lambda token: len(token) <= 10)})
-    except VocabularyError as exc:
-        bad.append(f"a ~63%-accepting predicate must construct, not be rejected as a catch-all: {exc}")
+    result = vocabulary({"midfreq": predicate(lambda token: len(token) <= 10)})
+    if isinstance(result, dict) and "code" in result:
+        bad.append(f"a ~63%-accepting predicate must construct, not come back as a catch-all fault: {result.get('message')!r}")
     return bad
 
 
@@ -346,14 +344,14 @@ ENGINE_LAWS = [law("HT-engine", "classify honours its rejection/fault contract",
 
 
 def _sm_construction_rejected(subject):
-    """An invalid state machine must fail construction (StateMachineError) with the expected
-    substring."""
+    """An invalid state machine must come back as a fault value (section 11.2) whose message
+    carries the expected substring."""
     build, expect = subject["build"], subject["expect"]
-    try:
-        build()
-    except StateMachineError as exc:
-        return [] if expect in str(exc) else [f"raised but message missing {expect!r}: {exc}"]
-    return ["construction succeeded; expected StateMachineError"]
+    result = build()
+    if not (isinstance(result, dict) and "code" in result):
+        return ["construction succeeded; expected a fault value"]
+    message = result.get("message", "")
+    return [] if expect in message else [f"returned a fault but message missing {expect!r}: {message!r}"]
 
 
 def _sm_from_vocabulary(subject):
@@ -472,14 +470,20 @@ def _non_string_token_names_the_type():
     return messages
 
 
+def _subjects(pairs):
+    """Wrap (name, params) pairs as honest-test Subject records {name, params}, the shape
+    verify_laws reads its cases as."""
+    return [{"name": name, "params": params} for name, params in pairs]
+
+
 def run():
     groups = [
-        verify_laws(RUNTIME_LAWS, RUNTIME_SUBJECTS),
-        verify_laws(CONSTRUCTION_LAWS, CONSTRUCTION_SUBJECTS),
-        verify_laws(ENGINE_LAWS, EDGE_SUBJECTS),
-        verify_laws(SM_LAWS, SM_CONSTRUCTION_SUBJECTS),
-        verify_laws(SM_VOCAB_LAWS, [("vocabulary_states", {})]),
-        verify_laws(SM_IMMUTABLE_LAWS, [("machine", {})]),
+        verify_laws(RUNTIME_LAWS, _subjects(RUNTIME_SUBJECTS)),
+        verify_laws(CONSTRUCTION_LAWS, _subjects(CONSTRUCTION_SUBJECTS)),
+        verify_laws(ENGINE_LAWS, _subjects(EDGE_SUBJECTS)),
+        verify_laws(SM_LAWS, _subjects(SM_CONSTRUCTION_SUBJECTS)),
+        verify_laws(SM_VOCAB_LAWS, _subjects([("vocabulary_states", {})])),
+        verify_laws(SM_IMMUTABLE_LAWS, _subjects([("machine", {})])),
     ]
     directs = [("HT-4", "reservation_layer total", _reservation_layer_law()),
                ("HT-engine", "catch-all admits a discriminating predicate", _catch_all_admits_discriminating()),

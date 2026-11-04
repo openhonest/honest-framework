@@ -41,13 +41,13 @@ import uuid
 from collections import defaultdict
 from pathlib import Path
 
-from honest_test import decide_proof, emit_proofs, run_value_cases
+from honest_test import build_proof_event, evaluate_case
 
 PY = Path(__file__).resolve().parent
 ROOT = PY.parent
 FEATURES = ROOT / "specs" / "features"
 LOG = PY / "honest_event_log.jsonl"
-BUILT = ["parse", "design", "type", "errors", "features", "gherkin", "observe", "rca", "persist", "test", "check", "auth", "state", "alerts", "estimate"]
+BUILT = ["parse", "design", "type", "errors", "features", "gherkin", "observe", "rca", "persist", "test", "check", "auth", "state", "alerts", "estimate", "page"]
 
 _DEF = re.compile(r"^(?:async )?def ([a-z_][a-z0-9_]*)", re.M)
 _SCEN = re.compile(r"^  Scenario: ([A-Za-z_][A-Za-z0-9_]*)(.*)$", re.M)
@@ -107,8 +107,9 @@ def module_value_results(m):
     cases = json.loads(suite.read_text()).get("cases", []) if suite.exists() else []
     resolvable = [{**c["value_case"], "id": c["id"]} for c in cases if "value_case" in c and c["value_case"]["function"] in function_map]
     by_function = defaultdict(list)
-    for value_case, result in zip(resolvable, run_value_cases(resolvable, function_map)):
-        by_function[value_case["function"]].append(result)
+    for value_case in resolvable:
+        verdict = evaluate_case(value_case, function_map)
+        by_function[value_case["function"]].append({"id": value_case["id"], "verdict": verdict})
     return by_function
 
 
@@ -131,6 +132,31 @@ def module_exempt(m):
     return {entry["function"] for entry in json.loads(suite.read_text()).get("value_oracle_exempt", [])}
 
 
+def _decide(value_results, waived):
+    """Grant `proved` only when the value leg holds (the green gate already establishes the honesty
+    and coverage legs, §8.5). A waived function — declared value-oracle exempt, or an internal
+    helper off the portable contract — is proved on those two legs alone. Otherwise every value
+    case must land in evaluate_case's ok arm; an err arm is a value mismatch and a Fault is a case
+    that could not run, each recorded as a `value case` failure. A public, non-exempt function with
+    no value case yet is not proved and carries no failure, so it reads as unchecked."""
+    if waived:
+        return {"result": "proved", "failures": []}
+    failures = []
+    for entry in value_results:
+        verdict = entry["verdict"]
+        if isinstance(verdict, dict) and "ok" in verdict:
+            continue
+        if isinstance(verdict, dict) and "err" in verdict:
+            detail = verdict["err"].get("detail", {}) if isinstance(verdict["err"], dict) else {}
+            failures.append(f"value case {entry['id']}: returned {detail.get('got')!r}, expected {detail.get('expected')!r}")
+        else:
+            problem = verdict.get("problem") if isinstance(verdict, dict) else verdict
+            failures.append(f"value case {entry['id']}: {problem}")
+    if not value_results:
+        return {"result": "failed", "failures": []}
+    return {"result": "proved" if not failures else "failed", "failures": failures}
+
+
 def build_proofs():
     proofs = []
     for m in BUILT:
@@ -149,7 +175,7 @@ def build_proofs():
             # leg is waived: for a declared-exempt public function (the laws carry the value), or for
             # an internal helper, which is off the portable value contract and verified indirectly.
             waived = func in exempt or func not in public
-            decision = decide_proof(True, True, value_results.get(func, []), exempt=waived)
+            decision = _decide(value_results.get(func, []), waived)
             proofs.append({
                 "function": fqn,
                 "gherkin": scenarios[i] if i < len(scenarios) else func,
@@ -198,7 +224,17 @@ def main(argv):
 
     proofs = build_proofs()
     with LOG.open("w", encoding="utf-8") as handle:
-        asyncio.run(emit_proofs(make_sink(handle), proofs))
+        sink = make_sink(handle)
+
+        async def _emit_all():
+            for proof in proofs:
+                event = build_proof_event(
+                    proof["function"], proof["gherkin"], proof["cases"],
+                    proof["result"], proof["line_coverage"], proof["branch_coverage"],
+                )
+                await sink("hf.proof.checked", "function", proof["function"], event)
+
+        asyncio.run(_emit_all())
 
     public = {m: module_public(m) for m in BUILT}
     declared_exempt = {m: module_exempt(m) for m in BUILT}

@@ -1862,7 +1862,7 @@
             "err": {
               "code": "guard_failed",
               "message": "no",
-              "category": "unauthenticated"
+              "category": "unauthenticated", "results": [], "detail": {}
             }
           },
           401

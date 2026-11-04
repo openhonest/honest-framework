@@ -20,8 +20,19 @@ fails the gate.
 import json
 import sys
 
-from honest_test import run_value_cases
+from honest_test import evaluate_case
 from proof_run import BUILT, PY, value_function_map
+
+
+def _why(verdict):
+    """A plain reason a value case was not proved: expected-vs-got from evaluate_case's err arm, or
+    the problem from its Fault when the case could not run."""
+    if isinstance(verdict, dict) and "err" in verdict:
+        detail = verdict["err"].get("detail", {}) if isinstance(verdict["err"], dict) else {}
+        return f"returned {detail.get('got')!r}, expected {detail.get('expected')!r}"
+    if isinstance(verdict, dict) and "problem" in verdict:
+        return verdict["problem"]
+    return str(verdict)
 
 
 def main():
@@ -38,12 +49,13 @@ def main():
             for case in cases
             if "value_case" in case and case["value_case"]["function"] in function_map
         ]
-        for result in run_value_cases(value_cases, function_map):
+        for case in value_cases:
             total += 1
-            if not result["proved"]:
-                failures.append((module, result))
-    for module, result in failures:
-        print(f"value-check: FAIL honest-{module} {result['id']}: {result['fault']}", file=sys.stderr)
+            verdict = evaluate_case(case, function_map)
+            if not (isinstance(verdict, dict) and "ok" in verdict):
+                failures.append((module, case["id"], _why(verdict)))
+    for module, case_id, why in failures:
+        print(f"value-check: FAIL honest-{module} {case_id}: {why}", file=sys.stderr)
     print(f"value-check: {total - len(failures)}/{total} value cases proved across the public surfaces.")
     if failures:
         print("value-check: a value case asserts the wrong output, or its function/fixture is unresolved.", file=sys.stderr)
