@@ -1,64 +1,88 @@
-# honest-type declared in .hd — the pure-function-table type system: recognizers, vocabularies,
-# classify(), links, chains, the boundary, and state machines. All pure; the boundary is a
-# table-driven dispatch, not I/O. The substrate the upper modules build on.
-
+# honest-type declared in .hd — the pure-function-table type system the whole framework stands on:
+# recognizers, vocabularies, classify(), links, chains, the boundary handler, and state machines.
+# honest-type is a pure library. It touches no file, database, clock or network: tokens in, manifest
+# out, and that is the whole contract (spec section 1.1). So it has no boundary of its own, no reader
+# and no orchestrator. Its functions are pure, and the world reaches them by a simple import from a
+# sibling module or a call from the host application. Eleven modules import it; it is the substrate.
+# Architecture: ../../specs/02-code-quality/honest-type-architecture.md
 module honest-type
-
   layer foundation
 
+  # No boundary, so no I/O surface. The world arrives only through the entries at the foot of the
+  # file: an import a sibling makes (verified), or a call the host application makes.
+  inputs  = { }
+  outputs = { }
+
+  # Step 3. The closed word-sets the records bind their fields to. A recognizer's kind, a rejection's
+  # reason, and a fault's responsibility are each a finite set of words, so each is a vocabulary and
+  # never a plain str.
+  set recognizer_kinds = { "set" : "a finite Set membership test",
+                           "insensitive" : "a case-folded Set membership test",
+                           "predicate" : "an open-ended String to Boolean callable" }
+  vocabulary RecognizerKind = { recognizer_kinds }
+  set rejection_reasons = { "unrecognized" : "matched no recognizer",
+                            "reserved_word" : "a predicate matched a reserved word at runtime",
+                            "unbound_type" : "classified but no binding exists for its type",
+                            "duplicate_slot" : "two tokens bound to one slot",
+                            "missing_required" : "a required binding slot had no token",
+                            "empty_token" : "an empty string reached classify",
+                            "null_token" : "a null token reached classify" }
+  vocabulary Reason = { rejection_reasons }
+  set fault_categories = { "client" : "bad input, the caller's responsibility",
+                           "server" : "broken logic, the program's responsibility" }
+  vocabulary Category = { fault_categories }
+
+  # Step 3. The data dictionary. A recognizer is tagged data, not behaviour. A vocabulary classifies;
+  # a binding renames; a composed type carries its own context. A ticket, a rejection and a fault are
+  # all data, never exceptions. A Result wraps either a manifest or a fault.
   type Recognizer = {
-    kind: str
+    kind: RecognizerKind
   }
-
-  type Vocabulary = {
-    base_types: dict<str, any>
-    composed_types: list<ComposedType>
-  }
-
   type ComposedType = {
     name: str
     requires: dict<str, str>
     captures: str
   }
-
+  type Vocabulary = {
+    base_types: dict<str, Recognizer>
+    composed_types: list<ComposedType>
+  }
   type Binding = {
     slots: dict<str, str>
   }
-
-  type Ticket = {
-    kind: str
-    value: str
+  type Maybe = {
     slot: str
   }
-
-  type Rejection = {
+  type Ticket = {
+    type_name: str
     value: str
-    reason: str
-    kind: str
   }
-
+  type Rejection = {
+    token: str
+    reason: Reason
+    detail: str
+  }
   type Fault = {
     code: str
     message: str
-    category: str
+    category: Category
+    results: list<Result>
     detail: dict<str, any>
   }
-
   type Manifest = {
     slots: dict<str, any>
   }
-
+  type Result = {
+    ok: Manifest
+    err: Fault
+  }
   type Link = {
     accepts: Vocabulary
     binds: Binding
     boundary: bool
+    authorizes: bool
     emits: list<str>
   }
-
-  type Chain = {
-    links: list<Link>
-  }
-
   type StateMachine = {
     states: Vocabulary
     events: Vocabulary
@@ -66,62 +90,91 @@ module honest-type
     initial: str
     terminal: list<str>
   }
-
-  type Result = {
-    ok: Manifest
-    err: Fault
+  type StateChange = {
+    state: str
   }
 
-  fn predicate : (fn: Callable) -> Recognizer
+  # Step 5. The pure functions. A construction failure comes back as a Fault, never a raise: a pure
+  # function returns its error as data, and only a host boundary turns a fault into an exception.
 
-  fn insensitive : (members: list<str>) -> Recognizer
+  # Recognizers and vocabularies.
+  fn predicate : (fn: Callable) -> Recognizer note "wraps a String to Boolean callable as an open-ended recognizer"
+  fn insensitive : (members: list<str>) -> Recognizer note "a case-insensitive Set recognizer: members and token are compared lowercased"
+  fn recognize : (token: str, recognizer: Recognizer) -> bool | Fault invokes by_kind, fault note "true when a token matches a recognizer, dispatched on the recognizer's kind; an unknown kind hits the terminal entry and returns a server fault naming the accepted kinds (spec 13.7)"
+  # recognize's dispatch. The kind selects the matcher. The table is module-local and fixed to the
+  # three members of recognizer_kinds, so a kind outside it can only come from a construction bug;
+  # recognize's terminal entry returns that fault rather than letting the lookup miss in silence.
+  dispatch by_kind = { "set" -> _match_set, "insensitive" -> _match_insensitive, "predicate" -> _match_predicate }
+  fn _match_set : (token: str, recognizer: Recognizer) -> bool note "membership test for a Set recognizer: the token is one of the recognizer's members"
+  fn _match_insensitive : (token: str, recognizer: Recognizer) -> bool note "membership test for a case-insensitive Set recognizer: the lowercased token is one of the members"
+  fn _match_predicate : (token: str, recognizer: Recognizer) -> bool note "runs the recognizer's String to Boolean callable; a throw becomes a predicate_error fault at classify, not here"
+  edge fn vocabulary : (base_declarations: dict<str, any>, composed_types: list<ComposedType>) -> Vocabulary | Fault invokes _check_overlap, _check_catch_all, _check_composed, _check_capture_ambiguity, _check_reserved note "builds a validated vocabulary, returning a fault on a reserved word, an overlap, a catch-all predicate, or an unknown composed base"
+  fn merge : (vocab_a: Vocabulary, vocab_b: Vocabulary) -> Vocabulary | Fault invokes _check_overlap, _check_composed, _check_capture_ambiguity note "combines two vocabularies into one, returning a fault on a name or value collision"
+  fn composed : (name: str, requires: dict<str, str>, captures: str) -> ComposedType note "a multi-token recognizer: it matches when its required base types are present and claims one base type's value"
+  edge fn binding : (table: dict<str, str>) -> Binding note "a binding table mapping type names to slot names"
+  fn auto_binding : (vocab: Vocabulary) -> Binding note "the identity binding: every type name, base and composed, is its own slot"
+  edge fn maybe : (slot: str) -> Maybe note "marks a binding slot optional: an absent token becomes Nothing, not a rejection"
 
-  fn recognize : (token: str, recognizer: Recognizer) -> bool
+  # The vocabulary construction checks. Each returns the fault it found, or nothing.
+  fn _check_reserved : (base_types: dict<str, Recognizer>) -> list<Fault> invokes is_reserved, fault note "the construction check that no Set member is a reserved word"
+  fn _check_overlap : (base_types: dict<str, Recognizer>) -> list<Fault> invokes fault note "the construction check that no token matches two types in one vocabulary"
+  fn _check_catch_all : (base_types: dict<str, Recognizer>) -> list<Fault> invokes recognize, fault note "the construction check that rejects a predicate matching nearly every input, which is a test and not a type"
+  fn _check_composed : (base_types: dict<str, Recognizer>, composed_list: list<ComposedType>) -> list<Fault> invokes fault note "the construction check that every composed type's required base types exist"
+  fn _check_capture_ambiguity : (composed_list: list<ComposedType>) -> list<Fault> invokes fault note "the construction check that no two composed types would capture the same token"
 
-  edge fn vocabulary : (base_declarations: dict<str, any>, composed_types: list<ComposedType>) -> Vocabulary
+  # classify and its two passes.
+  edge fn classify : (tokens: list<str>, vocab: Vocabulary, bind: Binding) -> Manifest | Fault invokes _classify_token, _resolve_bindings, auto_binding, rejection, fault note "classifies tokens against a vocabulary into a manifest, in two passes so token order never changes the result"
+  fn _classify_token : (token: str, vocab: Vocabulary) -> Ticket | Rejection | Fault invokes ticket, rejection, fault, is_reserved, recognize note "pass one: one token becomes a ticket, a rejection, or a fault when a predicate throws"
+  fn _resolve_bindings : (tickets: list<Ticket>, rejections: list<Rejection>, vocab: Vocabulary, bind: Binding) -> Manifest invokes rejection note "pass two: resolve composed types, bind the remaining slots, fill Maybe slots with Nothing, and record missing required slots"
 
-  fn merge : (vocab_a: Vocabulary, vocab_b: Vocabulary) -> Vocabulary
+  # Links and chains. A composer returns a composed link the host later runs; an executor runs links.
+  edge fn link : (accepts: Vocabulary, binds: Binding, boundary: bool, authorizes: bool, emits: list<str>) -> Callable note "declares a link by attaching its vocabulary and role to a function for the checker; it never changes the function's behaviour"
+  fn is_link : (fn: Callable) -> bool note "true when a function was declared with link"
+  edge fn link_meta : (fn: Callable) -> Link note "the metadata a declared link carries: its name, accepts, binds, boundary, authorizes and emits"
+  fn chain : (links: list<Callable>) -> Callable note "composes links into one short-circuiting link the host later runs, manifest to Result"
+  fn validate_all : (links: list<Callable>) -> Callable note "composes links into one accumulating link the host later runs: every link runs against the same manifest and any error makes the whole a validation_failed carrying every result"
+  edge fn execute_chain : (links: list<Callable>, initial_manifest: Manifest) -> Manifest | Fault invokes ok, err, fault note "runs links in sequence, short-circuiting on the first error"
+  fn execute_chain_async : (links: list<Callable>, initial_manifest: Manifest) -> Manifest | Fault awaited invokes ok, err, fault note "runs links in sequence, awaiting each, short-circuiting on the first error"
+  fn _run_validate_all : (links: list<Callable>, manifest: Manifest) -> Manifest | Fault invokes ok, err, fault note "runs every link against the same manifest, accumulating every result"
+  fn _run_validate_all_async : (links: list<Callable>, manifest: Manifest) -> Manifest | Fault awaited invokes ok, err, fault note "runs every link against the same manifest, awaiting each, accumulating every result"
 
-  fn composed : (name: str, requires: dict<str, str>, captures: str) -> ComposedType
+  # The boundary helper and the rejection screen.
+  fn catch_at_boundary : (handler: Callable, fault_to_output: dict<str, any>, success_output: Callable, server_default: Callable, client_default: Callable) -> Callable note "wraps a handler the host later runs so a fault renders through the output table and an uncaught exception becomes a server default"
+  fn check_rejections : (manifest: Manifest, policy: dict<str, str>) -> Manifest | Fault invokes ok, err, fault note "turns a manifest's rejections into a Result before the chain runs, deciding by a policy table"
 
-  edge fn binding : (table: dict<str, str>) -> Binding
+  # State machines.
+  edge fn state_machine : (states: Vocabulary, events: Vocabulary, transitions: dict<str, str>, initial: str, terminal: list<str>) -> StateMachine | Fault invokes fault note "builds an immutable state machine, returning a fault on an unknown state, event, or transition target"
+  edge fn transition : (machine: StateMachine, current_state: str, event: str) -> StateChange | Fault invokes ok, err, fault note "applies one event to a state and returns the next state or a fault; the machine stays stateless and the caller stores the result"
 
-  fn auto_binding : (vocab: Vocabulary) -> Binding
+  # The reserved-word test and the data constructors.
+  fn is_reserved : (token: str) -> bool note "true when a token is a framework, cross-language, or language reserved word"
+  fn ticket : (type_name: str, value: str) -> Ticket note "the result of classifying one token: its matched type name and original value"
+  fn rejection : (token: str, reason: Reason, detail: str) -> Rejection note "a token that could not be classified or bound, carried as data"
+  fn fault : (code: str, message: str, category: Category, results: list<Result>, detail: dict<str, any>) -> Fault note "a processing error carried as data; every field is passed explicitly, results empty unless a validate_all fault and detail empty unless there is structured context, so nothing is defaulted (spec 13.2)"
+  fn ok : (manifest: Manifest) -> Result note "a successful Result wrapping a manifest"
+  fn err : (fault_data: Fault) -> Result note "a failed Result wrapping a fault"
 
-  edge fn maybe : (slot: str) -> Recognizer
-
-  edge fn classify : (tokens: list<str>, vocab: Vocabulary, bind: Binding) -> Manifest
-
-  edge fn link : (accepts: Vocabulary, binds: Binding, boundary: bool, authorizes: bool, emits: list<str>) -> Link
-
-  fn is_link : (fn: Callable) -> bool
-
-  edge fn link_meta : (fn: Callable) -> Link
-
-  fn chain : (links: list<Link>) -> Chain
-
-  edge fn execute_chain : (links: list<Link>, initial_manifest: Manifest) -> Result
-
-  fn execute_chain_async : (links: list<Link>, initial_manifest: Manifest) -> Result awaited
-
-  fn validate_all : (links: list<Link>) -> Chain
-
-  fn catch_at_boundary : (handler: Callable, fault_to_output: dict<str, any>, success_output: Callable, server_default: Callable, client_default: Callable) -> Callable
-
-  fn check_rejections : (manifest: Manifest, policy: dict<str, str>) -> Result
-
-  edge fn state_machine : (states: Vocabulary, events: Vocabulary, transitions: dict<str, str>, initial: str, terminal: list<str>) -> StateMachine
-
-  edge fn transition : (machine: StateMachine, current_state: str, event: str) -> Result
-
-  fn is_reserved : (token: str) -> bool
-
-  fn ticket : (type_name: str, value: str) -> Ticket
-
-  fn rejection : (token: str, reason: str, detail: dict<str, any>) -> Rejection
-
-  fn fault : (code: str, message: str, category: str, detail: dict<str, any>) -> Fault
-
-  fn ok : (manifest: Manifest) -> Result
-
-  fn err : (fault_data: Fault) -> Result
+  # The world arrives here. A sibling module imports these names (verified below), or the host
+  # application calls them (noted, not verifiable by import). Functions reached only by another
+  # function on this list need no entry; the call that reaches them is their arrival.
+  entry "import honest_type" -> classify
+  entry "import honest_type" -> vocabulary
+  entry "import honest_type" -> binding
+  entry "import honest_type" -> maybe
+  entry "import honest_type" -> link
+  entry "import honest_type" -> link_meta
+  entry "import honest_type" -> execute_chain
+  entry "import honest_type" -> state_machine
+  entry "import honest_type" -> transition
+  entry "call:application" -> predicate
+  entry "call:application" -> insensitive
+  entry "call:application" -> merge
+  entry "call:application" -> composed
+  entry "call:application" -> chain
+  entry "call:application" -> validate_all
+  entry "call:application" -> execute_chain_async
+  entry "call:application" -> _run_validate_all
+  entry "call:application" -> _run_validate_all_async
+  entry "call:application" -> is_link
+  entry "call:application" -> catch_at_boundary
+  entry "call:application" -> check_rejections

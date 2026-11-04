@@ -1,54 +1,425 @@
-# honest-test declared in .hd — the auto-generated verification layer. All pure: generators derive
-# test cases from declarations, and the honesty checks run a link and inspect the result.
+# honest-test declared in .hd — the auto-generated verification layer of the framework (architecture:
+# ../../specs/02-code-quality/honest-test-architecture.md). honest-test derives every test case from a
+# module's own declarations — vocabularies, links, chains, state machines — and runs them; the developer
+# writes no test code (spec section 1).
+#
+# The runner is honest-test's own boundary (section 11). The host starts a run two ways: the CLI
+# `python -m honest_test [src_dir]`, and the pytest plugin at collection time. On a run a reader reads each
+# source file under src/ and a config reader reads honest-test.toml; one orchestrator drives the pure core
+# (parse and classify predicates, generate the cases source analysis can produce, measure coverage and
+# mutation adequacy); two sinks report, one printing the human report to stdout and one writing coverage.json
+# (section 9.5). Generation and measurement are pure and return data — only the readers and the two sinks
+# touch the world. The set-based generators and the honesty, chain-contract, state-machine, persist, component,
+# value-oracle and scaffolding checks are a pure import surface (the `edge` role): the generated scaffolding
+# and the conformance runner import them with the live vocabularies and callables the runner cannot read from
+# source text, and the memory-capped mutation harness imports the mutant classifier. The second door is the
+# pytest collection hook (section 4.8), which reads each collected test module's source and refuses collection
+# when the test body rebinds a call target at runtime.
 
 module honest-test
 
   layer tooling
 
-  type Coverage = {
-    vocabularies: any
-    chains: any
-    honesty: any
-  }
+  note "the auto-generated verification layer: a runner reads a module's source and declarations and turns them into every test case, with a pure import surface of generators and honesty checks, and two doors — the CLI and pytest runner, and the pytest collection hook that rejects a dishonest test body."
+
+  # The surface, closed. honest-test reads the filesystem — the source files under src/ and honest-test.toml
+  # at run start, and each collected test module's source at the collection hook (sections 11, 3.6, 4.8). It
+  # writes two sinks: the human report to stdout and coverage.json to the filesystem (sections 11, 9.5).
+  inputs  = { "file"        : "the source files under src/ read on a run, honest-test.toml read at run start, and each collected test module's source read at the pytest collection hook (sections 11, 3.6, 4.8)",
+              "process"     : "the running interpreter's import system; the loader dynamically imports each module under test, executing its top-level code to obtain its live vocabularies, links, chains and state machines (section 11)",
+              "honest-type" : "the recognizer, vocabulary and link machinery honest-test is built on; the loader asks honest-type to tell a link from an ordinary function and read its declared vocabulary and binding off each imported module (section 1.1), the seam by which honest-test depends on honest-type" }
+  outputs = { "stdout" : "the human-readable run report print_report writes on a CLI run (section 11)",
+              "file"   : "coverage.json, which write_coverage writes on a run for honest-check to read (section 9.5)" }
+
+  # ============================================================================================
+  # Foreign shapes. honest-test reads declarations other modules own; it never constructs them.
+  # ============================================================================================
+  type Vocabulary = foreign "honest-type" note "a validated vocabulary, the value honest-type's vocabulary() produces: its base recognizers and composed types (honest-type-architecture.md). honest-test reads it to enumerate every Set member and every combination (section 3.2) and to drive chain-contract test cases (section 4.6). It is foreign because honest-type owns the shape; honest-test receives a Vocabulary and reads it, never builds one."
+  type Binding = foreign "honest-type" note "a binding table mapping type names to slot names, honest-type's binding() result. honest-test reads it to know which slot each classified token fills when it builds a test manifest (section 4.6). Foreign: honest-type owns it."
+  type Manifest = foreign "honest-type" note "a fully resolved classification result — slot names to values — honest-type's classify() output and the value every link and chain is run on. honest-test constructs test manifests by enumerating a vocabulary and hands them to the link under test (sections 4.1 through 4.6). Foreign: honest-type owns the shape; honest-test fills slots it already knows from the vocabulary, never redefines the record."
+  type Result = foreign "honest-type" note "honest-type's Result: an ok arm carrying a manifest or an err arm carrying a fault, the value a chain run and a value-oracle case evaluation produce. honest-test reads which arm is present to judge a chain contract (section 4.6) and to compare a function's output against the oracle's expected value (section 8.6). Foreign: honest-type owns it."
+  type Link = foreign "honest-type" note "the metadata a declared @link carries — its name, the vocabulary it accepts, its binding, whether it is a boundary, what it emits — honest-type's link_meta() shape. honest-test reads it to generate step scaffolding from a chain's links (section 8.2). Foreign: honest-type owns it. The runnable link itself is passed separately as a Callable plug."
+  type StateMachine = foreign "honest-type" note "an immutable state machine — its states and events vocabularies, its transition table, its initial and terminal states — honest-type's state_machine() result. honest-test enumerates it to test every valid transition, every invalid pair, and adversarial state and event tokens (section 5). Foreign: honest-type owns it."
+  type Schema = foreign "honest-persist" note "a declared persistence schema — its tables, columns, nullability and CHECK constraints — honest-persist owns the shape (honest-persist-architecture.md section 8). honest-test reads it to generate round-trip, required-field, empty-set and CHECK-constraint contract tests against a real in-memory database (section 6). Foreign: honest-persist owns it; honest-test drives the genuine query builders and execute against it through an injected connect."
+  type AuthProvider = foreign "honest-auth" note "a registered authentication provider — its resolve_actor boundary validator, its actor_recognizer, its test_token_generator and its fault_mapping — honest-auth owns the shape (honest-auth-architecture.md sections 2.3 through 2.4). honest-test probes it with each token class and asserts the outcome (section 4.7). Foreign: honest-auth owns it; honest-test receives the provider as a parameter, never reaches a registry for it."
+  type Node = foreign "tree-sitter" note "one parsed syntax-tree node, the value tree-sitter produces over a source string. honest-test parses each source file once with tree-sitter (sections 2, 9.6), then reads the tree: it finds each predicate node to classify its generation strategy (section 2) and reads length and numeric bounds off the comparison operators the node holds (sections 3.3, 3.4), and it reads node spans to locate a mutant (section 9.6). It is foreign because tree-sitter owns the shape; honest-test receives a node and reads it, never constructs one — the same reason honest-check's Node is foreign to tree-sitter."
+
+  # ============================================================================================
+  # The closed word-sets. Each is a finite set the notes fold over, declared so the engine is named
+  # and counted rather than left in prose.
+  # ============================================================================================
+
+  set finding_kinds = {
+    "failure"   : "the code is wrong and the gate fails: a purity, mutation, idempotency, chain-contract, auth, state-machine or persist contract violation",
+    "warning"   : "a smell reported without failing the gate: I/O or non-determinism detected in a link not declared a boundary, or a predicate with no supplied-value entry (sections 4.4, 4.5, 3.6)",
+    "rejection" : "a test body or a gate is dishonest and collection is refused: a runtime rebind (section 4.8) or an unverified gate (section 4.9)"
+  } note "the three grades a Finding carries. failure and rejection block; warning reports and does not block. A rejection is the one grade raised at collection time rather than returned from a run."
+  vocabulary FindingKind = { finding_kinds } note "the closed grade of a Finding; which of the three a given check produces is fixed by the check and pinned by the conformance suite (section 12.2)."
+
+  set finding_codes = {
+    "non_deterministic"              : "a pure link returned different results on identical input (section 4.1, failure)",
+    "manifest_mutated"               : "a pure link modified its input manifest (section 4.2, failure)",
+    "not_idempotent"                 : "a chain produced different results on identical input run twice (section 4.3, failure)",
+    "io_detected"                    : "a link not declared a boundary performed I/O (section 4.4, warning)",
+    "nondeterminism_detected"        : "a link not declared a boundary called a non-deterministic source on the watch list (section 4.5, warning)",
+    "missing_supplied_values"        : "an external-lookup predicate has no entry in honest-test.toml, so no cases could be generated for it (section 3.6, warning)",
+    "chain_contract"                 : "a downstream link rejected a valid output of the upstream link with a server fault (section 4.6, failure)",
+    "auth_honesty"                   : "the auth provider accepted a malformed token, rejected a valid one, or did not fault correctly for a token class (section 4.7, failure)",
+    "test_body_dishonest"            : "a test body rebinds a call target at runtime — monkeypatch, mock.patch, setattr or attribute assignment on an imported symbol (section 4.8, rejection)",
+    "gate_unverified"                : "a declared gate has no proof-of-failure test (section 4.9, rejection)",
+    "gate_proof_unbound"             : "a gate's proof does not bind the specific failure it expects and can pass on an unrelated error (section 4.9, rejection)",
+    "transition_incorrect"           : "a valid transition produced the wrong next state (section 5.1, failure)",
+    "invalid_transition_accepted"    : "a state and event pair with no declared transition was accepted instead of faulting no_transition (section 5.2, failure)",
+    "invalid_state"                  : "an adversarial neighbor of a state was accepted instead of faulting invalid_state (section 5.3, failure)",
+    "invalid_event"                  : "an adversarial neighbor of an event was accepted instead of faulting invalid_event (section 5.3, failure)",
+    "round_trip_mismatch"            : "a row read back from the real database did not equal the row written (section 6.1, failure)",
+    "undeclared_column_accepted"     : "a query builder referencing an undeclared column was not rejected at build time (section 6.1, failure)",
+    "missing_required_field_accepted": "an insert omitting a non-nullable column was not rejected by the real database (section 6.1, failure)",
+    "empty_set_faulted"              : "a select matching no rows returned a fault instead of ok of an empty list (section 6.1, failure)",
+    "css_namespace_collision"        : "two components share a CSS class name instead of each namespacing under its own BEM block (section 7.1, failure)",
+    "route_collision"                : "two components define the same route path (section 7.2, failure)",
+    "startup_cascade"                : "one component failing to load caused another to fail, so the components are not independently loadable (section 7.3, failure)"
+  } note "the closed catalogue of codes honest-test's checks emit, one per failure or warning condition the spec names across sections 3.6 and 4 through 7. A Finding's code is exactly one of these. The set is declared so the verification engine is counted and a scenario can name the code it expects, rather than the codes living only in prose inside each check's note."
+  vocabulary FindingCode = { finding_codes } note "the closed code space of a Finding; the exact code a given check produces for a given input is pinned by the conformance suite (section 12.2)."
+
+  set predicate_classes = {
+    "numeric"         : "the predicate contains int(), float() or a numeric comparison; tested by the Fibonacci sequence outward from zero (section 3.3)",
+    "length_bounded"  : "the predicate constrains string length with len(s) and a comparison operator; tested by enumerating every valid length plus the boundary lengths just outside (section 3.4)",
+    "character_class" : "the predicate calls s.isdigit(), s.isalpha() or s.isupper(); tested by enumerating character classes",
+    "external_lookup" : "the predicate calls a function not defined in the codebase; generation is skipped and values are taken from honest-test.toml, a missing entry reported not passed over (section 3.6)",
+    "composite"       : "the predicate calls a function defined in the codebase; the AST walk recurses into the callee at any depth",
+    "catch_all"       : "the predicate accepts nearly all inputs; rejected at vocabulary construction by HC011, never generated here (section 2)"
+  } note "the six classes honest-test sorts a predicate into by analyzing its AST (section 2); the class picks the generation strategy. Declared so the classifier's output space is named and a scenario can assert which class a given predicate falls in."
+  vocabulary PredicateClass = { predicate_classes } note "the closed class a predicate is sorted into (section 2); classify_predicate returns exactly one."
+
+  set supplied_strategies = {
+    "supplied_only" : "the predicate cannot be analyzed, so honest-test runs only the valid and invalid values the programmer supplied in honest-test.toml (section 3.6)",
+    "fibonacci"     : "the predicate is numeric and the programmer configured its Fibonacci generation — the limit, whether to include the negative direction, whether to divide by 100 for floats (sections 3.3, 10)"
+  } note "the two generation strategies a honest-test.toml predicate entry may name (section 10). Declared so a supplied entry's strategy is a bounded word, not a free string."
+  vocabulary SuppliedStrategy = { supplied_strategies } note "the closed strategy of one supplied predicate entry (section 10)."
+
+  set token_classes = {
+    "valid"     : "a well-formed, unexpired, unrevoked token; the provider must resolve it to ok(actor)",
+    "revoked"   : "a revoked token; the provider must fault, categorized unauthenticated, mapped to 401",
+    "expired"   : "an expired token; the provider must fault, categorized unauthenticated, mapped to 401",
+    "malformed" : "a structurally invalid token; the provider's actor_recognizer must reject it before it reaches resolve_actor (400, or 401 if the provider prefers)",
+    "missing"   : "no token supplied; the provider must fault, categorized unauthenticated, mapped to 401",
+    "forged"    : "a token with a bad signature; the provider must fault, categorized unauthenticated, mapped to 401"
+  } note "the six token classes the authentication-honesty test probes (section 4.7). This is the smallest set that exercises the boundary validator; the provider may override the class-to-outcome mapping. Declared so the auth probe's input space is named and counted."
+  vocabulary TokenClass = { token_classes } note "the closed set of token classes the auth-honesty probe generates (section 4.7); compute_expected_status maps one to its expected HTTP status."
+
+  set mutation_kinds = {
+    "comparison_swap"   : "a comparison operator is swapped: < to <=, > to >=, == to != (section 9.6)",
+    "number_shift"      : "a number is shifted by one: n to n+1 or n to n-1",
+    "condition_flip"    : "a boolean condition is flipped: and to or, a removed not, x to not x",
+    "constant_replace"  : "a constant is replaced: 0 to 1, a non-empty literal to empty, True to False",
+    "result_swap"       : "a result is swapped: ok(...) to err(...) or the reverse",
+    "line_removal"      : "one statement or one branch arm is deleted",
+    "membership_change" : "a membership or key is changed: in to not in, a dict key to a sibling key"
+  } note "the seven mechanical source changes honest-test applies for mutation adequacy, the fixed finite list of section 9.6, applied to every place each fits. Declared so the mutation engine is named and counted rather than hidden in the section 9.6 table alone."
+  vocabulary MutationKind = { mutation_kinds } note "the closed kind of a Mutant, naming which row of the section 9.6 table applied; mutate_source tags every change it makes with one."
+
+  set mutant_verdicts = {
+    "caught"    : "at least one conformance case failed on the changed source, so the suite would detect the line being wrong (section 9.6)",
+    "set_aside" : "the change left the suite's observed output identical, demonstrated not asserted, so the change cannot alter the result (section 9.6)",
+    "undecided" : "the run hit its time or memory bound and produced no verdict, so nothing may be claimed about the change; it fails the gate exactly as an unexamined change does (section 9.6)"
+  } note "the three verdicts a mutant run reaches (section 9.6). Adequacy requires caught plus set_aside to equal the total and no change left undecided. Declared so the adequacy judgement is enumerable and a scenario can assert the verdict for a given mutant run."
+  vocabulary MutantVerdict = { mutant_verdicts } note "the closed verdict a MutantResult carries (section 9.6)."
+
+  set proof_outcomes = {
+    "proved" : "the function passed the honesty checks, is fully covered — 100% line and branch — and its gherkin Then steps passed (section 8.5)",
+    "failed" : "at least one of honesty, coverage or the value oracle did not hold (section 8.5)"
+  } note "the two outcomes a proof event carries (section 8.5). A function earns proved only when all three legs hold together; a value-oracle-exempt function waives the value leg only, never honesty or coverage. Declared so the proof-event outcome is a named two-member set."
+  vocabulary ProofOutcome = { proof_outcomes } note "the closed outcome of one hf.proof.checked event (section 8.5)."
+
+  set expr_kinds = {
+    "literal"   : "a value that is itself: a string, number, boolean or plain structure (section 8.6)",
+    "list"      : "a list whose elements are each evaluated as an expression",
+    "reference" : "a name resolved from the function map to a callable, so a function that takes another function is reachable by naming its argument with no callable embedded in the data",
+    "call"      : "a named function applied to its evaluated arguments, recursively, so a case is a tree of applications the oracle walks bottom-up"
+  } note "the four kinds of expression the value oracle evaluates against the function map (section 8.6), keeping suite.json pure data while letting a case name multi-argument and function-taking calls. Declared so the small expression grammar the oracle walks is named and counted."
+  vocabulary ExprKind = { expr_kinds } note "the closed kind of an Expression node (section 8.6); evaluate_case dispatches its evaluation on this."
+
+  # ============================================================================================
+  # The data dictionary. honest-test's own records.
+  # ============================================================================================
+
+  type Fault = {
+    problem: str
+    remedy: str
+  } note "honest-test's own failure record, raised by nothing in the interior and returned as a value: mutate_source returns it when the module source does not parse, run_suite passes it outward, and evaluate_case returns it when an expression names a function the map does not hold. problem states what went wrong in a sentence a developer reads — the source handed to the mutation engine is not parseable, or a value-oracle case referenced an unknown function name. remedy states what to do instead — fix the source so tree-sitter can parse it, or add the named function to the suite's function map. The two fields together make the fault self-explaining. A Fault travels by return out to the boundary: mutate_source to run_suite to the CLI door, and evaluate_case to its importing conformance runner."
+
+  type LiveModules = {
+    vocabularies: list<Vocabulary>
+    bindings: list<Binding>
+    links: list<Callable>
+    chains: list<Callable>
+    machines: list<StateMachine>
+    schemas: list<Schema>
+    components: list<Component>
+    providers: list<AuthProvider>
+    gates: list<Gate>
+  } note "the live declarations and callables load_under_test obtains by dynamically importing the modules under test (section 11), the input the checks that must call real functions take. vocabularies are the live Vocabulary objects enumerate_sets and the chain-contract check permute; bindings are the live Binding tables that pair with them. links and chains are the runnable callables the honesty checks (purity, mutation, idempotency, boundary isolation, non-determinism) and the chain-contract check run — Callable because a link and a chain are run, not read, the honest-type idiom for an injected runnable. machines are the live StateMachine objects the three state-machine tests exercise. schemas are the live persistence schemas the persist contract and CHECK enumeration drive against a real database. components are the live Component records the three isolation checks compare. providers are the registered AuthProvider objects the auth-honesty probe exercises. gates are the self-declared Gate records the gate-honesty check verifies. Loading ran each module's own code, so this record is the fruit of a boundary, not of pure analysis; the pure checks take these values and run no import themselves."
+
+  type Finding = {
+    kind: FindingKind
+    code: FindingCode
+    message: str
+    location: str
+  } note "one result a honest-test check produces, carried as data, never thrown. kind is the grade — failure, warning or rejection — deciding whether it blocks. code is the exact condition from the closed FindingCode catalogue, naming which check fired and why. message is the human sentence naming what is wrong and, where the spec gives one, how to fix it — for example that a link produced different results on identical input, or that a test rebinds a call target at runtime and should pass the dependency as a parameter instead. location is where the finding sits as file:line:col for a rejection read off a source position (sections 4.8, 4.9), and the empty string for a run-time check whose finding has no single source line to point at. A check returns a list of these; an empty list means that check found nothing."
+
+  type SuppliedEntry = {
+    valid: list<str>
+    invalid: list<str>
+    strategy: SuppliedStrategy
+  } note "one predicate's entry in honest-test.toml (sections 3.6, 10), the programmer-supplied test values for a predicate honest-test cannot analyze. valid is the list of values that must be accepted; invalid is the list that must be rejected; strategy is supplied_only or fibonacci, naming how the predicate is generated. read_config resolves one of these per predicate name."
+
+  type SuppliedConfig = dict<str, SuppliedEntry> note "the resolved supplied-values record read_config hands the generators (section 3.6), keyed by predicate name. Each value is one SuppliedEntry. A predicate with no key here has no supplied values, which supplied_cases reports as the missing_supplied_values warning rather than a file lookup. The generators take this record as data and read no file."
+
+  type SuppliedCases = {
+    valid: list<str>
+    invalid: list<str>
+    missing: bool
+  } note "what supplied_cases returns for one predicate (section 3.6). valid is the supplied values that must be accepted; invalid is the supplied values that must be rejected. missing is true when the predicate had no entry in the supplied config, the case that yields a missing_supplied_values warning; when missing is true both lists are empty. honest-test runs the valid values and confirms they are accepted, runs the invalid values and confirms they are rejected."
+
+  type LengthCases = {
+    valid: list<str>
+    invalid: list<str>
+  } note "the strings enumerate_lengths derives from a length-bounded predicate (section 3.4). valid is one string at every length the predicate accepts, built by repeating the alphabet so lengths beyond the alphabet are still generated. invalid is the boundary lengths just outside the valid range that must be rejected: always one over the maximum, and one under the minimum when the minimum is greater than one — a minimum of one means the under-length string is empty, already an empty_token rejection handled elsewhere (section 9.3). Boundary testing is symmetric: both the under and the over case, not only the over."
 
   type Mutant = {
-    kind: str
     location: str
-  }
+    change_kind: MutationKind
+    original: str
+    replacement: str
+  } note "one mechanical change to the module's own source (section 9.6). location is the tree-sitter node's span the change sits at. change_kind names which row of the section 9.6 table applied. original is the exact source text being replaced; replacement is what it becomes — a swapped operator, a shifted number, a flipped condition, an emptied literal, a deleted statement rendered as the empty string, or a changed membership or key. mutate_source produces one Mutant per place a kind fits, the way the generators enumerate a Set."
+
+  type MutantResult = {
+    verdict: MutantVerdict
+    reason: str
+  } note "the judgement of running one mutant against the suite (section 9.6). verdict is caught, set_aside or undecided. reason is empty for caught; for set_aside it is the demonstration that the change left the suite's observed output identical — named by its recurring kind, a guard on a value the parser always supplies, a trailing return that falls through to the same value, a constant shifted preserving order, an unreachable fallback, two commuting operations reordered; and for undecided it is the bound the run hit, time or memory. Every set_aside and undecided judgement stands on the record by name, never inferred from a clock."
+
+  type Coverage = {
+    total: int
+    exercised: int
+    pct: int
+  } note "one coverage dimension's numbers (section 9). total is how many things could be exercised — Set members, input-reachable fault exits, links, or declared transitions, depending on the dimension. exercised is how many were. pct is exercised over total as a whole-number percentage. Set enumeration and exhaustive transition testing drive their dimensions to 100 by construction; chain coverage counts only the fault exits an input can reach, and names the state-dependent ones it cannot rather than reporting them covered (section 9.2.2)."
+
+  type CoverageReport = {
+    version: str
+    vocabularies: dict<str, Coverage>
+    chains: dict<str, Coverage>
+    honesty: dict<str, Coverage>
+    state_machines: dict<str, Coverage>
+  } note "the whole coverage result build_coverage_report assembles, which write_coverage writes as coverage.json (section 9.5) and honest-check reads for HC-P009 and other cross-tool checks. version is the format version, '1.0'. vocabularies maps each vocabulary name to its member coverage; chains maps each chain name to its fault-exit coverage; honesty maps each chain name to the share of its links that passed every honesty check; state_machines maps each machine name to its transition coverage. Each value is one Coverage record."
+
+  type RunReport = {
+    chains: int
+    links: int
+    vocabularies: int
+    permutations: int
+    failures: int
+    adversarial_rejected: int
+    coverage: CoverageReport
+    mutation_caught: int
+    mutation_total: int
+  } note "the assembled result of one CLI run, which print_report renders to the human report on stdout and whose coverage field write_coverage writes to coverage.json (section 11). chains, links and vocabularies are how many of each the run found under src/. permutations is how many generated cases ran; failures is how many failed. adversarial_rejected is how many near-miss inputs were correctly rejected. coverage is the four-dimension CoverageReport. mutation_caught and mutation_total are the mutation-adequacy tally (section 9.6): adequacy holds when every change was caught or demonstrably set aside with none left undecided."
+
+  type CheckCase = {
+    conforming_row: dict<str, any>
+    violating_row: dict<str, any>
+  } note "one CHECK-constraint contract case enumerate_check_constraints derives from a declared schema (section 6.2), honest-persist's CHECK-expression vocabulary being closed and finite. conforming_row is a full row for the table that satisfies the constraint and the real database must accept; violating_row is a full row that breaks the constraint and the real database must reject. Both rows are derived from the closed constraint vocabulary, never supplied by hand. The rows are dict<str, any> because a table row is genuinely heterogeneous across columns, the same open map honest-type uses for a manifest's slots."
+
+  type ComponentRoute = {
+    path: str
+  } note "one route a component defines, the minimal shape honest-test reads for route-isolation (section 7.2). path is the route's URL path, checked for collision across components. The full route record lives in honest-page; honest-test reads only the path."
+
+  type Component = {
+    name: str
+    template: str
+    routes: list<ComponentRoute>
+  } note "the minimal read-subset of a component definition honest-test touches for isolation checks (section 7). name identifies the component in a collision message. template is the HTML honest-DOM renders, from which extract_css_classes pulls the CSS class names that must not collide with another component's (section 7.1). routes is the component's routes, each carrying a path, checked for collision across components (section 7.2). The full component record lives in honest-page; honest-test reads only these three fields."
+
+  type Gate = {
+    name: str
+    location: str
+    proof: Proof | NOTHING
+  } note "one declared gate — any check whose purpose is to stop the run: a fixture precondition, a session guard, a marker selection, a required-resource assertion, a lint rule, a build step (section 4.9). A gate declares itself; honest-test never guesses which checks are gates. name identifies it in a rejection message; location is where it sits. proof is the proof-of-failure test paired with it, or NOTHING when none is paired — the absence case check_gate_honesty rejects as gate_unverified. The absence is an explicit bounded value, so the check never has to tell a missing proof from a forgotten one."
 
   type Proof = {
+    location: str
+    binds_failure: bool
+  } note "a gate's proof-of-failure test (section 4.9): a test that supplies the gate a known-bad input and requires the specific failure. location is where the proof sits. binds_failure is true when the proof requires the specific failure type and message, and false when it asserts only that some exception was raised — the one-level-up defect check_gate_honesty rejects as gate_proof_unbound, because a proof that catches only the ordinary exception type cannot see a failure raised from the root type, so its own observing arm is unreachable."
+
+  type Expression = {
+    kind: ExprKind
+    literal: any
+    elements: list<Expression>
+    name: str
+    args: list<Expression>
+  } note "one node of the small expression grammar a value-oracle case is written in (section 8.6), tagged by kind so only the fields that kind uses carry meaning. When kind is literal, literal holds the value and the other fields are unused. When kind is list, elements holds the sub-expressions and the rest are unused. When kind is reference, name holds the function-map key to resolve to a callable and the rest are unused. When kind is call, name holds the function being applied and args holds its argument expressions, evaluated recursively. literal is open because a literal is any portable value — a string, number, boolean or plain structure. The grammar carries no callable in the data, only a name resolved from the function map, which is what keeps suite.json pure data while reaching function-taking functions."
+
+  type SuiteCase = {
     function: str
-    result: str
-  }
+    input: Expression
+    expected: Expression
+  } note "one portable value-oracle case from suite.json (section 8.6, section 12.2), the single source of the known-good (input, expected) pairs so the values are never authored twice. function is the name of the function under test, resolved from the function map. input is the expression driving the When step — the argument the function is called on, itself a tree of literals, lists, references and calls. expected is the expression driving the Then step — the known-good value the output is compared against. The case is language-agnostic data, so a second-language implementation proves conformance by running the same file."
 
-  fn enumerate_sets : (vocab: any, bind: any) -> list<any>
+  type ProofEvent = {
+    function_name: str
+    scenario: str
+    cases_run: int
+    outcome: ProofOutcome
+    line_coverage: int
+    branch_coverage: int
+  } note "one hf.proof.checked event honest-test builds per function it proves (section 8.5), for the host runner to emit through an injected honest-observe runtime — honest-test's core takes no dependency on honest-observe, so a pure local run with no runtime wired emits nothing. function_name is the fully-qualified name, which is the function's one gherkin requirement and its function-point unit, so the events are a gap-free requirement-to-proof-to-result record. scenario is the gherkin scenario name. cases_run is how many cases the function was run on. outcome is proved or failed. line_coverage and branch_coverage are the function's coverage percentages. honest-test builds this record and returns it; the emit is the runner's boundary."
 
-  fn adversarial_neighbours : (value: str) -> list<str>
+  # ---- the law-runner data dictionary (section 4.10): the generative-verification API other modules import ----
 
-  fn verify_purity : (link: Callable, manifest: any) -> bool
+  type Law = {
+    identifier: str
+    statement: str
+    check: Callable
+  } note "one property stated once, as data, for honest-test to check across a bounded set of cases (section 4.10). identifier is the law's short name, carried into every violation it raises. statement is the plain-language property, the sentence a reader checks the evidence against. check is the pure predicate the law is proven by: a function from one subject to a list of violation messages, empty when the property holds for that subject and one message per violation otherwise. The check never raises and never returns a bare boolean — the messages are the evidence a failure reports. law() builds this record; other modules' conformance runners import law to state their own laws."
 
-  fn detect_mutation : (link: Callable, manifest: any) -> bool
+  type Subject = {
+    name: str
+    params: dict<str, any>
+  } note "one case a law is checked against (section 4.10), a (name, params) pair. name labels the case in the report, so a violation can say which subject failed. params is the record the law's check reads — an open map because a subject's fields vary by what the law is about, the same heterogeneous shape a manifest's slots carry. A caller builds many subjects from the generators it already has, the Set enumeration of enumerate_sets and the adversarial neighbors of adversarial_neighbors, so one law is proven across a bounded space of cases."
 
-  fn verify_idempotency : (links: list<any>, manifest: any) -> bool
+  type Violation = {
+    law: str
+    statement: str
+    subject: str
+    messages: list<str>
+  } note "one law that failed on one subject (section 4.10). law is the failing law's identifier; statement is its plain-language property, repeated so the report is self-explaining; subject is the name of the case it failed on; messages are the violation messages the law's check returned, the evidence of what was wrong. verify_laws collects these across every law-and-subject pair that did not hold."
 
-  fn verify_determinism : (link: Callable, manifest: any) -> bool
+  type LawRun = {
+    passed: int
+    total: int
+    violations: list<Violation>
+  } note "the result of running a set of laws over a set of subjects (section 4.10). passed is how many law-and-subject pairs held; total is how many were checked; violations is one Violation per pair that failed. A caller aggregates several LawRun records into one status and prints the pass-and-fail counts. passed plus the number of violations equals total."
 
-  fn verify_boundary_isolation : (link: Callable, manifest: any) -> bool
+  # ============================================================================================
+  # The two doors. The CLI run start and the pytest collection hook. Both are host-started, so each
+  # arrives on a call-form entry the entry-check reports UNCHECKED.
+  # ============================================================================================
+  boundary_in fn run_cli : (src_dir: str) -> RunReport | Fault invokes run_suite note "the CLI door the host starts with `python -m honest_test [src_dir]` (section 11). src_dir is the source directory to scan, as typed on the command line and already in memory; run_cli opens no file itself — the orchestrator's readers do the filesystem reads. It hands src_dir to run_suite, which drives the whole run, and returns what run_suite returned: the assembled RunReport on a completed run, or the Fault run_suite passed outward when the module source could not be parsed for mutation (section 9.6). The two sinks that print the report and write coverage.json are driven inside run_suite, so a completed run has already reported by the time run_cli returns. It raises nothing: a run that could not complete comes back as a Fault for the host to discharge as a non-zero exit."
+  boundary_in fn check_test_body : (collector: handle) -> list<Finding> raises "collection_failure" invokes run_body_check side_effect reads "file" note "the pytest plugin's collection-time hook (section 4.8). pytest hands it the collector for one test module; honest-test reads that module's source through the collector — the injected collector carries a path whose read_text returns the source, so the read is substituted by passing a stand-in collector rather than by patching — and hands the source to run_body_check for the pure verdict. collector is the opaque pytest collection object; honest-test reads only the module source from it and touches nothing else. It returns the list of rejections the verdict produced, and raises collection_failure when that list is non-empty, naming each rebinding site, so a test body that rebinds a call target at runtime does not run. A returned empty list means the module collected clean. Its one side effect is reading the collected module's source file."
 
-  fn enumerate_mutants : (source: str) -> list<Mutant>
+  # ============================================================================================
+  # The readers. The source reader pulls each file under src/; the config reader pulls honest-test.toml
+  # once at run start and resolves the programmer-supplied values (sections 11, 3.6).
+  # ============================================================================================
+  reader fn read_source : (path: str) -> str side_effect reads "file" note "the source reader (section 11). It pulls one file's complete text from disk and hands it back as a string, so the orchestrator can parse it and generate from it. path is the filesystem path of one source file under src/, already resolved by discovery at the run boundary. It returns that file's full contents as a string and does nothing else: it does not parse, generate or write. Its one side effect is reading the filesystem."
+  reader fn load_under_test : (src_dir: str) -> LiveModules side_effect reads "file" side_effect reads "process" side_effect reads "honest-type.link_meta" note "the loader reader (section 11), the one way honest-test's boundary is wider than honest-check's: it does not merely read source text, it imports each module under test to obtain the module's live vocabularies, links, chains, state machines, schemas, components, providers and gates. src_dir is the source directory whose modules it loads. It returns a LiveModules record carrying those live values for the orchestrator to thread into the checks that must call real functions — vocabulary permutations, the honesty checks, chain contracts, state machines, persist contracts and component isolation. Loading runs each module's own top-level code, so it is a boundary, not pure analysis: it reads the module files from disk, executes them into the running interpreter, and asks honest-type to tell a link from an ordinary function and read its declared vocabulary and binding off it — honest-type's link_meta and is_link and vocabulary machinery, the seam by which honest-test depends on honest-type. Its side effects are reading the filesystem, reading the import system of the running process, and the honest-type seam that interprets what it loaded. honest-check reaches no such breadth because its rules are decidable from source text; honest-test's live checks are not, which is why this second reader exists."
+  reader fn read_config : (path: str) -> dict<str, any> side_effect reads "file" note "the config reader (sections 3.6, 10). It reads honest-test.toml once at the start of a run and decodes it to the plain parsed table — nothing more. path is the path to honest-test.toml. It returns the decoded TOML as a plain map of maps, the standard-format decode HC-R006's second carve-out allows a door to do; it builds no record and resolves nothing, so it never reshapes the world's data into the module's own shape. The resolution into the SuppliedConfig record is resolve_supplied_config, a pure function the orchestrator calls after this pull. The table is empty when no honest-test.toml exists. Its one side effect is reading the filesystem."
+  fn resolve_supplied_config : (table: dict<str, any>) -> SuppliedConfig note "resolves the decoded honest-test.toml table into the supplied-values record the generators take (sections 3.6, 10), the transformation HC-R006 moves out of the config reader into the pure core. table is the plain parsed TOML read_config returned. It returns a SuppliedConfig: a map from each predicate name to its SuppliedEntry — the predicate's valid list, its invalid list, and its strategy (supplied_only or fibonacci). It is the empty map when the table declares no predicates. It reads no world and returns pure data; the supplied values entered at the boundary in read_config, and this function only reshapes them."
 
-  fn mutation_adequacy : (mutants: list<Mutant>, survivors: list<Mutant>, set_aside: list<str>) -> bool
+  # ============================================================================================
+  # The orchestrators. run_suite drives the CLI run; run_body_check drives the collection verdict.
+  # ============================================================================================
+  orchestrator fn run_suite : (src_dir: str) -> RunReport | Fault invokes read_source, read_config, resolve_supplied_config, load_under_test, parse_source, extract_predicates, classify_predicate, enumerate_lengths, fibonacci_sequence, supplied_cases, enumerate_sets, verify_purity, detect_mutation, test_idempotency, verify_boundary_isolation, verify_determinism, test_chain_contracts, test_auth_honesty, check_gate_honesty, test_valid_transitions, test_invalid_transitions, test_adversarial_state_machine, test_persist_schema_contract, enumerate_check_constraints, test_css_isolation, test_route_isolation, test_startup_isolation, mutate_source, coverage_ratio, build_coverage_report, build_run_report, render_report, print_report, write_coverage note "the orchestrator the CLI door hands its source directory to (section 11). It pulls the decoded config table once with read_config and resolves it to the supplied-values record with resolve_supplied_config, and it loads the modules under test once with load_under_test to obtain their live vocabularies, links, chains, state machines, schemas, components, providers and gates. Over both readers' results it drives the whole pure core. From the source text: for each file it pulls the text with read_source, parses it once with parse_source, and runs the source-decidable checks — extract_predicates finds each predicate node, classify_predicate sorts it, and the matching generator runs (enumerate_lengths for a length-bounded predicate, fibonacci_sequence for a numeric one with the limit and direction the config carries, supplied_cases for an external-lookup predicate), then mutate_source produces the mutants for the adequacy measure. From the live values: enumerate_sets permutes each vocabulary, the honesty checks (verify_purity, detect_mutation, test_idempotency, verify_boundary_isolation, verify_determinism) run each link, test_chain_contracts checks each chain's joins, test_auth_honesty probes each provider, check_gate_honesty verifies each gate, the three state-machine tests exercise each machine, test_persist_schema_contract and enumerate_check_constraints drive each schema, and the three component-isolation checks compare the components. It measures coverage with coverage_ratio and assembles it with build_coverage_report, assembles the whole RunReport with build_run_report, renders the report text with render_report and writes it to stdout with print_report, writes coverage.json with write_coverage, and returns the assembled RunReport. It returns the Fault mutate_source answers when the module source does not parse, passing it outward to the door rather than swallowing it. Only generate_scaffolding, build_proof_event and evaluate_case are not driven here: they are the per-case import surface the generated scaffolding and conformance runner call. src_dir is the directory to scan. One run resolves one config, loads once, and governs the whole scan."
+  orchestrator fn run_body_check : (source: str) -> list<Finding> invokes test_body_violations note "the orchestrator between the collection door and the pure test-body verdict (section 4.8). It takes the one test module's source text the door read and runs test_body_violations over it, returning the rejections for the door to act on. It holds the collection path's single decision — run the verdict over the source — and nothing else: it reads no world, keeps no state, and composes no other orchestrator. source is the full text of one collected test module. It returns the list of rejection Findings, empty when the test body is honest."
 
-  fn check_oracle : (case: any, result: any) -> bool
+  fn test_body_violations : (source: str) -> list<Finding> note "the pure verdict of the test-body honesty rule (section 4.8), the one function the whole collection gate rests on. It reads a test module's source and returns one rejection Finding per statement that rebinds a call target at runtime: a monkeypatch fixture (setattr, setitem, delattr, setenv), a mock.patch or patch.object or a Mock installed as a call target, a setattr on an imported module, class or function, or an imported symbol rebound by attribute assignment. Each such statement exercises a call graph that is not production's, so the test proves a behaviour of the patched graph rather than the shipped code. The framework's own record-and-restore boundary instrumentation (io_monitor, call_monitor) is not a violation and never appears here: it lives in framework code, not a test body, and restores the original rather than leaving a behaviour-changing stand-in, so the rule fires only on a test body that installs a stand-in which alters behaviour. source is the full text of one test module. It returns the rejections, each carrying the rebinding site's location and the fix — pass the dependency as a parameter, or inject a boundary plug as an argument; an empty list means the test body is honest. It reads nothing and raises nothing."
 
-  fn run_value_cases : (cases: list<any>, functions: dict<str, any>) -> list<any>
+  # ============================================================================================
+  # The sinks. Two boundary_out: the human report to stdout and coverage.json to the filesystem.
+  # ============================================================================================
+  boundary_out fn print_report : (text: str) -> NOTHING side_effect writes "stdout" note "the human-report sink (section 11). It writes the already-rendered report text to standard output and does nothing else — no formatting, no decision. text is the finished report string render_report produced; splitting the rendering out keeps this door declarative under HC-R006, which forbids a boundary from deriving a representation. It returns nothing; its one side effect is writing stdout."
+  boundary_out fn write_coverage : (report: RunReport) -> NOTHING side_effect writes "file" note "the coverage.json sink (sections 11, 9.5). It writes the report's CoverageReport as coverage.json, the file honest-check reads for HC-P009 (a roled function without a gherkin) and other cross-tool checks. report is the finished RunReport; write_coverage writes its coverage field. It returns nothing; its one side effect is writing the file. It makes no decision — the coverage numbers are already measured."
 
-  fn law : (law_id: str, statement: str, check: Callable) -> any
+  # ============================================================================================
+  # The pure core the orchestrator drives: parse, classify, and the source-reachable generators.
+  # ============================================================================================
+  fn parse_source : (source: str) -> Node note "parses one source file's text with tree-sitter and returns the root node (sections 2, 9.6). source is the full text of one source file. It returns the tree's root node, which extract_predicates walks for predicate nodes and mutate_source walks for the spans each change sits at. The parse is deterministic and reads no world; tree-sitter produces a tree with error nodes for malformed input rather than failing, so parse_source returns a node, never a fault."
+  fn extract_predicates : (tree: Node) -> list<Node> note "walks a parsed source tree and returns the node of each recognizer predicate it holds (section 2), so each can be classified and generated from. tree is the root node parse_source produced. It returns one node per predicate found, each the body honest-test analyzes; an empty list means the file declares no predicates. It reads no world and returns pure data."
+  fn classify_predicate : (predicate_node: Node) -> PredicateClass note "sorts one predicate into its generation class by analyzing its AST (section 2). predicate_node is the parsed syntax-tree node of the predicate's body. It reads the node for the markers that decide the class: int() or float() or a numeric comparison means numeric; a len(s) comparison means length_bounded; s.isdigit() or s.isalpha() or s.isupper() means character_class; a call to a function not defined in the codebase means external_lookup; a call to a codebase-defined function means composite, and the AST walk recurses into that callee at any depth; a predicate that accepts nearly all inputs is catch_all, already rejected at vocabulary construction by HC011. It returns exactly one PredicateClass, which picks the downstream strategy. It reads no world and returns pure data."
+  fn enumerate_lengths : (predicate_node: Node) -> LengthCases note "generates the strings for a length-bounded predicate (section 3.4). predicate_node is the parsed predicate; enumerate_lengths reads the minimum and maximum length from the comparison operators it holds, distinguishing == (one exact length) from <= (a range up to a maximum) from < (a range up to one below). It returns a LengthCases: one valid string at every length in the range, and the invalid boundary lengths just outside — one over the maximum always, one under the minimum when the minimum exceeds one. A pure lower bound with no maximum is unbounded above and not finitely enumerable, so it falls to supplied values (section 3.6) rather than generating here. It reads no world and returns pure data."
+  fn fibonacci_sequence : (limit: int, negative: bool) -> list<int> note "generates the numeric probe values for a predicate classified numeric (section 3.3): the Fibonacci sequence from zero up to limit, giving logarithmically distributed values dense among small numbers and spaced among large ones so boundary conditions are probed without exhaustive enumeration. limit is the ceiling, the configurable value whose documented default is 1,000,000, carried from the predicate's honest-test.toml entry. negative says whether to include the negative direction — the negatives of the sequence prepended — which the config may disable. It returns the probe values, the negatives followed by the non-negatives when negative is true, the non-negatives alone otherwise. For a float predicate each value is divided by 100. This probes a numeric range rather than enumerating it, because a range bounds the value but leaves the set of values infinite; the coverage report says probing, never exhaustion. It reads no world and returns pure data."
+  fn supplied_cases : (predicate_name: str, supplied_values: SuppliedConfig) -> SuppliedCases note "resolves one predicate's programmer-supplied test values from the config the reader handed in (section 3.6), the external-lookup path where honest-test cannot analyze the predicate. predicate_name is the predicate to look up; supplied_values is the resolved SuppliedConfig keyed by predicate name. It returns a SuppliedCases carrying that predicate's valid and invalid values when the config has an entry, and missing true with empty lists when it does not — the case the runner turns into a missing_supplied_values warning rather than passing over. It reads no file: the supplied values entered through read_config at the boundary, and supplied_cases reads only the record it was handed. It returns pure data."
 
-  fn verify_laws : (laws: list<any>, subjects: list<any>) -> bool
+  # ============================================================================================
+  # The pure import surface (edge). Reached by import from the generated scaffolding, the conformance
+  # runner and the mutation harness, each holding the live vocabularies, callables and run outputs the
+  # CLI orchestrator cannot read from source text. Each keeps every pure discipline.
+  # ============================================================================================
+  fn enumerate_sets : (vocab: Vocabulary) -> list<Manifest> note "generates every test case for a Set-based vocabulary (section 3.2): it enumerates every member of every Set recognizer and produces the Cartesian product of their members, so a vocabulary of three Sets of 5, 150 and 4 members yields all 3,000 cases, no sampling. Each case is a manifest in honest-type's manifest shape, a map from each Set slot's name to the member chosen for it, the value a link receives from classify. A Maybe slot adds its absent arm: besides one case per member, one more case binding that slot to Nothing, which honest-type records as the slot present with a null value, so a Maybe Set of 4 members yields 5. vocab is the validated vocabulary whose base recognizers are read for their members; a predicate recognizer contributes no slot to these manifests and is handled by the predicate strategies, and a vocabulary of only predicate recognizers enumerates to one empty manifest. It returns the list of test manifests, one per combination. It reads no world and returns pure data."
+  fn verify_purity : (link: Callable, test_manifest: Manifest) -> list<Finding> note "the purity honesty check (section 4.1): it runs the link twice on the same manifest and returns a non_deterministic failure when the two results differ, because a pure function must return the same output for the same input, always. link is the link under test, passed in as a callable so honest-test runs it rather than reaching for it; test_manifest is one generated input. A link declared a boundary is exempt and is not handed here, because I/O at a declared boundary is expected to differ. It returns the failure as a one-element list, or the empty list when the link is pure. It performs no I/O of its own; any effect belongs to the injected link."
+  fn detect_mutation : (link: Callable, test_manifest: Manifest) -> list<Finding> note "the input-mutation honesty check (section 4.2): it deep-copies the manifest, runs the link, and returns a manifest_mutated failure when the manifest after the run differs from the copy taken before, because a pure function must not modify its input. link is the link under test; test_manifest is one generated input. The failure's message carries the diff of what changed. It returns the failure as a one-element list, or the empty list when the input was untouched. It performs no I/O of its own."
+  fn test_idempotency : (chain: Callable, test_manifest: Manifest) -> list<Finding> note "the idempotency honesty check (section 4.3): it runs the chain twice, the second time on a deep copy of the manifest, and returns a not_idempotent failure when the two results differ, because the same chain run twice on the same manifest must produce the same result. chain is the composed chain under test, passed in as a callable; test_manifest is one generated input. A chain containing a boundary link is exempt and is not handed here. It returns the failure as a one-element list, or the empty list when the chain is idempotent. It performs no I/O of its own."
+  fn verify_boundary_isolation : (link: Callable, test_manifest: Manifest, monitor: Callable) -> list<Finding> note "the boundary-isolation honesty check (section 4.4): it runs the link inside the injected I/O monitor and returns an io_detected warning when the monitor recorded an I/O call and the link is not declared a boundary, because a non-boundary link must perform no I/O. link is the link under test; test_manifest is one generated input; monitor is the injected io_monitor plug — framework record-and-restore instrumentation that patches known I/O functions to record a call and then restores the original, changing no result, so it is not the runtime rebinding section 4.8 forbids. It is passed in as a callable so honest-test runs the link under it and takes back the record of detected calls, never reaching for a global. It returns the warning as a one-element list, or the empty list when no I/O was detected. The warning reports and does not block."
+  fn verify_determinism : (link: Callable, test_manifest: Manifest, monitor: Callable) -> list<Finding> note "the non-determinism honesty check (section 4.5): it runs the link inside the injected call monitor, which traps the symbols on the non-deterministic watch list, and returns a nondeterminism_detected warning when the monitor recorded such a call and the link is not declared a boundary. This runtime trap is stricter than honest-check's static HC008: the monitor patches the target symbols so it catches non-determinism entering through an attribute chain or dynamic dispatch that static analysis misses. link is the link under test; test_manifest is one generated input; monitor is the injected call_monitor plug, passed in as a callable, whose watch list is the subset of honest-check's NONDETERMINISTIC_WATCH_LIST honest-test carries and verifies against the published list in its conformance suite, so the two cannot drift. It returns the warning as a one-element list, or the empty list. The warning reports and does not block."
+  fn test_chain_contracts : (links: list<Callable>, vocab: Vocabulary, binding: Binding) -> list<Finding> invokes enumerate_test_cases note "the chain-contract check (section 4.6): for each adjacent pair of links, it enumerates the input cases the upstream link accepts, runs the upstream link, and when that produces an ok manifest, feeds it to the downstream link; a chain_contract failure is returned when the downstream link rejects that valid output with a server fault, because every valid output of one link must be accepted as valid input by the next. links is the chain's links in order; vocab and binding drive the case enumeration. A client fault from the downstream link is not a contract failure — only a server fault indicates a broken join. It returns one failure per broken join, empty when every join holds. It performs no I/O of its own; the links are injected callables."
+  fn enumerate_test_cases : (accepts: Vocabulary, binding: Binding) -> list<Manifest> note "builds the input manifests a link accepts, for chain-contract testing (section 4.6). accepts is the vocabulary the link declares it accepts; binding is the binding that names which slot each classified token fills. It enumerates the vocabulary the way enumerate_sets does and resolves each combination into a manifest through the binding, so each case is a ready input for the link under test. Each manifest is honest-type's manifest shape, a map from slot name to value, the binding naming the slot each member fills rather than the member's own type name; the same Maybe and predicate rules enumerate_sets follows hold here. It returns the list of manifests. It reads no world and returns pure data."
+  fn test_auth_honesty : (provider: AuthProvider) -> list<Finding> invokes compute_expected_status note "the authentication-honesty check (section 4.7): for each of the six token classes it generates a token with the provider's test_token_generator and asserts the provider's outcome. A malformed token must be rejected at the provider's actor_recognizer before it reaches resolve_actor; a valid token must resolve to ok(actor); every other class must fault with the expected HTTP status, which compute_expected_status derives from the class and the provider's fault_mapping. An auth_honesty failure is returned when the provider accepts a malformed token at the recognizer, rejects a valid one, or does not fault correctly for a class. provider is the registered provider, passed in rather than reached from a registry. It returns one failure per class that behaved wrongly, empty when the provider's boundary validation is sound. Whether a resolved actor is authorized for a target is ordinary business logic verified by that link's own tests, not here. It performs no I/O of its own; the provider's resolve_actor is its injected boundary."
+  fn compute_expected_status : (token_class: TokenClass, fault_mapping: dict<str, int>) -> int note "maps one token class to the HTTP status the auth-honesty check expects (section 4.7). token_class is the class being probed; fault_mapping is the provider's optional override of the default class-to-outcome mapping. It returns the expected status: 401 for revoked, expired, missing and forged (an unauthenticated fault), 400 or the provider's preferred status for malformed (rejected at the recognizer), and the ok path for valid carries no error status. The provider may override the default through fault_mapping. It reads no world and returns pure data."
+  fn check_gate_honesty : (gates: list<Gate>) -> list<Finding> note "the gate-honesty check (section 4.9): every declared gate must name a proof-of-failure test that supplies a known-bad input and requires the specific failure, because a gate whose failing arm has never executed carries no information when the run is green. gates is the list of self-declared gates; honest-test never guesses which checks are gates, since inferring that is undecidable the way inferring entry points is. It returns a gate_unverified rejection for a gate with no proof, and a gate_proof_unbound rejection for a proof that asserts only that some exception was raised rather than binding the specific failure type and message — a proof whose own observing arm can be unreachable. A gate that skips rather than fails is not handled here as a failure obligation but must surface its skip and reason in the run output, the coverage obligation. It returns one rejection per dishonest gate, empty when every gate is proven. It reads no world and returns pure data."
+  fn test_valid_transitions : (machine: StateMachine, run_transition: Callable) -> list<Finding> note "exhaustively tests every declared transition (section 5.1): for each (state, event) to next_state in the machine's transition table, it applies the event and returns a transition_incorrect failure when the result is not ok of the expected next state. machine is the state machine under test; run_transition is honest-type's transition applied to the machine, passed in as a callable. It returns one failure per wrong transition, empty when every declared transition is correct, driving transition coverage to 100 by construction. It performs no I/O of its own."
+  fn test_invalid_transitions : (machine: StateMachine, run_transition: Callable) -> list<Finding> note "exhaustively tests every (state, event) pair the table does not declare (section 5.2): for each state and each event with no declared transition, it applies the event and returns an invalid_transition_accepted failure when the result is not a no_transition fault, because an undeclared pair must be refused. machine is the machine under test; run_transition is honest-type's transition, passed in. It returns one failure per undeclared pair that was accepted, empty when every undeclared pair faults correctly. It performs no I/O of its own."
+  fn test_adversarial_state_machine : (machine: StateMachine, run_transition: Callable) -> list<Finding> invokes adversarial_neighbors note "tests adversarial neighbors of the machine's states and events (section 5.3): for each state, it feeds each adversarial neighbor of that state with the first valid event and returns an invalid_state failure when the neighbor is accepted; for each event, it feeds the first valid state each adversarial neighbor of that event and returns an invalid_event failure when the neighbor is accepted. machine is the machine under test; run_transition is honest-type's transition, passed in. The neighbors come from adversarial_neighbors, the same five classes used for Set members. It returns one failure per accepted neighbor, empty when every neighbor is rejected. It performs no I/O of its own."
+  fn adversarial_neighbors : (value: str) -> list<str> invokes edit_distance_1, unicode_confusables, control_characters, length_extensions, encoding_variants note "generates the adversarial neighbors of one valid value across the five classes (section 3.5), the deduplicated union of edit-distance-1 neighbors, Unicode confusables, control-character injections, length extensions and encoding variants, with the original value removed. Every neighbor must produce a rejection; one that is accepted reveals a vocabulary overlap, a case-sensitivity bug, a normalization flaw or an encoding vulnerability. value is one Set member or one state or event token. It returns every neighbor across the five classes. The five class functions it invokes are the reference vocabulary a conformant implementation must exercise in full. It reads no world and returns pure data."
+  fn edit_distance_1 : (value: str) -> list<str> note "the edit-distance-1 neighbor class (section 3.5): every single deletion, every single insertion from the alphanumeric alphabet, every single substitution, the lower, upper and title case variants, and the whitespace variants — a leading space, a trailing space, and an interior space after the first character. value is the string to perturb. It returns all such neighbors. It reads no world and returns pure data."
+  fn unicode_confusables : (value: str) -> list<str> note "the Unicode-confusable neighbor class (section 3.5): for each ASCII character in value that has a known visually-similar character in a different Unicode block, one neighbor with that character substituted at that position, plus one full-homoglyph neighbor with every replaceable character substituted at once. The confusable map is the curated subset of Unicode Technical Standard 39 the reference implementation exercises. value is the string to perturb. It returns the confusable neighbors. It reads no world and returns pure data."
+  fn control_characters : (value: str) -> list<str> note "the control-character neighbor class (section 3.5): for each C0 and C1 control code, DEL, and the zero-width and bidirectional-override characters on the injection set, three neighbors — the character prepended, appended, and inserted at the midpoint of value. These reveal parsers that strip or mishandle control codes instead of rejecting them. value is the string to perturb. It returns the control-character neighbors. It reads no world and returns pure data."
+  fn length_extensions : (value: str) -> list<str> note "the length-extension neighbor class (section 3.5): value repeated 10, 100 and 1000 times to shake out quadratic behaviour, and value padded to just below, at, and well beyond the uint16 boundary and toward one megabyte, to expose fixed-buffer assumptions, field-length confusion and downstream truncation. value is the string to extend. It returns the extended neighbors. It reads no world and returns pure data."
+  fn encoding_variants : (value: str) -> list<str> note "the encoding-variant neighbor class (section 3.5): value with a UTF-16 byte-order-mark prefix, an overlong UTF-8 encoding of its ASCII, a double percent-encoding, a mixed UTF-8 and latin-1 encoding, and whitespace-normalization attacks that replace a space with a non-breaking space or a line separator. These target recognizers that accept after normalization rather than rejecting malformed input. value is the string to re-encode. It returns the encoding neighbors. It reads no world and returns pure data."
+  fn test_persist_schema_contract : (schema: Schema, connect: Callable) -> list<Finding> note "the schema contract check against a real in-memory database, never a mock (section 6.1). connect is honest-persist's one I/O seam, injected: it returns a fresh ephemeral in-memory database recreated per table so nothing leaks between tables, and honest-test applies the declared schema and drives the genuine query builders and execute against it. schema is the declared persistence schema. For every table it checks four contracts and returns a failure for each that breaks: round_trip_mismatch when a row read back does not equal the row written; undeclared_column_accepted when a query builder referencing an undeclared column is not rejected at build time; missing_required_field_accepted when an insert omitting a non-nullable column is not rejected by the real database; and empty_set_faulted when a select matching no rows returns a fault instead of ok of an empty list. It returns one failure per broken contract per table, empty when every table's contract holds. The only side effect is through the injected connect, which is a real driver, not a stand-in that could drift from how the real database behaves."
+  fn enumerate_check_constraints : (schema: Schema) -> list<CheckCase> note "enumerates the CHECK-constraint contract cases for a schema (section 6.2), honest-persist's CHECK-expression vocabulary being closed and finite. schema is the declared schema. For each CHECK declared on a table it produces one CheckCase carrying a conforming row the real database must accept and a violating row it must reject, both derived from the closed constraint vocabulary. It returns the list of cases for the contract runner to drive against the real database. It reads no world and returns pure data; the running against the database is test_persist_schema_contract's injected connect, not here."
+  fn test_css_isolation : (component_a: Component, component_b: Component) -> list<Finding> invokes extract_css_classes note "checks that two components share no CSS class name (section 7.1): it extracts each component's CSS classes from its template and returns a css_namespace_collision failure naming the shared classes when the two sets intersect, because each component must namespace under its own BEM block. component_a and component_b are the two components compared. It returns the failure when they collide, empty when their class namespaces are disjoint. It reads no world and returns pure data."
+  fn test_route_isolation : (components: list<Component>) -> list<Finding> note "checks that no two components define the same route path (section 7.2): it accumulates every component's route paths and returns a route_collision failure naming both components when a path is defined twice. components is the full set of components, each carrying its routes. It returns one failure per collided path, empty when every route path is unique. It reads no world and returns pure data."
+  fn test_startup_isolation : (components: list<Component>, load_component: Callable) -> list<Finding> note "checks that components are independently loadable (section 7.3): when one component fails to load, every other must still load. load_component is the injected loader, passed in as a callable so honest-test drives the genuine load; components is the full set. It returns a startup_cascade failure when a failure in one component causes another to fail to load, empty when each component's load failure is isolated. The effect of loading belongs to the injected loader; honest-test only observes which loads then fail."
+  fn extract_css_classes : (template: str) -> set<str> note "pulls the CSS class names out of a component's template (section 7.1). template is the component's rendered HTML. It returns the set of class names the template references, for test_css_isolation to intersect against another component's. It reads no world and returns pure data."
+  fn coverage_ratio : (exercised: int, total: int) -> Coverage note "computes one coverage dimension's numbers (section 9.1 through 9.4). The four dimensions — vocabulary, chain, honesty and state-machine coverage — are one computation: the share of the things that could be exercised that were, so they are one function and a caller that names the dimension, not four functions differing by nothing. exercised is how many were exercised; total is how many could be. It returns a Coverage carrying both and their whole-number percentage. For chain coverage the total is the fault exits an input can reach, not every fault exit; the exits no input can reach are named elsewhere, never folded into this ratio (section 9.2.2). It reads no world and returns pure data."
+  fn build_coverage_report : (vocabularies: dict<str, Coverage>, chains: dict<str, Coverage>, honesty: dict<str, Coverage>, state_machines: dict<str, Coverage>) -> CoverageReport note "assembles the four coverage dimensions into the CoverageReport write_coverage writes as coverage.json (section 9.5). vocabularies, chains, honesty and state_machines are each a map from a declaration's name to its Coverage, already computed by coverage_ratio. It returns the CoverageReport, stamping the format version. It reads no world and returns pure data."
+  fn build_run_report : (chains: int, links: int, vocabularies: int, permutations: int, failures: int, adversarial_rejected: int, coverage: CoverageReport, mutation_caught: int, mutation_total: int) -> RunReport note "assembles the finished RunReport from the measured pieces (section 11), so the report the sinks consume is produced by a pure function on run_suite's path rather than reshaped inside a door. chains, links and vocabularies are how many of each the run found; permutations is how many generated cases ran and failures how many failed; adversarial_rejected is how many near-miss inputs were correctly rejected; coverage is the CoverageReport build_coverage_report produced; mutation_caught and mutation_total are the adequacy tally. It returns the RunReport render_report renders and write_coverage writes. It reads no world and returns pure data."
+  fn render_report : (report: RunReport) -> str note "renders the finished RunReport into the section 11 human layout, the transformation HC-R006 moves out of the print_report sink into the pure core. report is the assembled RunReport. It returns the report text — the chains, links and vocabularies found, the permutations run and failures, the adversarial inputs rejected, the honesty and chain-contract results, the state-machine tallies, and the totals — laid out as section 11 shows. run_suite calls it and hands the string to print_report. It reads no world and returns pure data; the write is print_report's."
+  fn mutate_source : (source: str) -> list<Mutant> | Fault note "generates every mechanical mutant of a module's source for the adequacy measure (section 9.6). source is the module's source text, parsed with tree-sitter. It applies each of the seven change kinds to every place it fits — the way the generators enumerate a Set — and returns one Mutant per change: a swapped comparison, a shifted number, a flipped condition, a replaced constant, a swapped result, a removed line, a changed membership or key, each carrying its node span and the original and replacement text. It returns a Fault when the source does not parse, because a mutant can only be made from parseable source. The mutants are run out of process by the memory-capped harness, never here, because an infinite-loop mutant must not run inline; mutate_source only produces the changes. It reads no world and returns pure data or a Fault."
+  edge fn classify_mutant_result : (baseline_output: str, mutant_output: str, completed: bool) -> MutantResult note "judges one mutant run against the baseline (section 9.6), given the outputs the memory-capped harness recorded. baseline_output is the conformance suite's observed output on the unchanged source, which must already pass; mutant_output is its output on the changed source; completed says whether the mutant run finished within its time and memory bound. It returns a MutantResult: caught when the mutant output shows at least one case failed; set_aside with the demonstration as its reason when the mutant output is identical to the baseline, so the change cannot alter the result; and undecided with the bound as its reason when completed is false, because a run that hit its bound produced no verdict and nothing may be claimed about it — recording it as caught would assert a detection that did not happen and fail in the direction that hides the defect. Adequacy requires caught plus set_aside to equal the total with none left undecided. It reads no world and returns pure data."
+  edge fn evaluate_case : (case: SuiteCase, function_map: dict<str, Callable>) -> Result | Fault note "runs one portable value-oracle case and compares the function's output against the known-good value (section 8.6), the leg that earns a function proved because auto-generation checks properties and shape but never which value is correct. case is the suite.json case: the function name, the input expression and the expected expression. function_map maps each name a reference or call expression can hold to its callable, so a function that takes another function is reachable by naming its argument with no callable embedded in the data. evaluate_case walks the input expression bottom-up — a literal is itself, a list evaluates its elements, a reference resolves a callable, a call applies a named function to its evaluated arguments — invokes the function under test by single, positional or keyword arguments, runs an awaitable result to completion so async functions are checkable, and returns the function's Result. It returns a Fault when an expression names a function the map does not hold, or is otherwise malformed. It performs no I/O of its own; the functions under test are injected through the map."
+  edge fn generate_scaffolding : (chain_name: str, links: list<Link>) -> str note "generates the Gherkin step scaffolding for a chain from its link declarations (section 8.2). chain_name is the chain the feature targets; links are its declared links. It returns a step-module source string whose handlers are pure functions that take the immutable context plus bound captures and return a new context, wired through a register(registry) that returns the registry — never through decorators or a mutable shared context, matching honest-gherkin's step-module contract. The developer writes only the .feature files against this scaffolding; the scaffolding is marked do-not-edit. It reads no world and returns the generated source as a string."
+  edge fn build_proof_event : (function_name: str, scenario: str, cases_run: int, outcome: ProofOutcome, line_coverage: int, branch_coverage: int) -> ProofEvent note "builds one hf.proof.checked proof event for a function honest-test proved (section 8.5), for the host runner to emit through an injected honest-observe runtime so honest-test's core takes no dependency on honest-observe. function_name is the fully-qualified name that is the function's gherkin requirement and its function-point unit; scenario is the gherkin scenario name; cases_run is how many cases ran; outcome is proved or failed; line_coverage and branch_coverage are the function's coverage percentages. A function earns proved only when honesty, full coverage and the gherkin's Then value oracle all hold; a run where any does not emits failed. It returns the ProofEvent record. It reads no world and returns pure data; the emit is the runner's boundary."
+  edge fn law : (identifier: str, statement: str, check: Callable) -> Law note "states one property as data, the first of the two law-runner functions a module imports to write its own generative conformance (section 4.10). identifier is the law's short name; statement is its plain-language property; check is the pure predicate it is proven by — a function from one subject to a list of violation messages, empty when the property holds and one message per violation otherwise, which never raises and never returns a bare boolean. It returns the Law record of those three fields. It is reached only by import — honest-type, honest-persist and honest-test's own suite import it in their conformance runners — so it is an import surface, not a stage of the §11 run; run_suite never calls it except when honest-test verifies itself. It reads no world and returns pure data."
+  edge fn verify_laws : (laws: list<Law>, subjects: list<Subject>) -> LawRun note "runs every law against every subject and returns the run record, the second law-runner function a module imports (section 4.10). laws is the properties to check; subjects is the bounded set of cases, each a (name, params) pair the caller built from its generators — the Set enumeration of enumerate_sets and the adversarial neighbors of adversarial_neighbors. It applies each law's check to each subject's params, counts the law-and-subject pairs that held as passed and the pairs checked as total, and collects one Violation per pair that failed, each naming the law's identifier, its statement, the subject, and the messages the check returned. It returns the LawRun. Like law, it is reached only by import, not by run_suite, which is why it is an edge and not a stage of the §11 run; its callers are other modules' conformance runners. It reads no world of its own; each check is a pure predicate the caller supplied, so running them is calling a parameter, and returns pure data."
 
-  fn test_chain_contracts : (links: list<any>) -> list<any>
+  # ============================================================================================
+  # How the world arrives. The CLI run and the pytest collection hook are host-started (call-form
+  # entries the entry-check reports UNCHECKED). Every pure import-surface function and the
+  # source-reachable generators the conformance runner tests are reached by import (verified).
+  # ============================================================================================
+  entry "call:cli" -> run_cli
+  entry "call:pytest" -> check_test_body
 
-  fn build_coverage : (vocabularies: any, chains: any, honesty: any, state_machines: any, timestamp: str) -> Coverage
-
-  fn decide_proof : (honesty_ok: bool, coverage_ok: bool, value_results: list<any>, exempt: bool) -> Proof
+  entry "import honest_test" -> test_body_violations
+  entry "import honest_test" -> classify_predicate
+  entry "import honest_test" -> enumerate_lengths
+  entry "import honest_test" -> fibonacci_sequence
+  entry "import honest_test" -> supplied_cases
+  entry "import honest_test" -> enumerate_sets
+  entry "import honest_test" -> adversarial_neighbors
+  entry "import honest_test" -> verify_purity
+  entry "import honest_test" -> detect_mutation
+  entry "import honest_test" -> test_idempotency
+  entry "import honest_test" -> verify_boundary_isolation
+  entry "import honest_test" -> verify_determinism
+  entry "import honest_test" -> test_chain_contracts
+  entry "import honest_test" -> test_auth_honesty
+  entry "import honest_test" -> check_gate_honesty
+  entry "import honest_test" -> test_valid_transitions
+  entry "import honest_test" -> test_invalid_transitions
+  entry "import honest_test" -> test_adversarial_state_machine
+  entry "import honest_test" -> test_persist_schema_contract
+  entry "import honest_test" -> enumerate_check_constraints
+  entry "import honest_test" -> test_css_isolation
+  entry "import honest_test" -> test_route_isolation
+  entry "import honest_test" -> test_startup_isolation
+  entry "import honest_test" -> coverage_ratio
+  entry "import honest_test" -> build_coverage_report
+  entry "import honest_test" -> mutate_source
+  entry "import honest_test" -> classify_mutant_result
+  entry "import honest_test" -> evaluate_case
+  entry "import honest_test" -> generate_scaffolding
+  entry "import honest_test" -> build_proof_event
+  entry "import honest_test" -> law
+  entry "import honest_test" -> verify_laws
