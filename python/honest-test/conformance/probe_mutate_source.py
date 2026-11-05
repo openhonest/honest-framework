@@ -44,6 +44,22 @@ _CASES = [
             }
         ],
     },
+    # (a2) The `<=` operator, the other direction of the comparison-swap table. Its
+    # swap is pinned to `<=` -> `<`, so the `<=` KEY of the swap table is exercised,
+    # not only the `<` key case (a) covers.
+    {
+        "name": "less-equal comparison",
+        "source": "def f(n):\n    return n <= 5\n",
+        "is_fault": False,
+        "must_contain_kinds": {"comparison_swap", "number_shift"},
+        "pins": [
+            {
+                "change_kind": "comparison_swap",
+                "original_has": "<=",
+                "replacement_has": "<",
+            }
+        ],
+    },
     # (b1) A bare number literal yields a number shift.
     {
         "name": "number literal",

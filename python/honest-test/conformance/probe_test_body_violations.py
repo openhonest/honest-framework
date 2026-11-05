@@ -81,6 +81,62 @@ _CASES = [
         ),
         "expect_count": 2,
     },
+    # monkeypatch.setitem rebinds a dict entry at runtime: one rejection. The rule
+    # names four monkeypatch methods (setattr, setitem, delattr, setenv); this case
+    # and the two below exercise the forms the setattr case alone does not, so each
+    # member of the method set is a tested recognizer, not a dead constant.
+    {
+        "source": (
+            "def test_item(monkeypatch):\n"
+            "    monkeypatch.setitem(config, 'now', 0)\n"
+            "    assert run() == 0\n"
+        ),
+        "expect_count": 1,
+    },
+    # monkeypatch.delattr removes a call target at runtime: one rejection.
+    {
+        "source": (
+            "def test_del(monkeypatch):\n"
+            "    monkeypatch.delattr(service, 'now')\n"
+            "    assert service.elapsed() == 0\n"
+        ),
+        "expect_count": 1,
+    },
+    # monkeypatch.setenv rebinds an environment variable at runtime: one rejection.
+    # The fourth monkeypatch method, so all four are exercised by this probe alone.
+    {
+        "source": (
+            "def test_env(monkeypatch):\n"
+            "    monkeypatch.setenv('NOW', '0')\n"
+            "    assert run() == 0\n"
+        ),
+        "expect_count": 1,
+    },
+    # mock.patch written as an ATTRIBUTE call (module.patch(...)), not the bare
+    # `patch(...)` name the decorator case above uses: one rejection. This is the
+    # _PATCH_ATTRS branch, where the call's attribute name must be recognised.
+    {
+        "source": (
+            "from unittest import mock\n"
+            "\n"
+            "def test_attr_patch():\n"
+            "    mock.patch('service.now')\n"
+            "    assert service.elapsed() == 0\n"
+        ),
+        "expect_count": 1,
+    },
+    # patch.object(...), the other _PATCH_ATTRS member: one rejection. With the
+    # attribute-patch case above, both members of the patch-attr set are exercised.
+    {
+        "source": (
+            "from unittest.mock import patch\n"
+            "\n"
+            "def test_patch_object():\n"
+            "    patch.object(service, 'now')\n"
+            "    assert service.elapsed() == 0\n"
+        ),
+        "expect_count": 1,
+    },
     # Carve-out: the framework's own record-and-restore instrumentation used as a
     # context manager (call_monitor / io_monitor, spec sections 4.4, 4.5, 4.8). It
     # observes a watch-list symbol and restores the original rather than installing
@@ -121,6 +177,16 @@ def probe_test_body_violations():
                     f"test_body_violations({case['source']!r}) emitted kind "
                     f"{finding['kind']!r}, expected 'rejection'"
                 )
+            # The rejection must carry the fix the spec specifies (section 4.8): pass the
+            # dependency as a parameter, or inject a boundary plug as an argument. Asserting
+            # both halves keeps the fix text from being silently emptied.
+            message = finding["message"]
+            for phrase in ("pass the dependency as a parameter", "inject a boundary plug as an argument"):
+                if phrase not in message:
+                    bad.append(
+                        f"test_body_violations({case['source']!r}) rejection message "
+                        f"{message!r} is missing the fix phrase {phrase!r}"
+                    )
     return bad
 
 

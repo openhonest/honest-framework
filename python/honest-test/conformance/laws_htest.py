@@ -1,2483 +1,537 @@
-"""honest-test conformance: the HTest laws + generator-internal probes (the circle).
+"""honest-test conformance: honest-test verifying itself through its own law runner.
 
-honest-test verifies every other module's generators; here it verifies its own. The HTest
-laws (honest-conformance-suite.md) are asserted over real vocabularies through verify_laws —
-honest-test eating its own law-runner. The probes then drive the generator internals the
-JSON example suite cannot reach from data alone: live-function predicate classification, the
-length-bound parser's edge operators, the honesty checks' exempt/skip branches, the TOML
-load boundary, and the state-machine generators' degenerate-machine and violation-detector
-paths (the last via a deliberately non-conformant transition, to prove the detector fires).
+honest-test exposes a generative-verification surface (spec section 4.10): law(identifier,
+statement, check) states one property as data, a subject is a {name, params} record, and
+verify_laws(laws, subjects) runs every law against every subject and returns the run record
+{passed, total, violations}. This module is honest-test turning that surface on its own pure
+functions. Each property is derived from the spec/.hd contract of the function it names and must
+hold on the correct current source; a mutation that broke the function would make the law fail.
 
-The conformance directory is outside the honest-check gate, so it may read files, build
-throwing fixtures, and inject a bad dependency to exercise a verifier's failure branch.
+The laws state invariants that are checked well across many subjects — adversarial-neighbour
+set algebra, Set enumeration counts, the numeric and length generators, the §4.7 status mapping,
+the honesty and state-machine checks over generated manifests. The 54 probe_*.py fragments carry
+the per-function conformance; these laws do not duplicate them.
+
+Each check is pure: it returns [] when the property holds for its subject, one message per
+violation otherwise. It never returns a bare boolean and never raises. Subjects are built from
+honest-test's own generators over small sample vocabularies, so the input space is honest-test's
+own, not hand-picked literals.
 """
 
-import asyncio
-import tempfile
-from pathlib import Path
-
-from honest_type import binding, fault, link, ok, state_machine, vocabulary
-
-import honest_test.statemachine as sm_module
 from honest_test import (
-    adversarial_neighbours,
+    adversarial_neighbors,
     classify_predicate,
-    classify_source,
+    classify_mutant_result,
+    compute_expected_status,
+    control_characters,
+    coverage_ratio,
+    detect_mutation,
+    edit_distance_1,
+    encoding_variants,
+    enumerate_lengths,
     enumerate_sets,
+    extract_predicates,
+    fibonacci_sequence,
     law,
-    load_config,
-    supplied_for,
-    test_chain_contracts,
+    length_extensions,
+    mutate_source,
+    parse_source,
+    test_idempotency,
     test_invalid_transitions,
     test_valid_transitions,
-    verify_idempotency,
+    unicode_confusables,
     verify_laws,
+    verify_purity,
 )
-from honest_test.length import _bound_from_pair, enumerate_lengths, extract_length_bounds
-from honest_test.predicate import _collect_facts, _fact_call
-from honest_test.mutation import _enclosing_function_name
-from honest_parse import parse_python, walk
+from honest_type import predicate, state_machine, transition, vocabulary
 
-# --------------------------------------------------------------------------- HTest laws
+# The five adversarial-neighbour class functions, named together so AN-3 can state that
+# adversarial_neighbors is exactly their deduplicated union (spec section 3.5).
+_NEIGHBOUR_CLASSES = (
+    edit_distance_1,
+    unicode_confusables,
+    control_characters,
+    length_extensions,
+    encoding_variants,
+)
 
-HTEST_SUBJECTS = [
-    ("two_sets", vocabulary({"color": {"red", "green"}, "size": {"small", "large"}})),
-    ("one_char", vocabulary({"flag": {"a", "b"}})),
-    ("singleton", vocabulary({"only": {"x"}})),
+# The mechanical change kinds mutate_source is allowed to emit (spec section 9.6 table).
+_MUTATION_KINDS = frozenset({
+    "comparison_swap", "number_shift", "condition_flip", "result_swap",
+    "constant_replace", "membership_change",
+})
+
+
+# --------------------------------------------------------------------- injected links
+
+def _pure_link(manifest):
+    """A deterministic, non-mutating link: honesty checks must pass it clean."""
+    return {**manifest, "seen": True}
+
+
+def _nondeterministic_link(_manifest):
+    """A link whose output differs run to run (a fresh object each call), so verify_purity
+    and test_idempotency must each report exactly one finding against it."""
+    return {"nonce": object()}
+
+
+def _mutating_link(manifest):
+    """A link that mutates its input manifest, so detect_mutation must report it."""
+    manifest["_mutated"] = True
+    return manifest
+
+
+def _wrong_transition(_machine, _state, _event):
+    """A broken transition that always lands on 'locked', so test_valid_transitions has
+    something real to catch (proving the valid-transition law is not a tautology)."""
+    return {"ok": {"state": "locked"}}
+
+
+# --------------------------------------------------------------------- generator laws
+
+def _an_no_original(params):
+    value = params["value"]
+    return [] if value not in adversarial_neighbors(value) else [
+        f"adversarial_neighbors({value!r}) contains the original value"]
+
+
+def _an_deduplicated(params):
+    value = params["value"]
+    result = adversarial_neighbors(value)
+    return [] if len(result) == len(set(result)) else [
+        f"adversarial_neighbors({value!r}) has duplicate neighbours"]
+
+
+def _an_union_of_classes(params):
+    value = params["value"]
+    combined = []
+    for neighbour_class in _NEIGHBOUR_CLASSES:
+        combined.extend(neighbour_class(value))
+    expected = [n for n in dict.fromkeys(combined) if n != value]
+    actual = adversarial_neighbors(value)
+    return [] if actual == expected else [
+        f"adversarial_neighbors({value!r}) is not the deduplicated union of the five classes"]
+
+
+def _edit_distance_deletions(params):
+    value = params["value"]
+    result = edit_distance_1(value)
+    bad = []
+    if value in result:
+        bad.append(f"edit_distance_1({value!r}) contains the original value")
+    for index in range(len(value)):
+        deletion = value[:index] + value[index + 1:]
+        if deletion not in result:
+            bad.append(f"edit_distance_1({value!r}) is missing the deletion {deletion!r}")
+    return bad
+
+
+def _confusables_preserve_length(params):
+    value = params["value"]
+    result = unicode_confusables(value)
+    bad = []
+    if value in result:
+        bad.append(f"unicode_confusables({value!r}) contains the original value")
+    for neighbour in result:
+        if len(neighbour) != len(value):
+            bad.append(f"confusable {neighbour!r} did not preserve the length of {value!r}")
+        if neighbour.isascii():
+            bad.append(f"confusable {neighbour!r} carries no non-ASCII codepoint")
+    return bad
+
+
+def _control_adds_one_char(params):
+    value = params["value"]
+    bad = []
+    for neighbour in control_characters(value):
+        if len(neighbour) != len(value) + 1:
+            bad.append(f"control neighbour {neighbour!r} is not {value!r} plus one character")
+    return bad
+
+
+def _length_extensions_grow(params):
+    value = params["value"]
+    result = length_extensions(value)
+    bad = []
+    if len(result) != 6:
+        bad.append(f"length_extensions({value!r}) returned {len(result)} neighbours, expected 6")
+    for neighbour in result:
+        if not neighbour.startswith(value):
+            bad.append(f"length extension {neighbour[:8]!r}... does not start with {value!r}")
+        if len(neighbour) <= len(value):
+            bad.append(f"length extension of {value!r} is not longer than the value")
+    return bad
+
+
+def _encoding_bom(params):
+    value = params["value"]
+    result = encoding_variants(value)
+    bad = []
+    if value in result:
+        bad.append(f"encoding_variants({value!r}) contains the original value")
+    if ("﻿" + value) not in result:
+        bad.append(f"encoding_variants({value!r}) is missing the UTF-16 BOM prefix")
+    return bad
+
+
+def _fibonacci_structure(params):
+    limit, negative = params["limit"], params["negative"]
+    result = fibonacci_sequence(limit, negative)
+    # Independent Fibonacci oracle bounded by limit.
+    expected_positive = []
+    current, following = 0, 1
+    while current <= limit:
+        expected_positive.append(current)
+        current, following = following, current + following
+    positives = [value for value in result if value >= 0]
+    bad = []
+    if positives != expected_positive:
+        bad.append(f"non-negative part {positives} != bounded Fibonacci run {expected_positive}")
+    if any(value > limit for value in positives):
+        bad.append(f"a non-negative value exceeds the limit {limit}")
+    negatives = [value for value in result if value < 0]
+    if negative:
+        expected_negatives = sorted(-value for value in expected_positive if value > 0)
+        if negatives != expected_negatives:
+            bad.append(f"negatives {negatives} != mirror of positives {expected_negatives}")
+        if result != expected_negatives + expected_positive:
+            bad.append("negatives are not prepended in number-line order ahead of the positives")
+    elif negatives:
+        bad.append(f"negative=False but the sequence carried negatives {negatives}")
+    return bad
+
+
+def _coverage_floor(params):
+    exercised, total = params["exercised"], params["total"]
+    record = coverage_ratio(exercised, total)
+    pct = record["pct"]
+    bad = []
+    if record["exercised"] != exercised or record["total"] != total:
+        bad.append(f"coverage_ratio did not echo its inputs: {record}")
+    if not (0 <= pct <= 100):
+        bad.append(f"percentage {pct} is outside 0..100")
+    if total == 0:
+        if pct != 100:
+            bad.append(f"an empty dimension must report 100, got {pct}")
+    else:
+        # pct is the whole-number floor of 100*exercised/total: it never over-reports and is
+        # never low by a whole point. Stated with integers so it does not restate `//`.
+        if pct * total > exercised * 100:
+            bad.append(f"percentage {pct} over-reports {exercised}/{total}")
+        if (pct + 1) * total <= exercised * 100:
+            bad.append(f"percentage {pct} under-reports {exercised}/{total}")
+    return bad
+
+
+def _expected_status(params):
+    got = compute_expected_status(params["token_class"], params["fault_mapping"])
+    return [] if got == params["expected"] else [
+        f"compute_expected_status({params['token_class']!r}) = {got}, expected {params['expected']}"]
+
+
+def _classify_and_determinism(params):
+    source, expected = params["source"], params["expected_class"]
+    first = extract_predicates(parse_source(source))
+    second = extract_predicates(parse_source(source))
+    bad = []
+    if not first or not second:
+        return [f"extract_predicates found no predicate in {source!r}"]
+    kind_one = classify_predicate(first[0])
+    kind_two = classify_predicate(second[0])
+    if kind_one != expected:
+        bad.append(f"classify_predicate -> {kind_one!r}, expected {expected!r}")
+    if kind_one != kind_two:
+        bad.append("classify_predicate is not deterministic across a re-parse")
+    if len(first) != len(second):
+        bad.append("extract_predicates count differs across a re-parse")
+    return bad
+
+
+def _length_bounds(params):
+    source, minimum, maximum = params["source"], params["min"], params["max"]
+    node = extract_predicates(parse_source(source))[0]
+    generated = enumerate_lengths(node)
+    bad = []
+    for string in generated["valid"]:
+        if not (minimum <= len(string) <= maximum):
+            bad.append(f"valid string of length {len(string)} is outside [{minimum}, {maximum}]")
+    for string in generated["invalid"]:
+        if minimum <= len(string) <= maximum:
+            bad.append(f"invalid string of length {len(string)} sits inside [{minimum}, {maximum}]")
+    return bad
+
+
+def _set_product(params):
+    declarations = params["declarations"]
+    vocab = vocabulary({name: set(members) for name, members in declarations.items()})
+    cases = enumerate_sets(vocab)
+    expected_count = 1
+    for members in declarations.values():
+        expected_count *= len(members)
+    bad = []
+    if len(cases) != expected_count:
+        bad.append(f"enumerate_sets produced {len(cases)} cases, expected the product {expected_count}")
+    for case in cases:
+        if set(case) != set(declarations):
+            bad.append(f"manifest {case} does not key exactly the declared type names")
+        for name, value in case.items():
+            if value not in declarations[name]:
+                bad.append(f"manifest value {value!r} is not a member of set {name!r}")
+    return bad
+
+
+def _mutation_single_site(params):
+    mutants = mutate_source(params["source"])
+    bad = []
+    if not isinstance(mutants, list):
+        return [f"mutate_source on parseable source returned {mutants!r}, expected a list of mutants"]
+    if not mutants:
+        return [f"mutate_source found no mutant in {params['source']!r}"]
+    for mutant in mutants:
+        if mutant["original"] == mutant["replacement"]:
+            bad.append(f"mutant {mutant} is not a change (original == replacement)")
+        if mutant["change_kind"] not in _MUTATION_KINDS:
+            bad.append(f"mutant change_kind {mutant['change_kind']!r} is not a known kind")
+        if not mutant["location"]:
+            bad.append(f"mutant {mutant} carries no location")
+    return bad
+
+
+# --------------------------------------------------------------------- honesty laws
+
+def _purity_catches_nondeterminism(params):
+    manifest = params["manifest"]
+    bad = []
+    if verify_purity(_pure_link, dict(manifest)) != []:
+        bad.append("verify_purity flagged a deterministic link")
+    findings = verify_purity(_nondeterministic_link, dict(manifest))
+    if not (len(findings) == 1 and findings[0]["code"] == "non_deterministic"):
+        bad.append(f"verify_purity did not report one non_deterministic finding: {findings}")
+    return bad
+
+
+def _mutation_detect(params):
+    manifest = params["manifest"]
+    bad = []
+    if detect_mutation(_pure_link, dict(manifest)) != []:
+        bad.append("detect_mutation flagged a non-mutating link")
+    findings = detect_mutation(_mutating_link, dict(manifest))
+    if not (len(findings) == 1 and findings[0]["code"] == "manifest_mutated"):
+        bad.append(f"detect_mutation did not report one manifest_mutated finding: {findings}")
+    return bad
+
+
+def _idempotency_catches_drift(params):
+    manifest = params["manifest"]
+    bad = []
+    if test_idempotency(_pure_link, dict(manifest)) != []:
+        bad.append("test_idempotency flagged an idempotent chain")
+    findings = test_idempotency(_nondeterministic_link, dict(manifest))
+    if not (len(findings) == 1 and findings[0]["code"] == "not_idempotent"):
+        bad.append(f"test_idempotency did not report one not_idempotent finding: {findings}")
+    return bad
+
+
+# --------------------------------------------------------------------- state-machine laws
+
+def _sample_machine():
+    return state_machine(
+        {"locked", "unlocked"},
+        {"coin", "push"},
+        {("locked", "coin"): "unlocked", ("unlocked", "push"): "locked"},
+        "locked",
+    )
+
+
+def _valid_transitions_pass(_params):
+    machine = _sample_machine()
+    bad = []
+    clean = test_valid_transitions(machine, transition)
+    if clean != []:
+        bad.append(f"test_valid_transitions found a fault in a correct machine: {clean}")
+    broken = test_valid_transitions(machine, _wrong_transition)
+    if not broken:
+        bad.append("test_valid_transitions did not catch a broken transition function")
+    return bad
+
+
+def _invalid_transitions_pass(_params):
+    machine = _sample_machine()
+    findings = test_invalid_transitions(machine, transition)
+    return [] if findings == [] else [
+        f"test_invalid_transitions flagged a correct machine's undeclared pairs: {findings}"]
+
+
+# --------------------------------------------------------------------- subjects
+
+_STRING_SUBJECTS = [
+    ("red", {"value": "red"}),
+    ("https", {"value": "https"}),
+    ("token", {"value": "token"}),
+    ("abc", {"value": "abc"}),
+    ("digits_123", {"value": "123"}),
+]
+
+_FIB_SUBJECTS = [
+    ("limit_0", {"limit": 0, "negative": False}),
+    ("limit_1", {"limit": 1, "negative": False}),
+    ("limit_10", {"limit": 10, "negative": False}),
+    ("limit_10_neg", {"limit": 10, "negative": True}),
+    ("limit_100_neg", {"limit": 100, "negative": True}),
+]
+
+_COVERAGE_SUBJECTS = [
+    ("empty", {"exercised": 0, "total": 0}),
+    ("none", {"exercised": 0, "total": 5}),
+    ("half", {"exercised": 1, "total": 2}),
+    ("third", {"exercised": 1, "total": 3}),
+    ("most", {"exercised": 7, "total": 10}),
+    ("full", {"exercised": 3, "total": 3}),
+]
+
+_STATUS_SUBJECTS = [
+    ("valid", {"token_class": "valid", "fault_mapping": {}, "expected": 200}),
+    ("revoked", {"token_class": "revoked", "fault_mapping": {}, "expected": 401}),
+    ("expired", {"token_class": "expired", "fault_mapping": {}, "expected": 401}),
+    ("missing", {"token_class": "missing", "fault_mapping": {}, "expected": 401}),
+    ("forged", {"token_class": "forged", "fault_mapping": {}, "expected": 401}),
+    ("malformed", {"token_class": "malformed", "fault_mapping": {}, "expected": 400}),
+    ("override", {"token_class": "revoked", "fault_mapping": {"revoked": 418}, "expected": 418}),
+]
+
+_CLASSIFY_SUBJECTS = [
+    ("length_bounded", {"source": "f = lambda s: len(s) <= 5", "expected_class": "length_bounded"}),
+    ("character_class", {"source": "f = lambda s: s.isdigit()", "expected_class": "character_class"}),
+    ("numeric", {"source": "f = lambda s: int(s) > 0", "expected_class": "numeric"}),
+    ("catch_all", {"source": "f = lambda s: s == 'x'", "expected_class": "catch_all"}),
+    ("composite", {"source": "def helper(s):\n    return True\nf = lambda s: helper(s)", "expected_class": "composite"}),
+    ("external_lookup", {"source": "f = lambda s: lookup(s)", "expected_class": "external_lookup"}),
+]
+
+_LENGTH_SUBJECTS = [
+    ("one_to_five", {"source": "f = lambda s: 1 <= len(s) <= 5", "min": 1, "max": 5}),
+    ("upper_three", {"source": "f = lambda s: len(s) <= 3", "min": 1, "max": 3}),
+    ("three_to_eight", {"source": "f = lambda s: 3 <= len(s) <= 8", "min": 3, "max": 8}),
+]
+
+_SET_SUBJECTS = [
+    ("two_sets", {"declarations": {"color": {"red", "green"}, "size": {"small", "large"}}}),
+    ("one_set", {"declarations": {"lang": {"EN", "FR", "DE"}}}),
+    ("three_sets", {"declarations": {"a": {"x"}, "b": {"p", "q"}, "c": {"m", "n", "o"}}}),
+]
+
+_MUTATION_SUBJECTS = [
+    ("comparison", {"source": "x = 1 < 2"}),
+    ("boolean", {"source": "y = True and False"}),
+    ("membership", {"source": "z = 1 in [1, 2]"}),
 ]
 
 
-def _htest1_exhaustive(vocab):
-    """Every declared Set member appears in at least one generated case."""
-    cases = enumerate_sets(vocab)
-    bad = []
-    from honest_type.recognizers import is_bounded, members as set_members
-
-    for name, rec in vocab["base_types"].items():
-        if not is_bounded(rec):
-            continue
-        for member in set_members(rec):
-            if not any(case.get(name) == member for case in cases):
-                bad.append(f"member {member!r} of {name!r} not exercised")
-    return bad
+def _manifest_subjects():
+    """Honesty subjects are the manifests honest-test's own enumerate_sets generates for a small
+    sample vocabulary — the generated input space, not hand-written dicts."""
+    vocab = vocabulary({"a": {"x", "y"}, "b": {"p", "q"}})
+    return [(f"manifest_{index}", {"manifest": manifest})
+            for index, manifest in enumerate(enumerate_sets(vocab))]
 
 
-def _htest2_declared(vocab):
-    """Every value in every generated case is a declared member (or None for Maybe)."""
-    from honest_type.recognizers import members as set_members
+# --------------------------------------------------------------------- law groups
 
-    declared = {name: set(set_members(rec)) for name, rec in vocab["base_types"].items()}
-    bad = []
-    for case in enumerate_sets(vocab):
-        for name, value in case.items():
-            if value is not None and value not in declared.get(name, set()):
-                bad.append(f"case bound {name!r}={value!r}, not a declared member")
-    return bad
+_STRING_LAWS = [
+    law("AN-1", "adversarial_neighbors never contains the original value", _an_no_original),
+    law("AN-2", "adversarial_neighbors is deduplicated", _an_deduplicated),
+    law("AN-3", "adversarial_neighbors is the deduplicated union of the five neighbour classes", _an_union_of_classes),
+    law("ED-1", "edit_distance_1 omits the original and contains every single-character deletion", _edit_distance_deletions),
+    law("UC-1", "each unicode_confusables neighbour preserves length and carries a non-ASCII codepoint", _confusables_preserve_length),
+    law("CC-1", "each control_characters neighbour is the value plus exactly one injected character", _control_adds_one_char),
+    law("LE-1", "each length_extensions neighbour starts with the value and is longer", _length_extensions_grow),
+    law("EV-1", "encoding_variants omits the original and includes the UTF-16 BOM prefix", _encoding_bom),
+]
+
+_FIB_LAWS = [law("FIB-1", "fibonacci_sequence is the bounded Fibonacci run, with negatives prepended iff requested", _fibonacci_structure)]
+_COVERAGE_LAWS = [law("COV-1", "coverage_ratio is the whole-number floor share within 0..100", _coverage_floor)]
+_STATUS_LAWS = [law("STATUS-1", "compute_expected_status maps each token class to its section 4.7 status", _expected_status)]
+_CLASSIFY_LAWS = [law("CLS-1", "classify_predicate assigns the declared class deterministically", _classify_and_determinism)]
+_LENGTH_LAWS = [law("LEN-1", "enumerate_lengths keeps valid strings in range and invalid ones just outside", _length_bounds)]
+_SET_LAWS = [law("SET-1", "enumerate_sets yields the Cartesian product with every value a set member", _set_product)]
+_MUTATION_LAWS = [law("MUT-1", "every mutant is a single-site change at a located node", _mutation_single_site)]
+_HONESTY_LAWS = [
+    law("HON-1", "verify_purity passes a pure link and catches a non-deterministic one", _purity_catches_nondeterminism),
+    law("HON-2", "detect_mutation passes a clean link and catches a mutating one", _mutation_detect),
+    law("HON-3", "test_idempotency passes an idempotent chain and catches a drifting one", _idempotency_catches_drift),
+]
+_SM_LAWS = [
+    law("SM-1", "test_valid_transitions passes a correct machine and catches a broken transition", _valid_transitions_pass),
+    law("SM-2", "test_invalid_transitions passes a correct machine's undeclared pairs", _invalid_transitions_pass),
+]
 
 
-def _htest4_determinism(vocab):
-    """Generation is deterministic: same vocabulary, same suite, every time."""
-    if enumerate_sets(vocab) != enumerate_sets(vocab):
-        return ["enumerate_sets is not deterministic"]
-    member = sorted(next(iter(vocab["base_types"].values()))["members"])[0]
-    if adversarial_neighbours(member) != adversarial_neighbours(member):
-        return ["adversarial_neighbours is not deterministic"]
+def _subjects(pairs):
+    """Wrap (name, params) pairs as honest-test Subject records {name, params}, the shape
+    verify_laws reads its cases as."""
+    return [{"name": name, "params": params} for name, params in pairs]
+
+
+def _mutate_source_faults_on_garbage():
+    """mutate_source returns a Fault value (problem + remedy), never a raise, for unparseable
+    source (spec section 9.6)."""
+    result = mutate_source("x = = 2")
+    if not (isinstance(result, dict) and "problem" in result and "remedy" in result):
+        return ["mutate_source on unparseable source did not return a Fault value"]
     return []
 
 
-def _htest5_rejection(vocab):
-    """For every Set member, adversarial neighbours (the rejection inputs) are generated."""
-    from honest_type.recognizers import members as set_members
+def _enumerate_sets_predicate_only_is_one_empty_manifest():
+    """A vocabulary of only predicate recognizers has nothing to enumerate, so enumerate_sets
+    yields exactly one empty manifest (spec section 3.2)."""
+    cases = enumerate_sets(vocabulary({"digits": predicate(str.isdigit)}))
+    if cases != [{}]:
+        return [f"enumerate_sets of a predicate-only vocabulary gave {cases}, expected [{{}}]"]
+    return []
 
+
+def _classify_mutant_result_contract():
+    """classify_mutant_result judges a run three ways (spec section 9.6): undecided when the run
+    did not complete, set_aside when the output matched the baseline, caught when it differed."""
     bad = []
-    for rec in vocab["base_types"].values():
-        for member in set_members(rec):
-            if not adversarial_neighbours(member):
-                bad.append(f"no adversarial neighbours generated for {member!r}")
-    return bad
-
-
-HTEST_LAWS = [
-    law("HTest-1", "every declared Set member is exercised by a generated case", _htest1_exhaustive),
-    law("HTest-2", "no generated case asserts an undeclared value", _htest2_declared),
-    law("HTest-4", "generation is deterministic", _htest4_determinism),
-    law("HTest-5", "rejection inputs are generated for every member", _htest5_rejection),
-]
-
-
-# --------------------------------------------------------------------------- fixtures
-
-_format_vocab = vocabulary({"fmt": {"currency", "number"}})
-
-
-@link(accepts=_format_vocab, binds=binding({"fmt": "format"}))
-def _emit_fail(manifest):
-    return {"err": fault("emit_failed", "producer faulted", "server")}
-
-
-@link(boundary=True)
-def _boundary(manifest):
-    return ok(manifest)
-
-
-def _always_ok(manifest):
-    return ok(manifest)
-
-
-def _ok_consumer(manifest):
-    return ok(manifest)
-
-
-# --------------------------------------------------------------------------- probes
-
-
-def _probe_predicate():
-    from honest_test.predicate import _CHARCLASS_METHODS, _IGNORED_BUILTINS
-
-    bad = []
-    # Hardcoded expectations (NOT read from the module's own sets, which would move with a mutation):
-    # the full character-class method set and the full ignored-builtin set the spec fixes.
-    charclass_methods = ["isdigit", "isalpha", "isupper", "islower", "isalnum", "isspace", "isnumeric", "isdecimal", "isidentifier", "istitle", "isprintable", "isascii"]
-    ignored_builtins = ["str", "repr", "abs", "ord", "round", "hex", "oct", "bin", "chr", "min", "max", "sum"]
-    if set(_CHARCLASS_METHODS) != set(charclass_methods):
-        bad.append(f"_CHARCLASS_METHODS drifted from the spec set: {set(_CHARCLASS_METHODS) ^ set(charclass_methods)}")
-    if set(_IGNORED_BUILTINS) != set(ignored_builtins):
-        bad.append(f"_IGNORED_BUILTINS drifted from the spec set: {set(_IGNORED_BUILTINS) ^ set(ignored_builtins)}")
-    expectations = {
-        "def p(s): return str(s) == s": "unknown",       # ignored builtin (59->exit)
-        "def p(s): return s.strip() == s": "unknown",    # non-charclass attribute (65->exit)
-        "def p(s): return fns[0](s)": "unknown",         # subscript callee (77->exit)
-    }
-    for source, expect in expectations.items():
-        got = classify_source(source)
-        if got != expect:
-            bad.append(f"classify_source({source!r}) = {got}, expected {expect}")
-    if classify_predicate(lambda s: s.isdigit()) != "character_class":
-        bad.append("classify_predicate on a live readable fn failed")
-    if classify_predicate(len) != "external":
-        bad.append("classify_predicate on a C builtin should fall back to external")
-
-    # Every character-class method is recognised as character_class — iterating the hardcoded list, so
-    # dropping any member from _CHARCLASS_METHODS now fails the suite (the source uses the real name).
-    for method in charclass_methods:
-        if classify_source(f"lambda s: s.{method}()") != "character_class":
-            bad.append(f"a s.{method}() predicate should classify as character_class")
-
-    # Every ignored builtin carries no classification signal: calling it leaves the predicate unknown,
-    # not external (it must not be recorded as a named call). Iterates the hardcoded list.
-    for builtin in ignored_builtins:
-        if classify_source(f"lambda x: {builtin}(x)") != "unknown":
-            bad.append(f"the ignored builtin {builtin}() should leave the predicate unknown, not external")
-
-    # classify_predicate unwraps a {"fn": ...} recognizer (the "fn"/"get" branch) and classifies the fn.
-    if classify_predicate({"fn": lambda s: s.isdigit()}) != "character_class":
-        bad.append("classify_predicate should unwrap a {'fn': ...} recognizer and classify its fn")
-    # callee-is-None guard: feed _fact_call a non-call node (an integer has no function field).
-    facts = _collect_facts("0")
-    integer_node = next(n for n in walk(parse_python(b"0").root_node) if n.type == "integer")
-    _fact_call(integer_node, b"0", facts)  # must return without error (line 75)
-    return bad
-
-
-def _probe_length():
-    bad = []
-    if extract_length_bounds("def p(s): return len(s) is not None is not False") != (1, None):
-        bad.append("is-not chain should contribute no bound")
-    if extract_length_bounds('def p(s): return len(s) >= 3 and "a" < "b"') != (3, None):
-        bad.append("non-len comparison should be ignored")
-    below = enumerate_lengths("def p(s): return len(s) < 0")
-    if below["valid"] or below["invalid"] != [""]:
-        bad.append(f"len(s) < 0 should yield empty valid and a zero-length invalid: {below}")
-    # The op-not-in-bound guard is unreachable from the scanner (the operator sets coincide);
-    # probe it directly to document the contract.
-    bounds = {"min": 1, "max": None}
-    _bound_from_pair(None, "!=", None, b"", bounds)
-    if bounds != {"min": 1, "max": None}:
-        bad.append("an unknown comparison operator must contribute no bound")
-    return bad
-
-
-def _probe_honesty():
-    import functools
-    import itertools
-
-    from honest_test import detect_mutation, verify_purity
-    from honest_test.honesty import _name
-
-    bad = []
-    if verify_idempotency([_boundary], {"a": 1}) is not None:
-        bad.append("a chain with a boundary link is exempt from idempotency")
-    if test_chain_contracts([_always_ok, _ok_consumer]):
-        bad.append("a producer with no accepts vocabulary contributes no contract cases")
-    if test_chain_contracts([_emit_fail, _ok_consumer]):
-        bad.append("a producer that faults yields no contract violation")
-
-    # Each finding is a full record (code, subject, message); assert the message too, not just the code.
-    counter = itertools.count()
-
-    def nondet(manifest):
-        return ok({**manifest, "n": next(counter)})
-
-    def mutator(manifest):
-        manifest["touched"] = True
-        return ok(manifest)
-
-    if verify_purity(nondet, {"a": 1}) != {"code": "non_deterministic", "subject": "nondet", "message": "Different results on identical input"}:
-        bad.append(f"verify_purity finding record wrong: {verify_purity(nondet, {'a': 1})}")
-    if detect_mutation(mutator, {"a": 1}) != {"code": "manifest_mutated", "subject": "mutator", "message": "Link modified its input manifest"}:
-        bad.append(f"detect_mutation finding record wrong: {detect_mutation(mutator, {'a': 1})}")
-    if verify_idempotency([nondet], {"a": 1}) != {"code": "not_idempotent", "subject": "<chain>", "message": "Different results on identical input"}:
-        bad.append(f"verify_idempotency finding record wrong: {verify_idempotency([nondet], {'a': 1})}")
-
-    # A NON-deterministic boundary link is exempt from purity and idempotency (the return-None guards
-    # a deterministic boundary link cannot distinguish from "the check happened to pass").
-    @link(boundary=True)
-    def nondet_boundary(manifest):
-        return ok({**manifest, "n": next(counter)})
-
-    if verify_purity(nondet_boundary, {"a": 1}) is not None:
-        bad.append("a boundary link is exempt from the purity check even when non-deterministic")
-    if verify_idempotency([nondet_boundary], {"a": 1}) is not None:
-        bad.append("a boundary chain is exempt from idempotency even when non-deterministic")
-
-    # _name falls back to <link> for a callable with neither a declared name nor a __name__.
-    if _name(functools.partial(lambda manifest: manifest)) != "<link>":
-        bad.append("_name should fall back to <link> for a nameless callable")
-    return bad
-
-
-def _module_callable_entry(entry):
-    """A honest-check watch-list entry resolved to itself when it is a module-level callable available on
-    this platform, else None: wildcards, attribute reads, C-type-bound methods, and missing symbols
-    resolve to None. Used to compute the patchable subset honest-test must trap."""
-    import importlib
-
-    if entry.endswith("*"):
-        return None
-    parent, _, attr = entry.rpartition(".")
-    try:
-        module = importlib.import_module(parent)
-    except (ImportError, ValueError):
-        return None
-    return entry if callable(getattr(module, attr, None)) else None
-
-
-def _probe_determinism():
-    """Non-determinism detection (§4.5): the pure decision, and the runtime trap verified against honest-
-    check's PUBLISHED HC008 list (not honest-test's own list, which would be tautological) — every
-    module-level callable honest-check publishes is trapped, honest-test traps nothing honest-check does
-    not, every entry is genuinely patched inside the monitor, and the end-to-end flag fires correctly."""
-    import importlib
-    import os
-    import time
-
-    from honest_check.watchlists import NONDETERMINISTIC_WATCH_LIST, matches_watchlist
-
-    from honest_test import call_monitor, nondeterminism_finding, nondeterministic_watch_list, verify_determinism
-
-    bad = []
-
-    # The pure decision (§4.5): detected + non-boundary -> warning; boundary or none -> honest.
-    if nondeterminism_finding("validate", False, ["time.time"]) is None:
-        bad.append("a non-boundary link that called a source should warn")
-    if nondeterminism_finding("record", True, ["time.time"]) is not None:
-        bad.append("a boundary link is exempt from the non-determinism check")
-    if nondeterminism_finding("validate", False, []) is not None:
-        bad.append("a link that touched no source is honest")
-
-    watch = nondeterministic_watch_list()
-    published = NONDETERMINISTIC_WATCH_LIST["python"]
-
-    # Cross-tool consistency (§4.5: "both tools trap the same entries"): honest-test traps nothing honest-
-    # check does not publish — this is the check that makes the conformance non-tautological.
-    for path in watch:
-        if not matches_watchlist(path, published):
-            bad.append(f"honest-test traps {path}, which honest-check does not publish")
-
-    # Completeness: every module-level callable honest-check publishes (resolvable on this platform) is
-    # trapped. Dropping a published symbol from honest-test now fails the suite, as §4.5 requires.
-    required = {entry for entry in (_module_callable_entry(p) for p in published) if entry is not None}
-    missing = required - set(watch)
-    if missing:
-        bad.append(f"honest-test does not trap published module-level callables: {sorted(missing)}")
-
-    # Every watch symbol is genuinely patched inside the monitor (regardless of its arity), and restored
-    # after — verified without calling it, so arg-taking sources (uuid.uuid3, random.randint) count too.
-    def resolve(path):
-        module_name, attr = path.rsplit(".", 1)
-        return getattr(importlib.import_module(module_name), attr, None)
-
-    originals = {path: resolve(path) for path in watch}
-    with call_monitor(watch) as detected:
-        for path in watch:
-            if resolve(path) is originals[path]:
-                bad.append(f"{path} was not patched inside the monitor")
-    for path in watch:
-        if resolve(path) is not originals[path]:
-            bad.append(f"{path} was not restored after the monitor")
-
-    # A symbol absent on the running platform is skipped, not a crash.
-    with call_monitor(["os.this_symbol_does_not_exist"]) as detected:
-        pass
-    if detected != []:
-        bad.append("an unavailable symbol should be skipped, not trapped")
-
-    # The recording itself works: a trapped call lands in the detected list, AND still delegates to
-    # the original (the recorder returns the real value, it does not swallow the call).
-    with call_monitor(["time.time"]) as detected:
-        trapped_value = time.time()
-    if detected != ["time.time"]:
-        bad.append(f"a trapped call should be recorded: {detected}")
-    if not isinstance(trapped_value, float):
-        bad.append("a trapped call should still delegate to the original and return its value")
-
-    # An unavailable symbol is skipped cleanly: the monitor must not leave a stray attribute on the
-    # module (the `if original is None: continue` guard), so it is gone after the monitor exits too.
-    with call_monitor(["os.another_missing_symbol"]):
-        pass
-    if hasattr(os, "another_missing_symbol"):
-        bad.append("an unavailable symbol should be skipped, not set on the module")
-
-    # End-to-end: a non-boundary link calling a source is flagged; a boundary one and a pure one are not.
-    @link()
-    def impure(manifest):
-        time.time()
-        return ok(manifest)
-
-    @link(boundary=True)
-    def at_boundary(manifest):
-        time.time()
-        return ok(manifest)
-
-    @link()
-    def pure_link(manifest):
-        return ok(manifest)
-
-    if verify_determinism(impure, {"a": 1}) is None:
-        bad.append("verify_determinism should flag a non-boundary link that calls a non-deterministic source")
-    if verify_determinism(at_boundary, {"a": 1}) is not None:
-        bad.append("verify_determinism should exempt a boundary link")
-    if verify_determinism(pure_link, {"a": 1}) is not None:
-        bad.append("verify_determinism should pass a link that touches no source")
-    return bad
-
-
-def _probe_auth_honesty():
-    """Authentication honesty (§4.7): the boundary validator (resolve_actor) must resolve each token class to
-    its declared outcome, and the recognizer must reject a malformed token. The class set, the fault-to-HTTP
-    map, the default expectations, and the per-class decision are pure; the provider is injected."""
-    from honest_test import auth_expected_status, auth_honesty_finding, auth_token_classes, map_fault_to_http, test_auth_honesty
-
-    bad = []
-
-    classes = auth_token_classes()
-    if classes[0] != "valid" or len(classes) != 6 or "forged" not in classes:
-        bad.append(f"the token classes are the smallest contract probe: {classes}")
-
-    # A fault maps to its HTTP status by category (§4.7); a server fault is 500 and an unrecognised
-    # category falls back to 500 (the dict's server value and the .get default are distinct sites).
-    if map_fault_to_http({"category": "forbidden"}) != 403 or map_fault_to_http({"category": "unauthenticated"}) != 401 or map_fault_to_http({"category": "client"}) != 400:
-        bad.append("map_fault_to_http should map auth categories to statuses")
-    if map_fault_to_http({"category": "server"}) != 500:
-        bad.append("a server fault should map to 500")
-    if map_fault_to_http({"category": "nonexistent"}) != 500:
-        bad.append("an unrecognised category should fall back to 500")
-
-    # Default expectations, overridable by the provider's fault_mapping.
-    if auth_expected_status("valid") != "ok" or auth_expected_status("revoked") != 401 or auth_expected_status("malformed") != 400:
-        bad.append("default auth expectations wrong")
-    if auth_expected_status("missing", {"missing": 403}) != 403:
-        bad.append("a provider fault_mapping should override the default expectation")
-
-    # The per-class decision.
-    if auth_honesty_finding("p", "valid", ok({}), "ok") is not None:
-        bad.append("a resolved valid token is honest")
-    rejected = auth_honesty_finding("p", "valid", {"err": fault("x", "y", "client")}, "ok")
-    if rejected is None:
-        bad.append("rejecting a valid token is a failure")
-    elif rejected["code"] != "auth_honesty" or "rejected a valid token" not in rejected["message"]:
-        bad.append(f"the rejected-valid finding should name the cause: {rejected}")
-    if auth_honesty_finding("p", "revoked", {"err": fault("guard_failed", "no", "unauthenticated")}, 401) is not None:
-        bad.append("a revoked token faulting 401 is honest")
-    if auth_honesty_finding("p", "expired", ok({}), 401) is None:
-        bad.append("resolving an expired token (expected 401) is a failure")
-    if auth_honesty_finding("p", "forged", {"err": fault("guard_failed", "no", "forbidden")}, 401) is None:
-        bad.append("a forged token faulting the wrong status is a failure")
-
-    # Orchestration over the classes with an injected provider (recognizer + resolve_actor). A malformed
-    # token is rejected by the recognizer; every other class goes through resolve_actor.
-    category = {"revoked": "unauthenticated", "expired": "unauthenticated", "missing": "unauthenticated", "forged": "unauthenticated"}
-
-    def resolve_correct(token):
-        return ok({}) if token == "valid" else {"err": fault("guard_failed", "no", category[token])}
-
-    correct_provider = {
-        "name": "p",
-        "generate": lambda class_name: class_name,
-        "actor_recognizer": lambda token: token != "malformed",
-        "resolve_actor": resolve_correct,
-        "fault_mapping": {},
-    }
-    if test_auth_honesty(correct_provider):
-        bad.append(f"an honest provider should report no auth findings: {test_auth_honesty(correct_provider)}")
-
-    # A provider whose resolve_actor accepts an expired token is dishonest; the finding names the provider.
-    def resolve_broken(token):
-        return ok({}) if token in ("valid", "expired") else {"err": fault("guard_failed", "no", category[token])}
-
-    broken_findings = test_auth_honesty({**correct_provider, "resolve_actor": resolve_broken})
-    if not broken_findings:
-        bad.append("a provider that resolves an expired token should fail auth honesty")
-    elif broken_findings[0]["subject"] != "p":
-        bad.append(f"the finding subject should be the provider name: {broken_findings[0]}")
-
-    # A provider with no name uses the default subject 'auth'.
-    no_name = {k: v for k, v in correct_provider.items() if k != "name"}
-    no_name_findings = test_auth_honesty({**no_name, "resolve_actor": resolve_broken})
-    if not no_name_findings or no_name_findings[0]["subject"] != "auth":
-        bad.append(f"a provider with no name should use the default subject 'auth': {no_name_findings}")
-
-    # A recognizer that accepts a malformed token is dishonest; the finding is an auth_honesty one naming it.
-    leaky_findings = test_auth_honesty({**correct_provider, "actor_recognizer": lambda token: True})
-    if not leaky_findings:
-        bad.append("a recognizer that accepts a malformed token should fail auth honesty")
-    elif leaky_findings[0]["code"] != "auth_honesty" or "malformed" not in leaky_findings[0]["message"]:
-        bad.append(f"the malformed-recognizer finding should name the cause: {leaky_findings[0]}")
-
-    if test_auth_honesty(None) != []:
-        bad.append("no registered provider means no auth honesty test")
-
-    # The provider's fault_mapping overrides the default expectation: missing overridden to 403, so a
-    # provider faulting missing -> forbidden(403) is honest only if the override is actually read.
-    def resolve_override(token):
-        if token == "valid":
-            return ok({})
-        return {"err": fault("guard_failed", "no", "forbidden" if token == "missing" else category[token])}
-
-    override_provider = {**correct_provider, "fault_mapping": {"missing": 403}, "resolve_actor": resolve_override}
-    if test_auth_honesty(override_provider):
-        bad.append("the provider fault_mapping should override the default class expectation")
-    return bad
-
-
-def _probe_coverage_data():
-    """Coverage data format (§9.5): the four coverage-dimension records (§9.1-9.4), the assembled
-    coverage.json document, and the injected write. honest-check reads this file back for HC-P009."""
-    import json as _json
-
-    from honest_test import build_coverage, chain_coverage, honesty_coverage, state_machine_coverage, vocabulary_coverage, write_coverage
-
-    bad = []
-
-    # The four coverage dimensions, each part-of-whole as a whole-number percentage.
-    if vocabulary_coverage(5, 5) != {"total": 5, "exercised": 5, "pct": 100}:
-        bad.append("vocabulary_coverage of a fully exercised vocabulary should be 100")
-    if vocabulary_coverage(3, 2) != {"total": 3, "exercised": 2, "pct": 67}:
-        bad.append(f"vocabulary_coverage should report the rounded percentage: {vocabulary_coverage(3, 2)}")
-    if vocabulary_coverage(0, 0)["pct"] != 100:
-        bad.append("an empty vocabulary is vacuously fully covered")
-    if chain_coverage(3, 3) != {"fault_paths": 3, "exercised": 3, "pct": 100}:
-        bad.append(f"chain_coverage wrong: {chain_coverage(3, 3)}")
-    if honesty_coverage(3, 3, 1) != {"total": 3, "honest": 3, "boundary": 1, "pct": 100}:
-        bad.append(f"honesty_coverage should report honest, boundary, and the percentage: {honesty_coverage(3, 3, 1)}")
-    if state_machine_coverage(5, 5) != {"transitions": 5, "exercised": 5, "pct": 100}:
-        bad.append(f"state_machine_coverage wrong: {state_machine_coverage(5, 5)}")
-
-    # The assembled document mirrors the §9.5 shape.
-    document = build_coverage(
-        {"format_vocab": vocabulary_coverage(5, 5)},
-        {"format_pipeline": chain_coverage(3, 3)},
-        {"format_pipeline": honesty_coverage(3, 3, 1)},
-        {"order_machine": state_machine_coverage(5, 5)},
-        "2026-03-15T00:00:00Z",
-    )
-    if document["version"] != "1.0" or document["timestamp"] != "2026-03-15T00:00:00Z":
-        bad.append(f"the coverage document should carry the version and injected timestamp: {document}")
-    if set(document) != {"version", "timestamp", "vocabularies", "chains", "honesty", "state_machines"}:
-        bad.append(f"the coverage document should carry the four coverage maps: {set(document)}")
-
-    # write_coverage serializes and writes through the injected writer; honest-check reads it back.
-    captured = {}
-
-    def fake_write(path, text):
-        captured["path"] = path
-        captured["text"] = text
-
-    write_coverage(document, "coverage.json", fake_write)
-    if captured.get("path") != "coverage.json" or _json.loads(captured["text"]) != document:
-        bad.append(f"write_coverage should write coverage.json as the document round-trips: {captured}")
-    return bad
-
-
-def _probe_supplied():
-    bad = []
-    if load_config("/no/such/honest-test.toml") != {}:
-        bad.append("load_config of a missing file should be {}")
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "honest-test.toml"
-        path.write_text('[predicates.customer_id]\nvalid = ["C1"]\nstrategy = "supplied_only"\n', encoding="utf-8")
-        config = load_config(str(path))
-        entry = supplied_for(config, "customer_id")
-        if entry is None or entry["valid"] != ["C1"]:
-            bad.append(f"load_config did not parse the TOML file: {config}")
-    return bad
-
-
-def _probe_statemachine():
-    bad = []
-    # Degenerate machines: empty events and empty states each skip one adversarial loop.
-    no_events = state_machine({"a"}, set(), {}, "a")
-    if sm_module.test_adversarial_transitions(no_events):
-        bad.append("an events-less machine should yield no adversarial findings")
-    empty_states = {"states": set(), "events": {"e"}, "transitions": {}, "initial": None, "terminal": []}
-    if sm_module.test_adversarial_transitions(empty_states):
-        bad.append("a states-less machine should yield no adversarial findings")
-    # A table entry from an unknown state: test_valid must flag the incorrect transition.
-    ghost = {"states": {"a"}, "events": {"e"}, "transitions": {("ghost", "e"): "a"}, "initial": "a", "terminal": []}
-    if len(test_valid_transitions(ghost)) != 1:
-        bad.append("a transition from an unknown state must be flagged incorrect")
-    # The invalid-transition detector only fires against a non-conformant transition(); inject
-    # one that wrongly accepts every pair, and prove the detector catches it.
-    machine = state_machine({"a", "b"}, {"e"}, {("a", "e"): "a"}, "a")
-    saved = sm_module.transition
-    sm_module.transition = lambda m, s, e: ok({"state": "a"})
-    try:
-        if not test_invalid_transitions(machine):
-            bad.append("the no_transition detector failed to catch a wrongly-accepted pair")
-    finally:
-        sm_module.transition = saved
-    # Overlapping events: a neighbour of one event is itself a declared event, so the
-    # adversarial-event detector must flag it (the symmetric event path).
-    overlap = state_machine({"a"}, {"go", "GO"}, {("a", "go"): "a"}, "a")
-    if not sm_module.test_adversarial_transitions(overlap):
-        bad.append("an event whose neighbour is also a declared event must be flagged")
-
-    # Findings are records, not just counts: assert each detector's code and detail exactly.
-    if test_valid_transitions(ghost) != [{"code": "transition_incorrect", "detail": {"state": "ghost", "event": "e"}}]:
-        bad.append(f"transition_incorrect finding record wrong: {test_valid_transitions(ghost)}")
-
-    accept_all = state_machine({"a", "b"}, {"e"}, {("a", "e"): "a"}, "a")
-    saved_t = sm_module.transition
-    sm_module.transition = lambda m, s, e: ok({"state": "a"})
-    try:
-        invalid_findings = test_invalid_transitions(accept_all)
-    finally:
-        sm_module.transition = saved_t
-    if invalid_findings != [{"code": "invalid_transition_accepted", "detail": {"state": "b", "event": "e"}}]:
-        bad.append(f"invalid_transition_accepted finding record wrong: {invalid_findings}")
-
-    # Adversarial findings carry the neighbour, capped at 24 chars: inject an always-accepting
-    # transition over a long state and event so neighbours (all >= 39 chars here) are flagged, and
-    # assert the code and the exact cap on both the state and event paths.
-    long_state, long_event = "s" * 40, "e" * 40
-    big = state_machine({long_state}, {long_event}, {(long_state, long_event): long_state}, long_state)
-    sm_module.transition = lambda m, s, e: ok({"state": long_state})
-    try:
-        adv = sm_module.test_adversarial_transitions(big)
-    finally:
-        sm_module.transition = saved_t
-    state_hits = [f for f in adv if f["code"] == "adversarial_state_accepted"]
-    event_hits = [f for f in adv if f["code"] == "adversarial_event_accepted"]
-    if not state_hits or max(len(f["detail"]["neighbour"]) for f in state_hits) != 24:
-        bad.append("adversarial_state_accepted findings should cap the neighbour at 24 chars")
-    if not event_hits or max(len(f["detail"]["neighbour"]) for f in event_hits) != 24:
-        bad.append("adversarial_event_accepted findings should cap the neighbour at 24 chars")
-    return bad
-
-
-def _probe_runner():
-    """verify_laws must report a violation when a law fails (the runner's failure path)."""
-    bad = []
-    report = verify_laws([law("DEMO", "always fails", lambda subject: ["intentional"])], [("s", None)])
-    if report["failed"] != 1 or not report["violations"]:
-        bad.append(f"verify_laws did not record a failing law: {report}")
-    if report["violations"] and report["violations"][0]["messages"] != ["intentional"]:
-        bad.append("verify_laws did not carry the violation messages")
-    return bad
-
-
-def _probe_proof():
-    """Proof events (§8.5): the pure payload, and the injected-emit loop that writes one
-    hf.proof.checked per function (and nothing for an empty run)."""
-    from honest_test import PROOF_RESULTS, emit_proofs, proof_payload
-
-    async def _run():
-        bad = []
-        if PROOF_RESULTS != {"proved", "failed"}:
-            bad.append("PROOF_RESULTS vocabulary is wrong")
-        payload = proof_payload("m.f", "f does x", "m", 3, "proved", [], 100.0, 100.0)
-        if payload["function"] != "m.f" or payload["result"] != "proved" or payload["branch_coverage"] != 100.0:
-            bad.append(f"proof_payload wrong: {payload}")
-
-        calls = []
-
-        async def emit(event_type, aggregate_type, aggregate_id, event_payload):
-            calls.append((event_type, aggregate_type, aggregate_id, event_payload))
-            return {"ok": {"event_id": "e"}}
-
-        proofs = [
-            {"function": "m.a", "gherkin": "a", "module": "m", "cases": 1, "result": "proved", "failures": [], "line_coverage": 100.0, "branch_coverage": 100.0},
-            {"function": "m.b", "gherkin": "b", "module": "m", "cases": 2, "result": "failed", "failures": ["x"], "line_coverage": 50.0, "branch_coverage": 0.0},
-        ]
-        results = await emit_proofs(emit, proofs)
-        if len(calls) != 2 or len(results) != 2:
-            bad.append(f"emit_proofs should emit once per proof: {calls}")
-        elif calls[0][:3] != ("hf.proof.checked", "function", "m.a") or calls[1][2] != "m.b" or calls[1][3]["result"] != "failed":
-            bad.append(f"emit_proofs emitted the wrong event/aggregate/payload: {calls}")
-        if await emit_proofs(emit, []) != [] or len(calls) != 2:
-            bad.append("an empty run should emit nothing")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_value():
-    """The value-assertion oracle (§8.6): each Then variant proves on a match and fails as data on
-    a mismatch; an unknown function or a raising function is step_errored; a case with no oracle is
-    rejected. Concrete (input, expected) come from data and bind directly — a list input round-trips
-    where a text capture could not."""
-    from honest_test import check_oracle, run_value_case, run_value_cases
-
-    bad = []
-
-    def double(x):
-        return x * 2
-
-    def ok_fn(x):
-        return {"ok": x}
-
-    def err_fn(x):
-        return {"err": {"code": "bad"}}
-
-    def box_fn(x):
-        return {"n": x}
-
-    def boom(x):
-        raise ValueError("kaboom")
-
-    functions = {"double": double, "ok_fn": ok_fn, "err_fn": err_fn, "box_fn": box_fn, "boom": boom}
-
-    # Each oracle proves on a match (and a list input binds directly, no text round-trip).
-    proved = [
-        {"function": "double", "input": [1, 2], "expected": [1, 2, 1, 2]},
-        {"function": "err_fn", "input": 0, "fault": "bad"},
-        {"function": "ok_fn", "input": 7, "ok": True},
-        {"function": "box_fn", "input": 9, "field": {"name": "n", "value": 9}},
-    ]
-    for case in proved:
-        result = run_value_case(case, functions)
-        if not result["proved"] or result["fault"] is not None:
-            bad.append(f"a matching oracle should prove cleanly: {case} -> {result}")
-
-    # Each oracle fails as data on a mismatch — assertion_failed, never a raised exception — and the
-    # fault carries the oracle's diagnostic message (so emptying any assert message is caught).
-    mismatched = [
-        ({"function": "double", "input": 21, "expected": 99}, "expected 99"),
-        ({"function": "ok_fn", "input": 1, "fault": "bad"}, "expected fault"),
-        ({"function": "err_fn", "input": 1, "ok": True}, "expected an ok result"),
-        ({"function": "box_fn", "input": 1, "field": {"name": "n", "value": 999}}, "expected field"),
-    ]
-    for case, fragment in mismatched:
-        result = run_value_case(case, functions)
-        if result["proved"] or result["fault"]["code"] != "assertion_failed":
-            bad.append(f"a mismatched oracle should fail with assertion_failed: {case} -> {result}")
-        elif fragment not in result["fault"]["detail"]:
-            bad.append(f"the assertion fault should carry its diagnostic message: {fragment!r} not in {result['fault']['detail']!r}")
-
-    # An unknown function and a raising function are both step_errored, not crashes.
-    unknown = run_value_case({"function": "missing", "input": 1, "expected": 1}, functions)
-    if unknown["proved"] or unknown["fault"]["code"] != "step_errored":
-        bad.append(f"an unknown function should be step_errored: {unknown}")
-    raising = run_value_case({"function": "boom", "input": 1, "expected": 1}, functions)
-    if raising["proved"] or raising["fault"]["code"] != "step_errored":
-        bad.append(f"a raising function should be step_errored: {raising}")
-
-    # A case declaring no oracle is rejected (not silently proved): a clear assertion fault naming the
-    # missing oracle, not a step_errored crash from dispatching the empty kind.
-    no_oracle = run_value_case({"function": "double", "input": 1}, functions)
-    if no_oracle["proved"]:
-        bad.append(f"a case with no oracle must not be proved: {no_oracle}")
-    elif no_oracle["fault"]["code"] != "assertion_failed" or "declares no oracle" not in no_oracle["fault"]["detail"]:
-        bad.append(f"a no-oracle case should be a clear assertion fault naming the missing oracle: {no_oracle}")
-
-    # check_oracle is reusable on a result directly; run_value_cases maps over a list.
-    check_oracle({"expected": 4}, 4)
-    batch = run_value_cases([{"function": "double", "input": 2, "expected": 4}], functions)
-    if len(batch) != 1 or not batch[0]["proved"]:
-        bad.append(f"run_value_cases should map over the cases: {batch}")
-    return bad
-
-
-def _probe_mutation():
-    """Mutation adequacy engine (§9.6): each operator is a pure tree-sitter transform producing one
-    mutated source per site (the way the generators enumerate a Set). Comparison swap: every
-    <, <=, >, >=, ==, != token swapped to its pair."""
-    from honest_test import enumerate_mutants
-
-    bad = []
-    # Labels are stable: a mutant is identified by its change and the stripped source line it sits on
-    # (not a byte offset), with #n for the nth identical (change, line) pair — so a set-aside survives
-    # edits elsewhere in the file.
-    if {m["label"] for m in enumerate_mutants("a == b\n")} != {"==->!=@a == b", "remove@a == b"}:
-        bad.append(f"a label identifies the change and the line, not a byte offset: {sorted(m['label'] for m in enumerate_mutants('a == b\n'))}")
-    chained = sorted(m["label"] for m in enumerate_mutants("a < b < c\n") if m["operator"] == "comparison_swap")
-    if chained != ["<-><=@a < b < c@<module>", "<-><=@a < b < c@<module>#1"]:
-        bad.append(f"identical (change, line) pairs are disambiguated by index: {chained}")
-    # The property a set-aside depends on: a repeated label is qualified by the function holding it, so an
-    # identical mutation appearing in another function cannot slide a declaration onto a different mutant.
-    two = "def a():\n    for x in y:\n        continue\ndef b():\n    for x in y:\n        continue\n"
-    added = "def z():\n    for x in y:\n        continue\n" + two
-    kept = sorted(m["label"] for m in enumerate_mutants(two) if m["label"].startswith("sole-pass@continue"))
-    after = sorted(m["label"] for m in enumerate_mutants(added) if m["label"].startswith("sole-pass@continue"))
-    if kept != ["sole-pass@continue@a", "sole-pass@continue@b"]:
-        bad.append(f"a repeated label is qualified by the function that holds it: {kept}")
-    if not set(kept) <= set(after):
-        bad.append(f"a label must not move when an identical mutation is added in another function: {kept} then {after}")
-    # A site can sit on the def line itself — exactly the function's first byte. It belongs to that
-    # function, not to the scope around it.
-    twice = "def f():\n    pass\ndef f():\n    pass\n"
-    on_def = sorted(m["label"] for m in enumerate_mutants(twice) if m["label"].startswith("remove@def f():"))
-    if on_def != ["remove@def f():@f", "remove@def f():@f#1"]:
-        bad.append(f"a site on the def line belongs to the function it opens: {on_def}")
-    # The other edge: a site immediately after a function sits exactly at its end byte, and belongs to
-    # the scope around it — not to the function that just closed.
-    after_def = "def a():\n    pass\nx = 1\ndef b():\n    pass\nx = 1\n"
-    outside = sorted(m["label"] for m in enumerate_mutants(after_def) if m["label"].startswith("1->2@"))
-    if outside != ["1->2@x = 1@<module>", "1->2@x = 1@<module>#1"]:
-        bad.append(f"a site at a function's end byte belongs to the enclosing scope: {outside}")
-    # The JavaScript runner shares this stabiliser, so the qualifier must name a JS function too. An
-    # anonymous form is transparent: its sites take the nearest named function holding them.
-    from honest_parse import parse_javascript
-
-    js = b"function outer() {\n  const go = () => {\n    let x = 1\n  }\n}\n"
-    js_tree = parse_javascript(js)
-    if _enclosing_function_name(js_tree, js, js.index(b"let x")) != "outer":
-        bad.append("a JavaScript site must be qualified by the named function holding it")
-    if _enclosing_function_name(js_tree, js, js.index(b"function")) != "outer":
-        bad.append("a JavaScript site on the function keyword belongs to that function")
-    # The other named JavaScript forms the runner meets: a class method and a generator.
-    shapes = b"class C {\n  m() {\n    let y = 2\n  }\n}\nfunction* g() {\n  let z = 3\n}\n"
-    shapes_tree = parse_javascript(shapes)
-    if _enclosing_function_name(shapes_tree, shapes, shapes.index(b"let y")) != "m":
-        bad.append("a class method qualifies the sites inside it")
-    if _enclosing_function_name(shapes_tree, shapes, shapes.index(b"let z")) != "g":
-        bad.append("a generator function qualifies the sites inside it")
-
-    source = "def f(x):\n    return x < 0 and x == y\n"
-    swaps = sorted(m["source"] for m in enumerate_mutants(source) if m["operator"] == "comparison_swap")
-    if swaps != [
-        "def f(x):\n    return x < 0 and x != y\n",
-        "def f(x):\n    return x <= 0 and x == y\n",
-    ]:
-        bad.append(f"comparison swap should mutate each comparison operator to its pair: {swaps}")
-
-    # Every comparison operator is swappable (the full closed pairing), and an unmutated source has none.
-    pairs = sorted({m["source"] for m in enumerate_mutants("a >= b\nc != d\n") if m["operator"] == "comparison_swap"})
-    if pairs != ["a > b\nc != d\n", "a >= b\nc == d\n"]:
-        bad.append(f">= -> > and != -> == should each be produced: {pairs}")
-    if [m for m in enumerate_mutants("x = 1\n") if m["operator"] == "comparison_swap"]:
-        bad.append("source with no comparison operator yields no comparison-swap mutant")
-
-    def by(source, operator):
-        return sorted(m["source"] for m in enumerate_mutants(source) if m["operator"] == operator)
-
-    # Number shift: each integer to n+1 and n-1, and the same for float literals.
-    if by("x = 5\n", "number_shift") != ["x = 4\n", "x = 6\n"]:
-        bad.append(f"number shift should produce n+1 and n-1: {by('x = 5\n', 'number_shift')}")
-    if by("x = 2.5\n", "number_shift") != ["x = 1.5\n", "x = 3.5\n"]:
-        bad.append(f"number shift should cover float literals: {by('x = 2.5\n', 'number_shift')}")
-    if by("x = 0xff\n", "number_shift") != ["x = 254\n", "x = 256\n"]:
-        bad.append(f"number shift should read hex/octal/binary bases: {by('x = 0xff\n', 'number_shift')}")
-    if by("x = 1j\n", "number_shift") != ["x = (-1+1j)\n", "x = (1+1j)\n"]:
-        bad.append(f"a complex literal shifts by one in the real part: {by('x = 1j\n', 'number_shift')}")
-    # Condition flip: and <-> or, a `not` dropped, and a branch condition negated (`if c` -> `if not (c)`).
-    if by("a and b\n", "condition_flip") != ["a or b\n"]:
-        bad.append("and should flip to or")
-    if by("not a\n", "condition_flip") != ["a\n"]:
-        bad.append("a not should be droppable")
-    if by("if x:\n    pass\n", "condition_flip") != ["if not (x):\n    pass\n"]:
-        bad.append(f"a branch condition should be negatable: {by('if x:\n    pass\n', 'condition_flip')}")
-    if by("while x:\n    pass\n", "condition_flip") != ["while not (x):\n    pass\n"]:
-        bad.append("a while condition should be negatable")
-    elif_neg = by("if x:\n    pass\nelif y:\n    pass\n", "condition_flip")
-    if "if x:\n    pass\nelif not (y):\n    pass\n" not in elif_neg:
-        bad.append(f"an elif condition should be negatable: {elif_neg}")
-    if by("x = a if b else c\n", "condition_flip") != ["x = a if not (b) else c\n"]:
-        bad.append(f"a ternary condition should be negatable: {by('x = a if b else c\n', 'condition_flip')}")
-    if by("assert a\n", "condition_flip") != ["assert not (a)\n"]:
-        bad.append("an assert condition should be negatable")
-    if by("y = [i for i in z if a]\n", "condition_flip") != ["y = [i for i in z if not (a)]\n"]:
-        bad.append("a comprehension filter condition should be negatable")
-    # Constant replace: True <-> False, and a non-empty string emptied.
-    if by("x = True\n", "constant_replace") != ["x = False\n"]:
-        bad.append("True should flip to False")
-    if by('x = "hi"\n', "constant_replace") != ['x = ""\n']:
-        bad.append("a non-empty string should be emptiable")
-    if by('x = b"hi"\n', "constant_replace") != ['x = b""\n']:
-        bad.append(f"a non-empty bytes literal empties to b-quotes, preserving its bytes type: {by(chr(120) + ' = b' + chr(34) + 'hi' + chr(34) + chr(10), 'constant_replace')}")
-    # Result swap: ok(...) <-> err(...).
-    if by("ok(z)\n", "result_swap") != ["err(z)\n"]:
-        bad.append("ok should swap to err")
-    # Membership change: in <-> not in.
-    if by("x in y\n", "membership_change") != ["x not in y\n"]:
-        bad.append("in should change to not in")
-    if by("x not in y\n", "membership_change") != ["x in y\n"]:
-        bad.append("not in should change to in")
-    # Dict-key swap: each dict key replaced by a sibling key (the cyclic next), one per key. A single-key
-    # dict has no sibling to swap to. Only string keys are swapped.
-    keyswaps = by('d = {"a": 1, "b": 2}\n', "key_swap")
-    if keyswaps != ['d = {"a": 1, "a": 2}\n', 'd = {"b": 1, "b": 2}\n']:
-        bad.append(f"a dict key should swap to a sibling key: {keyswaps}")
-    if by('d = {"a": 1}\n', "key_swap") != []:
-        bad.append("a single-key dict has no sibling key to swap to")
-    if by("d = {x: 1, y: 2}\n", "key_swap") != ["d = {x: 1, x: 2}\n", "d = {y: 1, y: 2}\n"]:
-        bad.append(f"identifier dict keys swap to a sibling too: {by('d = {x: 1, y: 2}\n', 'key_swap')}")
-    if by('d = {1: "a", 2: "b"}\n', "key_swap") != ['d = {1: "a", 1: "b"}\n', 'd = {2: "a", 2: "b"}\n']:
-        bad.append("integer dict keys swap to a sibling too")
-    if by('d = {"a": 1, "a": 2}\n', "key_swap") != []:
-        bad.append("a swap that would not change the source (a duplicate key) is skipped")
-    if by('d = {**z, "a": 1, "b": 2}\n', "key_swap") != ['d = {**z, "a": 1, "a": 2}\n', 'd = {**z, "b": 1, "b": 2}\n']:
-        bad.append("a splat entry beside keys is skipped; the keys still swap")
-    # Line removal: in a multi-statement block one statement is deleted, the rest kept. A module's sole
-    # statement is deleted too — an empty module is valid Python — so a sole top-level def disappears.
-    if by("def f():\n    a()\n    b()\n", "line_removal") != ["\n", "def f():\n    \n    b()\n", "def f():\n    a()\n    \n"]:
-        bad.append(f"line removal should delete one statement, keeping the rest: {by('def f():\n    a()\n    b()\n', 'line_removal')}")
-    # A block's sole statement cannot be deleted (the block would not parse), so it is replaced by `pass`
-    # — its effect removed while the block stays valid. The module's sole def is still deleted. A block
-    # already `pass` yields no replacement; a sole docstring or bare annotation stays universally equivalent.
-    if by("def f():\n    a()\n", "line_removal") != ["\n", "def f():\n    pass\n"]:
-        bad.append(f"a block's sole statement is replaced by pass: {by('def f():\n    a()\n', 'line_removal')}")
-    if by("a()\n", "line_removal") != ["\n"]:
-        bad.append(f"a module's sole statement is deleted, leaving an empty module: {by('a()\n', 'line_removal')}")
-    if by("def f():\n    pass\n", "line_removal") != ["\n"]:
-        bad.append(f"a block already a sole pass yields no replacement, only the module's def is deleted: {by('def f():\n    pass\n', 'line_removal')}")
-    if any(m["label"].startswith("sole-pass@") for m in enumerate_mutants('def f():\n    """d"""\n')) or any(m["label"].startswith("sole-pass@") for m in enumerate_mutants("def f():\n    a: int\n")):
-        bad.append("a sole docstring or annotation is not replaced by pass")
-    # Branch-arm removal: an else or elif clause is dropped whole (multi-statement bodies, so the arm
-    # removal is distinct from the sole-statement replacement); an if with neither has no arm to drop.
-    # Dropping the trailing clause leaves the source's final newline orphaned (a harmless blank line);
-    # the mutant still parses and runs, which is all the gate needs.
-    else_arm = by("if x:\n    a()\n    c()\nelse:\n    b()\n    d()\n", "line_removal")
-    if "if x:\n    a()\n    c()\n\n" not in else_arm:
-        bad.append(f"branch-arm removal should drop the else clause: {else_arm}")
-    elif_arm = by("if x:\n    a()\n    c()\nelif y:\n    b()\n    d()\n", "line_removal")
-    if "if x:\n    a()\n    c()\n\n" not in elif_arm:
-        bad.append(f"branch-arm removal should drop the elif clause: {elif_arm}")
-    if any(m["label"].startswith("drop-arm@") for m in enumerate_mutants("if x:\n    a()\n    c()\n")):
-        bad.append("an if with no elif or else has no branch arm to drop")
-
-    def arms(source):
-        return sorted(m["source"] for m in enumerate_mutants(source) if m["label"].startswith("drop-arm@"))
-
-    # Branch-arm removal reaches every compound statement, dropping only clauses whose removal still parses.
-    if arms("for i in x:\n    a()\nelse:\n    b()\n") != ["for i in x:\n    a()\n\n"]:
-        bad.append(f"a for-else arm is droppable: {arms('for i in x:\n    a()\nelse:\n    b()\n')}")
-    if arms("while x:\n    a()\nelse:\n    b()\n") != ["while x:\n    a()\n\n"]:
-        bad.append(f"a while-else arm is droppable: {arms('while x:\n    a()\nelse:\n    b()\n')}")
-    # match: a case is droppable only when two or more remain.
-    if arms("match v:\n    case 1:\n        a()\n    case 2:\n        b()\n") != ["match v:\n    \n    case 2:\n        b()\n", "match v:\n    case 1:\n        a()\n    \n"]:
-        bad.append(f"a match case is droppable when two or more: {arms('match v:\n    case 1:\n        a()\n    case 2:\n        b()\n')}")
-    if arms("match v:\n    case 1:\n        a()\n") != []:
-        bad.append("a sole match case is not droppable")
-    # try: each except droppable when another except remains; else always; finally when an except remains.
-    if arms("try:\n    a()\nexcept E:\n    b()\nexcept F:\n    c()\n") != ["try:\n    a()\n\nexcept F:\n    c()\n", "try:\n    a()\nexcept E:\n    b()\n\n"]:
-        bad.append(f"each of two excepts is droppable: {arms('try:\n    a()\nexcept E:\n    b()\nexcept F:\n    c()\n')}")
-    # one except + finally (no else): the except drops (finally remains), the finally drops (except remains).
-    if arms("try:\n    a()\nexcept E:\n    b()\nfinally:\n    c()\n") != ["try:\n    a()\n\nfinally:\n    c()\n", "try:\n    a()\nexcept E:\n    b()\n\n"]:
-        bad.append(f"except and finally each drop when the other remains: {arms('try:\n    a()\nexcept E:\n    b()\nfinally:\n    c()\n')}")
-    # one except + else + finally: the else and finally drop, but the sole except cannot (else needs it).
-    if arms("try:\n    a()\nexcept E:\n    b()\nelse:\n    c()\nfinally:\n    d()\n") != ["try:\n    a()\nexcept E:\n    b()\n\nfinally:\n    d()\n", "try:\n    a()\nexcept E:\n    b()\nelse:\n    c()\n\n"]:
-        bad.append(f"else and finally drop, sole except does not when an else needs it: {arms('try:\n    a()\nexcept E:\n    b()\nelse:\n    c()\nfinally:\n    d()\n')}")
-    if arms("try:\n    a()\nexcept E:\n    b()\n") != []:
-        bad.append("a sole except is not droppable (the try would have no handler)")
-    if arms("try:\n    a()\nfinally:\n    b()\n") != []:
-        bad.append("a finally with no except is not droppable (the try would be bare)")
-
-    # Docstrings are non-behavioural: a docstring is neither emptied nor removed (a universally
-    # equivalent mutant), but a non-docstring bare string still is.
-    doc_labels = {m["label"] for m in enumerate_mutants('"""doc."""\nx = 1\n')}
-    if any(label.startswith('string->empty@"""doc') for label in doc_labels) or 'remove@"""doc."""' in doc_labels:
-        bad.append("a docstring must produce no string-empty or line-removal mutant (it cannot change behaviour)")
-    if not any("1->2@" in label for label in doc_labels):
-        bad.append("a non-docstring statement beside the docstring is still mutated")
-    nondoc = {m["label"] for m in enumerate_mutants('x = 1\n"side"\n')}
-    if not any(label.startswith("string->empty@") for label in nondoc):
-        bad.append("a bare string that is not the first statement is not a docstring and is still emptiable")
-
-    # A bare type annotation (`name: type`, no value) has no runtime effect, so it is not a removable
-    # statement (a universally equivalent mutant, like a docstring); the runtime statements beside it are.
-    annotated = "def f():\n    a: int\n    x = 5\n    b()\n    return 1\n"
-    # Exclude the module-level deletion of the sole def (source "\n"); count the block's own removals.
-    line_removals = sorted(m["label"] for m in enumerate_mutants(annotated) if m["operator"] == "line_removal" and m["source"] != "\n")
-    if len(line_removals) != 3:
-        bad.append(f"an annotation-only field is skipped; the three runtime statements (x=5, b(), return) are removable: {line_removals}")
-
-    # Both directions of every symmetric swap table are exercised (the cases above test one direction
-    # of each; these pin the other entries — an emptied key drops a swap, an emptied value would break
-    # the replacement, and the two operators the cases above never used: <= and >).
-    if by("a <= b\n", "comparison_swap") != ["a < b\n"]:
-        bad.append("<= should swap to <")
-    if by("a > b\n", "comparison_swap") != ["a >= b\n"]:
-        bad.append("> should swap to >=")
-    if by("a or b\n", "condition_flip") != ["a and b\n"]:
-        bad.append("or should flip to and")
-    if by("x = False\n", "constant_replace") != ["x = True\n"]:
-        bad.append("False should flip to True")
-    if by("err(z)\n", "result_swap") != ["ok(z)\n"]:
-        bad.append("err should swap to ok")
-
-    # An empty string is not a constant-replace site (emptying it would be a no-op): the string_content
-    # guard in _constant_replaces must require actual content.
-    if by('x = ""\n', "constant_replace") != []:
-        bad.append("an empty string yields no constant-replace mutant")
-
-    # An uppercase complex literal is read as complex too (the ('j', 'J') guard, both members).
-    if by("x = 1J\n", "number_shift") != ["x = (-1+1j)\n", "x = (1+1j)\n"]:
-        bad.append(f"an uppercase complex literal shifts in the real part: {by('x = 1J\n', 'number_shift')}")
-
-    # A comment preceding the docstring does not stop it being the docstring (the comment filter in
-    # _is_docstring), and a comment inside a block is not a removable statement (the filter in
-    # _line_removals), so the sole real statement is still replaced by pass and the comment is kept.
-    if any(label.startswith('string->empty@"""doc') for label in {m["label"] for m in enumerate_mutants('# lead\n"""doc."""\nx = 1\n')}):
-        bad.append("a docstring preceded by a comment is still recognised as the docstring")
-    if by("def f():\n    # c\n    a()\n", "line_removal") != ["\n", "def f():\n    # c\n    pass\n"]:
-        bad.append(f"a comment is not a removable statement; the sole real statement becomes pass: {by('def f():\n    # c\n    a()\n', 'line_removal')}")
-
-    # A bare annotation (no value) is skipped, but an annotated assignment WITH a value is removable
-    # (the `right is None` guard in _is_annotation_only requires the no-value form).
-    if by("def f():\n    a: int = 5\n", "line_removal") != ["\n", "def f():\n    pass\n"]:
-        bad.append(f"an annotated assignment with a value is removable: {by('def f():\n    a: int = 5\n', 'line_removal')}")
-
-    # A module-level comment is in named_children (unlike a block's), so the comment filter in
-    # _line_removals matters there: the comment is not a removable statement, only x = 1 is.
-    if by("# c\nx = 1\n", "line_removal") != ["# c\n\n"]:
-        bad.append(f"a module-level comment is not a removable statement: {by('# c\nx = 1\n', 'line_removal')}")
-    return bad
-
-
-def _probe_mutation_runner():
-    """The mutant runner and adequacy decision (§9.6, A3/A4): run_mutants checks each mutant against an
-    injected suite-runner and returns the survivors (mutants the suite did not catch); mutation_adequacy
-    accounts caught + set_aside == total, where every survivor must be declared equivalent by label."""
-    from honest_test import mutation_adequacy, run_mutants
-
-    bad = []
-    # A hand-built single-mutant list: the runner and the adequacy decision are exercised on a known
-    # input, independent of how enumeration would size the mutant set.
-    mutants = [{"operator": "comparison_swap", "label": "==->!=@a == b", "source": "a != b\n"}]
-
-    # run_suite returns True when the suite PASSES on the mutated source — i.e. the mutant was NOT caught.
-    if run_mutants(mutants, lambda source: False) != []:
-        bad.append("a suite that fails on every mutant leaves no survivors")
-    survivors = run_mutants(mutants, lambda source: True)
-    if len(survivors) != 1 or survivors[0]["operator"] != "comparison_swap":
-        bad.append(f"a suite that passes on every mutant leaves all as survivors: {survivors}")
-
-    # An undeclared survivor is not adequate; total/caught/set_aside accounting holds.
-    report = mutation_adequacy(mutants, survivors, [], {})
-    if report != {"total": 1, "caught": 0, "set_aside": 0, "undecided": [], "undeclared": [{"operator": "comparison_swap", "label": "==->!=@a == b"}], "adequate": False}:
-        bad.append(f"an undeclared survivor must be reported as inadequate: {report}")
-
-    # A survivor declared equivalent (by label, with a reason) is set aside -> adequate.
-    declared = mutation_adequacy(mutants, survivors, [], {"==->!=@a == b": "equivalent: the suite asserts only the other arm"})
-    if not declared["adequate"] or declared["set_aside"] != 1 or declared["undeclared"]:
-        bad.append(f"a declared-equivalent survivor must be adequate: {declared}")
-
-    # No survivors is adequate (every mutant caught).
-    if not mutation_adequacy(mutants, [], [], {})["adequate"]:
-        bad.append("no survivors is adequate")
-
-    # A mutant whose run did not finish is UNDECIDED, and undecided is not caught (section 9.6).
-    # The bound is a property of the harness and the machine, not of the change, so a run that hit
-    # it produced no verdict and nothing may be claimed about it. Recording it as caught asserts a
-    # detection that did not happen, and it fails in the direction that hides the defect.
-    undecided = [{"operator": "comparison_swap", "label": "==->!=@a == b", "reason": "timeout"}]
-    stalled = mutation_adequacy(mutants, [], undecided, {})
-    if stalled["adequate"]:
-        bad.append("a mutant nothing judged is not evidence the suite would catch it")
-    if stalled["caught"] != 0:
-        bad.append(f"an undecided mutant must not be counted as caught: {stalled}")
-    if [u["label"] for u in stalled["undecided"]] != ["==->!=@a == b"]:
-        bad.append(f"an undecided mutant is disclosed by name, with the bound it hit: {stalled}")
-    if stalled["undecided"][0]["reason"] != "timeout":
-        bad.append(f"the reason it went undecided is carried, not dropped: {stalled}")
-
-    # A person who has looked can account for it, and that is what set_aside records. The mutant here
-    # deletes a loop's advance, so it genuinely never halts; declaring that clears the gate. It is
-    # still reported as undecided rather than folded into caught, because it was never caught.
-    excused = mutation_adequacy(mutants, [], undecided, {"==->!=@a == b": "does not terminate"})
-    if not excused["adequate"]:
-        bad.append("a declared non-terminating mutant is accounted for, not left blocking")
-    if excused["caught"] != 0 or not excused["undecided"][0]["declared"]:
-        bad.append(f"a declared undecided mutant stays undecided in the report: {excused}")
-    return bad
-
-
-def _probe_adversarial():
-    """Adversarial neighbour generation (§3.5): the per-class details the example suite cannot easily
-    carry — exact substitutions, the confusable map (every member), the length-extension multipliers
-    and buffer sizes, the control-insertion positions, and the >=2 whitespace split — asserted in
-    Python so the large strings and Unicode escapes stay readable."""
-    from honest_test import adversarial_neighbours
-    from honest_test.adversarial import control_characters, edit_distance_1, length_extensions, unicode_confusables
-
-    bad = []
-
-    # Class 1 edit-distance-1: a deletion, a substitution at position 0, an insertion, and the
-    # whitespace split that only applies to a >= 2-length value.
-    ed = set(edit_distance_1("ab"))
-    if not {"a", "b"} <= ed:
-        bad.append("edit_distance_1 should include single-character deletions")
-    if "xb" not in ed:
-        bad.append("edit_distance_1 should substitute each position (xb from ab)")
-    if "xab" not in ed:
-        bad.append("edit_distance_1 should insert at each position (xab from ab)")
-    if "a b" not in ed:
-        bad.append("a >= 2-length value gets a whitespace split (a b)")
-    if "a b" in set(edit_distance_1("a")):
-        bad.append("a single-character value has no whitespace split")
-
-    # Class 2 confusables: the exact set per character, so every mapped member (and the key) is pinned.
-    # Escapes only — the source stays pure ASCII, the very property adversarial.py defends.
-    expected_confusables = {
-        "a": {"\u0430", "\u0251", "\uff41", "\U0001d41a"},
-        "e": {"\u0435", "\u0113", "\uff45"},
-        "o": {"\u043e", "0", "\u03bf", "\uff4f"},
-        "i": {"\u0456", "\u04cf", "1", "l"},
-    }
-    for char, expected in expected_confusables.items():
-        if set(unicode_confusables(char)) != expected:
-            bad.append(f"unicode_confusables({char!r}) should be exactly {expected}: {set(unicode_confusables(char))}")
-    # The positional replacement uses value[i+1:] (the tail), not value[i+2:]: for "ae" (two
-    # confusable chars), replacing only position 0 yields a-confusable + e, which neither the i+2
-    # slip (which would drop the e) nor the full homoglyph (which also replaces the e) produces.
-    if "\u0430e" not in set(unicode_confusables("ae")):
-        bad.append("a confusable replaces one position and keeps the rest of the value")
-
-    # Class 3 control insertions land at prepend, append, and the midpoint (len//2).
-    ctrl = set(control_characters("ab"))
-    if not {"\x00ab", "ab\x00", "a\x00b"} <= ctrl:
-        bad.append(f"control_characters should prepend, append, and insert at the midpoint: {ctrl & {chr(0) + 'ab', 'ab' + chr(0), 'a' + chr(0) + 'b'}}")
-
-    # Class 4 length extensions: the exact multipliers and the exact buffer sizes.
-    ext = length_extensions("x")
-    if not {"x" * 10, "x" * 100, "x" * 1000} <= set(ext):
-        bad.append(f"length_extensions should multiply by 10/100/1000: {sorted(len(e) for e in ext)}")
-    if not {"x" + "A" * 65535, "x" + "A" * 65536, "x" + "A" * 1048575} <= set(ext):
-        bad.append("length_extensions should pad to the 65535/65536/1048575 buffer sizes")
-
-    # The aggregate de-dupes, sorts, and excludes the value itself.
-    everything = adversarial_neighbours("ab")
-    if "ab" in everything or everything != sorted(everything) or len(everything) != len(set(everything)):
-        bad.append("adversarial_neighbours should exclude the value, sort, and de-duplicate")
-    return bad
-
-
-def _probe_laws():
-    """verify_laws, the generic law runner, eaten by itself: the (law x subject) count and the
-    violation record shape are asserted directly, because run() only DISPLAYS these counts — it does
-    not fail on them, so a miscount would otherwise slip through."""
-    bad = []
-    holds = law("L-OK", "always holds", lambda subject: [])
-    breaks = law("L-BAD", "never holds", lambda subject: [f"broke on {subject}"])
-    subjects = [("a", 1), ("b", 2)]
-
-    clean = verify_laws([holds], subjects)
-    if (clean["passed"], clean["failed"], clean["total"], clean["violations"]) != (2, 0, 2, []):
-        bad.append(f"a law that holds over two subjects: 2 passed, 0 failed, 2 total, no violations: {clean}")
-
-    failed = verify_laws([breaks], subjects)
-    if (failed["passed"], failed["failed"], failed["total"]) != (0, 2, 2):
-        bad.append(f"a law that fails over two subjects: 0 passed, 2 failed, 2 total: {failed}")
-    if failed["violations"][0] != {"law": "L-BAD", "statement": "never holds", "subject": "a", "messages": ["broke on 1"]}:
-        bad.append(f"a violation records law/statement/subject/messages exactly: {failed['violations'][0]}")
-
-    mixed = verify_laws([holds, breaks], subjects)
-    if (mixed["passed"], mixed["failed"], mixed["total"]) != (2, 2, 4):
-        bad.append(f"two laws over two subjects: 2 passed, 2 failed, 4 total: {mixed}")
-    return bad
-
-
-def _probe_isolation():
-    """Boundary isolation (§4.4): io_monitor records I/O without performing it, and
-    verify_boundary_isolation warns a non-boundary link that touched it."""
-    import importlib
-    import os
-
-    from honest_test.isolation import io_finding, io_monitor, io_watch_list, verify_boundary_isolation
-
-    bad = []
-
-    # The pure decision (§4.4): detected + non-boundary -> warning; boundary or none -> honest.
-    if io_finding("write", False, ["builtins.open"]) != {"code": "io_detected", "subject": "write", "message": "Link performed I/O ['builtins.open']; I/O belongs at boundaries. Add boundary=True if intentional."}:
-        bad.append(f"a non-boundary link that performed I/O should warn with the io_detected record: {io_finding('write', False, ['builtins.open'])}")
-    if io_finding("save", True, ["builtins.open"]) is not None:
-        bad.append("a boundary link is exempt from the I/O check")
-    if io_finding("compute", False, []) is not None:
-        bad.append("a link that performed no I/O is honest")
-
-    watch = io_watch_list()
-    if "builtins.open" not in watch or "subprocess.run" not in watch:
-        bad.append(f"the I/O watch list should name the stdlib I/O callables: {watch}")
-
-    # Every watch symbol is patched inside the monitor and restored after — checked without calling it.
-    def resolve(path):
-        module_name, attr = path.rsplit(".", 1)
-        return getattr(importlib.import_module(module_name), attr)
-
-    originals = {path: resolve(path) for path in watch}
-    with io_monitor():
-        for path in watch:
-            if resolve(path) is originals[path]:
-                bad.append(f"{path} was not patched inside the io monitor")
-    for path in watch:
-        if resolve(path) is not originals[path]:
-            bad.append(f"{path} was not restored after the io monitor")
-
-    # The recorder records the call and does NOT perform the I/O (detect without executing). Clean any
-    # leftover first: a broken io_monitor mutant lets the real os.mkdir run, and that directory would
-    # otherwise persist and confound a later run.
-    stray = "/tmp/honest_test_isolation_should_not_exist"
-    if os.path.isdir(stray):
-        os.rmdir(stray)
-    with io_monitor() as detected:
-        os.mkdir(stray)
-    if detected != ["os.mkdir"]:
-        bad.append(f"a trapped I/O call should be recorded, got {detected}")
-    if os.path.isdir(stray):
-        os.rmdir(stray)
-        bad.append("io_monitor must not perform the I/O (no directory should be created)")
-
-    # verify_boundary_isolation: a non-boundary link that opens a file is flagged; a pure link and a
-    # boundary link are clean; a link that faults after a blocked I/O is still flagged on what it attempted.
-    def pure(m):
-        return {**m, "ok": True}
-
-    def writes(m):
-        open("/tmp/honest_test_iso_x")
-        return m
-
-    def faults(m):
-        return open("/tmp/honest_test_iso_y").read()
-
-    def bwrites(m):
-        open("/tmp/honest_test_iso_z")
-        return m
-
-    writes.__honest_link__ = {"boundary": False}
-    faults.__honest_link__ = {"boundary": False}
-    bwrites.__honest_link__ = {"boundary": True}
-
-    if verify_boundary_isolation(pure, {}) is not None:
-        bad.append("a pure link should pass boundary isolation")
-    flagged = verify_boundary_isolation(writes, {})
-    if flagged is None or flagged["code"] != "io_detected":
-        bad.append(f"a non-boundary link that performs I/O should be flagged: {flagged}")
-    after_fault = verify_boundary_isolation(faults, {})
-    if after_fault is None or after_fault["code"] != "io_detected":
-        bad.append(f"a link that faults after a blocked I/O is still flagged: {after_fault}")
-    if verify_boundary_isolation(bwrites, {}) is not None:
-        bad.append("a boundary link is exempt from boundary isolation")
-    return bad
-
-
-def _probe_scaffolding():
-    """BDD step scaffolding (§8.2): scaffold_chain generates a gherkin registry from a chain — given
-    classifies the captured slots, when runs the chain, and the then steps assert ok or a fault code."""
-    from honest_gherkin import parse_feature, run_scenario
-    from honest_type import binding, link, vocabulary
-
-    from honest_test.scaffolding import _given_pattern, _humanize, scaffold_chain
-
-    bad = []
-    if _humanize("create_user_pipeline") != "create user pipeline":
-        bad.append("_humanize should turn underscores into spaces")
-    if _given_pattern("p", ["role", "colour"]) != 'a manifest for p with role "{role}" and colour "{colour}"':
-        bad.append(f"_given_pattern wrong: {_given_pattern('p', ['role', 'colour'])}")
-
-    v = vocabulary({"role": {"admin", "guest"}, "colour": {"blue", "green"}})
-    b = binding({"role": "role", "colour": "colour"})
-
-    @link(accepts=v, binds=b)
-    def accept(m):
-        return {"ok": {**m, "seen": True}}
-
-    @link(accepts=v, binds=b)
-    def reject(m):
-        return {"err": {"code": "unrecognized"}}
-
-    def go(links, feature_text):
-        registry = scaffold_chain("create_user_pipeline", links, v, b, ["role", "colour"])
-        scenario = parse_feature(feature_text, "t.feature")["ok"]["scenarios"][0]
-        report = run_scenario(scenario, [], registry)
-        return report["status"], [r["status"] for r in report["step_results"]]
-
-    given_when = (
-        '    Given a manifest for create user pipeline with role "admin" and colour "blue"\n'
-        "    When the create user pipeline runs\n"
-    )
-    if go([accept], "Feature: X\n\n  Scenario: V\n" + given_when + "    Then the result is ok\n") != ("ok", ["ok", "ok", "ok"]):
-        bad.append("a scaffolded chain returning ok should pass the ok scenario")
-    if go([reject], "Feature: X\n\n  Scenario: R\n" + given_when + '    Then the result has a fault code "unrecognized"\n') != ("ok", ["ok", "ok", "ok"]):
-        bad.append("a scaffolded chain returning a fault should pass the fault scenario")
-    # The then-step assertions genuinely fire: ok fails on a fault, and fault fails on the wrong code.
-    if go([reject], "Feature: X\n\n  Scenario: W\n" + given_when + "    Then the result is ok\n")[0] == "ok":
-        bad.append("the ok assertion should fail when the chain returns a fault")
-    if go([reject], "Feature: X\n\n  Scenario: W\n" + given_when + '    Then the result has a fault code "other"\n')[0] == "ok":
-        bad.append("the fault-code assertion should fail on the wrong code")
-    # then_fault on a non-fault result fails cleanly on the "err" assert (failed), never a KeyError (errored).
-    on_ok = go([accept], "Feature: X\n\n  Scenario: W\n" + given_when + '    Then the result has a fault code "unrecognized"\n')
-    if on_ok[1][2] != "failed":
-        bad.append(f"the 'err' assertion should make then_fault fail (not error) on a non-fault result: {on_ok}")
-    return bad
-
-
-def _probe_http_steps():
-    """Standard protocol-level assertion steps (§8.4): the 23 required HTTP steps run through the
-    gherkin registry against a fake normalized client — each response assertion passes on a match and
-    fails on a mismatch, the request builders and when-senders shape the sent request, and the session
-    steps carry cookies across requests. The pure helpers are exercised directly."""
-    from honest_gherkin import empty_registry, parse_feature, register_step, run_scenario
-    from honest_parse import parse_html, walk
-
-    from honest_test.http_steps import (
-        _charset,
-        _content_type,
-        _element_attr,
-        _element_tag,
-        _html_has_selector,
-        _mime,
-        _open_tag,
-        _parse_selector,
-        _selector_matches,
-        register_http_steps,
-    )
-
-    bad = []
-
-    # --- pure helpers ---
-    html = {"headers": {"content-type": "text/html; charset=utf-8"}}
-    if _content_type(html) != "text/html; charset=utf-8" or _content_type({"headers": {}}) != "":
-        bad.append("_content_type")
-    if _mime(html) != "text/html":
-        bad.append("_mime")
-    if _charset(html) != "utf-8" or _charset({"headers": {"content-type": "text/plain"}}) != "":
-        bad.append("_charset")
-    if _charset({"headers": {"content-type": "text/html; boundary=z; charset=utf-8"}}) != "utf-8":
-        bad.append("_charset should skip a non-charset parameter")
-    if _parse_selector("div#main.card.wide") != ("div", "main", ["card", "wide"]):
-        bad.append(f"_parse_selector: {_parse_selector('div#main.card.wide')}")
-    if not _html_has_selector(b'<div id="main" class="card">x</div>', "div#main.card"):
-        bad.append("selector should match tag+id+class")
-    if _html_has_selector(b"<span>x</span>", "div") or _html_has_selector(b'<div id="o">x</div>', "#main") or _html_has_selector(b'<div class="a">x</div>', ".b"):
-        bad.append("selector should not match a wrong tag/id/class")
-    if not _html_has_selector(b'<img id="logo"/>', "#logo"):
-        bad.append("selector should match a self-closing element (exercises the self_closing_tag branch)")
-    root = parse_html(b'<div id="main" class="c">x</div>').root_node
-    element = next(n for n in walk(root) if n.type == "element")
-    src = b'<div id="main" class="c">x</div>'
-    if _element_tag(element, src) != "div" or _element_attr(element, "id", src) != "main" or _element_attr(element, "nope", src) is not None:
-        bad.append("_element_tag / _element_attr")
-    if _open_tag(root) is not None or _element_tag(root, b"") is not None or _element_attr(root, "id", b"") is not None:
-        bad.append("_open_tag / _element_tag / _element_attr of a non-element should be None")
-
-    # --- steps through the registry against a fake client ---
-    box = {"response": None, "request": None}
-
-    def client(method, path, request):
-        box["request"] = {"method": method, "path": path, "request": request}
-        return box["response"]
-
-    def seed(context):
-        return {**context, "client": client, "schemas": {"user": lambda d: "id" in d}}
-
-    registry = register_step(register_http_steps(empty_registry()), "given", "the client is ready", seed)
-    ok_response = {
-        "status": 200,
-        "headers": {"content-type": "text/html; charset=utf-8", "location": "/next"},
-        "body": b'<div id="main" class="card">hi</div>',
-        "cookies": {"session": {"value": "abc", "attributes": {"HttpOnly": "", "Max-Age": 3600}}},
-    }
-
-    def run(response, steps):
-        box["response"] = response
-        feature = 'Feature: F\n\n  Scenario: S\n    Given the client is ready\n    When a GET request is sent to "/x"\n' + steps
-        scenario = parse_feature(feature, "t.feature")["ok"]["scenarios"][0]
-        return run_scenario(scenario, [], registry)["status"]
-
-    # Each response assertion: a match passes, a mismatch fails (so the assert genuinely fires).
-    passes = [
-        "the response status is 200",
-        "the response status is in 2xx",
-        'the response Content-Type is "text/html"',
-        'the response charset is "utf-8"',
-        'the response header "location" equals "/next"',
-        'the response has no header "x-missing"',
-        'the response body bytes equal "plain body"',
-        "the response body is JSON conforming to user",
-        'the response body is HTML containing the selector "div#main.card"',
-        'the response sets cookie "session" with value "abc"',
-        'the response cookie "session" has attribute "HttpOnly"',
-        "the response cookie \"session\" has Max-Age 3600",
-        'the response location is "/next"',
-    ]
-    fails = [
-        "the response status is 404",
-        "the response status is in 5xx",
-        'the response Content-Type is "text/plain"',
-        'the response charset is "latin-1"',
-        'the response header "location" equals "/wrong"',
-        'the response has no header "location"',
-        'the response body bytes equal "other"',
-        "the response body is JSON conforming to user",
-        'the response body is HTML containing the selector "span"',
-        'the response sets cookie "session" with value "zzz"',
-        'the response cookie "session" has attribute "Secure"',
-        "the response cookie \"session\" has Max-Age 1",
-        'the response location is "/elsewhere"',
-    ]
-    json_response = {**ok_response, "body": b'{"id": 1}'}
-    json_fail_response = {**ok_response, "body": b"{}"}
-    bytes_response = {**ok_response, "body": b"plain body"}
-
-    def _pass_response(step):
-        if "JSON" in step:
-            return json_response
-        return bytes_response if "body bytes" in step else ok_response
-
-    def _fail_response(step):
-        if "JSON" in step:
-            return json_fail_response
-        return bytes_response if "body bytes" in step else ok_response
-
-    for step in passes:
-        if run(_pass_response(step), "    Then " + step + "\n") != "ok":
-            bad.append(f"the passing HTTP assertion should hold: {step}")
-    for step in fails:
-        if run(_fail_response(step), "    Then " + step + "\n") == "ok":
-            bad.append(f"the failing HTTP assertion should be caught: {step}")
-
-    # Chained assertion then-steps thread the context, so each non-last then-handler's return is used by
-    # the next (dropping a return then breaks the chain). Response-specific bodies get their own chain.
-    ok_chain = "".join(
-        "    Then " + s + "\n"
-        for s in [
-            "the response status is 200",
-            "the response status is in 2xx",
-            'the response Content-Type is "text/html"',
-            'the response charset is "utf-8"',
-            'the response header "location" equals "/next"',
-            'the response has no header "x-missing"',
-            'the response location is "/next"',
-            'the response body is HTML containing the selector "div#main.card"',
-            'the response sets cookie "session" with value "abc"',
-            'the response cookie "session" has attribute "HttpOnly"',
-            "the response cookie \"session\" has Max-Age 3600",
-            "the response status is 200",
-        ]
-    )
-    if run(ok_response, ok_chain) != "ok":
-        bad.append("chained assertion then-steps should each thread the context forward")
-    if run(bytes_response, '    Then the response body bytes equal "plain body"\n    Then the response status is 200\n') != "ok":
-        bad.append("the body-bytes then should thread the context forward")
-    if run(json_response, "    Then the response body is JSON conforming to user\n    Then the response status is 200\n") != "ok":
-        bad.append("the JSON then should thread the context forward")
-    # A status just below a hundred boundary distinguishes // 100 from any nearby divisor.
-    if run({**ok_response, "status": 199}, "    Then the response status is in 1xx\n") != "ok":
-        bad.append("status 199 should be in the 1xx class")
-    if run({**ok_response, "status": 199}, "    Then the response status is in 2xx\n") == "ok":
-        bad.append("status 199 should not be in the 2xx class")
-
-    # Request builders and when-senders shape the request the client receives. The status is checked so a
-    # dropped context-thread (a builder that stops returning the request) breaks the scenario observably.
-    def sent(steps):
-        box["response"] = ok_response
-        box["request"] = None
-        feature = "Feature: F\n\n  Scenario: S\n    Given the client is ready\n" + steps
-        scenario = parse_feature(feature, "t.feature")["ok"]["scenarios"][0]
-        status = run_scenario(scenario, [], registry)["status"]
-        return status, box["request"]
-
-    status, built = sent(
-        '    Given a request with header "X-Token" = "t"\n'
-        '    Given a request with cookie "c" = "1"\n'
-        '    Given a request with Content-Type "application/json"\n'
-        '    Given a request with body "seed"\n'
-        '    When a POST request is sent to "/p" with body "hello"\n'
-    )
-    if status != "ok" or built is None or built["method"] != "POST" or built["path"] != "/p" or built["request"]["body"] != b"hello":
-        bad.append(f"POST send should carry the method, path, and body: {status} {built}")
-    if built["request"]["headers"].get("X-Token") != "t" or built["request"]["cookies"].get("c") != "1" or built["request"]["content_type"] != "application/json":
-        bad.append(f"request builders should shape the request: {built}")
-    get_status, get_sent = sent('    Given a request with body "b"\n    When a GET request is sent to "/g"\n')
-    if get_status != "ok" or get_sent["method"] != "GET" or get_sent["request"]["body"] != b"b":
-        bad.append(f"GET send should use the GET method and carry the built body: {get_sent}")
-    delete_status, delete_sent = sent('    When a DELETE request is sent to "/d"\n')
-    if delete_status != "ok" or delete_sent["method"] != "DELETE":
-        bad.append("DELETE send should use the DELETE method")
-
-    # Session steps: cookies carry from a response into the next request; shared-session assertion.
-    reuse_status, reused = sent(
-        '    When a GET request is sent to "/first"\n'
-        "    When the previous response's Set-Cookie is used as the next request's Cookie\n"
-        '    When a GET request is sent to "/second"\n'
-    )
-    if reuse_status != "ok" or reused["request"]["cookies"].get("session") != "abc":
-        bad.append(f"reuse_set_cookie should carry the response cookies into the next request: {reused}")
-    session_status, reused2 = sent(
-        '    When a GET request is sent to "/first"\n'
-        "    When the session from the previous response is reused\n"
-        '    When a GET request is sent to "/second"\n'
-    )
-    if session_status != "ok" or reused2["request"]["cookies"].get("session") != "abc":
-        bad.append("reuse_session should carry the session cookie into the next request")
-    share = 'Feature: F\n\n  Scenario: S\n    Given the client is ready\n    When a GET request is sent to "/a"\n    When a GET request is sent to "/b"\n    Then the response and the previous response share the same session cookie value\n    Then the response status is 200\n'
-    box["response"] = ok_response
-    if run_scenario(parse_feature(share, "t.feature")["ok"]["scenarios"][0], [], registry)["status"] != "ok":
-        bad.append("share_session should hold when both responses carry the same session cookie")
-
-    # share_session fails when the two responses carry different session cookies (the assertion fires).
-    def per_path_client(method, path, request):
-        return {**ok_response, "cookies": {"session": {"value": path, "attributes": {}}}}
-
-    def seed_per_path(context):
-        return {**context, "client": per_path_client, "schemas": {}}
-
-    reg2 = register_step(register_http_steps(empty_registry()), "given", "the client is ready", seed_per_path)
-    if run_scenario(parse_feature(share, "t.feature")["ok"]["scenarios"][0], [], reg2)["status"] == "ok":
-        bad.append("share_session should fail when the two responses carry different session cookies")
-    return bad
-
-
-def _probe_testbody():
-    """test_body_violations (section 4.8): flags runtime rebinding in a test body — the monkeypatch
-    fixture, mock.patch / patch.object, setattr on an imported symbol, and a direct attribute assignment
-    on an imported symbol — and leaves honest tests and local mutation alone. Cases cover every rebind
-    construct, the clean paths, the import forms that define the imported-symbol scope, and the exact
-    rejection message and recorded line."""
-    from honest_test.testbody import test_body_violations
-
-    # The expected message is written out here, not imported from testbody, so that emptying any part of
-    # the module's own constant is caught (comparing against the imported constant would mutate both sides).
-    expected_message = (
-        "This test rebinds a call target at runtime, so it exercises a different call graph than production. "
-        "Pass the dependency as a parameter (config-as-parameters, I/O at the boundary) and assert on the pure "
-        "function, or inject a boundary plug as an argument."
-    )
-    bad = []
-    flagged = [
-        ("monkeypatch fixture", "def test_t(monkeypatch):\n    monkeypatch.setattr(mod, 'fn', lambda: 1)\n"),
-        ("mock.patch context manager", "from unittest import mock\ndef test_t():\n    with mock.patch('m.f'):\n        pass\n"),
-        ("bare patch", "from unittest.mock import patch\ndef test_t():\n    patch('m.f')\n"),
-        ("patch.object", "from unittest.mock import patch\ndef test_t():\n    patch.object(o, 'm')\n"),
-        ("setattr on an imported symbol", "import mod\ndef test_t():\n    setattr(mod, 'fn', lambda: 1)\n"),
-        ("attribute assignment on an imported module", "import mod\ndef test_t():\n    mod.fn = lambda: 1\n"),
-        ("attribute assignment on an aliased import", "import pkg.sub as ps\ndef test_t():\n    ps.fn = lambda: 1\n"),
-        ("attribute assignment on a dotted import", "import pkg.sub\ndef test_t():\n    pkg.fn = lambda: 1\n"),
-        ("attribute assignment on a from-imported name", "from p import fn\ndef test_t():\n    fn.attr = 1\n"),
-    ]
-    clean = [
-        ("attribute assignment on a from-import module", "from mod import fn\ndef test_t():\n    mod.g = 1\n"),
-        (".object() on a non-patch object", "def test_t():\n    d.object()\n"),
-        ("setattr on a local object", "def test_t():\n    obj = T()\n    setattr(obj, 'x', 1)\n"),
-        ("a plain call", "def test_t():\n    helper(x)\n"),
-        ("a call with no arguments", "def test_t():\n    run()\n"),
-        ("constructing a local object", "def test_t():\n    obj = T()\n"),
-        ("attribute assignment on a local object", "def test_t():\n    obj = T()\n    obj.field = 5\n"),
-        ("nested attribute assignment on a local", "def test_t():\n    a.b.c = 1\n"),
-        ("rebinding a from-imported name locally", "from p import fn\ndef test_t():\n    fn = 1\n"),
-        ("a star import then an honest call", "from x import *\ndef test_t():\n    helper()\n"),
-        ("injecting a dependency as a parameter", "def test_t():\n    def injected():\n        return 0\n    assert compute(now=injected) == 0\n"),
-    ]
-    for label, src in flagged:
-        if not test_body_violations(src):
-            bad.append(f"a rebind by {label} must be flagged: {src!r}")
-    for label, src in clean:
-        if test_body_violations(src):
-            bad.append(f"an honest test — {label} — must not be flagged: {src!r}")
-
-    reported = test_body_violations("import mod\ndef test_t():\n    mod.fn = lambda: 1\n")
-    if not reported or reported[0].get("message") != expected_message:
-        bad.append(f"the rejection message must be the section 4.8 text: {reported}")
-    if not reported or reported[0].get("line") != 3:
-        bad.append(f"the violation records the 1-based line of the rebind: {reported}")
-    if not reported or "col" not in reported[0]:
-        bad.append(f"the violation records the column of the rebind: {reported}")
-    return bad
-
-
-def _probe_pytest_plugin():
-    """The section 4.8 collection-time boundary (honest_test.pytest_plugin): rebind_report formats the
-    violations, and pytest_pycollect_makemodule fails a rebinding test module's collection (a CollectError)
-    while letting an honest one build normally. The hook is exercised through a stand-in module path whose
-    read_text returns the source, so no live pytest run is needed."""
-    import pytest
-
-    from honest_test.pytest_plugin import pytest_pycollect_makemodule, rebind_report
-
-    bad = []
-    if rebind_report([]) is not None:
-        bad.append("rebind_report returns None when there are no violations")
-    one = rebind_report([{"line": 3, "col": 5, "message": "M"}])
-    expected_one = "honest-test 4.8 — this test rebinds a call target at runtime, so it does not exercise the production call graph. line 3: M"
-    if one != expected_one:
-        bad.append(f"rebind_report names the single rebinding site exactly: {one!r}")
-    two = rebind_report([{"line": 3, "col": 5, "message": "A"}, {"line": 5, "col": 1, "message": "B"}])
-    if two != "honest-test 4.8 — this test rebinds a call target at runtime, so it does not exercise the production call graph. line 3: A; line 5: B":
-        bad.append(f"rebind_report joins multiple sites with '; ': {two!r}")
-
-    def module_path(source):
-        # read_text yields the source only when asked for utf-8, so the hook is verified to pass that
-        # encoding; a wrong encoding yields empty source (no violations) and the assertions below catch it.
-        return type("P", (), {"read_text": lambda self, encoding=None: source if encoding == "utf-8" else ""})()
-
-    if pytest_pycollect_makemodule(module_path("def test_t():\n    assert f(1) == 1\n"), None) is not None:
-        bad.append("an honest test module must be built normally (the hook returns None)")
-    try:
-        pytest_pycollect_makemodule(module_path("import mod\ndef test_t():\n    mod.fn = lambda: 1\n"), None)
-        bad.append("a rebinding test module must fail collection")
-    except pytest.Collector.CollectError:
-        pass
-    return bad
-
-
-def _probe_plugin_import_cost():
-    """The plugin is loaded by pytest in EVERY process where honest-test is installed, so importing
-    it must not drag the package's whole surface in with it. A heavy import here does not break our
-    tests, it breaks collection for every unrelated project sharing that environment: one missing
-    dependency anywhere under honest_test takes pytest down for all of them. The probe imports the
-    plugin in a fresh interpreter and asks which of our modules came along."""
-    import subprocess
-    import sys
-
-    bad = []
-    script = (
-        "import sys\n"
-        "import honest_test.pytest_plugin\n"
-        "print(','.join(sorted(m for m in sys.modules if m.startswith(('honest_type', 'honest_gherkin', 'honest_check')))))\n"
-    )
-    run = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
-    if run.returncode != 0:
-        return [f"importing honest_test.pytest_plugin failed: {run.stderr.strip().splitlines()[-1:]}"]
-    dragged = [m for m in run.stdout.strip().split(",") if m]
-    if dragged:
-        bad.append(
-            "importing the plugin pulled in sibling packages, so a missing one fails collection "
-            f"for every project in the environment: {sorted(set(m.split('.')[0] for m in dragged))}"
-        )
-
-    # The lazy surface itself: __dir__ lists every public name without importing one, and
-    # __getattr__ resolves a real name and refuses an absent one by name.
-    from importlib import import_module
-
-    import honest_test
-    from honest_test import _EXPORTS
-
-    # The count is the anchor. A key swapped to a sibling's makes a duplicate, Python keeps the
-    # last, and the table quietly loses a name — invisible to any check that iterates the table
-    # itself. Same bijection idiom the feature gate uses: the number IS the measure.
-    if len(_EXPORTS) != 72:
-        bad.append(f"the export table holds {len(_EXPORTS)} names, expected 72")
-
-    listed = honest_test.__dir__()
-    if listed != sorted(honest_test.__all__):
-        bad.append("__dir__ must list exactly the public names")
-    # Every row of the table, not a sample: a key pointing at a sibling module would still
-    # import cleanly and hand back the wrong object, or none at all.
-    for name in honest_test.__all__:
-        defining = import_module(_EXPORTS[name])
-        if not hasattr(defining, name):
-            bad.append(f"_EXPORTS maps {name!r} to {_EXPORTS[name]!r}, which does not define it")
-        elif getattr(honest_test, name) is not getattr(defining, name):
-            bad.append(f"__getattr__({name!r}) did not return the object {_EXPORTS[name]} defines")
-    try:
-        honest_test.no_such_export
-        bad.append("an absent name must raise AttributeError")
-    except AttributeError as exc:
-        if "no_such_export" not in str(exc):
-            bad.append(f"the AttributeError must name the attribute: {exc}")
-    return bad
-
-
-def _probe_suite_runner():
-    """The §11 orchestrating runner (honest_test.runner): run_chain wires enumeration -> execution ->
-    adversarial -> honesty -> chain contracts over live objects into one result record; run_state_machine
-    does the same for a machine; compute_totals folds the records; format_report renders the §11 report.
-    Live fixture chains and a live machine are built here and the runner is exercised on them."""
-    from honest_test.runner import compute_totals, format_report, run_chain, run_state_machine
-
-    bad = []
-
-    run_vocab = vocabulary({"greeting": {"hi", "hey"}, "lang": {"en", "fr"}})
-    run_bind = binding({"greeting": "greeting", "lang": "lang"})
-
-    @link()
-    def link_a(manifest):
-        return ok(manifest)
-
-    @link()
-    def link_b(manifest):
-        return ok({**manifest, "seen": True})
-
-    @link(boundary=True)
-    def link_write(manifest):
-        return ok(manifest)
-
-    @link(boundary=True)
-    def link_write2(manifest):
-        return ok(manifest)
-
-    pure = run_chain("greet_pipeline", [link_a, link_b], run_vocab, run_bind)
-    if pure["link_count"] != 2:
-        bad.append(f"greet_pipeline: 2 links, got {pure['link_count']}")
-    if pure["permutations"] != 4:
-        bad.append(f"greet_pipeline: 4 permutations (2x2), got {pure['permutations']}")
-    if pure["passed"] != 4:
-        bad.append(f"greet_pipeline: all 4 permutations pass, got {pure['passed']}")
-    if not (pure["honesty"]["purity"] and pure["honesty"]["mutation"] and pure["honesty"]["idempotency"] is True):
-        bad.append(f"greet_pipeline: pure links must be honest, got {pure['honesty']}")
-    if pure["honesty"]["boundary"]:
-        bad.append(f"greet_pipeline: no boundary links, got {pure['honesty']['boundary']}")
-    if not pure["contracts_ok"]:
-        bad.append("greet_pipeline: chain contracts must hold")
-    if pure["adversarial_total"] <= 0 or pure["adversarial_rejected"] != pure["adversarial_total"]:
-        bad.append(f"greet_pipeline: every near-miss rejected, got {pure['adversarial_rejected']}/{pure['adversarial_total']}")
-    if pure["honesty"]["honest"] != ["link_a", "link_b"]:
-        bad.append(f"greet_pipeline: both pure links verified honest, got {pure['honesty']['honest']}")
-
-    boundary_chain = run_chain("write_pipeline", [link_a, link_write], run_vocab, run_bind)
-    if boundary_chain["honesty"]["boundary"] != ["link_write"]:
-        bad.append(f"write_pipeline: boundary link named, got {boundary_chain['honesty']['boundary']}")
-    if boundary_chain["honesty"]["idempotency"] != "exempt":
-        bad.append(f"write_pipeline: boundary chain is idempotency-exempt (§4.3), got {boundary_chain['honesty']['idempotency']}")
-
-    if boundary_chain["honesty"]["honest"] != ["link_a"]:
-        bad.append(f"write_pipeline: only the non-boundary link is counted honest, got {boundary_chain['honesty']['honest']}")
-
-    two_boundary = run_chain("two_boundary_pipeline", [link_write, link_write2], run_vocab, run_bind)
-    if two_boundary["honesty"]["boundary"] != ["link_write", "link_write2"]:
-        bad.append(f"two_boundary_pipeline: boundary links named in order, got {two_boundary['honesty']['boundary']}")
-    if two_boundary["honesty"]["honest"] != []:
-        bad.append(f"two_boundary_pipeline: boundary links are not counted honest, got {two_boundary['honesty']['honest']}")
-
-    # Dishonest fixtures drive the failure-detection paths (§4.1/4.2/4.3) and the report's non-pass rendering.
-    scratch = {"n": 0}
-
-    @link()
-    def link_impure(manifest):
-        scratch["n"] += 1
-        return ok({**manifest, "count": scratch["n"]})
-
-    @link()
-    def link_mutates(manifest):
-        manifest["mutated"] = True
-        return ok(manifest)
-
-    impure = run_chain("impure_pipeline", [link_impure], run_vocab, run_bind)
-    if impure["honesty"]["purity"] is not False:
-        bad.append(f"impure_pipeline: impurity must be caught, got purity={impure['honesty']['purity']}")
-    if impure["honesty"]["idempotency"] is not False:
-        bad.append(f"impure_pipeline: non-idempotence must be caught, got {impure['honesty']['idempotency']}")
-    if impure["honesty"]["honest"] != []:
-        bad.append(f"impure_pipeline: an impure link is not counted honest, got {impure['honesty']['honest']}")
-
-    mutating = run_chain("mutating_pipeline", [link_mutates], run_vocab, run_bind)
-    if mutating["honesty"]["mutation"] is not False:
-        bad.append(f"mutating_pipeline: input mutation must be caught, got mutation={mutating['honesty']['mutation']}")
-    if mutating["honesty"]["honest"] != []:
-        bad.append(f"mutating_pipeline: a mutating link is not counted honest, got {mutating['honesty']['honest']}")
-
-    # A producer with a declared accepts vocabulary followed by a consumer that server-faults on its
-    # output breaks the chain contract (§4.6) and fails every permutation - the FAIL and BROKEN paths.
-    contract_vocab = vocabulary({"greeting": {"hi", "hey"}})
-    contract_bind = binding({"greeting": "greeting"})
-
-    @link(accepts=contract_vocab, binds=contract_bind)
-    def producer(manifest):
-        return ok(manifest)
-
-    @link()
-    def bad_consumer(manifest):
-        return {"err": fault("boom", "producer output rejected", "server")}
-
-    broken = run_chain("broken_pipeline", [producer, bad_consumer], contract_vocab, contract_bind)
-    if broken["contracts_ok"]:
-        bad.append("broken_pipeline: a server-fault consumer must break the chain contract")
-    if broken["passed"] != 0 or broken["permutations"] != 2:
-        bad.append(f"broken_pipeline: every permutation fails, got {broken['passed']}/{broken['permutations']}")
-
-    # A chain where the second link faults unless it received the first link's output pins the manifest
-    # threading: run_chain must feed each link the previous link's result, not the original manifest.
-    @link()
-    def adder(manifest):
-        return ok({**manifest, "token": "ok"})
-
-    @link()
-    def needs_token(manifest):
-        return ok(manifest) if manifest.get("token") == "ok" else {"err": fault("no_token", "missing token", "server")}
-
-    threaded = run_chain("threaded_pipeline", [adder, needs_token], run_vocab, run_bind)
-    if threaded["passed"] != threaded["permutations"]:
-        bad.append(f"threaded_pipeline: each link receives the previous link's output, got {threaded['passed']}/{threaded['permutations']}")
-
-    machine = state_machine(
-        states={"idle", "running", "done"},
-        events={"start", "finish"},
-        transitions={("idle", "start"): "running", ("running", "finish"): "done"},
-        initial="idle",
-        terminal=["done"],
-    )
-    sm = run_state_machine("order_machine", machine)
-    if sm["states"] != 3 or sm["events"] != 2 or sm["transitions"] != 2:
-        bad.append(f"order_machine: 3 states / 2 events / 2 transitions, got {sm}")
-    if sm["valid_total"] != 2 or sm["valid_passed"] != sm["valid_total"]:
-        bad.append(f"order_machine: 2/2 valid transitions, got {sm['valid_passed']}/{sm['valid_total']}")
-    if sm["invalid_total"] <= 0 or sm["invalid_rejected"] != sm["invalid_total"]:
-        bad.append(f"order_machine: every invalid transition rejected, got {sm['invalid_rejected']}/{sm['invalid_total']}")
-    if sm["adversarial_total"] <= 0 or sm["adversarial_rejected"] != sm["adversarial_total"]:
-        bad.append(f"order_machine: every adversarial state/event token rejected, got {sm['adversarial_rejected']}/{sm['adversarial_total']}")
-
-    # A machine with no events has no state/event tokens to perturb (§5.3): the adversarial total is 0.
-    degenerate = state_machine(states={"only"}, events=set(), transitions={}, initial="only", terminal=["only"])
-    sm_degenerate = run_state_machine("degenerate_machine", degenerate)
-    if sm_degenerate["adversarial_total"] != 0:
-        bad.append(f"degenerate_machine: no events means no adversarial tokens, got {sm_degenerate['adversarial_total']}")
-
-    results = [pure, boundary_chain, sm]
-    totals = compute_totals(results)
-    if totals["permutations"] != 8 or totals["failures"] != 0:
-        bad.append(f"totals: 8 permutations / 0 failures, got {totals}")
-
-    # Exact §11 rendering: a single honest chain locks the header, the block, the footer, and every
-    # join; the variant assertions below lock the fail/exempt/boundary/broken/state-machine lines.
-    # Adversarial counts are read back from the record, so the oracle asserts structure, not a magic
-    # number that would make the test brittle to the near-miss generators.
-    adv, rej = pure["adversarial_total"], pure["adversarial_rejected"]
-    expected_pure = "\n".join([
-        "honest-test v0.1.0",
-        "Scanning src/ for chains...",
-        "",
-        "Found 1 chains, 2 links, 1 vocabularies",
-        "",
-        "greet_pipeline (2 links)",
-        "  Vocabulary: greeting(2) × lang(2)",
-        "  Permutations: 4",
-        "  Running... 4/4 PASS",
-        f"  Adversarial: {adv:,} near-miss inputs, {rej:,} rejected",
-        "  Honesty: purity ✓  mutation ✓  idempotency ✓",
-        "  Chain contracts: all outputs accepted by downstream links",
-        "",
-        "",
-        "Total: 4 permutations tested, 0 failures",
-        f"       {adv:,} adversarial inputs, {rej:,} rejected",
-        "       2/2 links verified honest (0 declared boundary)",
-        "       0/0 BDD scenarios PASS",
-    ])
-    if format_report([pure]) != expected_pure:
-        bad.append(f"format_report([pure]) exact mismatch: {format_report([pure])!r}")
-    if "  Honesty: purity ✗  mutation ✓  idempotency ✗" not in format_report([impure]):
-        bad.append("format_report: an impure chain renders failed purity/idempotency marks exactly")
-    if "  Honesty: purity ✓  mutation ✓  idempotency n/a (boundary)  boundary: link_write (expected)" not in format_report([boundary_chain]):
-        bad.append("format_report: a boundary chain renders the exempt idempotency and boundary line exactly")
-    if "  boundary: link_write, link_write2 (expected)" not in format_report([two_boundary]):
-        bad.append(f"format_report: multiple boundary links are comma-joined: {format_report([two_boundary])!r}")
-
-    # A boundary chain contributes its declared boundary to the footer's honest/total accounting.
-    if "       1/2 links verified honest (1 declared boundary)" not in format_report([boundary_chain]):
-        bad.append(f"format_report: the footer counts honest and boundary links: {format_report([boundary_chain])!r}")
-
-    broken_report = format_report([broken])
-    if "  Running... 0/2 FAIL" not in broken_report:
-        bad.append(f"format_report: a failing permutation renders FAIL exactly: {broken_report!r}")
-    if "  Chain contracts: BROKEN" not in broken_report:
-        bad.append(f"format_report: a broken contract renders BROKEN exactly: {broken_report!r}")
-
-    # A chain with a developer feature file renders the BDD line and contributes to the footer total.
-    bdd_record = {**pure, "bdd": {"feature": "features/greet_pipeline.feature", "passed": 2, "total": 3}}
-    bdd_report = format_report([bdd_record])
-    if "  BDD: features/greet_pipeline.feature — 2/3 scenarios PASS" not in bdd_report:
-        bad.append(f"format_report: a chain with a feature renders the BDD line: {bdd_report!r}")
-    if "       2/3 BDD scenarios PASS" not in bdd_report:
-        bad.append(f"format_report: the footer sums BDD scenarios: {bdd_report!r}")
-
-    sm_adv = sm["adversarial_total"]
-    sm_block = "\n".join([
-        "order_machine (state machine)",
-        "  States: 3, Events: 2, Transitions: 2",
-        "  Valid transitions: 2/2 PASS",
-        "  Invalid transitions: 4/4 correctly rejected",
-        f"  Adversarial: {sm_adv:,} near-miss state/event tokens, {sm_adv:,} rejected",
-    ])
-    if sm_block not in format_report([sm]):
-        bad.append(f"format_report([sm]) block mismatch: {format_report([sm])!r}")
-
-    return bad
-
-
-_FIXTURE_APP = (
-    "from honest_type import binding, chain, link, ok, state_machine, vocabulary\n"
-    "\n"
-    "vocab = vocabulary({'greeting': {'hi', 'hey'}})\n"
-    "bind = binding({'greeting': 'greeting'})\n"
-    "\n"
-    "@link(accepts=vocab, binds=bind)\n"
-    "def step_one(manifest):\n"
-    "    return ok(manifest)\n"
-    "\n"
-    "@link()\n"
-    "def step_two(manifest):\n"
-    "    return ok(manifest)\n"
-    "\n"
-    "@link()\n"
-    "def nostep(manifest):\n"
-    "    return ok(manifest)\n"
-    "\n"
-    "@link(accepts=vocab, binds=bind)\n"
-    "def step_three(manifest):\n"
-    "    return ok(manifest)\n"
-    "\n"
-    "pipeline = chain(step_one, step_two)\n"
-    "bare = chain(nostep)\n"
-    "other = chain(step_three)\n"
-    "flow = state_machine(states={'idle', 'running'}, events={'start'}, transitions={('idle', 'start'): 'running'}, initial='idle', terminal=['running'])\n"
-)
-
-_FIXTURE_BROKEN = (
-    "from honest_type import binding, chain, fault, link, ok, vocabulary\n"
-    "v = vocabulary({'g': {'x', 'y'}})\n"
-    "b = binding({'g': 'g'})\n"
-    "@link(accepts=v, binds=b)\n"
-    "def prod(manifest):\n"
-    "    return ok(manifest)\n"
-    "@link()\n"
-    "def broke(manifest):\n"
-    "    return {'err': fault('boom', 'server faulted', 'server')}\n"
-    "brokenpipe = chain(prod, broke)\n"
-)
-
-
-def _live_module(source):
-    """The live module a real import would produce: exec binds the same names run_suite's injected
-    import returns, so discover binds chains and machines to real honest_type objects."""
-    import types
-
-    namespace = {}
-    exec(source, namespace)
-    return types.SimpleNamespace(**{k: v for k, v in namespace.items() if not k.startswith("__")})
-
-
-def _probe_runner_discovery():
-    """The discovery + orchestration boundary (honest_test.runner): discover reads honest-check's
-    declaration graph for a file's chains and machines and binds them to the live objects an injected
-    import returns; run_suite scans, verifies, emits the section-11 report, names untestable chains,
-    and writes coverage.json - every boundary injected. _chain_ok and all_passed decide the exit."""
-    import json
-
-    from honest_test.runner import _chain_ok, all_passed, discover, run_suite
-
-    bad = []
-    module = _live_module(_FIXTURE_APP)
-
-    def walk(src_dir):
-        return ["app.py"]
-
-    def read(path):
-        return _FIXTURE_APP.encode("utf-8")
-
-    def import_module(path):
-        return module
-
-    discovered = discover("src", walk, read, import_module)
-    if [c["name"] for c in discovered["chains"]] != ["pipeline", "other"]:
-        bad.append(f"discover: the testable chains are pipeline and other, got {[c['name'] for c in discovered['chains']]}")
-    if discovered["untestable"] != ["bare"]:
-        bad.append(f"discover: the vocab-less chain is untestable, got {discovered['untestable']}")
-    if [m["name"] for m in discovered["machines"]] != ["flow"]:
-        bad.append(f"discover: the machine is flow, got {[m['name'] for m in discovered['machines']]}")
-    found = discovered["chains"][0]
-    if [link.__name__ for link in found["links"]] != ["step_one", "step_two"]:
-        bad.append(f"discover: pipeline binds live links in order, got {[link.__name__ for link in found['links']]}")
-    if found["vocab"] is not module.vocab:
-        bad.append("discover: pipeline's vocabulary is its first link's accepts vocabulary")
-    if found["bind"] is not module.bind:
-        bad.append("discover: pipeline's binding is its first link's binding")
-
-    emitted = []
-    written = {}
-
-    def run_feature(chain):
-        name = chain["name"]
-        return {"feature": f"features/{name}.feature", "passed": 2, "total": 2} if name == "pipeline" else None
-
-    def emit(text):
-        emitted.append(text)
-
-    def write(path, text):
-        written[path] = text
-
-    status = run_suite("src", walk, read, import_module, run_feature, emit, write, "2026-01-01T00:00:00Z")
-    if status != 0:
-        bad.append(f"run_suite: a clean fixture passes, got exit {status}")
-    report = "\n".join(emitted)
-    for needle in ("pipeline (2 links)", "flow (state machine)",
-                   "BDD: features/pipeline.feature — 2/2 scenarios PASS",
-                   "skipped (no input vocabulary declared): bare"):
-        if needle not in report:
-            bad.append(f"run_suite report missing {needle!r}: {report!r}")
-    if "coverage.json" not in written:
-        bad.append("run_suite: coverage.json is written")
-    else:
-        cov = json.loads(written["coverage.json"])
-        if cov["version"] != "1.0" or cov["timestamp"] != "2026-01-01T00:00:00Z":
-            bad.append(f"run_suite: coverage.json carries the version and timestamp: {cov}")
-        if "pipeline" not in cov["vocabularies"] or "pipeline" not in cov["honesty"]:
-            bad.append(f"run_suite: coverage.json records the chain: {cov}")
-        # The chains entry is the §9.2 fault coverage: the fixture links have no fault exits, so the
-        # input-reachable count is 0, nothing is exercised (pct 100 by the nothing-to-cover rule), and
-        # no exit is unreachable.
-        if cov["chains"].get("pipeline") != {"fault_paths": 0, "exercised": 0, "pct": 100, "unreachable": []}:
-            bad.append(f"run_suite: coverage.json chains entry is the fault coverage with disclosed unreachable exits: {cov['chains']}")
-        if "flow" not in cov["state_machines"]:
-            bad.append(f"run_suite: coverage.json records the state machine: {cov}")
-
-    broken_module = _live_module(_FIXTURE_BROKEN)
-    broken_status = run_suite("src", lambda d: ["b.py"], lambda p: _FIXTURE_BROKEN.encode("utf-8"),
-                              lambda p: broken_module, lambda n: None, lambda t: None, lambda p, t: None,
-                              "2026-01-01T00:00:00Z")
-    if broken_status != 1:
-        bad.append(f"run_suite: a fixture with a failing chain returns a non-zero exit, got {broken_status}")
-
-    # _chain_ok fails on each defect and passes a clean chain; boundary-exempt idempotency is not a defect.
-    base = {"passed": 2, "permutations": 2, "adversarial_rejected": 3, "adversarial_total": 3,
-            "contracts_ok": True, "honesty": {"purity": True, "mutation": True, "idempotency": True}}
-    if not _chain_ok(base):
-        bad.append("_chain_ok: a clean chain passes")
-    if not _chain_ok({**base, "honesty": {**base["honesty"], "idempotency": "exempt"}}):
-        bad.append("_chain_ok: boundary-exempt idempotency is not a defect")
-    defects = [
-        {**base, "passed": 1},
-        {**base, "adversarial_rejected": 2},
-        {**base, "contracts_ok": False},
-        {**base, "honesty": {**base["honesty"], "purity": False}},
-        {**base, "honesty": {**base["honesty"], "mutation": False}},
-        {**base, "honesty": {**base["honesty"], "idempotency": False}},
-    ]
-    for defect in defects:
-        if _chain_ok(defect):
-            bad.append(f"_chain_ok: must fail on {defect}")
-
-    # all_passed folds chains and machines; a machine that accepts a near-miss token fails the run.
-    ok_chain = {"kind": "chain", **base}
-    ok_machine = {"kind": "state_machine", "adversarial_rejected": 3, "adversarial_total": 3}
-    if not all_passed([ok_chain, ok_machine]):
-        bad.append("all_passed: a clean chain and machine pass")
-    if all_passed([{"kind": "chain", **base, "passed": 0}]):
-        bad.append("all_passed: a failing chain fails the run")
-    if all_passed([{"kind": "state_machine", "adversarial_rejected": 1, "adversarial_total": 3}]):
-        bad.append("all_passed: a machine accepting a near-miss token fails the run")
-    if not all_passed([{"kind": "chain", **base, "bdd": {"passed": 2, "total": 2}}]):
-        bad.append("all_passed: a chain whose feature scenarios all pass passes the run")
-    if all_passed([{"kind": "chain", **base, "bdd": {"passed": 1, "total": 2}}]):
-        bad.append("all_passed: a chain with a failing feature scenario fails the run")
-
-    return bad
-
-
-def _probe_cli():
-    """The CLI boundary (honest_test.cli): main scans a src directory, imports each module so the runner
-    binds live objects, runs the developer's feature per chain, prints the section-11 report, writes
-    coverage.json, and returns the exit code. Run against a real temporary project so the filesystem,
-    import, feature-run, write, and clock boundaries all execute; the conformance directory permits I/O."""
-    import io
-    import json
-    import os
-    import shutil
-    from contextlib import redirect_stdout
-
-    from honest_test import cli
-
-    bad = []
-    root = Path(tempfile.mkdtemp())
-    cwd = os.getcwd()
-    try:
-        src = root / "src"
-        src.mkdir()
-        (src / "app.py").write_text(_FIXTURE_APP, encoding="utf-8")
-        # A failing chain OUTSIDE src/, at the project root: scanning 'src' does not reach it, but
-        # scanning '' (the whole tree) would - so main([]) defaulting to 'src' passes only because the
-        # default really is 'src'.
-        (root / "bad.py").write_text(_FIXTURE_BROKEN, encoding="utf-8")
-        features = root / "features"
-        features.mkdir()
-        # A feature written against pipeline's scaffolded step patterns so _run_feature scaffolds a
-        # registry and runs it (the found branch); the 'other' chain has no feature (the None branch).
-        (features / "pipeline.feature").write_text(
-            "Feature: pipeline\n"
-            "\n"
-            "  Scenario: a greeting flows through\n"
-            '    Given a manifest for pipeline with greeting "hi"\n'
-            "    When the pipeline runs\n"
-            "    Then the result is ok\n",
-            encoding="utf-8",
-        )
-
-        out = io.StringIO()
-        os.chdir(root)
-        with redirect_stdout(out):
-            status = cli.main(["src"])
-        os.chdir(cwd)
-
-        if status != 0:
-            bad.append(f"cli.main: the fixture project passes, got exit {status}")
-        report = out.getvalue()
-        if "pipeline (2 links)" not in report:
-            bad.append(f"cli.main: prints the section-11 report: {report!r}")
-        if "BDD: features/pipeline.feature" not in report:
-            bad.append(f"cli.main: runs and reports the chain's feature: {report!r}")
-        coverage_file = root / "coverage.json"
-        if not coverage_file.is_file():
-            bad.append("cli.main: writes coverage.json beside the run")
-        else:
-            cov = json.loads(coverage_file.read_text(encoding="utf-8"))
-            if "pipeline" not in cov["chains"] or "flow" not in cov["state_machines"]:
-                bad.append(f"cli.main: coverage.json records the run: {cov}")
-            if not isinstance(cov["timestamp"], str) or not cov["timestamp"]:
-                bad.append(f"cli.main: coverage.json carries a real timestamp: {cov['timestamp']!r}")
-
-        # No argument defaults to the 'src' directory.
-        out2 = io.StringIO()
-        os.chdir(root)
-        with redirect_stdout(out2):
-            status2 = cli.main([])
-        os.chdir(cwd)
-        if status2 != 0:
-            bad.append(f"cli.main: defaults to the src directory, got exit {status2}")
-
-        # The scanned directory is the FIRST argument: a good src followed by a would-fail directory
-        # ('.' reaches the root's failing chain) still passes, because only argv[0] is scanned.
-        out3 = io.StringIO()
-        os.chdir(root)
-        with redirect_stdout(out3):
-            status3 = cli.main(["src", "."])
-        os.chdir(cwd)
-        if status3 != 0:
-            bad.append(f"cli.main: scans the first argument, not the last, got exit {status3}")
-    finally:
-        os.chdir(cwd)
-        shutil.rmtree(root, ignore_errors=True)
-
-    return bad
-
-
-def _probe_component_isolation():
-    """Component isolation tests (§7): components must not collide in CSS namespace (§7.1) or route
-    (§7.2), and one component failing to load must not cascade into another (§7.3). component_classes
-    reads a template's static class tokens; the three checks return findings as data. load is injected
-    and returns a Result, so no try/except lives in the interior."""
-    from honest_test.component_isolation import (
-        component_classes,
-        test_css_isolation,
-        test_route_isolation,
-        test_startup_isolation,
-    )
-
-    bad = []
-
-    # 7.1 CSS namespace isolation.
-    card = {"name": "card", "template": b'<div class="card card__title"></div>'}
-    panel = {"name": "panel", "template": b'<section class="panel card__title"></section>'}
-    badge = {"name": "badge", "template": b'<span class="badge"></span>'}
-    if component_classes(card["template"]) != frozenset({"card", "card__title"}):
-        bad.append(f"component_classes: reads the static class tokens, got {component_classes(card['template'])}")
-    css = test_css_isolation([card, panel, badge])
-    if len(css) != 1 or css[0]["code"] != "css_namespace_collision":
-        bad.append(f"test_css_isolation: card and panel share card__title, got {css}")
-    elif css[0]["detail"] != {"components": ["card", "panel"], "classes": ["card__title"]}:
-        bad.append(f"test_css_isolation: names the two components and the shared class, got {css[0]['detail']}")
-    if test_css_isolation([card, badge]) != []:
-        bad.append("test_css_isolation: components with no shared class are isolated")
-
-    # 7.2 route isolation. Three components claim /search: the collision always names the FIRST owner,
-    # which pins the continue that keeps the first claimant as owner.
-    search = {"name": "search", "routes": ["/search"]}
-    find = {"name": "find", "routes": ["/search"]}
-    extra = {"name": "extra", "routes": ["/search"]}
-    home = {"name": "home", "routes": ["/"]}
-    routes = test_route_isolation([search, find, extra, home])
-    if [f["code"] for f in routes] != ["route_collision", "route_collision"]:
-        bad.append(f"test_route_isolation: two later components collide on /search, got {routes}")
-    elif routes[0]["detail"] != {"path": "/search", "components": ["search", "find"]} or \
-            routes[1]["detail"] != {"path": "/search", "components": ["search", "extra"]}:
-        bad.append(f"test_route_isolation: each collision names the first owner and the claimant, got {[r['detail'] for r in routes]}")
-    if test_route_isolation([search, home]) != []:
-        bad.append("test_route_isolation: components with distinct routes are isolated")
-
-    # 7.3 startup fault isolation: load returns a Result; a failing load must not cascade.
-    def load(component):
-        return {"err": "load failed"} if component["name"].startswith("broken") else {"ok": None}
-
-    isolated = test_startup_isolation([{"name": "ok1"}, {"name": "broken"}, {"name": "ok2"}], load)
-    if isolated != []:
-        bad.append(f"test_startup_isolation: one failing component with others loadable is not a cascade, got {isolated}")
-    cascade = test_startup_isolation([{"name": "broken1"}, {"name": "broken2"}], load)
-    if len(cascade) != 2 or any(f["code"] != "startup_cascade" for f in cascade):
-        bad.append(f"test_startup_isolation: two components failing to load independently is a cascade, got {cascade}")
-    elif {(f["detail"]["failed"], f["detail"]["cascaded_to"]) for f in cascade} != {("broken1", "broken2"), ("broken2", "broken1")}:
-        bad.append(f"test_startup_isolation: each cascade names the failed component and the one it cascaded to, got {[f['detail'] for f in cascade]}")
-    if test_startup_isolation([{"name": "ok1"}, {"name": "ok2"}], load) != []:
-        bad.append("test_startup_isolation: all components loading is clean")
-
-    return bad
-
-
-def _probe_persist_contract():
-    """honest-persist contract tests (§6): verify_write round-trips an adopter's row against a REAL
-    in-memory SQLite database, never a mock. A conforming row inserts and reads back; an undeclared
-    column is caught pure by checked_insert; a CHECK, NOT NULL, or type violation is caught by the real
-    database at the write; an invalid schema is caught by diff. The connect boundary is a thin async
-    adapter over real sqlite3 — real SQL runs, the adapter only shapes the return."""
-    import sqlite3
-    import types
-
-    from honest_test.persist_contract import verify_write
-
-    bad = []
-
-    def connect():
-        raw = sqlite3.connect(":memory:")
-        raw.row_factory = sqlite3.Row
-
-        async def execute(sql, params=None):
-            cursor = raw.execute(sql, params) if params is not None else raw.execute(sql)
-            rows = [dict(record) for record in cursor.fetchall()]
-            raw.commit()
-            return {"rows": rows, "rowcount": cursor.rowcount}
-
-        return types.SimpleNamespace(execute=execute)
-
-    schema = {
-        "widget": {
-            "columns": {
-                "id": {"type": "integer", "primary_key": True, "nullable": False},
-                "name": {"type": "text", "nullable": False},
-                "size": {"type": "integer", "nullable": False, "check": "size > 0"},
-            }
-        }
-    }
-    invalid_schema = {"widget": {"columns": {"id": {"type": "integer"}}, "indexes": {"ix": {"columns": ["nonexistent"]}}}}
-
-    async def _run():
-        return {
-            "conforming": await verify_write(schema, "widget", {"id": 1, "name": "a", "size": 5}, connect, "sqlite"),
-            "undeclared": await verify_write(schema, "widget", {"id": 1, "name": "a", "size": 5, "bogus": 9}, connect, "sqlite"),
-            "check": await verify_write(schema, "widget", {"id": 1, "name": "a", "size": 0}, connect, "sqlite"),
-            "not_null": await verify_write(schema, "widget", {"id": 1, "size": 5}, connect, "sqlite"),
-            "invalid": await verify_write(invalid_schema, "widget", {"id": 1}, connect, "sqlite"),
-        }
-
-    r = asyncio.run(_run())
-
-    if r["conforming"] != ok([{"id": 1, "name": "a", "size": 5}]):
-        bad.append(f"verify_write: a conforming row round-trips against the real database, got {r['conforming']}")
-    if r["undeclared"].get("err", {}).get("code") != "unknown_column":
-        bad.append(f"verify_write: an undeclared column is caught pure by checked_insert before any SQL runs, got {r['undeclared']}")
-    for label in ("check", "not_null"):
-        rejection = r[label].get("err", {})
-        if rejection.get("code") != "write_rejected" or rejection.get("category") != "client" or rejection.get("detail") != {"table": "widget"}:
-            bad.append(f"verify_write: the {label} row is rejected by the real database as a client write_rejected fault naming the table, got {r[label]}")
-    if "err" not in r["invalid"]:
-        bad.append(f"verify_write: an invalid schema is rejected, got {r['invalid']}")
-
-    return bad
-
-
-def _probe_fault_paths():
-    """Deliberate fault-path generation (§9.2): fault_exits reads a link's guards and returns the fault
-    exits an input can reach - each with a triggering manifest fragment (strategy 1, §9.2.1) - and
-    discloses the exits no input can reach because they turn on external state (§9.2.2), naming each
-    with its reason rather than silently dropping it."""
-    from honest_test.fault_paths import fault_exits
-
-    bad = []
-    source = (
-        "def gate(manifest):\n"
-        "    if manifest['size'] <= 0:\n"
-        "        return {'err': fault('bad_size', 'size must be positive', 'client')}\n"
-        "    if lookup(manifest['id']) is None:\n"
-        "        return {'err': fault('not_found', 'no such id', 'client')}\n"
-        "    return ok(manifest)\n"
-    )
-    exits = fault_exits(source)
-
-    reachable = exits["reachable"]
-    if [f["code"] for f in reachable] != ["bad_size"]:
-        bad.append(f"fault_exits: only the size guard is input-reachable, got {[f['code'] for f in reachable]}")
-    elif reachable[0]["trigger"].get("size", 1) > 0:
-        bad.append(f"fault_exits: the trigger must satisfy size <= 0, got {reachable[0]['trigger']}")
-
-    unreachable = exits["unreachable"]
-    if [f["code"] for f in unreachable] != ["not_found"]:
-        bad.append(f"fault_exits: the lookup guard is state-dependent and disclosed, not dropped, got {[f['code'] for f in unreachable]}")
-    elif unreachable[0]["reason"] != "state-dependent":
-        bad.append(f"fault_exits: an unreachable exit names its reason, got {unreachable[0]}")
-
-    # Every comparison operator solves to its exact boundary trigger.
-    ops_source = (
-        "def gate(manifest):\n"
-        "    if manifest['a'] <= 5:\n        return {'err': fault('le')}\n"
-        "    if manifest['a'] < 5:\n        return {'err': fault('lt')}\n"
-        "    if manifest['a'] >= 5:\n        return {'err': fault('ge')}\n"
-        "    if manifest['a'] > 5:\n        return {'err': fault('gt')}\n"
-        "    if manifest['a'] == 5:\n        return {'err': fault('eq')}\n"
-        "    if manifest['a'] != 5:\n        return {'err': fault('ne')}\n"
-        "    return ok(manifest)\n"
-    )
-    triggers = {f["code"]: f["trigger"]["a"] for f in fault_exits(ops_source)["reachable"]}
-    if triggers != {"le": 5, "lt": 4, "ge": 5, "gt": 6, "eq": 5, "ne": 6}:
-        bad.append(f"fault_exits: each operator solves to its boundary trigger, got {triggers}")
-
-    # Classification of every other guard shape: pure-but-unsolvable guards defer to perturbation, a
-    # state call is unreachable, an err with no fault() call still counts (empty code), an ok return is
-    # not a fault exit at all.
-    classify_source = (
-        "def gate(manifest):\n"
-        "    if manifest['flag']:\n        return {'err': fault('d_truthy')}\n"
-        "    if other['x'] <= 5:\n        return {'err': fault('d_nonmanifest')}\n"
-        "    if manifest['a'] <= limit:\n        return {'err': fault('d_nonliteral')}\n"
-        "    if flag <= 5:\n        return {'err': fault('d_nonsub')}\n"
-        "    if manifest[k] <= 5:\n        return {'err': fault('d_nonstrkey')}\n"
-        "    if manifest['a'] is None:\n        return {'err': fault('d_isop')}\n"
-        "    if 0 <= manifest['a'] <= 5:\n        return {'err': fault('d_chained')}\n"
-        "    if lookup(manifest['a']) is None:\n        return {'err': fault('u_call')}\n"
-        "    if manifest['a'] <= 5:\n        return {'err': 'plain'}\n"
-        "    if manifest['a'] <= 5:\n        return ok(manifest)\n"
-        "    return ok(manifest)\n"
-    )
-    classified = fault_exits(classify_source)
-    deferred = {f["code"]: f["reason"] for f in classified["deferred"]}
-    expected_deferred = {code: "needs-perturbation" for code in ("d_truthy", "d_nonmanifest", "d_nonliteral", "d_nonsub", "d_nonstrkey", "d_isop", "d_chained")}
-    if deferred != expected_deferred:
-        bad.append(f"fault_exits: pure-but-unsolvable guards defer to perturbation, got {deferred}")
-    if [f["code"] for f in classified["unreachable"]] != ["u_call"]:
-        bad.append(f"fault_exits: only the state call is unreachable, got {classified['unreachable']}")
-    if classified["reachable"] != [{"code": "", "trigger": {"a": 5}}]:
-        bad.append(f"fault_exits: an err with no fault() call is still a reachable exit with an empty code, got {classified['reachable']}")
-
-    # The fault code is the first STRING argument: a non-string first argument is skipped, and a fault
-    # call with no string argument yields an empty code.
-    argshape_source = (
-        "def gate(manifest):\n"
-        "    if manifest['a'] <= 5:\n        return {'err': fault(code_var, 'second')}\n"
-        "    if manifest['a'] >= 5:\n        return {'err': fault(only_var)}\n"
-        "    return ok(manifest)\n"
-    )
-    argcodes = [f["code"] for f in fault_exits(argshape_source)["reachable"]]
-    if argcodes != ["second", ""]:
-        bad.append(f"fault_exits: the code is the first string argument, skipping non-strings, got {argcodes}")
-
-    return bad
-
-
-def _probe_perturbations():
-    """Fault-path generation strategy 2 (§9.2.1): when a guard cannot be read, perturb a passing
-    manifest one field at a time - omit the field, or push it to a type-edge value - so the chain can be
-    run on each and the fault exits that trip recorded."""
-    from honest_test.fault_paths import perturbations
-
-    bad = []
-    manifest = {"size": 5, "name": "ok", "tag": "z"}
-    variants = perturbations(manifest)
-
-    # Each field omitted once - the variant keeps the OTHER two fields (three fields distinguish real
-    # omission, `key != field`, from keeping only the field, `key == field`).
-    if {"name": "ok", "tag": "z"} not in variants:
-        bad.append(f"perturbations: omits the size field, keeping the rest, got {variants}")
-    if {"size": 5, "tag": "z"} not in variants:
-        bad.append(f"perturbations: omits the name field, keeping the rest, got {variants}")
-    if {"size": 5, "name": "ok"} not in variants:
-        bad.append(f"perturbations: omits the tag field, keeping the rest, got {variants}")
-
-    # Every edge value tried on every field.
-    for edge in (0, -1, 1_000_000, "", "x" * 1000):
-        if {"size": edge, "name": "ok", "tag": "z"} not in variants:
-            bad.append(f"perturbations: pushes the size field to {edge!r}, got {variants}")
-        if {"size": 5, "name": edge, "tag": "z"} not in variants:
-            bad.append(f"perturbations: pushes the name field to {edge!r}, got {variants}")
-
-    return bad
-
-
-def _probe_seam_breakers():
-    """Fault-path generation strategy 3 (§9.2.1): for each adjacent pair, construct a hand-off value the
-    downstream rejects - a near-miss of a member its accepts vocabulary declares - so feeding it to the
-    downstream trips the hand-off fault. A downstream with no accepts vocabulary has no readable seam."""
-    from honest_type.recognizers import members, predicate, recognize
-
-    from honest_test.adversarial import adversarial_neighbours
-    from honest_test.fault_paths import seam_breakers
-
-    bad = []
-    # Close members ('cat'/'car' are one edit apart) so a near-miss can coincide with the other member -
-    # exercising both the kept and the excluded side of the rejection filter. The predicate type is
-    # unbounded and has no members to perturb.
-    accepts = vocabulary({"tier": {"cat", "car"}, "note": predicate(lambda token: token.isdigit())})
-
-    @link()
-    def up(manifest):
-        return ok(manifest)
-
-    @link()
-    def mid(manifest):
-        return ok(manifest)
-
-    @link(accepts=accepts)
-    def tail(manifest):
-        return ok(manifest)
-
-    # Seam 0 (downstream mid) has no accepts vocabulary; seam 1 (downstream tail) does. The accepts
-    # sits on the LAST link so the final seam is the one that yields a breaker.
-    breakers = seam_breakers([up, mid, tail])
-
-    tier = accepts["base_types"]["tier"]
-    expected = min(neighbour for neighbour in adversarial_neighbours(min(members(tier))) if not recognize(neighbour, tier))
-    if expected in {"cat", "car"}:
-        bad.append(f"seam_breakers probe: the expected breaker must be a near-miss, got {expected!r}")
-
-    if any(b["seam"] == 0 for b in breakers):
-        bad.append(f"seam_breakers: a downstream with no accepts vocabulary has no readable seam, got {breakers}")
-    seam1 = [b for b in breakers if b["seam"] == 1]
-    if len(seam1) != 1 or seam1[0]["manifest"] != {"tier": expected}:
-        bad.append(f"seam_breakers: the tail link's accepts vocabulary yields the tier near-miss {expected!r}, got {breakers}")
-
-    return bad
-
-
-def _probe_fault_coverage():
-    """Chain fault coverage (§9.2): fault_coverage reads every link's fault exits (strategy 1), runs the
-    generated candidates - read-guard triggers, field perturbations, seam breakers - through the chain,
-    and reports the input-reachable exits, the ones exercised, and the unreachable ones disclosed.
-    function_source hands each link its own source. A malformed candidate that makes a link raise trips
-    nothing cleanly."""
-    from honest_type.recognizers import predicate
-
-    from honest_test.fault_paths import fault_coverage, function_source
-
-    bad = []
-
-    def live(source, name, extra=""):
-        namespace = {}
-        exec("from honest_type import fault, link, ok\n" + extra + source + f"\n{name} = link()({name})\n", namespace)
-        return namespace[name]
-
-    # function_source extracts one function's text by name, and is empty when there is no such function.
-    multi = "def a(m):\n    return m\n\n\ndef b(m):\n    return {'err': fault('c')}\n"
-    if not function_source(multi, "b").startswith("def b"):
-        bad.append(f"function_source: extracts the named function, got {function_source(multi, 'b')!r}")
-    if "def a" in function_source(multi, "b"):
-        bad.append("function_source: extracts only the named function, not its neighbour")
-    if function_source(multi, "missing") != "":
-        bad.append("function_source: is empty when there is no such function")
-
-    # Scenario 1: a gate link with a read-guard exit (reachable + exercised), a truthy-guard exit
-    # (deferred, reachable but not exercised here), and a lookup exit (unreachable, disclosed). An empty
-    # vocabulary means the only candidate is the read-guard trigger.
-    gate_source = (
-        "def gate(manifest):\n"
-        "    if manifest['size'] <= 0:\n"
-        "        return {'err': fault('bad_size', 'm', 'client')}\n"
-        "    if manifest['flag']:\n"
-        "        return {'err': fault('flag_set', 'm', 'client')}\n"
-        "    if lookup(manifest['id']) is None:\n"
-        "        return {'err': fault('state', 'm', 'client')}\n"
-        "    return ok(manifest)\n"
-    )
-    gate = live(gate_source, "gate", "def lookup(x):\n    return None\n")
-    empty_vocab = vocabulary({"note": predicate(lambda token: token.isdigit())})
-    coverage = fault_coverage([gate], [gate_source], empty_vocab, binding({}))
-    if coverage["input_reachable"] != ["bad_size", "flag_set"]:
-        bad.append(f"fault_coverage: reachable and deferred exits are input-reachable, got {coverage['input_reachable']}")
-    if coverage["exercised"] != ["bad_size"]:
-        bad.append(f"fault_coverage: the read-guard exit is exercised by its trigger, got {coverage['exercised']}")
-    if [u["code"] for u in coverage["unreachable"]] != ["state"]:
-        bad.append(f"fault_coverage: the lookup exit is unreachable and disclosed, got {coverage['unreachable']}")
-
-    # Scenario 2: a link that reads a field, over a bounded vocabulary. No fault exits; perturbations run
-    # (a passing edge candidate is an ok run, an omitted-field candidate makes the link raise and is
-    # caught). Exercises the non-empty base, the clean-run path, and the raise-caught path.
-    reader_source = "def reader(manifest):\n    return ok({**manifest, 'seen': manifest['greeting']})\n"
-    reader = live(reader_source, "reader")
-    reader_vocab = vocabulary({"greeting": {"hi", "hey"}})
-    reader_cov = fault_coverage([reader], [reader_source], reader_vocab, binding({"greeting": "greeting"}))
-    if reader_cov != {"input_reachable": [], "exercised": [], "unreachable": []}:
-        bad.append(f"fault_coverage: a link with no fault exits has empty coverage, got {reader_cov}")
-
-    # Scenario 3: a two-link chain whose downstream declares an accepts vocabulary, so seam breakers are
-    # generated and run as candidates (the seam-candidate path).
-    seam_vocab = vocabulary({"tier": {"gold", "silver"}})
-
-    @link()
-    def up2(manifest):
-        return ok(manifest)
-
-    @link(accepts=seam_vocab)
-    def down2(manifest):
-        return ok(manifest)
-
-    seam_sources = ["def up2(manifest):\n    return ok(manifest)\n", "def down2(manifest):\n    return ok(manifest)\n"]
-    seam_cov = fault_coverage([up2, down2], seam_sources, empty_vocab, binding({}))
-    if seam_cov != {"input_reachable": [], "exercised": [], "unreachable": []}:
-        bad.append(f"fault_coverage: seam breakers run as candidates without tripping a fault here, got {seam_cov}")
-
+    if classify_mutant_result("a", "b", False)["verdict"] != "undecided":
+        bad.append("an incomplete run must be undecided")
+    if classify_mutant_result("a", "a", True)["verdict"] != "set_aside":
+        bad.append("an identical output must be set_aside")
+    if classify_mutant_result("a", "b", True)["verdict"] != "caught":
+        bad.append("a differing output must be caught")
     return bad
 
 
 def run():
-    report = verify_laws(HTEST_LAWS, HTEST_SUBJECTS)
-    probes = {
-        "isolation": _probe_isolation(),
-        "scaffolding": _probe_scaffolding(),
-        "http_steps": _probe_http_steps(),
-        "adversarial": _probe_adversarial(),
-        "laws": _probe_laws(),
-        "mutation": _probe_mutation(),
-        "mutation_runner": _probe_mutation_runner(),
-        "predicate": _probe_predicate(),
-        "length": _probe_length(),
-        "honesty": _probe_honesty(),
-        "determinism": _probe_determinism(),
-        "auth_honesty": _probe_auth_honesty(),
-        "coverage_data": _probe_coverage_data(),
-        "supplied": _probe_supplied(),
-        "statemachine": _probe_statemachine(),
-        "runner": _probe_runner(),
-        "plugin_import_cost": _probe_plugin_import_cost(),
-        "suite_runner": _probe_suite_runner(),
-        "runner_discovery": _probe_runner_discovery(),
-        "cli": _probe_cli(),
-        "component_isolation": _probe_component_isolation(),
-        "persist_contract": _probe_persist_contract(),
-        "fault_paths": _probe_fault_paths(),
-        "perturbations": _probe_perturbations(),
-        "seam_breakers": _probe_seam_breakers(),
-        "fault_coverage": _probe_fault_coverage(),
-        "proof": _probe_proof(),
-        "value": _probe_value(),
-        "testbody": _probe_testbody(),
-        "pytest_plugin": _probe_pytest_plugin(),
-    }
-    violations = list(report["violations"])
-    for name, messages in probes.items():
+    groups = [
+        verify_laws(_STRING_LAWS, _subjects(_STRING_SUBJECTS)),
+        verify_laws(_FIB_LAWS, _subjects(_FIB_SUBJECTS)),
+        verify_laws(_COVERAGE_LAWS, _subjects(_COVERAGE_SUBJECTS)),
+        verify_laws(_STATUS_LAWS, _subjects(_STATUS_SUBJECTS)),
+        verify_laws(_CLASSIFY_LAWS, _subjects(_CLASSIFY_SUBJECTS)),
+        verify_laws(_LENGTH_LAWS, _subjects(_LENGTH_SUBJECTS)),
+        verify_laws(_SET_LAWS, _subjects(_SET_SUBJECTS)),
+        verify_laws(_MUTATION_LAWS, _subjects(_MUTATION_SUBJECTS)),
+        verify_laws(_HONESTY_LAWS, _subjects(_manifest_subjects())),
+        verify_laws(_SM_LAWS, _subjects([("turnstile", {})])),
+    ]
+    directs = [
+        ("MUT-2", "mutate_source returns a Fault for unparseable source", _mutate_source_faults_on_garbage()),
+        ("SET-2", "enumerate_sets of a predicate-only vocabulary is one empty manifest", _enumerate_sets_predicate_only_is_one_empty_manifest()),
+        ("MUT-3", "classify_mutant_result judges undecided/set_aside/caught", _classify_mutant_result_contract()),
+    ]
+
+    passed = sum(g["passed"] for g in groups) + sum(1 for _, _, messages in directs if not messages)
+    violations = [v for g in groups for v in g["violations"]]
+    for law_id, statement, messages in directs:
         if messages:
-            violations.append({"law": "HTest-probe", "statement": name, "subject": name, "messages": messages})
+            violations.append({"law": law_id, "statement": statement, "subject": "direct", "messages": messages})
+    total = sum(g["total"] for g in groups) + len(directs)
 
-    probe_total = len(probes)
-    probe_passed = sum(1 for m in probes.values() if not m)
-    passed = report["passed"] + probe_passed
-    total = report["total"] + probe_total
-
-    for v in violations:
-        print(f"FAIL {v['law']} [{v['subject']}]: {v['messages']}")
-    print(f"HTest laws: {passed} passed, {len(violations)} failed, {total} total")
+    for violation in violations:
+        print(f"FAIL {violation['law']} [{violation['subject']}]: {violation['messages']}")
+    print(f"honest-test laws: {passed} passed, {len(violations)} failed, {total} total")
     return 0 if not violations else 1
 
 
