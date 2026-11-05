@@ -165,7 +165,7 @@
               "side_effects": [
                 {
                   "direction": "reads",
-                  "target": "X",
+                  "target": "file",
                   "module": "",
                   "door": ""
                 }
