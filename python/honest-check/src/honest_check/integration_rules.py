@@ -1,4 +1,4 @@
-"""The cross-module seam rules — HC-REF006 and HC-REF007 — and the derivation they share.
+"""The cross-module seam rules — HC-REF006, HC-REF007 and HC-REF008 — and the derivation they share.
 
 A declaration never crosses a module boundary: the caller names the callee's door on its own
 side effect, with a dot (`reads "honest-parse.parse_source"`), and the callee never names its
@@ -37,12 +37,12 @@ def check_seams(declarations, paths, in_scope):
 def run_seam_rules(declarations, paths, in_scope):
     """The orchestrator the seam door hands its inputs to (section 8, §HC-REF006/§HC-REF007). For
     each module named in in_scope — or every loaded module when in_scope is empty — it runs the
-    two cross-module seam rules over that module's declaration and folds every finding into one
+    three cross-module seam rules over that module's declaration and folds every finding into one
     list.
 
     For each in-scope module it calls check_hc_ref006 with the module's declaration, the whole
-    declarations map and the module's .hd path, then check_hc_ref007 the same way, concatenating
-    their diagnostics in that order across every in-scope module. Both rules derive the module's
+    declarations map and the module's .hd path, then check_hc_ref007 and check_hc_ref008 the same
+    way, concatenating their diagnostics in that order across every in-scope module. Both rules derive the module's
     seams themselves through declared_seams, so the orchestrator never derives seams here. Each
     in-scope module's seams resolve against the COMPLETE declarations map, not the in-scope
     subset, so the gate's verdict on a module never changes with how it was invoked (§639). An
@@ -59,6 +59,7 @@ def run_seam_rules(declarations, paths, in_scope):
         path = paths[name]
         findings.extend(check_hc_ref006(module, declarations, path))
         findings.extend(check_hc_ref007(module, declarations, path))
+        findings.extend(check_hc_ref008(module, declarations, path))
     return findings
 
 
@@ -160,6 +161,56 @@ def check_hc_ref007(module, declarations, path):
                         f"'{seam['caller']}' {seam['direction']} "
                         f"'{seam['module']}.{seam['door']}', which {seam['module']} declares as "
                         f"a {role_of[seam['door']]} and not an entrance."
+                    ),
+                    "source_location": path,
+                    "context": "",
+                    "fixable": False,
+                }
+            )
+    return findings
+
+
+def seam_module_of(side, module_names):
+    """The module a side effect reaches, resolved against the names actually in view, or the empty
+    string when it reaches no module (§HC-REF008). Two forms name a module. A target honest-design
+    split on a dot carries the module in its own half: `honest-persist.execute` and the door-less
+    `honest-persist.` both arrive with module 'honest-persist'. A dotless target arrives as a world
+    read, module empty and the whole string in target, because honest-design reads one module at a
+    time and cannot know another module's name; honest-check holds every declaration at once, so it
+    matches that bare string against the module names here. A name that matches no module in view
+    is a world target or a module out of view and resolves to the empty string, the skip the other
+    seam rules take so a gate's verdict never changes with how it was invoked (§639)."""
+    if side["module"] != "":
+        return side["module"] if side["module"] in module_names else ""
+    return side["target"] if side["target"] in module_names else ""
+
+
+def check_hc_ref008(module, declarations, path):
+    """Run HC-REF008 over the side effects one module declares: a side effect that names a module
+    in view but carries no door reads as a reach into another module and tells the resolver nothing
+    it can act on, which is what leaves HC-REF006 and HC-REF007 idle (§HC-REF008, §696-715). It
+    fires on one case: a side effect that resolves to a module in view and whose door is the empty
+    string, as in `writes "honest-persist"`. The door must be named, as `honest-persist.execute`.
+
+    seam_module_of resolves both the dotted and the dotless form against the module names in view,
+    so honest-check catches the disguised `writes "honest-persist"` the parser reads as a world
+    write, per the ruling that honest-check matches the bare name against the module list rather
+    than waiting on honest-design to mark it. A side effect reaching no module in view is skipped.
+    """
+    module_names = set(declarations)
+    findings = []
+    for function in module["functions"]:
+        for side in function["side_effects"]:
+            named = seam_module_of(side, module_names)
+            if named == "" or side["door"] != "":
+                continue
+            findings.append(
+                {
+                    "rule_id": "HC-REF008",
+                    "severity": "error",
+                    "message": (
+                        f"'{function['name']}' {side['direction']} '{named}', which names a module "
+                        f"and not a door. Name the function it enters, as '{named}.<door>'."
                     ),
                     "source_location": path,
                     "context": "",
