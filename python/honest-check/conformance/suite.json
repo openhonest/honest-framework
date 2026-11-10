@@ -453,6 +453,108 @@
       }
     },
     {
+      "id": "HC-ST001-001",
+      "description": "A honest-persist write (transaction) in a non-boundary function writes persisted state off the boundary.",
+      "category": "HC-ST001",
+      "input": {
+        "language": "python",
+        "source": "from honest_persist import transaction\ndef save(rows, conn):\n    return transaction(rows, conn)\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-ST001",
+            "severity": "error",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-ST001-002",
+      "description": "A honest-persist write reached through the module name (honest_persist.transaction) still fires.",
+      "category": "HC-ST001",
+      "input": {
+        "language": "python",
+        "source": "import honest_persist\ndef save(rows, conn):\n    return honest_persist.transaction(rows, conn)\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-ST001",
+            "severity": "error",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-ST001-003",
+      "description": "A honest-persist writer imported under an alias (apply as run_migration) resolves and fires.",
+      "category": "HC-ST001",
+      "input": {
+        "language": "python",
+        "source": "from honest_persist import apply as run_migration\ndef migrate(diff, target, conn, dialect):\n    return run_migration(diff, target, conn, dialect)\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-ST001",
+            "severity": "error",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-ST001-clean-boundary",
+      "description": "A boundary function may write persisted state — that is the legitimate boundary write.",
+      "category": "HC-ST001",
+      "input": {
+        "language": "python",
+        "source": "from honest_persist import transaction\n@boundary\ndef save(rows, conn):\n    return transaction(rows, conn)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-ST001-clean-builder",
+      "description": "insert/update/delete build a Query value and write nothing, so a call to one never fires, interior or not.",
+      "category": "HC-ST001",
+      "input": {
+        "language": "python",
+        "source": "from honest_persist import insert\ndef build(table, values):\n    return insert(table, values)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-ST001-clean-not-persist",
+      "description": "A bare transaction() that no honest_persist import binds is a different function and does not fire.",
+      "category": "HC-ST001",
+      "input": {
+        "language": "python",
+        "source": "def save(rows, conn):\n    return transaction(rows, conn)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-ST001-clean-module-scope",
+      "description": "A write at module scope sits in no function, so it does not fire, exactly as module-scope I/O does not fire HC-P004.",
+      "category": "HC-ST001",
+      "input": {
+        "language": "python",
+        "source": "from honest_persist import transaction\nresult = transaction(rows, conn)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
       "id": "HC-P005-001",
       "description": "A runtime type check in business logic should be a vocabulary declaration.",
       "category": "HC-P005",

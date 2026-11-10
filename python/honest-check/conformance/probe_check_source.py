@@ -153,6 +153,55 @@ def _declaration_failures(check_source):
     return bad
 
 
+# ---- HC-ST001 consults the module's .hd on the error path, like the other boundary rules ----
+# HC-ST001 fires on a honest-persist write (transaction/apply) in a non-boundary function. It
+# reuses the same boundary machinery HC-P004 uses, so the .hd consult applies identically: when
+# the .hd marks the enclosing function boundary_in/boundary_out/reader, the write is the
+# legitimate boundary write and the finding is dropped; with no .hd, or a pure-fn role, it fires.
+_ST001_SOURCE = "from honest_persist import transaction\ndef save(rows, conn):\n    return transaction(rows, conn)\n"
+_ST001_DOOR_HD = 'module m\n  boundary_out fn save : (rows: list<any>, conn: any) -> any side_effect writes "database"\n'
+_ST001_PURE_HD = "module m\n  fn save : (rows: list<any>, conn: any) -> any\n"
+
+_ST001_DECLARATION_CASES = [
+    {
+        "source": _ST001_SOURCE,
+        "hd": _ST001_DOOR_HD,
+        "want_st001": False,
+        "why": "the .hd marks save boundary_out, so the persisted-state write is the legitimate boundary write and HC-ST001 is dropped",
+    },
+    {
+        "source": _ST001_SOURCE,
+        "hd": None,
+        "want_st001": True,
+        "why": "no .hd (the NOTHING arm), so save is a non-boundary function and HC-ST001 fires",
+    },
+    {
+        "source": _ST001_SOURCE,
+        "hd": _ST001_PURE_HD,
+        "want_st001": True,
+        "why": "the .hd marks save a pure fn, not a door, so HC-ST001 still fires",
+    },
+]
+
+
+def _st001_declaration_failures(check_source):
+    """HC-ST001 drops its finding when the .hd declares the enclosing function a door, and
+    fires with no .hd or a non-door role. Read as the presence of the HC-ST001 rule_id, so
+    the cases do not depend on source columns."""
+    bad = []
+    for case in _ST001_DECLARATION_CASES:
+        declaration = _declaration_for(case["hd"])
+        got = check_source(case["source"], "m.py", {}, declaration)
+        fired = any(d.get("rule_id") == "HC-ST001" for d in got)
+        if fired != case["want_st001"]:
+            bad.append(
+                f"check_source over the ST001 source where {case['why']}: HC-ST001 "
+                f"{'fired' if fired else 'did not fire'}, expected it to "
+                f"{'fire' if case['want_st001'] else 'be dropped'}"
+            )
+    return bad
+
+
 # ---- HC-OR003, suspected duplication between orchestrators (section 3.1, §HC-OR003) ----
 # A soft warning: two orchestrators that share a run of min_run or more consecutive equivalent
 # calls. min_run has no built-in default and reaches check_source only through rule_config, so
@@ -360,6 +409,13 @@ _MSG_CASES = [
         "expected": [{'rule_id': 'HC-P004', 'severity': 'error', 'message': "I/O call 'open' in a non-boundary function reaches outside the process off the boundary. Do the I/O at a boundary (@boundary / route handler) and pass the result into the pure interior.", 'source_location': 'case_HC-P004.py:2:12', 'context': 'open(p)', 'fixable': False}],
     },
     {
+        "id": 'HC-ST001',
+        "source": 'from honest_persist import transaction\ndef save(rows, conn):\n    return transaction(rows, conn)\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-ST001', 'severity': 'error', 'message': "Persisted-state write 'transaction' in a non-boundary function writes the database off the boundary. Do the write at a boundary (@boundary / route handler), not in the pure interior.", 'source_location': 'case_HC-ST001.py:3:12', 'context': 'transaction(rows, conn)', 'fixable': False}],
+    },
+    {
         "id": 'HC-P005',
         "source": 'def f(x):\n    return isinstance(x, int)\n',
         "rule_config": {},
@@ -556,6 +612,7 @@ def probe_check_source():
             )
     bad.extend(_watchlist_failures(check_source))
     bad.extend(_declaration_failures(check_source))
+    bad.extend(_st001_declaration_failures(check_source))
     bad.extend(_or003_failures(check_source))
     bad.extend(_message_failures(check_source))
     return bad

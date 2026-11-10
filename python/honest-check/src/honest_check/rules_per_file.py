@@ -5,7 +5,7 @@ from honest_parse import language_of, line_col
 from honest_check.watchlists import IO_WATCH_LIST, NONDETERMINISTIC_WATCH_LIST
 from honest_check.constants import _APPROVED_BASES, _CACHE_DECORATORS, _HTTP_RESPONSE_MARKERS, _IO_CALLS, _IO_MODULE_PREFIXES, _LIFECYCLE_HOOKS, _TYPE_CHECK_CALLS
 from honest_check.nodes import base_types_of, call_arguments, called_name, canonical_name, decorator_expression, decorator_target, decorators_of, diagnostic, enclosing_function, in_non_boundary_function, is_boundary_decorator, literal_string, module_mutable_globals, nonlocal_names, own_body, param_names, underscore_self_name
-from honest_check.analysis import construction_maps, dispatch_variable, dotted_target, feature_state_flag, features_vocabulary, is_empty_default, is_link_decorated, is_orchestrator, link_declares_emits, link_is_impure, local_function_links, longest_shared_run, module_dict_literals, mutated_names, within_class_init
+from honest_check.analysis import construction_maps, dispatch_variable, dotted_target, feature_state_flag, features_vocabulary, is_empty_default, is_link_decorated, is_orchestrator, link_declares_emits, link_is_impure, local_function_links, longest_shared_run, module_dict_literals, mutated_names, persist_write_targets, within_class_init
 from honest_check.bindings import binding_keys, vocabulary_binding_pairs, vocabulary_types
 
 
@@ -204,6 +204,41 @@ def check_per_file(ctx):
                     f"I/O call {target!r} in a non-boundary function reaches outside the "
                     "process off the boundary. Do the I/O at a boundary (@boundary / route "
                     "handler) and pass the result into the pure interior.",
+                    node,
+                )
+            )
+        return findings
+
+    def check_st001():
+        """HC-ST001: a call to a honest-persist database writer in a non-boundary function
+        (§3.1, honest-state-architecture.md) — a write to persisted state off the boundary.
+        The writers are the functions honest-persist declares with `side_effect writes
+        "database"` (`transaction`, `apply`); persist_write_targets resolves them through this
+        file's own `honest_persist` imports, so a bare name no such import binds does not fire,
+        and `insert`/`update`/`delete` — pure Query builders — never fire. Boundary-ness is the
+        same test HC-P004 uses: a `@boundary` function, or one the module's `.hd` marks a door,
+        is the legitimate boundary write and is dropped. honest-persist's own package is not
+        policed — its interior names these functions as local defs, so nothing resolves.
+        Reported at the call's line."""
+        findings = []
+        targets = persist_write_targets(ctx)
+        if not targets:
+            return findings
+        for node in nodes:
+            if node.type != "call":
+                continue
+            target = dotted_target(ctx, node)
+            if target is None or target not in targets:
+                continue
+            if not in_non_boundary_function(ctx, node):
+                continue
+            findings.append(
+                diagnostic(ctx,
+                    "HC-ST001",
+                    "error",
+                    f"Persisted-state write {target!r} in a non-boundary function writes the "
+                    "database off the boundary. Do the write at a boundary (@boundary / route "
+                    "handler), not in the pure interior.",
                     node,
                 )
             )
@@ -1051,6 +1086,7 @@ def check_per_file(ctx):
         check_p016,
         check_p002,
         check_p004,
+        check_st001,
         check_p005,
         check_p006,
         check_p015,

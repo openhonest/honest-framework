@@ -80,6 +80,14 @@ _HTTP_RESPONSE_MARKERS = frozenset(
 _IO_CALLS = frozenset({"open", "print", "os.system"})
 _IO_MODULE_PREFIXES = ("requests.", "urllib.", "subprocess.")
 
+# honest-persist's declared database writers — the functions it declares with
+# `side_effect writes "database"` in honest-persist.hd (`apply`, a schema migration, and
+# `transaction`, a list of queries committed as one unit). HC-ST001 fires on a call to one
+# of these in a non-boundary function, resolved through the file's own `honest_persist`
+# imports (§3.1, honest-state-architecture.md). `insert`/`update`/`delete` are not here —
+# they build a Query value and write nothing, so a call to one never fires.
+_PERSIST_WRITE_FUNCTIONS = frozenset({"transaction", "apply"})
+
 # The runtime type checks HC-P005 names in a non-boundary function (§5.5): a hand-written
 # check that duplicates a constraint a vocabulary should declare at the boundary.
 _TYPE_CHECK_CALLS = frozenset({"isinstance", "type"})

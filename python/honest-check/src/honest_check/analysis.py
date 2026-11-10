@@ -4,7 +4,7 @@ Each helper takes the check context ctx (root, nodes, aliases, roles, source, pa
 and returns data; the rule logic that uses them stays nested-as-data in the sub-cores (section 3.4)."""
 
 import ast
-from honest_check.constants import _EMPTY_CONSTRUCTORS
+from honest_check.constants import _EMPTY_CONSTRUCTORS, _PERSIST_WRITE_FUNCTIONS
 from honest_check.nodes import call_arguments, called_name, canonical_name, decorator_expression, decorator_target, decorators_of, enclosing_function, is_attribute_suffix, is_keyword_name, link_locals, literal_string, own_body, string_members, watched
 
 
@@ -93,6 +93,44 @@ def dotted_target(ctx, call_node):
         return None
 
     return name_of(call_node.child_by_field_name("function"))
+
+
+def persist_write_targets(ctx):
+    """The dotted call targets, as dotted_target would spell them, that resolve to a
+    honest-persist database writer through this file's own imports (§3.1, HC-ST001).
+
+    Each `from honest_persist import transaction [as tx]` of a writer adds its local name
+    (`transaction`, or the alias `tx`) as a bare target; each `import honest_persist [as hp]`
+    adds `honest_persist.<writer>` (or `hp.<writer>`) for every writer, matching the attribute
+    call the module name produces. A writer is a function honest-persist declares with
+    `side_effect writes "database"` — `_PERSIST_WRITE_FUNCTIONS`. The map is empty inside
+    honest-persist's own package, which refers to these functions as local defs rather than
+    importing them, so the rule never polices the boundary layer itself."""
+    targets = set()
+    for node in ctx["nodes"]:
+        if node.type == "import_from_statement":
+            module = node.child_by_field_name("module_name")
+            if module is None or module.text.decode("utf-8") != "honest_persist":
+                continue
+            for imported in node.children_by_field_name("name"):
+                if imported.type == "aliased_import":
+                    canonical = imported.child_by_field_name("name").text.decode("utf-8")
+                    local = imported.child_by_field_name("alias").text.decode("utf-8")
+                else:
+                    canonical = local = imported.text.decode("utf-8")
+                if canonical in _PERSIST_WRITE_FUNCTIONS:
+                    targets.add(local)
+        elif node.type == "import_statement":
+            for imported in node.children_by_field_name("name"):
+                if imported.type == "aliased_import":
+                    module_name = imported.child_by_field_name("name").text.decode("utf-8")
+                    local_module = imported.child_by_field_name("alias").text.decode("utf-8")
+                else:
+                    module_name = local_module = imported.text.decode("utf-8")
+                if module_name == "honest_persist":
+                    for writer in _PERSIST_WRITE_FUNCTIONS:
+                        targets.add(f"{local_module}.{writer}")
+    return targets
 
 
 def link_is_impure(ctx, fdef, watch, mutable_globals):
