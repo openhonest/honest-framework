@@ -83,12 +83,9 @@ A `Method` is the record `{version, signals, traversal}`, reproducible by constr
 
 ## 5. Edge Construction
 
-`causal_graph(evidence, method, judgments) -> CausalGraph` builds the graph by applying each enabled signal's detector to `E`, then adds the supplied `judgments` (marked edges) only when `judgment` is enabled in `M`. The detectors are pure and dispatched by signal kind through a table, never an if/elif chain:
+`causal_graph(evidence, method, judgments) -> CausalGraph` builds the graph by applying each enabled signal's detector to `E`, then adds the supplied `judgments` (marked edges) only when `judgment` is enabled in `M`. Detection is pure and dispatched by signal kind through a table, never an if/elif chain, and one detector serves every kind:
 
-- **`dataflow_edges(evidence) -> [CausalEdge]`** — a grounded edge for each recorded `flows_to` relation whose direction is a data dependency: the cause's value reaches the effect. Read from parse.
-- **`controlflow_edges(evidence) -> [CausalEdge]`** — a grounded edge for each recorded `controls` relation: the cause's branch determines whether the effect executes. Read from parse.
-- **`change_correlation_edges(evidence) -> [CausalEdge]`** — a grounded edge for each `changed_with` relation: the cause changed together with the failure. Read from history.
-- **`temporal_edges(evidence) -> [CausalEdge]`** — a grounded edge for each `precedes` relation: strict happens-before in the event log. Read from observe.
+- **`signal_edges(evidence, kind) -> [CausalEdge]`** — a grounded edge for each recorded relation of one signal kind, read from the evidence-item key the kind maps to: `dataflow` from `flows_to` (the cause's value reaches the effect, read from parse), `controlflow` from `controls` (the cause's branch determines whether the effect executes, read from parse), `change_correlation` from `changed_with` (the cause changed together with the failure, read from history), and `temporal` from `precedes` (strict happens-before in the event log, read from observe). Empty where the relation is absent. One detector parameterized by the kind rather than one copy per signal.
 
 Each detector emits only edges its signal can ground from the recorded relations; a relation absent from the evidence produces no edge. `judgment` builds no edges of its own — a judgment edge is supplied explicitly, `marked = true`, for a link no deterministic signal can settle, and it enters the graph only when `judgment` is enabled in `M`.
 

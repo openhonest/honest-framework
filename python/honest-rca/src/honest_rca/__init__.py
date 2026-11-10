@@ -13,10 +13,7 @@ from honest_rca.types import (
 from honest_rca.evidence import evidence_hash, evidence_set
 from honest_rca.edges import (
     causal_graph,
-    change_correlation_edges,
-    controlflow_edges,
-    dataflow_edges,
-    temporal_edges,
+    signal_edges,
 )
 from honest_rca.trace import terminus, trace
 from honest_rca.attest import attest, bound, terminus_is_design_root, validate_attestation
@@ -31,12 +28,9 @@ __all__ = [
     "bound",
     "causal_edge",
     "causal_graph",
-    "change_correlation_edges",
-    "controlflow_edges",
-    "dataflow_edges",
     "evidence_hash",
     "evidence_set",
-    "temporal_edges",
+    "signal_edges",
     "terminus",
     "terminus_is_design_root",
     "trace",

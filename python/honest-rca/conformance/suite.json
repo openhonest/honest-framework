@@ -37,7 +37,7 @@
     {
       "id": "vc-dataflow-edges",
       "value_case": {
-        "function": "dataflow_edges",
+        "function": "signal_edges",
         "expected": [
           {
             "cause": "a",
@@ -46,26 +46,29 @@
             "marked": false
           }
         ],
-        "input": [
-          {
-            "id": "a",
-            "kind": "code",
-            "ref": "",
-            "flows_to": [
-              "b"
-            ],
-            "controls": [],
-            "changed_with": [],
-            "precedes": [],
-            "category": ""
-          }
+        "args": [
+          [
+            {
+              "id": "a",
+              "kind": "code",
+              "ref": "",
+              "flows_to": [
+                "b"
+              ],
+              "controls": [],
+              "changed_with": [],
+              "precedes": [],
+              "category": ""
+            }
+          ],
+          "dataflow"
         ]
       }
     },
     {
       "id": "vc-controlflow-edges",
       "value_case": {
-        "function": "controlflow_edges",
+        "function": "signal_edges",
         "expected": [
           {
             "cause": "a",
@@ -74,26 +77,29 @@
             "marked": false
           }
         ],
-        "input": [
-          {
-            "id": "a",
-            "kind": "code",
-            "ref": "",
-            "flows_to": [],
-            "controls": [
-              "b"
-            ],
-            "changed_with": [],
-            "precedes": [],
-            "category": ""
-          }
+        "args": [
+          [
+            {
+              "id": "a",
+              "kind": "code",
+              "ref": "",
+              "flows_to": [],
+              "controls": [
+                "b"
+              ],
+              "changed_with": [],
+              "precedes": [],
+              "category": ""
+            }
+          ],
+          "controlflow"
         ]
       }
     },
     {
       "id": "vc-change-correlation-edges",
       "value_case": {
-        "function": "change_correlation_edges",
+        "function": "signal_edges",
         "expected": [
           {
             "cause": "a",
@@ -102,26 +108,29 @@
             "marked": false
           }
         ],
-        "input": [
-          {
-            "id": "a",
-            "kind": "code",
-            "ref": "",
-            "flows_to": [],
-            "controls": [],
-            "changed_with": [
-              "b"
-            ],
-            "precedes": [],
-            "category": ""
-          }
+        "args": [
+          [
+            {
+              "id": "a",
+              "kind": "code",
+              "ref": "",
+              "flows_to": [],
+              "controls": [],
+              "changed_with": [
+                "b"
+              ],
+              "precedes": [],
+              "category": ""
+            }
+          ],
+          "change_correlation"
         ]
       }
     },
     {
       "id": "vc-temporal-edges",
       "value_case": {
-        "function": "temporal_edges",
+        "function": "signal_edges",
         "expected": [
           {
             "cause": "a",
@@ -130,19 +139,22 @@
             "marked": false
           }
         ],
-        "input": [
-          {
-            "id": "a",
-            "kind": "code",
-            "ref": "",
-            "flows_to": [],
-            "controls": [],
-            "changed_with": [],
-            "precedes": [
-              "b"
-            ],
-            "category": ""
-          }
+        "args": [
+          [
+            {
+              "id": "a",
+              "kind": "code",
+              "ref": "",
+              "flows_to": [],
+              "controls": [],
+              "changed_with": [],
+              "precedes": [
+                "b"
+              ],
+              "category": ""
+            }
+          ],
+          "temporal"
         ]
       }
     },

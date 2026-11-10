@@ -17,12 +17,9 @@ from honest_rca import (
     bound,
     causal_edge,
     causal_graph,
-    change_correlation_edges,
-    controlflow_edges,
-    dataflow_edges,
     evidence_hash,
     evidence_set,
-    temporal_edges,
+    signal_edges,
     terminus,
     terminus_is_design_root,
     trace,
@@ -72,23 +69,23 @@ def _probe_edges():
         bad.append("causal_edge grounded shape wrong")
     if causal_edge("a", "b", "judgment")["marked"] is not True:
         bad.append("causal_edge must mark a judgment edge")
-    if dataflow_edges([_item("a", flows_to=["b", "c"])]) != [
+    if signal_edges([_item("a", flows_to=["b", "c"])], "dataflow") != [
         {"cause": "a", "effect": "b", "signal": "dataflow", "marked": False},
         {"cause": "a", "effect": "c", "signal": "dataflow", "marked": False},
     ]:
-        bad.append("dataflow_edges must ground one edge per flows_to")
-    if dataflow_edges([_item("a")]) != []:
-        bad.append("dataflow_edges must be empty without the relation")
-    if controlflow_edges([_item("a", controls=["b"])]) != [{"cause": "a", "effect": "b", "signal": "controlflow", "marked": False}]:
-        bad.append("controlflow_edges must ground one edge per controls")
-    if change_correlation_edges([_item("a", changed_with=["b"])]) != [{"cause": "a", "effect": "b", "signal": "change_correlation", "marked": False}]:
-        bad.append("change_correlation_edges must ground one edge per changed_with")
-    if temporal_edges([_item("a", precedes=["b"])]) != [{"cause": "a", "effect": "b", "signal": "temporal", "marked": False}]:
-        bad.append("temporal_edges must ground one edge per precedes")
+        bad.append("signal_edges(dataflow) must ground one edge per flows_to")
+    if signal_edges([_item("a")], "dataflow") != []:
+        bad.append("signal_edges(dataflow) must be empty without the relation")
+    if signal_edges([_item("a", controls=["b"])], "controlflow") != [{"cause": "a", "effect": "b", "signal": "controlflow", "marked": False}]:
+        bad.append("signal_edges(controlflow) must ground one edge per controls")
+    if signal_edges([_item("a", changed_with=["b"])], "change_correlation") != [{"cause": "a", "effect": "b", "signal": "change_correlation", "marked": False}]:
+        bad.append("signal_edges(change_correlation) must ground one edge per changed_with")
+    if signal_edges([_item("a", precedes=["b"])], "temporal") != [{"cause": "a", "effect": "b", "signal": "temporal", "marked": False}]:
+        bad.append("signal_edges(temporal) must ground one edge per precedes")
     # Every detector is exercised with and without its recorded relation (§10), not just dataflow: a
     # detector that grounded an edge from an absent relation would invent causation.
-    for name, detector in (("controlflow", controlflow_edges), ("change_correlation", change_correlation_edges), ("temporal", temporal_edges)):
-        if detector([_item("a")]) != []:
+    for name in ("controlflow", "change_correlation", "temporal"):
+        if signal_edges([_item("a")], name) != []:
             bad.append(f"{name}_edges must be empty without its recorded relation")
     return bad
 
@@ -314,12 +311,9 @@ def _probe_public_surface():
             "bound",
             "causal_edge",
             "causal_graph",
-            "change_correlation_edges",
-            "controlflow_edges",
-            "dataflow_edges",
             "evidence_hash",
             "evidence_set",
-            "temporal_edges",
+            "signal_edges",
             "terminus",
             "terminus_is_design_root",
             "trace",

@@ -20,24 +20,24 @@ Feature: honest-rca — the apophatic root-cause solver
     When causal_edge builds the edge
     Then it is marked exactly when the signal is judgment
 
-  Scenario: dataflow_edges grounds an edge for each recorded data-flow relation
+  Scenario: signal_edges grounds a dataflow edge for each recorded data-flow relation
     Given evidence items carrying flows_to relations
-    When dataflow_edges reads them
+    When signal_edges reads them for the dataflow kind
     Then it grounds one dataflow edge per relation and none where the relation is absent
 
-  Scenario: controlflow_edges grounds an edge for each recorded control-flow relation
+  Scenario: signal_edges grounds a controlflow edge for each recorded control-flow relation
     Given evidence items carrying controls relations
-    When controlflow_edges reads them
+    When signal_edges reads them for the controlflow kind
     Then it grounds one controlflow edge per relation and none where the relation is absent
 
-  Scenario: change_correlation_edges grounds an edge for each recorded co-change relation
+  Scenario: signal_edges grounds a change_correlation edge for each recorded co-change relation
     Given evidence items carrying changed_with relations
-    When change_correlation_edges reads them
+    When signal_edges reads them for the change_correlation kind
     Then it grounds one change_correlation edge per relation and none where the relation is absent
 
-  Scenario: temporal_edges grounds an edge for each recorded happens-before relation
+  Scenario: signal_edges grounds a temporal edge for each recorded happens-before relation
     Given evidence items carrying precedes relations
-    When temporal_edges reads them
+    When signal_edges reads them for the temporal kind
     Then it grounds one temporal edge per relation and none where the relation is absent
 
   Scenario: causal_graph applies the enabled signals and adds judgments only when enabled

@@ -73,6 +73,7 @@ module honest-rca
     code: str
     message: str
     category: str
+    results: list<any>
     detail: dict<str, any>
   }
 
@@ -82,13 +83,7 @@ module honest-rca
 
   fn causal_edge : (cause: str, effect: str, signal: str) -> CausalEdge
 
-  fn dataflow_edges : (items: list<EvidenceItem>) -> list<CausalEdge>
-
-  fn controlflow_edges : (items: list<EvidenceItem>) -> list<CausalEdge>
-
-  fn change_correlation_edges : (items: list<EvidenceItem>) -> list<CausalEdge>
-
-  fn temporal_edges : (items: list<EvidenceItem>) -> list<CausalEdge>
+  fn signal_edges : (items: list<EvidenceItem>, kind: str) -> list<CausalEdge>
 
   fn causal_graph : (evidence: EvidenceSet, method: Method, judgments: list<CausalEdge>) -> CausalGraph
 
