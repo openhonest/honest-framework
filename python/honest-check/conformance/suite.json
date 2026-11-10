@@ -524,7 +524,7 @@
         "diagnostics": [
           {
             "rule": "HC-P015",
-            "severity": "warning",
+            "severity": "error",
             "line": 1
           }
         ]
@@ -1605,7 +1605,7 @@
         "diagnostics": [
           {
             "rule": "HC-P015",
-            "severity": "warning",
+            "severity": "error",
             "line": 1
           }
         ]
@@ -1623,7 +1623,7 @@
         "diagnostics": [
           {
             "rule": "HC-P015",
-            "severity": "warning",
+            "severity": "error",
             "line": 1
           }
         ]
@@ -1641,7 +1641,7 @@
         "diagnostics": [
           {
             "rule": "HC-P015",
-            "severity": "warning",
+            "severity": "error",
             "line": 1
           }
         ]
@@ -1659,7 +1659,7 @@
         "diagnostics": [
           {
             "rule": "HC-P015",
-            "severity": "warning",
+            "severity": "error",
             "line": 1
           }
         ]
@@ -1773,7 +1773,7 @@
         "diagnostics": [
           {
             "rule": "HC-P015",
-            "severity": "warning",
+            "severity": "error",
             "line": 1
           }
         ]
@@ -3608,7 +3608,7 @@
         "diagnostics": [
           {
             "rule": "HC-P015",
-            "severity": "warning",
+            "severity": "error",
             "line": 1
           }
         ]
@@ -3626,7 +3626,7 @@
         "diagnostics": [
           {
             "rule": "HC-P015",
-            "severity": "warning",
+            "severity": "error",
             "line": 1
           }
         ]
@@ -4037,7 +4037,7 @@
         "diagnostics": [
           {
             "rule": "HC-P015",
-            "severity": "warning",
+            "severity": "error",
             "line": 1
           }
         ]
@@ -4341,6 +4341,126 @@
       "input": {
         "language": "python",
         "source": "from typing import TypedDict\nclass Thing(TypedDict):\n    x: int\ndef build():\n    return Thing(x=1)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P019-001",
+      "description": "A lookup with a fallback default serves an unknown key as a known one and loses the miss.",
+      "category": "HC-P019",
+      "input": {
+        "language": "python",
+        "source": "def f(d, k):\n    return d.get(k, 0)\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P019",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P019-clean-001",
+      "description": "A lookup read without a fallback does not fire HC-P019.",
+      "category": "clean",
+      "input": {
+        "language": "python",
+        "source": "def f(d, k):\n    return d.get(k)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P020-001",
+      "description": "A dispatch read on a dict-literal table with a variable key and no guard raises a bare KeyError.",
+      "category": "HC-P020",
+      "input": {
+        "language": "python",
+        "source": "TABLE = {\"a\": 1}\ndef f(k):\n    return TABLE[k]\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P020",
+            "severity": "error",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P020-clean-001",
+      "description": "A guarded dispatch read reports the miss, so HC-P020 does not fire.",
+      "category": "clean",
+      "input": {
+        "language": "python",
+        "source": "TABLE = {\"a\": 1}\ndef f(k):\n    if k not in TABLE:\n        return None\n    return TABLE[k]\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P018-001",
+      "description": "A bare eval runs code chosen at runtime, so the call graph is infinite.",
+      "category": "HC-P018",
+      "input": {
+        "language": "python",
+        "source": "def f(s):\n    return eval(s)\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P018",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P018-002",
+      "description": "A getattr-then-call with a runtime attribute name selects the callee from an unbounded name.",
+      "category": "HC-P018",
+      "input": {
+        "language": "python",
+        "source": "def f(obj, name):\n    return getattr(obj, name)()\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P018",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P018-clean-001",
+      "description": "A getattr with a literal attribute name is bounded, so HC-P018 does not fire.",
+      "category": "clean",
+      "input": {
+        "language": "python",
+        "source": "def f(obj):\n    return getattr(obj, \"method\")()\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P018-clean-002",
+      "description": "A call to a callable parameter is bounded, so HC-P018 does not fire.",
+      "category": "clean",
+      "input": {
+        "language": "python",
+        "source": "def f(g, x):\n    return g(x)\n"
       },
       "expected": {
         "diagnostics": []

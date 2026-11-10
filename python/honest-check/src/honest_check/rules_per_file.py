@@ -300,7 +300,7 @@ def check_per_file(ctx):
             findings.append(
                 diagnostic(ctx,
                     "HC-P015",
-                    "warning",
+                    "error",
                     f"Parameter {name!r} defaults to a real value. A default hides whether "
                     "the caller chose the value or omitted it, and leaves the omitted-argument "
                     "path untested. Make the parameter required, or default it to empty if "
@@ -910,6 +910,139 @@ def check_per_file(ctx):
                 )
             )
         return findings
+    def check_p019():
+        """HC-P019: a lookup read with a fallback default (§HC-P019). An attribute call named
+        'get' or 'pop' with two or more positional arguments hands the second argument back for
+        any key the table does not hold, so an unknown key is served as a known one and the miss
+        is lost. Give the absent case its own row, or read without a fallback and report the miss."""
+        findings = []
+        for node in nodes:
+            if node.type != "call":
+                continue
+            function = node.child_by_field_name("function")
+            if function is None or function.type != "attribute":
+                continue
+            attr = function.child_by_field_name("attribute")
+            if attr is None or attr.text.decode("utf-8") not in ("get", "pop"):
+                continue
+            positionals, _keywords = call_arguments(ctx, node)
+            if len(positionals) < 2:
+                continue
+            findings.append(
+                diagnostic(ctx,
+                    "HC-P019",
+                    "error",
+                    "This lookup falls back to a default for a key the table does not hold, so "
+                    "an unknown key is served as a known one and the miss is lost. If the absent "
+                    "case is real, give it its own row with its own key. If the key can be "
+                    "unknown, read without a fallback and report the miss, naming the expected keys.",
+                    node,
+                )
+            )
+        return findings
+
+    def check_p020():
+        """HC-P020: a dispatch read with no reported miss (§HC-P020). A subscript on a name bound
+        to a module-scope dict literal, indexed by a variable, with no `key in TABLE` guard in the
+        enclosing function, raises a bare KeyError for an unknown key and names neither the
+        expected keys nor a fault. A constant key is a fixed row and is left alone."""
+        tables = set(module_dict_literals(ctx))
+
+        def guarded(function, key, table):
+            lo, hi = function.start_byte, function.end_byte
+            for candidate in nodes:
+                if candidate.type != "comparison_operator":
+                    continue
+                if candidate.start_byte < lo or candidate.end_byte > hi:
+                    continue
+                if not any(child.type in ("in", "not in") for child in candidate.children):
+                    continue
+                names = {c.text.decode("utf-8") for c in candidate.named_children if c.type == "identifier"}
+                if key in names and table in names:
+                    return True
+            return False
+
+        findings = []
+        for node in nodes:
+            if node.type != "subscript":
+                continue
+            value = node.child_by_field_name("value")
+            if value is None or value.type != "identifier":
+                continue
+            table = value.text.decode("utf-8")
+            if table not in tables:
+                continue
+            index = node.child_by_field_name("subscript")
+            if index is None or index.type != "identifier":
+                continue
+            parent = node.parent
+            if parent is not None and parent.type in ("assignment", "augmented_assignment") \
+                    and parent.child_by_field_name("left") is node:
+                continue
+            key = index.text.decode("utf-8")
+            function = enclosing_function(node)
+            if function is not None and guarded(function, key, table):
+                continue
+            findings.append(
+                diagnostic(ctx,
+                    "HC-P020",
+                    "error",
+                    "This dispatch read raises a bare KeyError for a key the table does not hold, "
+                    "naming neither the expected keys nor a fault. Guard it with 'if key not in "
+                    "TABLE' that reports the miss and names the expected keys, or give the absent "
+                    "case its own row.",
+                    node,
+                )
+            )
+        return findings
+
+    def check_p018():
+        """HC-P018: a call whose target set is provably unbounded (§HC-P018). Only the proven
+        cases are rejected: a bare `eval`/`exec` call runs arbitrary code, and a
+        `getattr(obj, name)(...)` whose attribute name is not a string literal selects the callee
+        from an unbounded name, so the call graph is infinite and cannot be exhaustively tested.
+        A bounded form (a declared dict dispatch table, a getattr with a literal name, a callable
+        parameter) is left alone; an import-produced callable needs dataflow to prove and is
+        treated as undetermined rather than guessed."""
+        findings = []
+        for node in nodes:
+            if node.type != "call":
+                continue
+            function = node.child_by_field_name("function")
+            if function is None:
+                continue
+            if function.type == "identifier" and function.text.decode("utf-8") in ("eval", "exec"):
+                findings.append(
+                    diagnostic(ctx,
+                        "HC-P018",
+                        "error",
+                        "This call runs code chosen at runtime, so the set of functions it may "
+                        "invoke is open and the call graph is infinite. Use a declared dict "
+                        "dispatch table (HC-P001), or pass the callable as a parameter from a "
+                        "fixed set of call sites.",
+                        node,
+                    )
+                )
+                continue
+            if function.type == "call":
+                inner = function.child_by_field_name("function")
+                if inner is None or inner.type != "identifier" or inner.text.decode("utf-8") != "getattr":
+                    continue
+                positionals, _keywords = call_arguments(ctx, function)
+                if len(positionals) >= 2 and positionals[1].type != "string":
+                    findings.append(
+                        diagnostic(ctx,
+                            "HC-P018",
+                            "error",
+                            "This call selects its target by a runtime attribute name, so the set "
+                            "of functions it may invoke is not bounded to a finite, "
+                            "statically-visible set and the call graph is infinite. Use a declared "
+                            "dict dispatch table (HC-P001), or a getattr with a literal name.",
+                            node,
+                        )
+                    )
+        return findings
+
     per_file_rules = (
         check_classes,
         check_p001,
@@ -923,6 +1056,9 @@ def check_per_file(ctx):
         check_p015,
         check_p010,
         check_p013,
+        check_p018,
+        check_p019,
+        check_p020,
         check_hc008,
         check_hc001,
         check_hc002,

@@ -2,7 +2,7 @@
 rule filters, then counts the survivors.
 
 One enforced error-diagnostic at adoption Declared survives as an error: errors == 1,
-total_count == 53. A diagnostic whose rule is above the declared level (HC-OR001 at
+total_count == 57. A diagnostic whose rule is above the declared level (HC-OR001 at
 adoption Structural) is downgraded to info, so errors == 0.
 """
 
@@ -38,7 +38,7 @@ _CASES = [
         "diagnostics": [_diag("HC-P003", "error")],
         "args": _args("error"),
         "adoption": "Declared",
-        "expect": {"errors": 1, "total_count": 53},
+        "expect": {"errors": 1, "total_count": 57},
     },
     {
         "diagnostics": [_diag("HC-OR001", "error")],

@@ -2,7 +2,7 @@
 
 always_rules hold at every level; each level adds its own set on top of the levels
 below it. HC-P001 is enforced at Structural; HC-SYN holds everywhere; HC001 is not
-enforced at Structural but is at Typed. The four levels enforce 8, 17, 35 and 53
+enforced at Structural but is at Typed. The four levels enforce 11, 20, 39 and 57
 rules, so every rule name and the cumulative slice are pinned by one membership
 case and one count case apiece.
 """
@@ -82,10 +82,10 @@ _MEMBERSHIP = [
 # levels, so widening it by one level is caught here even though the member names do not
 # change.
 _COUNTS = [
-    {"level": "Structural", "count": 8},
-    {"level": "Boundary", "count": 17},
-    {"level": "Typed", "count": 35},
-    {"level": "Declared", "count": 53},
+    {"level": "Structural", "count": 11},
+    {"level": "Boundary", "count": 20},
+    {"level": "Typed", "count": 39},
+    {"level": "Declared", "count": 57},
 ]
 
 

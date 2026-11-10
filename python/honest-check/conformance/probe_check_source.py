@@ -378,7 +378,7 @@ _MSG_CASES = [
         "source": 'def f(x=5):\n    return x\n',
         "rule_config": {},
         "hd": None,
-        "expected": [{'rule_id': 'HC-P015', 'severity': 'warning', 'message': "Parameter 'x' defaults to a real value. A default hides whether the caller chose the value or omitted it, and leaves the omitted-argument path untested. Make the parameter required, or default it to empty if absence is the honest nothing.", 'source_location': 'case_HC-P015.py:1:7', 'context': 'x=5', 'fixable': False}],
+        "expected": [{'rule_id': 'HC-P015', 'severity': 'error', 'message': "Parameter 'x' defaults to a real value. A default hides whether the caller chose the value or omitted it, and leaves the omitted-argument path untested. Make the parameter required, or default it to empty if absence is the honest nothing.", 'source_location': 'case_HC-P015.py:1:7', 'context': 'x=5', 'fixable': False}],
     },
     {
         "id": 'HC008',

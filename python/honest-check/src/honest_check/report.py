@@ -12,9 +12,9 @@ import json
 _FORMATS = frozenset({"human", "json", "github", "junit"})
 
 # The section 9.4 level-to-rule membership, as data. Four cumulative level sets plus the
-# always-on three, 53 members in all. enforced_rules_of folds a named set, never a phrase.
+# always-on three, 57 members in all. enforced_rules_of folds a named set, never a phrase.
 _ALWAYS_RULES = frozenset({"HC-SYN", "HC-SUP001", "HC-SUP002"})
-_STRUCTURAL_RULES = frozenset({"HC-P001", "HC-P003", "HC-P007", "HC-P011", "HC-P016"})
+_STRUCTURAL_RULES = frozenset({"HC-P001", "HC-P003", "HC-P007", "HC-P011", "HC-P016", "HC-P015", "HC-P019", "HC-P020"})
 _BOUNDARY_RULES = frozenset(
     {
         "HC-P002",
@@ -48,6 +48,7 @@ _TYPED_RULES = frozenset(
         "HC-SM05",
         "HC-P014",
         "HC-P017",
+        "HC-P018",
     }
 )
 _DECLARED_RULES = frozenset(
@@ -85,7 +86,7 @@ _RULES_ADDED_AT = {
 }
 
 # The rules the adoption levels cover, the denominator of the adoption line (section 9.4).
-_TOTAL_COVERED = 53
+_TOTAL_COVERED = 57
 
 # severity ordering, so the --severity threshold keeps findings at or above it.
 _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
