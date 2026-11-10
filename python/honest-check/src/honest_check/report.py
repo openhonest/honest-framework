@@ -68,6 +68,7 @@ _DECLARED_RULES = frozenset(
         "HC-REF006",
         "HC-REF007",
         "HC-REF008",
+        "HC-REF009",
         "HC-ST002",
         "HC-HF001",
         "HC-HF002",
@@ -86,7 +87,7 @@ _RULES_ADDED_AT = {
 }
 
 # The rules the adoption levels cover, the denominator of the adoption line (section 9.4).
-_TOTAL_COVERED = 57
+_TOTAL_COVERED = 58
 
 # severity ordering, so the --severity threshold keeps findings at or above it.
 _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}

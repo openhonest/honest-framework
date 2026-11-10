@@ -478,7 +478,7 @@
       "prevents": "A hidden coupling where one module writes a resource and another reads it, invisible because each declares only its own world side and neither names the other. A question, not a gate failure: a module may honestly stand alone.",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": false
+      "emitted_by_honest_check": true
     },
     {
       "id": "HC-SM01",

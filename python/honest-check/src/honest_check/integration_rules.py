@@ -15,7 +15,14 @@ comes back as a Diagnostic, because a violation is data (section 8).
 The honest-pre-commit gate imports the two check functions and declared_seams from this submodule by
 path; they are defined here (so HC-REF005's "defined somewhere" holds) and not re-exported from
 the package __init__ (so no export the .hd does not declare).
+
+HC-REF009 lives here too, the complement of the other three: they fire on a declared reference
+that fails to resolve, and it fires on an undeclared coupling the declarations reveal. It calls
+honest-design's couples_on so the one test of "a named resource couples, a bare kind does not"
+has a single home.
 """
+
+from honest_design.validator import couples_on
 
 
 def check_seams(declarations, paths, in_scope):
@@ -60,6 +67,7 @@ def run_seam_rules(declarations, paths, in_scope):
         findings.extend(check_hc_ref006(module, declarations, path))
         findings.extend(check_hc_ref007(module, declarations, path))
         findings.extend(check_hc_ref008(module, declarations, path))
+    findings.extend(check_hc_ref009(declarations, in_scope, paths))
     return findings
 
 
@@ -168,6 +176,64 @@ def check_hc_ref007(module, declarations, path):
                 }
             )
     return findings
+
+
+def check_hc_ref009(declarations, in_scope, paths):
+    """Run HC-REF009 across every loaded declaration at once: when one module writes a named world
+    resource and another module reads that same resource, the two meet through it even though
+    neither names the other, and the rule raises one information finding per such pair so the
+    reader can confirm the coupling is intended (§HC-REF009, §717-745).
+
+    Unlike HC-REF006/007/008, which resolve one module's seams, this reads every module's world
+    sides together, because a coupling lives between two modules, not inside one. It skips a seam
+    (a side whose module half is named — HC-REF006/007/008 own those), and skips an ambient target
+    through honest-design's couples_on: a bare kind like `file` couples nobody, and the reserved
+    run-time name `given` never matches another. One module writing and reading the same resource
+    is not two modules meeting, so that pair is skipped. It reports a pair only when the writing
+    module is in scope (in_scope, or every loaded module when in_scope is empty), while the
+    resource match runs against the complete declarations, so the verdict never changes with how
+    the gate was invoked (§639). It emits info, never error: a shared resource may be intended, so
+    the rule informs and does not fail the build.
+    """
+    writers = {}
+    readers = {}
+    for module_name, module in declarations.items():
+        for function in module["functions"]:
+            for side in function["side_effects"]:
+                if side["module"] != "":
+                    continue
+                target = side["target"]
+                if not couples_on(target):
+                    continue
+                entry = (module_name, function["name"])
+                if side["direction"] in ("writes", "reads_writes"):
+                    writers.setdefault(target, []).append(entry)
+                if side["direction"] in ("reads", "reads_writes"):
+                    readers.setdefault(target, []).append(entry)
+    targets_in_scope = set(in_scope) if in_scope else set(declarations)
+    findings = []
+    for resource in writers:
+        for writer_module, _writer_function in writers[resource]:
+            if writer_module not in targets_in_scope:
+                continue
+            for reader_module, _reader_function in readers.get(resource, []):
+                if writer_module == reader_module:
+                    continue
+                findings.append(
+                    {
+                        "rule_id": "HC-REF009",
+                        "severity": "info",
+                        "message": (
+                            f"'{writer_module}' writes '{resource}' and '{reader_module}' reads "
+                            f"it, so the two meet through '{resource}' and neither names the "
+                            "other. Confirm the coupling is intended."
+                        ),
+                        "source_location": paths[writer_module],
+                        "context": "",
+                        "fixable": False,
+                    }
+                )
+    return sorted(findings, key=lambda finding: (finding["source_location"], finding["message"]))
 
 
 def seam_module_of(side, module_names):
