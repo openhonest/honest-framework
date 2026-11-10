@@ -7,6 +7,8 @@ the new state. No `if/elif` ladder on keywords: both the sorting and the handlin
 lookups. A malformed feature returns `err(StepFault bad_feature_syntax)`, never a raised exception.
 """
 
+from functools import partial
+
 from honest_type import err, ok
 
 from honest_gherkin.ir import STEP_KINDS, step_fault
@@ -16,20 +18,11 @@ def _is_blank(line):
     return line.strip() == ""
 
 
-def _is_comment(line):
-    return line.strip().startswith("#")
-
-
-def _is_tag(line):
-    return line.strip().startswith("@")
-
-
-def _is_feature(line):
-    return line.strip().startswith("Feature:")
-
-
-def _is_scenario(line):
-    return line.strip().startswith("Scenario:")
+def _starts_with(prefix, line):
+    """True when a line, stripped, begins with a literal prefix. One predicate parameterized by
+    the prefix, so comment, tag, feature and scenario are one function applied four ways rather
+    than four copies of the same body."""
+    return line.strip().startswith(prefix)
 
 
 def _is_step(line):
@@ -37,12 +30,13 @@ def _is_step(line):
 
 
 # Ordered classification table — first match wins; order is significant (comment before feature).
+# The four prefix kinds share one predicate, _starts_with, closed over their prefix with partial.
 _LINE_KINDS = (
     ("blank", _is_blank),
-    ("comment", _is_comment),
-    ("tag", _is_tag),
-    ("feature", _is_feature),
-    ("scenario", _is_scenario),
+    ("comment", partial(_starts_with, "#")),
+    ("tag", partial(_starts_with, "@")),
+    ("feature", partial(_starts_with, "Feature:")),
+    ("scenario", partial(_starts_with, "Scenario:")),
     ("step", _is_step),
 )
 
