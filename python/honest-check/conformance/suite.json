@@ -556,11 +556,11 @@
     },
     {
       "id": "HC-P014-001",
-      "description": "Two top-level functions with one body over different constants are one function written twice.",
+      "description": "Three top-level functions sharing one body fire regardless of length — a shape written three times is a pattern.",
       "category": "HC-P014",
       "input": {
         "language": "python",
-        "source": "def send_email(msg):\n    return deliver(msg, \"email\")\ndef send_sms(msg):\n    return deliver(msg, \"sms\")\n"
+        "source": "def send_email(msg):\n    return deliver(msg, \"email\")\ndef send_sms(msg):\n    return deliver(msg, \"sms\")\ndef send_push(msg):\n    return deliver(msg, \"push\")\n"
       },
       "expected": {
         "diagnostics": [
@@ -570,6 +570,36 @@
             "line": 1
           }
         ]
+      }
+    },
+    {
+      "id": "HC-P014-002",
+      "description": "Two functions sharing a body of more than two statements fire — two long copies are a real duplication.",
+      "category": "HC-P014",
+      "input": {
+        "language": "python",
+        "source": "def run_a(q, c):\n    x = prep(q)\n    y = call(x, c, \"a\")\n    return pick(y, \"rows\")\ndef run_b(q, c):\n    x = prep(q)\n    y = call(x, c, \"b\")\n    return pick(y, \"cols\")\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P014",
+            "severity": "error",
+            "line": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P014-clean-two-short",
+      "description": "Two functions sharing a body of two statements or fewer do not fire — two small siblings that return different fields are distinct operations, not one body written twice.",
+      "category": "HC-P014",
+      "input": {
+        "language": "python",
+        "source": "def execute(q, c):\n    r = run(q, c)\n    return r[\"rows\"]\ndef execute_many(q, c):\n    r = run(q, c)\n    return r[\"rowcount\"]\n"
+      },
+      "expected": {
+        "diagnostics": []
       }
     },
     {

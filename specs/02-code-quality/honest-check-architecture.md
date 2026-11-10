@@ -1147,19 +1147,21 @@ Sameness is behavioural, read from the source, never from the values. Two functi
 FUNCTION check_HC_P014(module):
     groups ← {}
     FOR EACH function IN module.top_level_functions:
-        IF body_is_trivial(function): CONTINUE          // a bare return or pass carries no logic to share
+        IF NOT body_has_call(function): CONTINUE        // no call: no behaviour to share
         key ← canonical_body(function)                  // literals blanked; names, calls, operators, structure kept
         APPEND function TO groups[key]
 
     FOR EACH (key, members) IN groups:
-        IF len(members) > 1:
+        IF len(members) >= 3 OR (len(members) == 2 AND body_statement_count(members[0]) > 2):
             EMIT error(HC-P014, members[0].location,
-                f"Functions {member_names} share one body over different values. "
-                f"Replace them with one function that takes the differing value, "
-                f"dispatched through a lookup table (HC-P001).")
+                f"Functions {member_names} have the same body. Collapse them into one "
+                f"function; pass any value they differ on as a parameter, dispatched "
+                f"through a lookup table (HC-P001).")
 ```
 
-**Scope.** Top-level functions in one file. A nested helper is the inner scope's own and is not compared, and cross-file duplication is out of this per-file rule's reach. `canonical_body` keeps identifier names, so two functions that call different helpers, or read differently named parameters, do not match; it blanks only literal values, so two functions that differ only in the constants they name do match. `body_is_trivial` excludes a function whose body is a single bare return or `pass`, which carries no logic worth sharing.
+**Scope.** Top-level functions in one file. A nested helper is the inner scope's own and is not compared, and cross-file duplication is out of this per-file rule's reach. `canonical_body` keeps identifier names, so two functions that call different helpers, or read differently named parameters, do not match; it blanks only literal values, so two functions that differ only in the constants they name do match. `body_has_call` skips a body with no call, which carries no logic worth sharing.
+
+**Threshold.** A body written **three or more** times fires outright — a shape repeated that often is a pattern, however short each copy. A body shared by exactly **two** functions fires only when it runs **past two statements**: two long copies are a real duplication, but two one- or two-statement functions often share an incidental shape without being the same operation — `execute` returning `result["rows"]` and `execute_many` returning `result["rowcount"]` are two distinct operations, not one written twice, and folding them behind a `key` parameter that selects which field to return would be a worse design (a flag that picks behaviour, forbidden in its own right) rather than the honest value-parameterization this rule asks for. The threshold keeps the rule aimed at genuine failures to polymorphize.
 
 **Why this matters.** The same logic written several times drifts: the day a bug is found in one copy, the fix lands there and the other copies keep the bug, because nothing ties them together. A single function behind a dispatch table has one place to fix and one place to test. The resolution is one of two shapes — a parameter that carries the differing value, or a dispatch table (HC-P001) keyed on it — never a second copy.
 

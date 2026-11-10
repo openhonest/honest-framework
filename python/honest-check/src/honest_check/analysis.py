@@ -119,6 +119,29 @@ def body_has_call(fdef):
     return any(node.type == "call" for node in own_body(fdef))
 
 
+def body_statement_count(fdef):
+    """The number of statements in a function's body block, comments aside (§HC-P014). HC-P014
+    fires on a two-member group only when its shared body runs past two statements; a longer body
+    is substantial enough that two copies are a real duplication, where two one- or two-statement
+    siblings may just share an incidental shape."""
+    body = fdef.child_by_field_name("body")
+    if body is None:
+        return 0
+
+    def is_docstring(child):
+        return (
+            child.type == "expression_statement"
+            and len(child.named_children) == 1
+            and child.named_children[0].type == "string"
+        )
+
+    return sum(
+        1
+        for child in body.named_children
+        if child.type != "comment" and not is_docstring(child)
+    )
+
+
 def persist_write_targets(ctx):
     """The dotted call targets, as dotted_target would spell them, that resolve to a
     honest-persist database writer through this file's own imports (§3.1, HC-ST001).

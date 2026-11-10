@@ -417,10 +417,10 @@ _MSG_CASES = [
     },
     {
         "id": 'HC-P014',
-        "source": 'def send_email(msg):\n    return deliver(msg, "email")\ndef send_sms(msg):\n    return deliver(msg, "sms")\n',
+        "source": 'def send_email(msg):\n    return deliver(msg, "email")\ndef send_sms(msg):\n    return deliver(msg, "sms")\ndef send_push(msg):\n    return deliver(msg, "push")\n',
         "rule_config": {},
         "hd": None,
-        "expected": [{'rule_id': 'HC-P014', 'severity': 'error', 'message': "Functions 'send_email', 'send_sms' have the same body. Collapse them into one function; pass any value they differ on as a parameter, dispatched through a lookup table.", 'source_location': 'case_HC-P014.py:1:1', 'context': 'def send_email(msg):', 'fixable': False}],
+        "expected": [{'rule_id': 'HC-P014', 'severity': 'error', 'message': "Functions 'send_email', 'send_sms', 'send_push' have the same body. Collapse them into one function; pass any value they differ on as a parameter, dispatched through a lookup table.", 'source_location': 'case_HC-P014.py:1:1', 'context': 'def send_email(msg):', 'fixable': False}],
     },
     {
         "id": 'HC-P005',

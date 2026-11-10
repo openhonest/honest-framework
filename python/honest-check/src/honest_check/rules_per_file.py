@@ -5,7 +5,7 @@ from honest_parse import language_of, line_col
 from honest_check.watchlists import IO_WATCH_LIST, NONDETERMINISTIC_WATCH_LIST
 from honest_check.constants import _APPROVED_BASES, _CACHE_DECORATORS, _HTTP_RESPONSE_MARKERS, _IO_CALLS, _IO_MODULE_PREFIXES, _LIFECYCLE_HOOKS, _TYPE_CHECK_CALLS
 from honest_check.nodes import base_types_of, call_arguments, called_name, canonical_name, decorator_expression, decorator_target, decorators_of, diagnostic, enclosing_function, in_non_boundary_function, is_boundary_decorator, literal_string, module_mutable_globals, nonlocal_names, own_body, param_names, underscore_self_name
-from honest_check.analysis import body_has_call, canonical_body, construction_maps, dispatch_variable, dotted_target, feature_state_flag, features_vocabulary, has_decorator, is_empty_default, link_declares_emits, link_is_impure, local_function_links, longest_shared_run, module_dict_literals, mutated_names, persist_write_targets, within_class_init
+from honest_check.analysis import body_has_call, body_statement_count, canonical_body, construction_maps, dispatch_variable, dotted_target, feature_state_flag, features_vocabulary, has_decorator, is_empty_default, link_declares_emits, link_is_impure, local_function_links, longest_shared_run, module_dict_literals, mutated_names, persist_write_targets, within_class_init
 from honest_check.bindings import binding_keys, vocabulary_binding_pairs, vocabulary_types
 
 
@@ -1102,6 +1102,12 @@ def check_per_file(ctx):
         for key in sorted(order, key=order.get):
             members = groups[key]
             if len(members) < 2:
+                continue
+            # Threshold: a two-member group fires only when its shared body runs past two
+            # statements — long enough that two copies are a real duplication, not an incidental
+            # shape two small sibling operations happen to share. Three or more copies of any
+            # body fire regardless of length: a shape written three times is a pattern.
+            if len(members) < 3 and body_statement_count(members[0]) <= 2:
                 continue
             names = [m.child_by_field_name("name").text.decode("utf-8") for m in members]
             findings.append(
