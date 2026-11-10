@@ -55,8 +55,11 @@ def execute_chain(links, initial_manifest) -> dict:
         if "err" in result:
             return result
         if "ok" not in result:
-            return err(fault("non_result_return", "Link returned neither ok nor err", "server",
-                             link=getattr(link, "__name__", None), input=current))
+            return err(fault(
+                "non_result_return",
+                f"{getattr(link, '__name__', None)} returned neither ok nor err; it was given {current!r}",
+                "server", [], {"link": getattr(link, "__name__", None)},
+            ))
         current = result["ok"]
     return ok(current)
 
@@ -73,10 +76,29 @@ async def execute_chain_async(links, initial_manifest) -> dict:
         if "err" in result:
             return result
         if "ok" not in result:
-            return err(fault("non_result_return", "Link returned neither ok nor err", "server",
-                             link=getattr(link, "__name__", None), input=current))
+            return err(fault(
+                "non_result_return",
+                f"{getattr(link, '__name__', None)} returned neither ok nor err; it was given {current!r}",
+                "server", [], {"link": getattr(link, "__name__", None)},
+            ))
         current = result["ok"]
     return ok(current)
+
+
+def _combinator(sync_run, async_run, links):
+    """The sync/async dispatch chain and validate_all share: when any link is async the composed
+    link is a coroutine function that awaits async_run, otherwise it runs sync_run; either way it
+    returns the composed link. chain and validate_all differ only in the runner pair they supply, so
+    the dispatch lives here once and takes the runners as data."""
+    if any(inspect.iscoroutinefunction(link) for link in links):
+        async def run(manifest):
+            return await async_run(list(links), manifest)
+        return run
+
+    def run(manifest):
+        return sync_run(list(links), manifest)
+
+    return run
 
 
 def chain(*links):
@@ -84,15 +106,7 @@ def chain(*links):
     chain containing any async link is itself async (its run awaits through execute_chain_async); a
     chain of all sync links is sync. Composition preserves this — an async chain is a coroutine
     function, so a parent chain that contains it is async too."""
-    if any(inspect.iscoroutinefunction(link) for link in links):
-        async def run(manifest):
-            return await execute_chain_async(list(links), manifest)
-        return run
-
-    def run(manifest):
-        return execute_chain(list(links), manifest)
-
-    return run
+    return _combinator(execute_chain, execute_chain_async, links)
 
 
 def _run_validate_all(links, manifest) -> dict:
@@ -100,7 +114,7 @@ def _run_validate_all(links, manifest) -> dict:
     the whole a validation_failed fault carrying every result, ok and err alike."""
     results = [link(manifest) for link in links]
     if any("err" in result for result in results):
-        return err(fault("validation_failed", "One or more validation checks failed", "client", results=results))
+        return err(fault("validation_failed", "one or more validation checks failed", "client", results, {}))
     return ok(manifest)
 
 
@@ -114,7 +128,7 @@ async def _run_validate_all_async(links, manifest) -> dict:
             result = await result
         results.append(result)
     if any("err" in result for result in results):
-        return err(fault("validation_failed", "One or more validation checks failed", "client", results=results))
+        return err(fault("validation_failed", "one or more validation checks failed", "client", results, {}))
     return ok(manifest)
 
 
@@ -122,12 +136,4 @@ def validate_all(*links):
     """An accumulating combinator as a composable link (sections 10.4, 10.6, 10.7): all links run
     against the same manifest; the complete picture is preserved on failure. Async when any link is
     async."""
-    if any(inspect.iscoroutinefunction(link) for link in links):
-        async def run(manifest):
-            return await _run_validate_all_async(list(links), manifest)
-        return run
-
-    def run(manifest):
-        return _run_validate_all(list(links), manifest)
-
-    return run
+    return _combinator(_run_validate_all, _run_validate_all_async, links)
