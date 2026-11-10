@@ -88,6 +88,14 @@ _IO_MODULE_PREFIXES = ("requests.", "urllib.", "subprocess.")
 # they build a Query value and write nothing, so a call to one never fires.
 _PERSIST_WRITE_FUNCTIONS = frozenset({"transaction", "apply"})
 
+# honest-dom's JavaScript package specifier, the module an application imports `collect` from
+# (§HC-ST002). HC-ST002 resolves a `collect` call against an `import { collect } from "honest-dom"`
+# so a collect from any other module, or a bare collect no import binds, never fires. honest-dom is
+# not built yet, so no file imports this today and the rule stays dormant; the specifier follows the
+# universal honest-<name> package-naming convention and is the one string to revisit when honest-dom
+# ships its JavaScript package.
+_DOM_PACKAGE = "honest-dom"
+
 # The runtime type checks HC-P005 names in a non-boundary function (§5.5): a hand-written
 # check that duplicates a constraint a vocabulary should declare at the boundary.
 _TYPE_CHECK_CALLS = frozenset({"isinstance", "type"})

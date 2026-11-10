@@ -5,7 +5,7 @@ from honest_parse import language_of, line_col
 from honest_check.watchlists import IO_WATCH_LIST, NONDETERMINISTIC_WATCH_LIST
 from honest_check.constants import _APPROVED_BASES, _CACHE_DECORATORS, _HTTP_RESPONSE_MARKERS, _IO_CALLS, _IO_MODULE_PREFIXES, _LIFECYCLE_HOOKS, _TYPE_CHECK_CALLS
 from honest_check.nodes import base_types_of, call_arguments, called_name, canonical_name, decorator_expression, decorator_target, decorators_of, diagnostic, enclosing_function, in_non_boundary_function, is_boundary_decorator, literal_string, module_mutable_globals, nonlocal_names, own_body, param_names, underscore_self_name
-from honest_check.analysis import body_has_call, body_statement_count, canonical_body, construction_maps, dispatch_variable, dotted_target, feature_state_flag, features_vocabulary, has_decorator, is_empty_default, link_declares_emits, link_is_impure, local_function_links, longest_shared_run, module_dict_literals, mutated_names, persist_write_targets, within_class_init
+from honest_check.analysis import body_has_call, body_statement_count, canonical_body, construction_maps, dispatch_variable, dom_collect_names, dotted_target, feature_state_flag, features_vocabulary, has_decorator, is_empty_default, link_declares_emits, link_is_impure, local_function_links, longest_shared_run, module_dict_literals, mutated_names, persist_write_targets, value_calls_collect, within_class_init
 from honest_check.bindings import binding_keys, vocabulary_binding_pairs, vocabulary_types
 
 
@@ -1122,6 +1122,55 @@ def check_per_file(ctx):
             )
         return findings
 
+    def check_st002():
+        """HC-ST002: a JavaScript file that binds the result of honest-dom's `collect` to a
+        variable at module top level keeps a second copy of user state outside the DOM (§3.2,
+        honest-state-architecture.md). collect reads the current user state fresh off the DOM, so
+        caching its result at module scope is a store of its own that drifts from the page — the
+        same violation the client-state rule names when it says user state never lives in a module
+        variable. dom_collect_names resolves `collect` through the file's own import from
+        honest-dom, so a collect no such import binds does not fire; value_calls_collect finds the
+        call anywhere inside the bound value. The rule runs only over JavaScript, because collect is
+        a client-side primitive, and a collect read inside a function and handed straight on keeps no
+        copy, so only a module-top-level binding fires. Reported at the binding."""
+        root = ctx["root"]
+        if root.type != "program":
+            return []
+        collect_names = dom_collect_names(ctx)
+        if not collect_names:
+            return []
+        findings = []
+        for child in root.named_children:
+            declaration = (
+                child.child_by_field_name("declaration")
+                if child.type == "export_statement"
+                else child
+            )
+            if declaration is None or declaration.type not in (
+                "lexical_declaration",
+                "variable_declaration",
+            ):
+                continue
+            for declarator in declaration.named_children:
+                if declarator.type != "variable_declarator":
+                    continue
+                value = declarator.child_by_field_name("value")
+                if value is None or not value_calls_collect(value, collect_names):
+                    continue
+                name_node = declarator.child_by_field_name("name")
+                name = name_node.text.decode("utf-8") if name_node is not None else "?"
+                findings.append(
+                    diagnostic(ctx,
+                        "HC-ST002",
+                        "error",
+                        f"'{name}' caches the result of collect() at module scope, a second copy "
+                        "of user state that drifts from the DOM. Call collect() fresh where you "
+                        "need the state instead of storing it.",
+                        declarator,
+                    )
+                )
+        return findings
+
     per_file_rules = (
         check_classes,
         check_p001,
@@ -1131,6 +1180,7 @@ def check_per_file(ctx):
         check_p002,
         check_p004,
         check_st001,
+        check_st002,
         check_p005,
         check_p006,
         check_p015,

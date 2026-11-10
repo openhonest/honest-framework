@@ -639,6 +639,96 @@
       }
     },
     {
+      "id": "HC-ST002-001",
+      "description": "collect() cached in a module-level variable is a shadow copy of user state.",
+      "category": "HC-ST002",
+      "input": {
+        "language": "javascript",
+        "source": "import { collect } from \"honest-dom\"\nconst state = collect(manifest)\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-ST002",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-ST002-aliased",
+      "description": "An aliased collect import resolves and still fires.",
+      "category": "HC-ST002",
+      "input": {
+        "language": "javascript",
+        "source": "import { collect as read } from \"honest-dom\"\nconst rows = read(manifest)\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-ST002",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-ST002-export",
+      "description": "An exported module-level binding of collect() fires the same way.",
+      "category": "HC-ST002",
+      "input": {
+        "language": "javascript",
+        "source": "import { collect } from \"honest-dom\"\nexport const state = collect(manifest)\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-ST002",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-ST002-clean-transient",
+      "description": "collect() read inside a function and handed straight to send keeps no copy.",
+      "category": "HC-ST002",
+      "input": {
+        "language": "javascript",
+        "source": "import { collect, send } from \"honest-dom\"\nfunction refresh(m) {\n  return send(\"/x\", collect(m))\n}\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-ST002-clean-not-imported",
+      "description": "A collect that no honest-dom import binds is a different function and does not fire.",
+      "category": "HC-ST002",
+      "input": {
+        "language": "javascript",
+        "source": "const state = collect(manifest)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-ST002-clean-other-source",
+      "description": "collect imported from another module is not honest-dom's and does not fire.",
+      "category": "HC-ST002",
+      "input": {
+        "language": "javascript",
+        "source": "import { collect } from \"other\"\nconst state = collect(manifest)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
       "id": "HC-P005-001",
       "description": "A runtime type check in business logic should be a vocabulary declaration.",
       "category": "HC-P005",

@@ -108,6 +108,16 @@ HC-ST001 fires on one shape: a call that writes persisted state, sitting inside 
 
 **honest-persist is not policed, and this needs no special case.** Inside honest-persist's own package, `transaction` and `apply` are the boundary functions, defined there and declared `boundary_out` in `honest-persist.hd`; a write that reaches the database sits inside one of them, so the boundary test already clears it. honest-persist's interior refers to those functions as local definitions, never as imports from `honest_persist`, so the writer-resolution step finds nothing to flag. The exemption falls out of the two tests above; the rule carries no "skip honest-persist" clause.
 
+### 3.2 HC-ST002 detection, precisely
+
+A shadow copy of user state is hard to recognize in the general case, so HC-ST002 names the one shape that creates it in honest-framework code: a program caches the result of `collect`. honest-dom's `collect(manifest)` reads the current user state fresh off the DOM every time a program calls it, which is what keeps the DOM the single store. A program that calls `collect` once and keeps the result in a lasting place reads from that stale copy afterward, and the page and the copy drift apart — the exact second store DATAOS forbids.
+
+**The one shape that fires.** A JavaScript file binds the result of a `collect` call to a variable at module top level, as in `const state = collect(manifest)` or `export let rows = collect(manifest)`. A module-level binding outlives the call and becomes a store of its own, which is the same violation the client-state rule names when it says user state never lives in a module variable. The rule resolves `collect` through the file's own import from honest-dom — `import { collect } from "honest-dom"`, or an aliased `import { collect as read } from "honest-dom"` — so a `collect` that no honest-dom import binds is a different function and does not fire. The call may sit anywhere inside the bound value: `collect(m)`, `collect(m).filter(keep)`, and `wrap(collect(m))` each cache what `collect` read, so each fires.
+
+**What does not fire.** A `collect` call inside a function, whose result the function hands straight to `send` or `apply` and then drops, keeps no copy and does not fire — that is the honest transient read the primitive is built for. A `collect` bound at module scope that no honest-dom import resolves does not fire, and the rule runs only over JavaScript, because `collect` is a client-side primitive.
+
+**Dormant until honest-dom ships.** No honest-dom package exists yet, so no file imports `collect`, and the rule reports nothing across the framework today, exactly as HC-REF004 reports nothing while no honest-format manifest is configured. The rule is written and tested against planted sources, and it gains teeth the day honest-dom ships `collect` and application code imports it. An adapter that routes `collect`'s result into a host framework's own state, such as React `useState`, commits the same violation, but that check belongs to the adapter, because core honest-check does not model React or Vue.
+
 ---
 
 ## 4. honest-test Integration

@@ -4,7 +4,7 @@ Each helper takes the check context ctx (root, nodes, aliases, roles, source, pa
 and returns data; the rule logic that uses them stays nested-as-data in the sub-cores (section 3.4)."""
 
 import ast
-from honest_check.constants import _EMPTY_CONSTRUCTORS, _PERSIST_WRITE_FUNCTIONS
+from honest_check.constants import _DOM_PACKAGE, _EMPTY_CONSTRUCTORS, _PERSIST_WRITE_FUNCTIONS
 from honest_check.nodes import call_arguments, called_name, canonical_name, decorator_expression, decorator_target, decorators_of, enclosing_function, link_locals, literal_string, node_is_field_child, own_body, string_members, watched
 
 
@@ -178,6 +178,58 @@ def persist_write_targets(ctx):
                     for writer in _PERSIST_WRITE_FUNCTIONS:
                         targets.add(f"{local_module}.{writer}")
     return targets
+
+
+def _descendants(node):
+    """Every node in a subtree, the node itself first, without descending through honest-parse's
+    walk over the whole tree — used to read the parts of one import or one bound value."""
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        yield current
+        stack.extend(current.named_children)
+
+
+def dom_collect_names(ctx):
+    """The local names this JavaScript file binds to honest-dom's `collect` through its own imports
+    (§HC-ST002). Each `import { collect } from "honest-dom"` adds `collect`, and an aliased
+    `import { collect as read } from "honest-dom"` adds `read`; an import from any other module, and
+    any imported name that is not `collect`, is ignored. The set is empty when the file imports
+    `collect` from no honest-dom module, which stands HC-ST002 down, so a bare `collect` that no
+    import binds is a different function and never fires."""
+    names = set()
+    for node in ctx["nodes"]:
+        if node.type != "import_statement":
+            continue
+        source = node.child_by_field_name("source")
+        fragment = source.named_children[0] if source is not None and source.named_children else None
+        if fragment is None or fragment.text.decode("utf-8") != _DOM_PACKAGE:
+            continue
+        for specifier in _descendants(node):
+            if specifier.type != "import_specifier":
+                continue
+            identifiers = [child for child in specifier.named_children if child.type == "identifier"]
+            if not identifiers:
+                continue
+            imported = identifiers[0].text.decode("utf-8")
+            local = identifiers[1].text.decode("utf-8") if len(identifiers) > 1 else imported
+            if imported == "collect":
+                names.add(local)
+    return names
+
+
+def value_calls_collect(value_node, collect_names):
+    """True when a bound value calls one of the resolved `collect` names anywhere inside it
+    (§HC-ST002). The call may be the whole value or sit within it — `collect(m)`,
+    `collect(m).filter(keep)`, and `wrap(collect(m))` each cache what collect read — so the search
+    walks the value's own subtree for a call whose function is a bare collect name."""
+    for node in _descendants(value_node):
+        if node.type != "call_expression":
+            continue
+        function = node.child_by_field_name("function")
+        if function is not None and function.type == "identifier" and function.text.decode("utf-8") in collect_names:
+            return True
+    return False
 
 
 def link_is_impure(ctx, fdef, watch, mutable_globals):

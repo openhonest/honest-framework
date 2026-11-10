@@ -559,10 +559,10 @@
       "startup": false,
       "lsp": false,
       "description": "Shadow copy of user state outside the manifest-declared DOM",
-      "prevents": "",
+      "prevents": "Cannot keep one store of user state — a module-level binding of honest-dom's collect() caches what the DOM holds, and the copy drifts from the page it mirrors.",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": false
+      "emitted_by_honest_check": true
     },
     {
       "id": "HC-SUP001",

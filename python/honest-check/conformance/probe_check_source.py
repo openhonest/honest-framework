@@ -202,6 +202,34 @@ def _st001_declaration_failures(check_source):
     return bad
 
 
+# ---- HC-ST002 pins its full record over a JavaScript source (§3.2, honest-state) ----
+# The single-source suite pins HC-ST002 only by (rule, severity, line), and the _MSG_CASES below
+# run under a Python path, which this JavaScript-only rule never fires on. So the exact message,
+# location and context are pinned here, over a .js path. A module-level binding of honest-dom's
+# collect() caches user state outside the DOM.
+_ST002_SOURCE = 'import { collect } from "honest-dom"\nconst state = collect(manifest)\n'
+_ST002_EXPECTED = {
+    "rule_id": "HC-ST002",
+    "severity": "error",
+    "message": "'state' caches the result of collect() at module scope, a second copy of user state that drifts from the DOM. Call collect() fresh where you need the state instead of storing it.",
+    "source_location": "m.js:2:7",
+    "context": "state = collect(manifest)",
+    "fixable": False,
+}
+
+
+def _st002_record_failures(check_source):
+    """HC-ST002 fires on a module-level binding of honest-dom's collect(), and this pins the whole
+    diagnostic record over a JavaScript source: rule, severity, the exact message, the
+    source_location, the context, and fixable present as a bool. A stub returning [] fails it."""
+    import json
+
+    got = [d for d in check_source(_ST002_SOURCE, "m.js", {}, None) if d.get("rule_id") == "HC-ST002"]
+    if len(got) != 1 or json.dumps(got[0], sort_keys=True) != json.dumps(_ST002_EXPECTED, sort_keys=True):
+        return [f"HC-ST002 record pin: got {got!r}, expected [{_ST002_EXPECTED!r}]"]
+    return []
+
+
 # ---- HC-OR003, suspected duplication between orchestrators (section 3.1, §HC-OR003) ----
 # A soft warning: two orchestrators that share a run of min_run or more consecutive equivalent
 # calls. min_run has no built-in default and reaches check_source only through rule_config, so
@@ -620,6 +648,7 @@ def probe_check_source():
     bad.extend(_watchlist_failures(check_source))
     bad.extend(_declaration_failures(check_source))
     bad.extend(_st001_declaration_failures(check_source))
+    bad.extend(_st002_record_failures(check_source))
     bad.extend(_or003_failures(check_source))
     bad.extend(_message_failures(check_source))
     return bad
