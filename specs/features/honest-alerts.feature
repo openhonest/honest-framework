@@ -162,30 +162,10 @@ Feature: honest-alerts — messages between actors, mailboxes as projections ove
     When deliver_dom delivers it
     Then the message is pushed to the DOM surface and the result is returned
 
-  Scenario: deliver_email delivers a message over the email channel
-    Given a delivery for the email channel and a connection
-    When deliver_email delivers it
-    Then the message is sent to the email endpoint and the result is returned
-
-  Scenario: deliver_sms delivers a message over the SMS channel
-    Given a delivery for the sms channel and a connection
-    When deliver_sms delivers it
-    Then the message is sent to the SMS endpoint and the result is returned
-
-  Scenario: deliver_webhook delivers a message over the webhook channel
-    Given a delivery for the webhook channel and a connection
-    When deliver_webhook delivers it
-    Then the message is posted to the webhook endpoint and the result is returned
-
-  Scenario: deliver_slack delivers a message over the Slack channel
-    Given a delivery for the slack channel and a connection
-    When deliver_slack delivers it
-    Then the message is posted to the Slack endpoint and the result is returned
-
-  Scenario: deliver_teams delivers a message over the Teams channel
-    Given a delivery for the teams channel and a connection
-    When deliver_teams delivers it
-    Then the message is posted to the Teams endpoint and the result is returned
+  Scenario: deliver_posted delivers a message over any posted channel
+    Given a delivery for a posted channel (email, SMS, webhook, Slack, or Teams) and a connection
+    When deliver_posted delivers it
+    Then the message is posted to the channel's configured endpoint through the transport and the result is returned
 
   # --- Orchestrators: one per path ---------------------------------------------
 

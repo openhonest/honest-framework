@@ -1,22 +1,16 @@
-"""The supervisor (section 6): turn a message and the routing table into deliveries and events.
+"""The supervisor's pure core and the delivery pass (section 6).
 
-The supervisor is table-driven and stateless. Its decision is pure: match the message to routes
-(section 6.1), sort by priority, and build one delivery record per channel. The two boundaries,
-supervise and execute_deliveries, reach the outside world — the delivery queue, the event log, and the
-channel handlers — only through an injected `runtime`, never a global, a clock, or an import. That keeps
-honest-alerts free of honest-persist and honest-observe imports and leaves the actual I/O to the runtime
-the application supplies (mirroring honest-observe's emit).
-
-The runtime the boundaries expect:
-  now()                          -> epoch seconds
-  await insert(delivery)         -> Result   (append to the alert_deliveries queue)
-  await emit(type, agg_id, body) -> Result   (append an alert.* event to the log)
-  await pending()                -> [delivery]  (due, pending delivery records)
-  await deliver(delivery)        -> Result   (dispatch through the channel handler)
-  await mark(delivery, status)   -> Result   (update the delivery record's status)
+Matching a message to routes and planning one delivery per channel are pure (sections 6.1). The
+delivery pass, run_deliveries, is the orchestrator the worker runs: it reads the pending records,
+dispatches each on its channel through the handler table, records the outcome, and emits the event.
+Every side of the world it touches is a boundary handed in, so a test drives it with stand-ins; the
+real boundaries live in honest_alerts.boundaries, and the handler table names one per channel.
 """
 
 from honest_type import ok
+
+from honest_alerts import boundaries
+from honest_alerts.events import alert_event
 
 
 def message_type_matches(pattern, message_type):
@@ -41,14 +35,15 @@ def matching_routes(routing_table, message):
 
 def delivery_plan(message, routes, now):
     """One pending delivery record per channel across the matched routes (section 6.1): the recipient is
-    the channel's recipient_spec or the message's recipient, and deliver_at is now plus the channel's
-    delay. Pure — now is injected, not read."""
+    the channel's recipient_spec or the message's recipient, the endpoint is the channel's configured
+    one, and deliver_at is now plus the channel's delay. Pure — now is injected, not read."""
     return [
         {
             "message_id": message["message_id"],
             "route_id": route["route_id"],
             "channel": channel_config["channel"],
             "recipient": channel_config.get("recipient_spec") or message["recipient"],
+            "endpoint": channel_config.get("endpoint", ""),
             "deliver_at": now + channel_config.get("delay_seconds", 0),
             "status": "pending",
         }
@@ -57,32 +52,38 @@ def delivery_plan(message, routes, now):
     ]
 
 
-async def supervise(message, routing_table, runtime):
-    """Route a message: write a pending delivery per channel and emit alert.sent; if no route matches,
-    emit an alert.no_route warning and deliver nothing (section 6.1). Returns ok({delivered}). I/O only
-    through the injected runtime."""
-    routes = matching_routes(routing_table, message)
-    if not routes:
-        await runtime.emit("alert.no_route", message["message_id"], {"message_type": message["message_type"]})
-        return ok({"delivered": 0})
-    plan = delivery_plan(message, routes, runtime.now())
-    for delivery in plan:
-        await runtime.insert(delivery)
-    await runtime.emit("alert.sent", message["message_id"], message)
-    return ok({"delivered": len(plan)})
+# One delivery handler per channel (section 6.2): the dispatch table run_deliveries picks from, a
+# table and not a branch. The keys are exactly the declared CHANNELS.
+DELIVER_BY_CHANNEL = {
+    "dom": boundaries.deliver_dom,
+    "email": boundaries.deliver_posted,
+    "sms": boundaries.deliver_posted,
+    "webhook": boundaries.deliver_posted,
+    "slack": boundaries.deliver_posted,
+    "teams": boundaries.deliver_posted,
+}
 
 
-async def execute_deliveries(runtime):
+async def run_deliveries(conn, transport, read_pending, deliver_by_channel, mark_delivery, emit_event):
     """Dispatch every due pending delivery through its channel and record the outcome (section 6.2): a
     success marks the record delivered and emits alert.delivered; a failure marks it failed and emits
-    alert.delivery_failed. Returns ok({executed}). I/O only through the injected runtime."""
-    pending = await runtime.pending()
+    alert.delivery_failed. Returns ok({executed}). I/O only through the handed-in boundaries: conn for
+    the queue and the log, transport for the channels."""
+    pending = await read_pending(conn)
     for delivery in pending:
-        result = await runtime.deliver(delivery)
+        handler = deliver_by_channel[delivery["channel"]]
+        result = await handler(delivery, conn, transport)
         if "ok" in result:
-            await runtime.mark(delivery, "delivered")
-            await runtime.emit("alert.delivered", delivery["message_id"], delivery)
+            await mark_delivery(delivery, "delivered", conn)
+            await emit_event(alert_event("alert.delivered", delivery["message_id"], delivery), conn)
         else:
-            await runtime.mark(delivery, "failed")
-            await runtime.emit("alert.delivery_failed", delivery["message_id"], delivery)
+            await mark_delivery(delivery, "failed", conn)
+            await emit_event(alert_event("alert.delivery_failed", delivery["message_id"], delivery), conn)
     return ok({"executed": len(pending)})
+
+
+async def tick(conn, transport):
+    """The door the delivery worker calls (section 6.2): run one delivery pass with the module's own
+    boundaries and the real channel-handler table. conn is the honest-persist connection, transport the
+    channel transport, both handed in by the worker."""
+    return await run_deliveries(conn, transport, boundaries.read_pending, DELIVER_BY_CHANNEL, boundaries.mark_delivery, boundaries.emit_event)

@@ -1,13 +1,26 @@
-# honest-alerts declared in .hd — the message-passing layer. The mailbox is a pure projection over
-# the event log and routing/lifecycle are pure; send and delivery reach the world through an
-# injected runtime at the boundary.
+# honest-alerts declared in .hd — the actor-model message layer. The mailbox is a pure projection
+# over honest-observe's event log, and routing and planning are pure. The module owns the sides it
+# touches: the clock and a random source, the routing table and the delivery queue in honest-persist,
+# the alert events in honest-observe, and the delivery channels on the network. A connection is
+# carried in as a handle, the way honest-persist's own doors take one. Delivery picks a channel
+# through a dispatch table, never a branch. No capability is handed in as an object.
 
 module honest-alerts
 
   layer domain
+  note "the actor-model message layer: it routes a message to delivery channels, keeps each recipient's mailbox as a pure projection over the event log, and carries replies back."
 
-  # The surface, closed: every side of the world a boundary here touches, and no other.
-  outputs = { "network" }
+  # The surface, closed: every side the boundaries here touch, and no other. honest-persist and
+  # honest-observe are seams to those modules; clock, random and network are the OS and the network;
+  # file is the alert configuration.
+  inputs  = { "clock" : "the wall clock, for send and delivery times",
+              "random" : "fresh message ids and reply tokens",
+              "honest-persist" : "the routing table and the pending-delivery queue",
+              "honest-observe" : "the alert event log, read for the mailbox and to resume a waiting send",
+              "file" : "the alert configuration" }
+  outputs = { "honest-persist" : "the delivery queue",
+              "honest-observe" : "the alert.* events",
+              "network" : "the channel that carries a message to its recipient" }
 
   type ActorRef = {
     actor_type: str
@@ -21,40 +34,137 @@ module honest-alerts
   }
 
   type Route = {
-    pattern: str
-    channel: str
+    route_id: str
+    message_type: str
+    channels: list<any>
+    priority: int
   }
 
-  type DeliveryPlan = {
-    channels: list<str>
+  type Delivery = {
+    message_id: str
+    route_id: str
+    channel: str
+    recipient: ActorRef
+    deliver_at: int
+    status: str
   }
+
+  type Reply = {
+    option_id: str
+    actor_id: str
+    reply_payload: dict<str, any>
+  }
+
+  # Delivery picks a channel handler by the delivery's channel, a dispatch table and not a branch.
+  dispatch deliver_by_channel = { "dom" -> deliver_dom, "email" -> deliver_posted, "sms" -> deliver_posted, "webhook" -> deliver_posted, "slack" -> deliver_posted, "teams" -> deliver_posted } note "run_deliveries dispatches each pending record on its channel; the five posted channels share deliver_posted, dom has its own handler"
+
+  # --- Pure core: data in, data out, no side of the world --------------------
 
   fn build_message : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, message_id: str, sent_at: str) -> Message
 
-  fn mailbox : (actor_ref: ActorRef, events: list<any>, at_time: str) -> list<Message>
+  fn validate_message : (message: Message) -> Result invokes validate_actor_ref, validate_termination, validate_reply_option
 
-  fn is_terminated : (event: any, actor_ref: ActorRef, events: list<any>, at_time: str) -> bool
+  fn validate_actor_ref : (ref: ActorRef) -> Result
+
+  fn validate_termination : (spec: dict<str, any>) -> Result
+
+  fn validate_reply_option : (option: dict<str, any>) -> Result
+
+  fn validate_channel_config : (config: dict<str, any>) -> Result
+
+  fn validate_escalation_rule : (rule: dict<str, any>) -> Result
+
+  fn validate_alert_route : (route: Route) -> Result invokes validate_channel_config, validate_escalation_rule
+
+  fn advance : (current_state: str, event: str) -> Result
+
+  fn message_type_matches : (pattern: str, message_type: str) -> bool
+
+  fn matching_routes : (routing_table: list<Route>, message: Message) -> list<Route> invokes message_type_matches
+
+  fn delivery_plan : (message: Message, routes: list<Route>, now: int) -> list<Delivery>
+
+  fn alert_event : (event_type: str, aggregate_id: str, payload: dict<str, any>) -> Result
+
+  fn mailbox : (actor_ref: ActorRef, events: list<Event>, at_time: str) -> list<Message> invokes is_terminated, recipient_matches
+
+  fn is_terminated : (event: Event, actor_ref: ActorRef, events: list<Event>, at_time: str) -> bool
 
   fn recipient_matches : (recipient: ActorRef, actor_ref: ActorRef) -> bool
 
-  fn validate_message : (message: Message) -> list<any>
-
-  fn matching_routes : (routing_table: list<Route>, message: Message) -> list<Route>
-
-  fn delivery_plan : (message: Message, routes: list<Route>, now: int) -> DeliveryPlan
-
-  fn advance : (current_state: str, event: str) -> str
-
   fn render_surface : (message: Message) -> str
-
-  fn alert_event : (event_type: str, aggregate_id: str, payload: dict<str, any>) -> any
 
   fn resolve_config : (raw: dict<str, any>) -> dict<str, any>
 
-  boundary_out fn send : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, runtime: any) -> Message awaited side_effect writes "network"
+  # --- Readers: the module reaches out and pulls -----------------------------
 
-  boundary_out fn send_and_wait : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, runtime: any) -> Message awaited side_effect writes "network"
+  reader fn now : () -> int side_effect reads "clock"
 
-  boundary_out fn supervise : (message: Message, routing_table: list<Route>, runtime: any) -> DeliveryPlan awaited side_effect writes "network"
+  reader fn new_message_id : () -> str side_effect reads "random"
 
-  boundary_out fn handle_reply : (message_id: str, option_id: str, reply_payload: dict<str, any>, actor_id: str, runtime: any) -> any awaited side_effect writes "network"
+  reader fn new_resume_token : () -> str side_effect reads "random"
+
+  reader fn read_routes : (conn: any) -> list<Route> awaited side_effect reads "honest-persist"
+
+  reader fn read_pending : (conn: any) -> list<Delivery> awaited side_effect reads "honest-persist"
+
+  reader fn read_events : (conn: any, actor_ref: ActorRef) -> list<Event> awaited side_effect reads "honest-observe"
+
+  reader fn await_reply : (conn: any, message_id: str, timeout_seconds: int) -> Reply | Absent awaited side_effect reads "honest-observe"
+
+  reader fn read_raw_config : () -> dict<str, any> side_effect reads "file"
+
+  # --- Output boundaries: the module reaches out and pushes ------------------
+
+  boundary_out fn write_delivery : (delivery: Delivery, conn: any) -> Result awaited side_effect writes "honest-persist"
+
+  boundary_out fn mark_delivery : (delivery: Delivery, status: str, conn: any) -> Result awaited side_effect writes "honest-persist"
+
+  boundary_out fn emit_event : (event: Result, conn: any) -> Event awaited side_effect writes "honest-observe"
+
+  boundary_out fn deliver_dom : (delivery: Delivery, conn: any, transport: any) -> Result awaited side_effect writes "network"
+
+  boundary_out fn deliver_posted : (delivery: Delivery, conn: any, transport: any) -> Result awaited side_effect writes "network" note "every posted channel — email, sms, webhook, slack, teams — delivers the same way, through the injected transport, so one deliverer serves them all"
+
+  # --- Orchestrators: one per path, flat, never calling another orchestrator -
+
+  orchestrator fn run_send : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, conn: any) -> Result awaited invokes new_message_id, now, build_message, validate_message, read_routes, validate_alert_route, matching_routes, delivery_plan, write_delivery, alert_event, emit_event
+
+  orchestrator fn run_send_and_wait : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, conn: any) -> Result awaited invokes new_message_id, new_resume_token, now, build_message, validate_message, read_routes, validate_alert_route, matching_routes, delivery_plan, write_delivery, alert_event, emit_event, await_reply
+
+  orchestrator fn run_deliveries : (conn: any, transport: any) -> Result awaited invokes read_pending, deliver_by_channel, mark_delivery, alert_event, emit_event
+
+  orchestrator fn record_reply : (message_id: str, option_id: str, reply_payload: dict<str, any>, actor_id: str, conn: any) -> Result awaited invokes alert_event, emit_event
+
+  orchestrator fn render_mailbox : (actor_ref: ActorRef, at_time: str, conn: any) -> str awaited invokes read_events, mailbox, render_surface
+
+  orchestrator fn run_stream : (actor_ref: ActorRef, at_time: str, conn: any) -> any awaited invokes read_events, mailbox, render_surface
+
+  orchestrator fn load_config : () -> dict<str, any> invokes read_raw_config, resolve_config
+
+  # --- Doors: the world calls in, each handing its input to one orchestrator -
+
+  boundary_in fn send : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, conn: any) -> Result awaited invokes run_send
+
+  boundary_in fn send_and_wait : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, conn: any) -> Result awaited invokes run_send_and_wait
+
+  boundary_in fn handle_reply : (message_id: str, option_id: str, reply_payload: dict<str, any>, actor_id: str, conn: any) -> Result awaited invokes record_reply
+
+  boundary_in fn serve_mailbox : (actor_ref: ActorRef, at_time: str, conn: any) -> str awaited invokes render_mailbox
+
+  boundary_in fn serve_stream : (actor_ref: ActorRef, at_time: str, conn: any) -> any awaited invokes run_stream note "the SSE endpoint the page surfaces connect to; it returns the live stream of rendered surfaces for the actor, pushed as alert events arrive"
+
+  boundary_in fn tick : (conn: any, transport: any) -> Result awaited invokes run_deliveries
+
+  boundary_in fn start : () -> dict<str, any> invokes load_config
+
+  # --- Who calls in ----------------------------------------------------------
+
+  entry "call:send" -> send
+  entry "call:send_and_wait" -> send_and_wait
+  entry "runtime:worker" -> tick
+  entry "call:configure" -> start
+  entry "call:advance" -> advance
+  route "POST /api/alerts/{message_id}/reply" -> handle_reply
+  route "GET /api/alerts/mailbox" -> serve_mailbox
+  route "GET /api/alerts/stream" -> serve_stream

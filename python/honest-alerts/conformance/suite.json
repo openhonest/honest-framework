@@ -1,57 +1,1335 @@
 {
   "module": "honest-alerts",
   "value_oracle_exempt": [
-    {"function": "supervise", "reason": "Section 6.1: an async boundary driven through an injected runtime (now/insert/emit); a JSON value case cannot carry the runtime. Proved by the supervise law in laws_ha.py against a stand-in runtime, both the matched and no-route branches."},
-    {"function": "execute_deliveries", "reason": "Section 6.2: an async boundary driven through an injected runtime (pending/deliver/mark/emit); a JSON value case cannot carry the runtime. Proved by the execute_deliveries law in laws_ha.py, both the delivered and failed branches."},
-    {"function": "send_message", "reason": "Section 8: an async boundary driven through an injected runtime (routes/insert/emit); a JSON value case cannot carry the runtime. Proved by the send_message law in laws_ha.py, both the valid and validation-fault branches."},
-    {"function": "send", "reason": "Section 8.1: an async boundary that reads the runtime's id and clock and dispatches through it; a JSON value case cannot carry the runtime. Proved by the send law in laws_ha.py."},
-    {"function": "send_and_wait", "reason": "Section 8.2-8.3: an async boundary that dispatches and awaits a reply through the injected runtime; a JSON value case cannot carry the runtime. Proved by the send_and_wait law in laws_ha.py, the replied, timeout, and validation-fault branches."},
-    {"function": "handle_reply", "reason": "Section 9.1: an async boundary that records alert.replied and alert.acknowledged through the injected runtime and returns the empty fragment; a JSON value case cannot carry the runtime. Proved by the handle_reply law in laws_ha.py."}
+    {
+      "function": "run_send",
+      "reason": "An orchestrator over injected boundaries; a JSON value case cannot carry the boundaries. Proven in laws_ha.py with stand-in functions."
+    },
+    {
+      "function": "run_send_and_wait",
+      "reason": "An orchestrator over injected boundaries; a JSON value case cannot carry the boundaries. Proven in laws_ha.py with stand-in functions."
+    },
+    {
+      "function": "run_deliveries",
+      "reason": "An orchestrator over injected boundaries; a JSON value case cannot carry the boundaries. Proven in laws_ha.py with stand-in functions."
+    },
+    {
+      "function": "record_reply",
+      "reason": "An orchestrator over injected boundaries; a JSON value case cannot carry the boundaries. Proven in laws_ha.py with stand-in functions."
+    },
+    {
+      "function": "render_mailbox",
+      "reason": "An orchestrator over injected boundaries; a JSON value case cannot carry the boundaries. Proven in laws_ha.py with stand-in functions."
+    },
+    {
+      "function": "load_config",
+      "reason": "An orchestrator over injected boundaries; a JSON value case cannot carry the boundaries. Proven in laws_ha.py with stand-in functions."
+    },
+    {
+      "function": "send",
+      "reason": "A door that wires the module own boundaries and hands off to an orchestrator; the orchestrator is proven in laws_ha.py."
+    },
+    {
+      "function": "send_and_wait",
+      "reason": "A door that wires the module own boundaries and hands off to an orchestrator; the orchestrator is proven in laws_ha.py."
+    },
+    {
+      "function": "handle_reply",
+      "reason": "A door that wires the module own boundaries and hands off to an orchestrator; the orchestrator is proven in laws_ha.py."
+    },
+    {
+      "function": "serve_mailbox",
+      "reason": "A door that wires the module own boundaries and hands off to an orchestrator; the orchestrator is proven in laws_ha.py."
+    },
+    {
+      "function": "tick",
+      "reason": "A door that wires the module own boundaries and hands off to an orchestrator; the orchestrator is proven in laws_ha.py."
+    },
+    {
+      "function": "start",
+      "reason": "A door that wires the module own boundaries and hands off to an orchestrator; the orchestrator is proven in laws_ha.py."
+    },
+    {
+      "function": "now",
+      "reason": "A reader that pulls from a side of the world; a JSON value case cannot carry the clock, the random source, honest-persist or honest-observe. Driven by a stand-in in laws_ha.py."
+    },
+    {
+      "function": "new_message_id",
+      "reason": "A reader that pulls from a side of the world; a JSON value case cannot carry the clock, the random source, honest-persist or honest-observe. Driven by a stand-in in laws_ha.py."
+    },
+    {
+      "function": "new_resume_token",
+      "reason": "A reader that pulls from a side of the world; a JSON value case cannot carry the clock, the random source, honest-persist or honest-observe. Driven by a stand-in in laws_ha.py."
+    },
+    {
+      "function": "read_routes",
+      "reason": "A reader that pulls from a side of the world; a JSON value case cannot carry the clock, the random source, honest-persist or honest-observe. Driven by a stand-in in laws_ha.py."
+    },
+    {
+      "function": "read_pending",
+      "reason": "A reader that pulls from a side of the world; a JSON value case cannot carry the clock, the random source, honest-persist or honest-observe. Driven by a stand-in in laws_ha.py."
+    },
+    {
+      "function": "read_events",
+      "reason": "A reader that pulls from a side of the world; a JSON value case cannot carry the clock, the random source, honest-persist or honest-observe. Driven by a stand-in in laws_ha.py."
+    },
+    {
+      "function": "await_reply",
+      "reason": "A reader that pulls from a side of the world; a JSON value case cannot carry the clock, the random source, honest-persist or honest-observe. Driven by a stand-in in laws_ha.py."
+    },
+    {
+      "function": "read_raw_config",
+      "reason": "A reader that pulls from a side of the world; a JSON value case cannot carry the clock, the random source, honest-persist or honest-observe. Driven by a stand-in in laws_ha.py."
+    },
+    {
+      "function": "write_delivery",
+      "reason": "An output boundary that writes a side of the world; a JSON value case cannot carry the write. Proven through run_send/run_deliveries/record_reply against stand-ins in laws_ha.py."
+    },
+    {
+      "function": "mark_delivery",
+      "reason": "An output boundary that writes a side of the world; a JSON value case cannot carry the write. Proven through run_send/run_deliveries/record_reply against stand-ins in laws_ha.py."
+    },
+    {
+      "function": "emit_event",
+      "reason": "An output boundary that writes a side of the world; a JSON value case cannot carry the write. Proven through run_send/run_deliveries/record_reply against stand-ins in laws_ha.py."
+    },
+    {
+      "function": "deliver_dom",
+      "reason": "An output boundary that writes a side of the world; a JSON value case cannot carry the write. Proven through run_send/run_deliveries/record_reply against stand-ins in laws_ha.py."
+    },
+    {
+      "function": "deliver_posted",
+      "reason": "An output boundary that writes a side of the world; a JSON value case cannot carry the write. Proven through run_send/run_deliveries/record_reply against stand-ins in laws_ha.py."
+    }
   ],
   "cases": [
-    {"id": "recipient-type-mismatch", "value_case": {"function": "recipient_matches", "args": [{"type": "dom", "id": null}, {"type": "user", "id": "u1"}], "expected": false}},
-    {"id": "recipient-broadcast", "value_case": {"function": "recipient_matches", "args": [{"type": "dom", "id": null}, {"type": "dom", "id": "s1"}], "expected": true}},
-    {"id": "recipient-id-match", "value_case": {"function": "recipient_matches", "args": [{"type": "user", "id": "u1"}, {"type": "user", "id": "u1", "tenant_id": "acme"}], "expected": true}},
-    {"id": "recipient-id-mismatch", "value_case": {"function": "recipient_matches", "args": [{"type": "user", "id": "u2"}, {"type": "user", "id": "u1"}], "expected": false}},
-    {"id": "recipient-tenant-mismatch", "value_case": {"function": "recipient_matches", "args": [{"type": "user", "id": "u1", "tenant_id": "other"}, {"type": "user", "id": "u1", "tenant_id": "acme"}], "expected": false}},
-    {"id": "terminated-ttl-live", "value_case": {"function": "is_terminated", "args": [{"event_type": "alert.sent", "timestamp": 1000, "payload": {"message_id": "m1", "recipient": {"type": "user", "id": "u1"}, "sent_at": 1000, "ack_scope": "actor", "termination": {"condition": "ttl", "ttl_seconds": 10}}}, {"type": "user", "id": "u1"}, [{"event_type": "alert.sent", "timestamp": 1000, "payload": {"message_id": "m1", "recipient": {"type": "user", "id": "u1"}, "sent_at": 1000, "ack_scope": "actor", "termination": {"condition": "ttl", "ttl_seconds": 10}}}], 1005], "expected": false}},
-    {"id": "terminated-ttl-expired", "value_case": {"function": "is_terminated", "args": [{"event_type": "alert.sent", "timestamp": 1000, "payload": {"message_id": "m1", "recipient": {"type": "user", "id": "u1"}, "sent_at": 1000, "ack_scope": "actor", "termination": {"condition": "ttl", "ttl_seconds": 10}}}, {"type": "user", "id": "u1"}, [{"event_type": "alert.sent", "timestamp": 1000, "payload": {"message_id": "m1", "recipient": {"type": "user", "id": "u1"}, "sent_at": 1000, "ack_scope": "actor", "termination": {"condition": "ttl", "ttl_seconds": 10}}}], 1011], "expected": true}},
-    {"id": "terminated-never", "value_case": {"function": "is_terminated", "args": [{"event_type": "alert.sent", "timestamp": 1000, "payload": {"message_id": "m1", "recipient": {"type": "user", "id": "u1"}, "sent_at": 1000, "ack_scope": "actor", "termination": {"condition": "never"}}}, {"type": "user", "id": "u1"}, [], 9999999], "expected": false}},
-    {"id": "mailbox-orders-and-filters", "value_case": {"function": "mailbox", "args": [{"type": "user", "id": "u1"}, [{"event_type": "alert.sent", "timestamp": 2000, "payload": {"message_id": "m2", "recipient": {"type": "user", "id": "u1"}, "sent_at": 2000, "ack_scope": "actor", "termination": {"condition": "never"}}}, {"event_type": "alert.sent", "timestamp": 1000, "payload": {"message_id": "m1", "recipient": {"type": "user", "id": "u1"}, "sent_at": 1000, "ack_scope": "actor", "termination": {"condition": "never"}}}, {"event_type": "alert.sent", "timestamp": 1000, "payload": {"message_id": "m3", "recipient": {"type": "user", "id": "u2"}, "sent_at": 1000, "ack_scope": "actor", "termination": {"condition": "never"}}}], 3000], "expected": [{"event_type": "alert.sent", "timestamp": 1000, "payload": {"message_id": "m1", "recipient": {"type": "user", "id": "u1"}, "sent_at": 1000, "ack_scope": "actor", "termination": {"condition": "never"}}}, {"event_type": "alert.sent", "timestamp": 2000, "payload": {"message_id": "m2", "recipient": {"type": "user", "id": "u1"}, "sent_at": 2000, "ack_scope": "actor", "termination": {"condition": "never"}}}]}},
-    {"id": "actor-ref-valid", "value_case": {"function": "validate_actor_ref", "args": [{"type": "user", "id": "u1"}], "expected": {"ok": {"type": "user", "id": "u1"}}}},
-    {"id": "actor-ref-invalid", "value_case": {"function": "validate_actor_ref", "args": [{"type": "ghost"}], "expected": {"err": {"code": "invalid_actor_type", "message": "'ghost' is not a declared actor type", "category": "client", "detail": "ghost"}}}},
-    {"id": "termination-valid-ttl", "value_case": {"function": "validate_termination", "args": [{"condition": "ttl", "ttl_seconds": 10}], "expected": {"ok": {"condition": "ttl", "ttl_seconds": 10}}}},
-    {"id": "termination-invalid-condition", "value_case": {"function": "validate_termination", "args": [{"condition": "bogus"}], "expected": {"err": {"code": "invalid_termination", "message": "'bogus' is not a declared termination condition", "category": "client", "detail": "bogus"}}}},
-    {"id": "termination-incomplete-ttl", "value_case": {"function": "validate_termination", "args": [{"condition": "ttl"}], "expected": {"err": {"code": "incomplete_termination", "message": "a 'ttl' termination is missing required fields: ['ttl_seconds']", "category": "client", "detail": ["ttl_seconds"]}}}},
-    {"id": "reply-option-valid", "value_case": {"function": "validate_reply_option", "args": [{"option_id": "approve", "label_id": "alerts.approve", "style": "primary"}], "expected": {"ok": {"option_id": "approve", "label_id": "alerts.approve", "style": "primary"}}}},
-    {"id": "reply-option-incomplete", "value_case": {"function": "validate_reply_option", "args": [{"option_id": "approve"}], "expected": {"err": {"code": "incomplete_reply_option", "message": "a reply option is missing required fields: ['label_id']", "category": "client", "detail": ["label_id"]}}}},
-    {"id": "reply-option-invalid-style", "value_case": {"function": "validate_reply_option", "args": [{"option_id": "a", "label_id": "b", "style": "neon"}], "expected": {"err": {"code": "invalid_reply_style", "message": "'neon' is not a declared reply style", "category": "client", "detail": "neon"}}}},
-    {"id": "message-valid", "value_case": {"function": "validate_message", "args": [{"message_id": "m1", "message_type": "order.placed", "message_version": "1", "sender": {"type": "framework"}, "recipient": {"type": "user", "id": "u1"}, "subject_label_id": "alerts.order_placed", "payload": {}, "reply_required": false, "termination": {"condition": "ttl", "ttl_seconds": 10}, "ack_scope": "session", "sent_at": 1000}], "expected": {"ok": {"message_id": "m1", "message_type": "order.placed", "message_version": "1", "sender": {"type": "framework"}, "recipient": {"type": "user", "id": "u1"}, "subject_label_id": "alerts.order_placed", "payload": {}, "reply_required": false, "termination": {"condition": "ttl", "ttl_seconds": 10}, "ack_scope": "session", "sent_at": 1000}}}},
-    {"id": "message-invalid-ack-scope", "value_case": {"function": "validate_message", "args": [{"message_id": "m1", "message_type": "order.placed", "message_version": "1", "sender": {"type": "framework"}, "recipient": {"type": "user", "id": "u1"}, "subject_label_id": "alerts.order_placed", "payload": {}, "reply_required": false, "termination": {"condition": "ttl", "ttl_seconds": 10}, "ack_scope": "everywhere", "sent_at": 1000}], "expected": {"err": {"code": "invalid_ack_scope", "message": "'everywhere' is not a declared ack scope", "category": "client", "detail": "everywhere"}}}},
-    {"id": "message-invalid-channel", "value_case": {"function": "validate_message", "args": [{"message_id": "m1", "message_type": "order.placed", "message_version": "1", "sender": {"type": "framework"}, "recipient": {"type": "user", "id": "u1"}, "subject_label_id": "alerts.order_placed", "payload": {}, "reply_required": false, "termination": {"condition": "ttl", "ttl_seconds": 10}, "ack_scope": "session", "sent_at": 1000, "channel": "carrier_pigeon"}], "expected": {"err": {"code": "invalid_channel", "message": "'carrier_pigeon' is not a declared channel", "category": "client", "detail": "carrier_pigeon"}}}},
-    {"id": "channel-config-valid", "value_case": {"function": "validate_channel_config", "args": [{"channel": "dom"}], "expected": {"ok": {"channel": "dom"}}}},
-    {"id": "channel-config-invalid-channel", "value_case": {"function": "validate_channel_config", "args": [{"channel": "pigeon"}], "expected": {"err": {"code": "invalid_channel", "message": "'pigeon' is not a declared channel", "category": "client", "detail": "pigeon"}}}},
-    {"id": "escalation-valid", "value_case": {"function": "validate_escalation_rule", "args": [{"ttl_seconds": 86400, "escalate_to": {"type": "role", "id": "admin"}}], "expected": {"ok": {"ttl_seconds": 86400, "escalate_to": {"type": "role", "id": "admin"}}}}},
-    {"id": "escalation-incomplete", "value_case": {"function": "validate_escalation_rule", "args": [{"ttl_seconds": 10}], "expected": {"err": {"code": "incomplete_escalation", "message": "an escalation rule is missing required fields: ['escalate_to']", "category": "client", "detail": ["escalate_to"]}}}},
-    {"id": "alert-route-valid", "value_case": {"function": "validate_alert_route", "args": [{"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1}], "expected": {"ok": {"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1}}}},
-    {"id": "alert-route-invalid-sender", "value_case": {"function": "validate_alert_route", "args": [{"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1, "sender_type": "ghost"}], "expected": {"err": {"code": "invalid_actor_type", "message": "'ghost' is not a declared actor type", "category": "client", "detail": "ghost"}}}},
-    {"id": "message-type-exact-match", "value_case": {"function": "message_type_matches", "args": ["order.placed", "order.placed"], "expected": true}},
-    {"id": "message-type-exact-no-prefix", "value_case": {"function": "message_type_matches", "args": ["order", "order.placed"], "expected": false}},
-    {"id": "message-type-wildcard", "value_case": {"function": "message_type_matches", "args": ["system.*", "system.maintenance_notice"], "expected": true}},
-    {"id": "message-type-wildcard-other-namespace", "value_case": {"function": "message_type_matches", "args": ["system.*", "auth.login"], "expected": false}},
-    {"id": "matching-routes-sorted", "value_case": {"function": "matching_routes", "args": [[{"route_id": "r_wild", "message_type": "system.*", "priority": 2}, {"route_id": "r_exact", "message_type": "system.maintenance_notice", "priority": 1}, {"route_id": "r_other", "message_type": "order.placed", "priority": 1}], {"message_type": "system.maintenance_notice", "sender": {"type": "framework"}}], "expected": [{"route_id": "r_exact", "message_type": "system.maintenance_notice", "priority": 1}, {"route_id": "r_wild", "message_type": "system.*", "priority": 2}]}},
-    {"id": "delivery-plan-records", "value_case": {"function": "delivery_plan", "args": [{"message_id": "m1", "recipient": {"type": "user", "id": "u1"}}, [{"route_id": "r1", "channels": [{"channel": "dom"}, {"channel": "email", "delay_seconds": 300, "recipient_spec": {"type": "role", "id": "admin"}}]}], 1000], "expected": [{"message_id": "m1", "route_id": "r1", "channel": "dom", "recipient": {"type": "user", "id": "u1"}, "deliver_at": 1000, "status": "pending"}, {"message_id": "m1", "route_id": "r1", "channel": "email", "recipient": {"type": "role", "id": "admin"}, "deliver_at": 1300, "status": "pending"}]}},
-    {"id": "advance-created-deliver", "value_case": {"function": "advance", "args": ["created", "deliver"], "expected": {"ok": {"state": "delivered", "event": "alert.delivered"}}}},
-    {"id": "advance-delivered-acknowledge", "value_case": {"function": "advance", "args": ["delivered", "acknowledge"], "expected": {"ok": {"state": "acknowledged", "event": "alert.acknowledged"}}}},
-    {"id": "advance-escalated-expire", "value_case": {"function": "advance", "args": ["escalated", "expire"], "expected": {"ok": {"state": "expired", "event": "alert.expired"}}}},
-    {"id": "build-message-defaults", "value_case": {"function": "build_message", "args": ["sys.notice", {"type": "dom", "id": null}, {}, {"termination": {"condition": "never"}}, {"actor": {"type": "role", "id": "mgr"}}, "m2", 2000], "expected": {"message_id": "m2", "message_type": "sys.notice", "message_version": "1", "sender": {"type": "role", "id": "mgr"}, "recipient": {"type": "dom", "id": null}, "subject_label_id": "sys.notice", "payload": {}, "reply_required": false, "termination": {"condition": "never"}, "ack_scope": "actor", "sent_at": 2000}}},
-    {"id": "build-message-framework-sender", "value_case": {"function": "build_message", "args": ["x", {"type": "user", "id": "u1"}, {}, {"termination": {"condition": "never"}, "ack_scope": "session"}, {}, "m3", 3000], "expected": {"message_id": "m3", "message_type": "x", "message_version": "1", "sender": {"type": "framework"}, "recipient": {"type": "user", "id": "u1"}, "subject_label_id": "x", "payload": {}, "reply_required": false, "termination": {"condition": "never"}, "ack_scope": "session", "sent_at": 3000}}},
-    {"id": "build-message-surface-default-termination", "value_case": {"function": "build_message", "args": ["x", {"type": "user", "id": "u1"}, {}, {"dom_surface": "toast"}, {}, "m4", 4000], "expected": {"message_id": "m4", "message_type": "x", "message_version": "1", "sender": {"type": "framework"}, "recipient": {"type": "user", "id": "u1"}, "subject_label_id": "x", "payload": {}, "reply_required": false, "termination": {"condition": "ttl", "ttl_seconds": 5}, "ack_scope": "actor", "sent_at": 4000, "dom_surface": "toast"}}},
-    {"id": "render-surface-card", "value_case": {"function": "render_surface", "args": [{"message_id": "m1", "dom_surface": "banner", "subject_label_id": "alerts.subj", "reply_options": [{"option_id": "approve", "label_id": "alerts.approve"}]}], "expected": "<div class=\"alert alert-banner\" data-message-id=\"m1\" data-surface=\"banner\"><span class=\"alert-subject\" data-label=\"alerts.subj\"></span><button class=\"alert-action\" hx-post=\"/api/alerts/m1/reply\" name=\"option_id\" value=\"approve\" data-label=\"alerts.approve\"></button></div>"}},
-    {"id": "render-surface-badge", "value_case": {"function": "render_surface", "args": [{"message_id": "m3", "dom_surface": "badge", "subject_label_id": "alerts.count"}], "expected": "<span class=\"alert-badge\" data-message-id=\"m3\" data-surface=\"badge\" data-label=\"alerts.count\">1</span>"}},
-    {"id": "alert-event-shaped", "value_case": {"function": "alert_event", "args": ["alert.sent", "m1", {"total": 5}], "expected": {"ok": {"event_type": "alert.sent", "aggregate_type": "alert", "aggregate_id": "m1", "payload": {"total": 5}}}}},
-    {"id": "alert-event-unknown", "value_case": {"function": "alert_event", "args": ["alert.teleported", "m1", {}], "expected": {"err": {"code": "unknown_alert_event", "message": "'alert.teleported' is not a declared alert event", "category": "server", "detail": "alert.teleported"}}}},
-    {"id": "resolve-config-defaults", "value_case": {"function": "resolve_config", "args": [{}], "expected": {"routing": {"table": "alert_routes", "db_id": "primary"}, "delivery": {"table": "alert_deliveries", "poll_interval_seconds": 5}, "channels": {"dom": {"enabled": true}}, "dom": {"sse_endpoint": "/api/alerts/stream", "reply_endpoint": "/api/alerts/{message_id}/reply"}, "send_and_wait": {"default_ttl_seconds": 3600}}}},
-    {"id": "resolve-config-override", "value_case": {"function": "resolve_config", "args": [{"delivery": {"poll_interval_seconds": 10}, "channels": {"email": {"enabled": true, "smtp_config_id": "x"}}}], "expected": {"routing": {"table": "alert_routes", "db_id": "primary"}, "delivery": {"table": "alert_deliveries", "poll_interval_seconds": 10}, "channels": {"dom": {"enabled": true}, "email": {"enabled": true, "smtp_config_id": "x"}}, "dom": {"sse_endpoint": "/api/alerts/stream", "reply_endpoint": "/api/alerts/{message_id}/reply"}, "send_and_wait": {"default_ttl_seconds": 3600}}}}
+    {
+      "id": "recipient-type-mismatch",
+      "value_case": {
+        "function": "recipient_matches",
+        "args": [
+          {
+            "type": "dom",
+            "id": null
+          },
+          {
+            "type": "user",
+            "id": "u1"
+          }
+        ],
+        "expected": false
+      }
+    },
+    {
+      "id": "recipient-broadcast",
+      "value_case": {
+        "function": "recipient_matches",
+        "args": [
+          {
+            "type": "dom",
+            "id": null
+          },
+          {
+            "type": "dom",
+            "id": "s1"
+          }
+        ],
+        "expected": true
+      }
+    },
+    {
+      "id": "recipient-id-match",
+      "value_case": {
+        "function": "recipient_matches",
+        "args": [
+          {
+            "type": "user",
+            "id": "u1"
+          },
+          {
+            "type": "user",
+            "id": "u1",
+            "tenant_id": "acme"
+          }
+        ],
+        "expected": true
+      }
+    },
+    {
+      "id": "recipient-id-mismatch",
+      "value_case": {
+        "function": "recipient_matches",
+        "args": [
+          {
+            "type": "user",
+            "id": "u2"
+          },
+          {
+            "type": "user",
+            "id": "u1"
+          }
+        ],
+        "expected": false
+      }
+    },
+    {
+      "id": "recipient-tenant-mismatch",
+      "value_case": {
+        "function": "recipient_matches",
+        "args": [
+          {
+            "type": "user",
+            "id": "u1",
+            "tenant_id": "other"
+          },
+          {
+            "type": "user",
+            "id": "u1",
+            "tenant_id": "acme"
+          }
+        ],
+        "expected": false
+      }
+    },
+    {
+      "id": "terminated-ttl-live",
+      "value_case": {
+        "function": "is_terminated",
+        "args": [
+          {
+            "event_type": "alert.sent",
+            "timestamp": 1000,
+            "payload": {
+              "message_id": "m1",
+              "recipient": {
+                "type": "user",
+                "id": "u1"
+              },
+              "sent_at": 1000,
+              "ack_scope": "actor",
+              "termination": {
+                "condition": "ttl",
+                "ttl_seconds": 10
+              }
+            }
+          },
+          {
+            "type": "user",
+            "id": "u1"
+          },
+          [
+            {
+              "event_type": "alert.sent",
+              "timestamp": 1000,
+              "payload": {
+                "message_id": "m1",
+                "recipient": {
+                  "type": "user",
+                  "id": "u1"
+                },
+                "sent_at": 1000,
+                "ack_scope": "actor",
+                "termination": {
+                  "condition": "ttl",
+                  "ttl_seconds": 10
+                }
+              }
+            }
+          ],
+          1005
+        ],
+        "expected": false
+      }
+    },
+    {
+      "id": "terminated-ttl-expired",
+      "value_case": {
+        "function": "is_terminated",
+        "args": [
+          {
+            "event_type": "alert.sent",
+            "timestamp": 1000,
+            "payload": {
+              "message_id": "m1",
+              "recipient": {
+                "type": "user",
+                "id": "u1"
+              },
+              "sent_at": 1000,
+              "ack_scope": "actor",
+              "termination": {
+                "condition": "ttl",
+                "ttl_seconds": 10
+              }
+            }
+          },
+          {
+            "type": "user",
+            "id": "u1"
+          },
+          [
+            {
+              "event_type": "alert.sent",
+              "timestamp": 1000,
+              "payload": {
+                "message_id": "m1",
+                "recipient": {
+                  "type": "user",
+                  "id": "u1"
+                },
+                "sent_at": 1000,
+                "ack_scope": "actor",
+                "termination": {
+                  "condition": "ttl",
+                  "ttl_seconds": 10
+                }
+              }
+            }
+          ],
+          1011
+        ],
+        "expected": true
+      }
+    },
+    {
+      "id": "terminated-never",
+      "value_case": {
+        "function": "is_terminated",
+        "args": [
+          {
+            "event_type": "alert.sent",
+            "timestamp": 1000,
+            "payload": {
+              "message_id": "m1",
+              "recipient": {
+                "type": "user",
+                "id": "u1"
+              },
+              "sent_at": 1000,
+              "ack_scope": "actor",
+              "termination": {
+                "condition": "never"
+              }
+            }
+          },
+          {
+            "type": "user",
+            "id": "u1"
+          },
+          [],
+          9999999
+        ],
+        "expected": false
+      }
+    },
+    {
+      "id": "mailbox-orders-and-filters",
+      "value_case": {
+        "function": "mailbox",
+        "args": [
+          {
+            "type": "user",
+            "id": "u1"
+          },
+          [
+            {
+              "event_type": "alert.sent",
+              "timestamp": 2000,
+              "payload": {
+                "message_id": "m2",
+                "recipient": {
+                  "type": "user",
+                  "id": "u1"
+                },
+                "sent_at": 2000,
+                "ack_scope": "actor",
+                "termination": {
+                  "condition": "never"
+                }
+              }
+            },
+            {
+              "event_type": "alert.sent",
+              "timestamp": 1000,
+              "payload": {
+                "message_id": "m1",
+                "recipient": {
+                  "type": "user",
+                  "id": "u1"
+                },
+                "sent_at": 1000,
+                "ack_scope": "actor",
+                "termination": {
+                  "condition": "never"
+                }
+              }
+            },
+            {
+              "event_type": "alert.sent",
+              "timestamp": 1000,
+              "payload": {
+                "message_id": "m3",
+                "recipient": {
+                  "type": "user",
+                  "id": "u2"
+                },
+                "sent_at": 1000,
+                "ack_scope": "actor",
+                "termination": {
+                  "condition": "never"
+                }
+              }
+            }
+          ],
+          3000
+        ],
+        "expected": [
+          {
+            "event_type": "alert.sent",
+            "timestamp": 1000,
+            "payload": {
+              "message_id": "m1",
+              "recipient": {
+                "type": "user",
+                "id": "u1"
+              },
+              "sent_at": 1000,
+              "ack_scope": "actor",
+              "termination": {
+                "condition": "never"
+              }
+            }
+          },
+          {
+            "event_type": "alert.sent",
+            "timestamp": 2000,
+            "payload": {
+              "message_id": "m2",
+              "recipient": {
+                "type": "user",
+                "id": "u1"
+              },
+              "sent_at": 2000,
+              "ack_scope": "actor",
+              "termination": {
+                "condition": "never"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "actor-ref-valid",
+      "value_case": {
+        "function": "validate_actor_ref",
+        "args": [
+          {
+            "type": "user",
+            "id": "u1"
+          }
+        ],
+        "expected": {
+          "ok": {
+            "type": "user",
+            "id": "u1"
+          }
+        }
+      }
+    },
+    {
+      "id": "actor-ref-invalid",
+      "value_case": {
+        "function": "validate_actor_ref",
+        "args": [
+          {
+            "type": "ghost"
+          }
+        ],
+        "expected": {
+          "err": {
+            "code": "invalid_actor_type",
+            "message": "'ghost' is not a declared actor type",
+            "category": "client",
+            "results": [],
+            "detail": "ghost"
+          }
+        }
+      }
+    },
+    {
+      "id": "termination-valid-ttl",
+      "value_case": {
+        "function": "validate_termination",
+        "args": [
+          {
+            "condition": "ttl",
+            "ttl_seconds": 10
+          }
+        ],
+        "expected": {
+          "ok": {
+            "condition": "ttl",
+            "ttl_seconds": 10
+          }
+        }
+      }
+    },
+    {
+      "id": "termination-invalid-condition",
+      "value_case": {
+        "function": "validate_termination",
+        "args": [
+          {
+            "condition": "bogus"
+          }
+        ],
+        "expected": {
+          "err": {
+            "code": "invalid_termination",
+            "message": "'bogus' is not a declared termination condition",
+            "category": "client",
+            "results": [],
+            "detail": "bogus"
+          }
+        }
+      }
+    },
+    {
+      "id": "termination-incomplete-ttl",
+      "value_case": {
+        "function": "validate_termination",
+        "args": [
+          {
+            "condition": "ttl"
+          }
+        ],
+        "expected": {
+          "err": {
+            "code": "incomplete_termination",
+            "message": "a 'ttl' termination is missing required fields: ['ttl_seconds']",
+            "category": "client",
+            "results": [],
+            "detail": [
+              "ttl_seconds"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "reply-option-valid",
+      "value_case": {
+        "function": "validate_reply_option",
+        "args": [
+          {
+            "option_id": "approve",
+            "label_id": "alerts.approve",
+            "style": "primary"
+          }
+        ],
+        "expected": {
+          "ok": {
+            "option_id": "approve",
+            "label_id": "alerts.approve",
+            "style": "primary"
+          }
+        }
+      }
+    },
+    {
+      "id": "reply-option-incomplete",
+      "value_case": {
+        "function": "validate_reply_option",
+        "args": [
+          {
+            "option_id": "approve"
+          }
+        ],
+        "expected": {
+          "err": {
+            "code": "incomplete_reply_option",
+            "message": "a reply option is missing required fields: ['label_id']",
+            "category": "client",
+            "results": [],
+            "detail": [
+              "label_id"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "reply-option-invalid-style",
+      "value_case": {
+        "function": "validate_reply_option",
+        "args": [
+          {
+            "option_id": "a",
+            "label_id": "b",
+            "style": "neon"
+          }
+        ],
+        "expected": {
+          "err": {
+            "code": "invalid_reply_style",
+            "message": "'neon' is not a declared reply style",
+            "category": "client",
+            "results": [],
+            "detail": "neon"
+          }
+        }
+      }
+    },
+    {
+      "id": "message-valid",
+      "value_case": {
+        "function": "validate_message",
+        "args": [
+          {
+            "message_id": "m1",
+            "message_type": "order.placed",
+            "message_version": "1",
+            "sender": {
+              "type": "framework"
+            },
+            "recipient": {
+              "type": "user",
+              "id": "u1"
+            },
+            "subject_label_id": "alerts.order_placed",
+            "payload": {},
+            "reply_required": false,
+            "termination": {
+              "condition": "ttl",
+              "ttl_seconds": 10
+            },
+            "ack_scope": "session",
+            "sent_at": 1000
+          }
+        ],
+        "expected": {
+          "ok": {
+            "message_id": "m1",
+            "message_type": "order.placed",
+            "message_version": "1",
+            "sender": {
+              "type": "framework"
+            },
+            "recipient": {
+              "type": "user",
+              "id": "u1"
+            },
+            "subject_label_id": "alerts.order_placed",
+            "payload": {},
+            "reply_required": false,
+            "termination": {
+              "condition": "ttl",
+              "ttl_seconds": 10
+            },
+            "ack_scope": "session",
+            "sent_at": 1000
+          }
+        }
+      }
+    },
+    {
+      "id": "message-invalid-ack-scope",
+      "value_case": {
+        "function": "validate_message",
+        "args": [
+          {
+            "message_id": "m1",
+            "message_type": "order.placed",
+            "message_version": "1",
+            "sender": {
+              "type": "framework"
+            },
+            "recipient": {
+              "type": "user",
+              "id": "u1"
+            },
+            "subject_label_id": "alerts.order_placed",
+            "payload": {},
+            "reply_required": false,
+            "termination": {
+              "condition": "ttl",
+              "ttl_seconds": 10
+            },
+            "ack_scope": "everywhere",
+            "sent_at": 1000
+          }
+        ],
+        "expected": {
+          "err": {
+            "code": "invalid_ack_scope",
+            "message": "'everywhere' is not a declared ack scope",
+            "category": "client",
+            "results": [],
+            "detail": "everywhere"
+          }
+        }
+      }
+    },
+    {
+      "id": "message-invalid-channel",
+      "value_case": {
+        "function": "validate_message",
+        "args": [
+          {
+            "message_id": "m1",
+            "message_type": "order.placed",
+            "message_version": "1",
+            "sender": {
+              "type": "framework"
+            },
+            "recipient": {
+              "type": "user",
+              "id": "u1"
+            },
+            "subject_label_id": "alerts.order_placed",
+            "payload": {},
+            "reply_required": false,
+            "termination": {
+              "condition": "ttl",
+              "ttl_seconds": 10
+            },
+            "ack_scope": "session",
+            "sent_at": 1000,
+            "channel": "carrier_pigeon"
+          }
+        ],
+        "expected": {
+          "err": {
+            "code": "invalid_channel",
+            "message": "'carrier_pigeon' is not a declared channel",
+            "category": "client",
+            "results": [],
+            "detail": "carrier_pigeon"
+          }
+        }
+      }
+    },
+    {
+      "id": "channel-config-valid",
+      "value_case": {
+        "function": "validate_channel_config",
+        "args": [
+          {
+            "channel": "dom"
+          }
+        ],
+        "expected": {
+          "ok": {
+            "channel": "dom"
+          }
+        }
+      }
+    },
+    {
+      "id": "channel-config-invalid-channel",
+      "value_case": {
+        "function": "validate_channel_config",
+        "args": [
+          {
+            "channel": "pigeon"
+          }
+        ],
+        "expected": {
+          "err": {
+            "code": "invalid_channel",
+            "message": "'pigeon' is not a declared channel",
+            "category": "client",
+            "results": [],
+            "detail": "pigeon"
+          }
+        }
+      }
+    },
+    {
+      "id": "escalation-valid",
+      "value_case": {
+        "function": "validate_escalation_rule",
+        "args": [
+          {
+            "ttl_seconds": 86400,
+            "escalate_to": {
+              "type": "role",
+              "id": "admin"
+            }
+          }
+        ],
+        "expected": {
+          "ok": {
+            "ttl_seconds": 86400,
+            "escalate_to": {
+              "type": "role",
+              "id": "admin"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "escalation-incomplete",
+      "value_case": {
+        "function": "validate_escalation_rule",
+        "args": [
+          {
+            "ttl_seconds": 10
+          }
+        ],
+        "expected": {
+          "err": {
+            "code": "incomplete_escalation",
+            "message": "an escalation rule is missing required fields: ['escalate_to']",
+            "category": "client",
+            "results": [],
+            "detail": [
+              "escalate_to"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "alert-route-valid",
+      "value_case": {
+        "function": "validate_alert_route",
+        "args": [
+          {
+            "route_id": "r1",
+            "message_type": "order.placed",
+            "channels": [
+              {
+                "channel": "dom"
+              }
+            ],
+            "priority": 1
+          }
+        ],
+        "expected": {
+          "ok": {
+            "route_id": "r1",
+            "message_type": "order.placed",
+            "channels": [
+              {
+                "channel": "dom"
+              }
+            ],
+            "priority": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "alert-route-invalid-sender",
+      "value_case": {
+        "function": "validate_alert_route",
+        "args": [
+          {
+            "route_id": "r1",
+            "message_type": "order.placed",
+            "channels": [
+              {
+                "channel": "dom"
+              }
+            ],
+            "priority": 1,
+            "sender_type": "ghost"
+          }
+        ],
+        "expected": {
+          "err": {
+            "code": "invalid_actor_type",
+            "message": "'ghost' is not a declared actor type",
+            "category": "client",
+            "results": [],
+            "detail": "ghost"
+          }
+        }
+      }
+    },
+    {
+      "id": "message-type-exact-match",
+      "value_case": {
+        "function": "message_type_matches",
+        "args": [
+          "order.placed",
+          "order.placed"
+        ],
+        "expected": true
+      }
+    },
+    {
+      "id": "message-type-exact-no-prefix",
+      "value_case": {
+        "function": "message_type_matches",
+        "args": [
+          "order",
+          "order.placed"
+        ],
+        "expected": false
+      }
+    },
+    {
+      "id": "message-type-wildcard",
+      "value_case": {
+        "function": "message_type_matches",
+        "args": [
+          "system.*",
+          "system.maintenance_notice"
+        ],
+        "expected": true
+      }
+    },
+    {
+      "id": "message-type-wildcard-other-namespace",
+      "value_case": {
+        "function": "message_type_matches",
+        "args": [
+          "system.*",
+          "auth.login"
+        ],
+        "expected": false
+      }
+    },
+    {
+      "id": "matching-routes-sorted",
+      "value_case": {
+        "function": "matching_routes",
+        "args": [
+          [
+            {
+              "route_id": "r_wild",
+              "message_type": "system.*",
+              "priority": 2
+            },
+            {
+              "route_id": "r_exact",
+              "message_type": "system.maintenance_notice",
+              "priority": 1
+            },
+            {
+              "route_id": "r_other",
+              "message_type": "order.placed",
+              "priority": 1
+            }
+          ],
+          {
+            "message_type": "system.maintenance_notice",
+            "sender": {
+              "type": "framework"
+            }
+          }
+        ],
+        "expected": [
+          {
+            "route_id": "r_exact",
+            "message_type": "system.maintenance_notice",
+            "priority": 1
+          },
+          {
+            "route_id": "r_wild",
+            "message_type": "system.*",
+            "priority": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "delivery-plan-records",
+      "value_case": {
+        "function": "delivery_plan",
+        "args": [
+          {
+            "message_id": "m1",
+            "recipient": {
+              "type": "user",
+              "id": "u1"
+            }
+          },
+          [
+            {
+              "route_id": "r1",
+              "channels": [
+                {
+                  "channel": "dom"
+                },
+                {
+                  "channel": "email",
+                  "delay_seconds": 300,
+                  "recipient_spec": {
+                    "type": "role",
+                    "id": "admin"
+                  }
+                }
+              ]
+            }
+          ],
+          1000
+        ],
+        "expected": [
+          {
+            "message_id": "m1",
+            "route_id": "r1",
+            "channel": "dom",
+            "recipient": {
+              "type": "user",
+              "id": "u1"
+            },
+            "endpoint": "",
+            "deliver_at": 1000,
+            "status": "pending"
+          },
+          {
+            "message_id": "m1",
+            "route_id": "r1",
+            "channel": "email",
+            "recipient": {
+              "type": "role",
+              "id": "admin"
+            },
+            "endpoint": "",
+            "deliver_at": 1300,
+            "status": "pending"
+          }
+        ]
+      }
+    },
+    {
+      "id": "advance-created-deliver",
+      "value_case": {
+        "function": "advance",
+        "args": [
+          "created",
+          "deliver"
+        ],
+        "expected": {
+          "ok": {
+            "state": "delivered",
+            "event": "alert.delivered"
+          }
+        }
+      }
+    },
+    {
+      "id": "advance-delivered-acknowledge",
+      "value_case": {
+        "function": "advance",
+        "args": [
+          "delivered",
+          "acknowledge"
+        ],
+        "expected": {
+          "ok": {
+            "state": "acknowledged",
+            "event": "alert.acknowledged"
+          }
+        }
+      }
+    },
+    {
+      "id": "advance-escalated-expire",
+      "value_case": {
+        "function": "advance",
+        "args": [
+          "escalated",
+          "expire"
+        ],
+        "expected": {
+          "ok": {
+            "state": "expired",
+            "event": "alert.expired"
+          }
+        }
+      }
+    },
+    {
+      "id": "build-message-defaults",
+      "value_case": {
+        "function": "build_message",
+        "args": [
+          "sys.notice",
+          {
+            "type": "dom",
+            "id": null
+          },
+          {},
+          {
+            "termination": {
+              "condition": "never"
+            }
+          },
+          {
+            "actor": {
+              "type": "role",
+              "id": "mgr"
+            }
+          },
+          "m2",
+          2000
+        ],
+        "expected": {
+          "message_id": "m2",
+          "message_type": "sys.notice",
+          "message_version": "1",
+          "sender": {
+            "type": "role",
+            "id": "mgr"
+          },
+          "recipient": {
+            "type": "dom",
+            "id": null
+          },
+          "subject_label_id": "sys.notice",
+          "payload": {},
+          "reply_required": false,
+          "termination": {
+            "condition": "never"
+          },
+          "ack_scope": "actor",
+          "sent_at": 2000
+        }
+      }
+    },
+    {
+      "id": "build-message-framework-sender",
+      "value_case": {
+        "function": "build_message",
+        "args": [
+          "x",
+          {
+            "type": "user",
+            "id": "u1"
+          },
+          {},
+          {
+            "termination": {
+              "condition": "never"
+            },
+            "ack_scope": "session"
+          },
+          {},
+          "m3",
+          3000
+        ],
+        "expected": {
+          "message_id": "m3",
+          "message_type": "x",
+          "message_version": "1",
+          "sender": {
+            "type": "framework"
+          },
+          "recipient": {
+            "type": "user",
+            "id": "u1"
+          },
+          "subject_label_id": "x",
+          "payload": {},
+          "reply_required": false,
+          "termination": {
+            "condition": "never"
+          },
+          "ack_scope": "session",
+          "sent_at": 3000
+        }
+      }
+    },
+    {
+      "id": "build-message-surface-default-termination",
+      "value_case": {
+        "function": "build_message",
+        "args": [
+          "x",
+          {
+            "type": "user",
+            "id": "u1"
+          },
+          {},
+          {
+            "dom_surface": "toast"
+          },
+          {},
+          "m4",
+          4000
+        ],
+        "expected": {
+          "message_id": "m4",
+          "message_type": "x",
+          "message_version": "1",
+          "sender": {
+            "type": "framework"
+          },
+          "recipient": {
+            "type": "user",
+            "id": "u1"
+          },
+          "subject_label_id": "x",
+          "payload": {},
+          "reply_required": false,
+          "termination": {
+            "condition": "ttl",
+            "ttl_seconds": 5
+          },
+          "ack_scope": "actor",
+          "sent_at": 4000,
+          "dom_surface": "toast"
+        }
+      }
+    },
+    {
+      "id": "render-surface-card",
+      "value_case": {
+        "function": "render_surface",
+        "args": [
+          {
+            "message_id": "m1",
+            "dom_surface": "banner",
+            "subject_label_id": "alerts.subj",
+            "reply_options": [
+              {
+                "option_id": "approve",
+                "label_id": "alerts.approve"
+              }
+            ]
+          }
+        ],
+        "expected": "<div class=\"alert alert-banner\" data-message-id=\"m1\" data-surface=\"banner\"><span class=\"alert-subject\" data-label=\"alerts.subj\"></span><button class=\"alert-action\" hx-post=\"/api/alerts/m1/reply\" name=\"option_id\" value=\"approve\" data-label=\"alerts.approve\"></button></div>"
+      }
+    },
+    {
+      "id": "render-surface-badge",
+      "value_case": {
+        "function": "render_surface",
+        "args": [
+          {
+            "message_id": "m3",
+            "dom_surface": "badge",
+            "subject_label_id": "alerts.count"
+          }
+        ],
+        "expected": "<span class=\"alert-badge\" data-message-id=\"m3\" data-surface=\"badge\" data-label=\"alerts.count\">1</span>"
+      }
+    },
+    {
+      "id": "alert-event-shaped",
+      "value_case": {
+        "function": "alert_event",
+        "args": [
+          "alert.sent",
+          "m1",
+          {
+            "total": 5
+          }
+        ],
+        "expected": {
+          "ok": {
+            "event_type": "alert.sent",
+            "aggregate_type": "alert",
+            "aggregate_id": "m1",
+            "payload": {
+              "total": 5
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "alert-event-unknown",
+      "value_case": {
+        "function": "alert_event",
+        "args": [
+          "alert.teleported",
+          "m1",
+          {}
+        ],
+        "expected": {
+          "err": {
+            "code": "unknown_alert_event",
+            "message": "'alert.teleported' is not a declared alert event",
+            "category": "server",
+            "results": [],
+            "detail": "alert.teleported"
+          }
+        }
+      }
+    },
+    {
+      "id": "resolve-config-defaults",
+      "value_case": {
+        "function": "resolve_config",
+        "args": [
+          {}
+        ],
+        "expected": {
+          "routing": {
+            "table": "alert_routes",
+            "db_id": "primary"
+          },
+          "delivery": {
+            "table": "alert_deliveries",
+            "poll_interval_seconds": 5
+          },
+          "channels": {
+            "dom": {
+              "enabled": true
+            }
+          },
+          "dom": {
+            "sse_endpoint": "/api/alerts/stream",
+            "reply_endpoint": "/api/alerts/{message_id}/reply"
+          },
+          "send_and_wait": {
+            "default_ttl_seconds": 3600
+          }
+        }
+      }
+    },
+    {
+      "id": "resolve-config-override",
+      "value_case": {
+        "function": "resolve_config",
+        "args": [
+          {
+            "delivery": {
+              "poll_interval_seconds": 10
+            },
+            "channels": {
+              "email": {
+                "enabled": true,
+                "smtp_config_id": "x"
+              }
+            }
+          }
+        ],
+        "expected": {
+          "routing": {
+            "table": "alert_routes",
+            "db_id": "primary"
+          },
+          "delivery": {
+            "table": "alert_deliveries",
+            "poll_interval_seconds": 10
+          },
+          "channels": {
+            "dom": {
+              "enabled": true
+            },
+            "email": {
+              "enabled": true,
+              "smtp_config_id": "x"
+            }
+          },
+          "dom": {
+            "sse_endpoint": "/api/alerts/stream",
+            "reply_endpoint": "/api/alerts/{message_id}/reply"
+          },
+          "send_and_wait": {
+            "default_ttl_seconds": 3600
+          }
+        }
+      }
+    }
   ]
 }

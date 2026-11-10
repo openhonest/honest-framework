@@ -24,19 +24,19 @@ from honest_alerts import (
     alert_lifecycle,
     build_message,
     resolve_config,
-    handle_reply,
     render_surface,
     delivery_plan,
-    execute_deliveries,
     is_terminated,
+    load_config,
     mailbox,
     matching_routes,
     message_type_matches,
     recipient_matches,
-    send,
-    send_and_wait,
-    send_message,
-    supervise,
+    record_reply,
+    render_mailbox,
+    run_deliveries,
+    run_send,
+    run_send_and_wait,
     validate_actor_ref,
     validate_alert_route,
     validate_channel_config,
@@ -76,42 +76,20 @@ def _law_exports():
 
     bad = []
     expected = [
-        "mailbox",
-        "is_terminated",
-        "recipient_matches",
-        "TERMINATION_CONDITIONS",
-        "ACK_SCOPES",
-        "ACTOR_TYPES",
-        "validate_actor_ref",
-        "DOM_SURFACES",
-        "REPLY_STYLES",
-        "CHANNELS",
-        "validate_termination",
-        "validate_reply_option",
-        "validate_message",
-        "validate_channel_config",
-        "validate_escalation_rule",
-        "validate_alert_route",
-        "message_type_matches",
-        "matching_routes",
-        "delivery_plan",
-        "supervise",
-        "execute_deliveries",
-        "alert_lifecycle",
-        "LIFECYCLE_EVENTS",
-        "advance",
-        "build_message",
-        "send_message",
-        "send",
-        "send_and_wait",
-        "SURFACE_DEFAULT_TERMINATION",
-        "render_surface",
-        "handle_reply",
-        "ALERT_AGGREGATE",
-        "ALERT_EVENTS",
-        "alert_event",
-        "ALERT_CONFIG_DEFAULTS",
-        "resolve_config",
+        "build_message", "validate_message", "validate_actor_ref", "validate_termination",
+        "validate_reply_option", "validate_channel_config", "validate_escalation_rule",
+        "validate_alert_route", "advance", "message_type_matches", "matching_routes",
+        "delivery_plan", "alert_event", "mailbox", "is_terminated", "recipient_matches",
+        "render_surface", "resolve_config",
+        "now", "new_message_id", "new_resume_token", "read_routes", "read_pending",
+        "read_events", "await_reply", "read_raw_config",
+        "write_delivery", "mark_delivery", "emit_event", "deliver_dom", "deliver_posted",
+        "run_send", "run_send_and_wait", "run_deliveries", "record_reply", "render_mailbox",
+        "load_config",
+        "send", "send_and_wait", "handle_reply", "serve_mailbox", "tick", "start",
+        "TERMINATION_CONDITIONS", "ACK_SCOPES", "ACTOR_TYPES", "DOM_SURFACES", "REPLY_STYLES",
+        "CHANNELS", "LIFECYCLE_EVENTS", "alert_lifecycle", "ALERT_AGGREGATE", "ALERT_EVENTS",
+        "ALERT_CONFIG_DEFAULTS", "SURFACE_DEFAULT_TERMINATION",
     ]
     if sorted(getattr(honest_alerts, "__all__", [])) != sorted(expected):
         bad.append(f"__all__ should be exactly the public surface: {getattr(honest_alerts, '__all__', None)}")
@@ -266,7 +244,7 @@ def _law_validate_actor_ref():
     if validate_actor_ref({"type": "dom"}) != {"ok": {"type": "dom"}}:
         bad.append("id and tenant_id are optional")
     ghost = validate_actor_ref({"type": "ghost"})
-    if ghost != {"err": {"code": "invalid_actor_type", "message": "'ghost' is not a declared actor type", "category": "client", "detail": "ghost"}}:
+    if ghost != {"err": {"code": "invalid_actor_type", "message": "'ghost' is not a declared actor type", "category": "client", "results": [], "detail": "ghost"}}:
         bad.append(f"an undeclared actor type is a full invalid_actor_type client fault: {ghost}")
     return bad
 
@@ -286,13 +264,13 @@ def _law_validate_termination():
     if validate_termination({"condition": "event", "event_type": "x.done"}) != {"ok": {"condition": "event", "event_type": "x.done"}}:
         bad.append("an event termination with event_type passes")
     bogus = validate_termination({"condition": "bogus"})
-    if bogus != {"err": {"code": "invalid_termination", "message": "'bogus' is not a declared termination condition", "category": "client", "detail": "bogus"}}:
+    if bogus != {"err": {"code": "invalid_termination", "message": "'bogus' is not a declared termination condition", "category": "client", "results": [], "detail": "bogus"}}:
         bad.append(f"an undeclared condition is a full invalid_termination fault: {bogus}")
     no_ttl = validate_termination({"condition": "ttl"})
-    if no_ttl != {"err": {"code": "incomplete_termination", "message": "a 'ttl' termination is missing required fields: ['ttl_seconds']", "category": "client", "detail": ["ttl_seconds"]}}:
+    if no_ttl != {"err": {"code": "incomplete_termination", "message": "a 'ttl' termination is missing required fields: ['ttl_seconds']", "category": "client", "results": [], "detail": ["ttl_seconds"]}}:
         bad.append(f"a ttl termination without ttl_seconds is a full incomplete_termination fault: {no_ttl}")
     no_event = validate_termination({"condition": "event"})
-    if no_event != {"err": {"code": "incomplete_termination", "message": "a 'event' termination is missing required fields: ['event_type']", "category": "client", "detail": ["event_type"]}}:
+    if no_event != {"err": {"code": "incomplete_termination", "message": "a 'event' termination is missing required fields: ['event_type']", "category": "client", "results": [], "detail": ["event_type"]}}:
         bad.append(f"an event termination without event_type is a full incomplete_termination fault: {no_event}")
     return bad
 
@@ -305,10 +283,10 @@ def _law_validate_reply_option():
     if validate_reply_option(styled) != {"ok": styled}:
         bad.append("a declared style passes")
     incomplete = validate_reply_option({"option_id": "approve"})
-    if incomplete != {"err": {"code": "incomplete_reply_option", "message": "a reply option is missing required fields: ['label_id']", "category": "client", "detail": ["label_id"]}}:
+    if incomplete != {"err": {"code": "incomplete_reply_option", "message": "a reply option is missing required fields: ['label_id']", "category": "client", "results": [], "detail": ["label_id"]}}:
         bad.append(f"a reply option missing label_id is a full incomplete_reply_option fault: {incomplete}")
     bad_style = validate_reply_option({"option_id": "a", "label_id": "b", "style": "neon"})
-    if bad_style != {"err": {"code": "invalid_reply_style", "message": "'neon' is not a declared reply style", "category": "client", "detail": "neon"}}:
+    if bad_style != {"err": {"code": "invalid_reply_style", "message": "'neon' is not a declared reply style", "category": "client", "results": [], "detail": "neon"}}:
         bad.append(f"an undeclared style is a full invalid_reply_style fault: {bad_style}")
     return bad
 
@@ -345,7 +323,7 @@ def _law_validate_message():
     incomplete = _valid_message()
     del incomplete["sent_at"]
     miss = validate_message(incomplete)
-    if miss != {"err": {"code": "incomplete_message", "message": "message is missing required fields: ['sent_at']", "category": "client", "detail": ["sent_at"]}}:
+    if miss != {"err": {"code": "incomplete_message", "message": "message is missing required fields: ['sent_at']", "category": "client", "results": [], "detail": ["sent_at"]}}:
         bad.append(f"a message missing a required field is a full incomplete_message fault: {miss}")
     # invalid sender / recipient propagate the actor fault
     bad_sender = validate_message(_valid_message(sender={"type": "ghost"}))
@@ -360,11 +338,11 @@ def _law_validate_message():
         bad.append(f"an invalid termination propagates invalid_termination: {bad_term}")
     # invalid ack_scope
     bad_scope = validate_message(_valid_message(ack_scope="everywhere"))
-    if bad_scope != {"err": {"code": "invalid_ack_scope", "message": "'everywhere' is not a declared ack scope", "category": "client", "detail": "everywhere"}}:
+    if bad_scope != {"err": {"code": "invalid_ack_scope", "message": "'everywhere' is not a declared ack scope", "category": "client", "results": [], "detail": "everywhere"}}:
         bad.append(f"an undeclared ack_scope is a full invalid_ack_scope fault: {bad_scope}")
     # invalid dom_surface
     bad_surface = validate_message(_valid_message(dom_surface="popover"))
-    if bad_surface != {"err": {"code": "invalid_dom_surface", "message": "'popover' is not a declared DOM surface", "category": "client", "detail": "popover"}}:
+    if bad_surface != {"err": {"code": "invalid_dom_surface", "message": "'popover' is not a declared DOM surface", "category": "client", "results": [], "detail": "popover"}}:
         bad.append(f"an undeclared dom_surface is a full invalid_dom_surface fault: {bad_surface}")
     # invalid reply option propagates
     bad_reply = validate_message(_valid_message(reply_options=[{"option_id": "ok"}]))
@@ -375,7 +353,7 @@ def _law_validate_message():
     if validate_message(with_channel) != {"ok": with_channel}:
         bad.append(f"a declared preferred channel passes: {validate_message(with_channel)}")
     bad_channel = validate_message(_valid_message(channel="carrier_pigeon"))
-    if bad_channel != {"err": {"code": "invalid_channel", "message": "'carrier_pigeon' is not a declared channel", "category": "client", "detail": "carrier_pigeon"}}:
+    if bad_channel != {"err": {"code": "invalid_channel", "message": "'carrier_pigeon' is not a declared channel", "category": "client", "results": [], "detail": "carrier_pigeon"}}:
         bad.append(f"an undeclared channel is a full invalid_channel fault: {bad_channel}")
     return bad
 
@@ -395,10 +373,10 @@ def _law_validate_channel_config():
     if validate_channel_config(with_recipient) != {"ok": with_recipient}:
         bad.append(f"a valid recipient_spec passes: {validate_channel_config(with_recipient)}")
     miss = validate_channel_config({})
-    if miss != {"err": {"code": "incomplete_channel_config", "message": "a channel config is missing required fields: ['channel']", "category": "client", "detail": ["channel"]}}:
+    if miss != {"err": {"code": "incomplete_channel_config", "message": "a channel config is missing required fields: ['channel']", "category": "client", "results": [], "detail": ["channel"]}}:
         bad.append(f"a channel config missing channel is a full incomplete_channel_config fault: {miss}")
     bad_channel = validate_channel_config({"channel": "pigeon"})
-    if bad_channel != {"err": {"code": "invalid_channel", "message": "'pigeon' is not a declared channel", "category": "client", "detail": "pigeon"}}:
+    if bad_channel != {"err": {"code": "invalid_channel", "message": "'pigeon' is not a declared channel", "category": "client", "results": [], "detail": "pigeon"}}:
         bad.append(f"an undeclared channel is a full invalid_channel fault: {bad_channel}")
     bad_recipient = validate_channel_config(_valid_channel_config(recipient_spec={"type": "ghost"}))
     if bad_recipient.get("err", {}).get("code") != "invalid_actor_type":
@@ -421,16 +399,16 @@ def _law_validate_escalation_rule():
     if validate_escalation_rule(with_channel) != {"ok": with_channel}:
         bad.append(f"a valid escalate_channel passes: {validate_escalation_rule(with_channel)}")
     no_ttl = validate_escalation_rule({"escalate_to": {"type": "role", "id": "admin"}})
-    if no_ttl != {"err": {"code": "incomplete_escalation", "message": "an escalation rule is missing required fields: ['ttl_seconds']", "category": "client", "detail": ["ttl_seconds"]}}:
+    if no_ttl != {"err": {"code": "incomplete_escalation", "message": "an escalation rule is missing required fields: ['ttl_seconds']", "category": "client", "results": [], "detail": ["ttl_seconds"]}}:
         bad.append(f"an escalation rule missing ttl_seconds is a full incomplete_escalation fault: {no_ttl}")
     no_target = validate_escalation_rule({"ttl_seconds": 10})
-    if no_target != {"err": {"code": "incomplete_escalation", "message": "an escalation rule is missing required fields: ['escalate_to']", "category": "client", "detail": ["escalate_to"]}}:
+    if no_target != {"err": {"code": "incomplete_escalation", "message": "an escalation rule is missing required fields: ['escalate_to']", "category": "client", "results": [], "detail": ["escalate_to"]}}:
         bad.append(f"an escalation rule missing escalate_to is a full incomplete_escalation fault: {no_target}")
     bad_target = validate_escalation_rule(_valid_escalation(escalate_to={"type": "ghost"}))
     if bad_target.get("err", {}).get("code") != "invalid_actor_type":
         bad.append(f"an invalid escalate_to propagates invalid_actor_type: {bad_target}")
     bad_channel = validate_escalation_rule(_valid_escalation(escalate_channel="pigeon"))
-    if bad_channel != {"err": {"code": "invalid_channel", "message": "'pigeon' is not a declared channel", "category": "client", "detail": "pigeon"}}:
+    if bad_channel != {"err": {"code": "invalid_channel", "message": "'pigeon' is not a declared channel", "category": "client", "results": [], "detail": "pigeon"}}:
         bad.append(f"an undeclared escalate_channel is a full invalid_channel fault: {bad_channel}")
     return bad
 
@@ -450,10 +428,10 @@ def _law_validate_alert_route():
     if validate_alert_route(rich) != {"ok": rich}:
         bad.append(f"a valid sender_type and escalation pass: {validate_alert_route(rich)}")
     miss = validate_alert_route({})
-    if miss != {"err": {"code": "incomplete_route", "message": "an alert route is missing required fields: ['route_id', 'message_type', 'channels', 'priority']", "category": "client", "detail": ["route_id", "message_type", "channels", "priority"]}}:
+    if miss != {"err": {"code": "incomplete_route", "message": "an alert route is missing required fields: ['route_id', 'message_type', 'channels', 'priority']", "category": "client", "results": [], "detail": ["route_id", "message_type", "channels", "priority"]}}:
         bad.append(f"a route missing required fields is a full incomplete_route fault: {miss}")
     bad_sender = validate_alert_route(_valid_route(sender_type="ghost"))
-    if bad_sender != {"err": {"code": "invalid_actor_type", "message": "'ghost' is not a declared actor type", "category": "client", "detail": "ghost"}}:
+    if bad_sender != {"err": {"code": "invalid_actor_type", "message": "'ghost' is not a declared actor type", "category": "client", "results": [], "detail": "ghost"}}:
         bad.append(f"an undeclared sender_type is a full invalid_actor_type fault: {bad_sender}")
     bad_channel = validate_alert_route(_valid_route(channels=[{"channel": "pigeon"}]))
     if bad_channel.get("err", {}).get("code") != "invalid_channel":
@@ -467,56 +445,87 @@ def _law_validate_alert_route():
 import asyncio
 
 
-class _Runtime:
-    """A stand-in supervisor runtime (sections 6.1-6.2): canned now and delivery outcome, a recorded
-    pending queue, and captured inserts, emits, and marks so the boundary laws can assert what the
-    supervisor did through it. Conformance code is not linted, so a class here is fine; the supervisor
-    source stays classless, and its I/O reaches the world only through this injected object."""
+def _stand_ins(now=1000, routes=None, pending=None, reply=None, deliver_ok=True, events=None, raw_config=None):
+    """Stand-in boundaries the orchestrators are handed: a canned clock, id and token, the recorded
+    routes, pending queue, events and reply, and recorders for the queue writes, the marks, and the
+    emitted events. Each is a plain function, not an object. emit_event records the shaped event's
+    (event_type, aggregate_id, payload) so a law reads it the way the old runtime recorded it."""
+    state = {"inserted": [], "emitted": [], "marked": [], "waited": None}
 
-    def __init__(self, now=1000, deliver_ok=True, pending=None, routes=None, reply=None):
-        self._now = now
-        self._deliver_ok = deliver_ok
-        self._pending = pending if pending is not None else []
-        self._routes = routes if routes is not None else []
-        self._reply = reply
-        self.inserted = []
-        self.emitted = []
-        self.marked = []
-        self.waited = None
+    def _now():
+        return now
 
-    def now(self):
-        return self._now
-
-    def message_id(self):
+    def _new_message_id():
         return "msg-1"
 
-    def resume_token(self):
+    def _new_resume_token():
         return "tok-1"
 
-    async def routes(self):
-        return self._routes
+    async def _read_routes(conn):
+        return list(routes or [])
 
-    async def wait_for_reply(self, message_id, timeout):
-        self.waited = (message_id, timeout)
-        return self._reply
+    async def _read_pending(conn):
+        return list(pending or [])
 
-    async def insert(self, delivery):
-        self.inserted.append(delivery)
+    async def _read_events(conn, actor_ref):
+        return list(events or [])
+
+    async def _await_reply(conn, message_id, timeout):
+        state["waited"] = (message_id, timeout)
+        return reply
+
+    def _read_raw_config():
+        return dict(raw_config or {})
+
+    async def _write_delivery(delivery, conn):
+        state["inserted"].append(delivery)
         return {"ok": delivery}
 
-    async def emit(self, event_type, aggregate_id, payload):
-        self.emitted.append((event_type, aggregate_id, payload))
+    async def _mark_delivery(delivery, status, conn):
+        state["marked"].append((delivery["message_id"], status))
+        return {"ok": None}
+
+    async def _emit_event(event, conn):
+        body = event["ok"]
+        state["emitted"].append((body["event_type"], body["aggregate_id"], body["payload"]))
         return {"ok": {"event_id": "e1"}}
 
-    async def pending(self):
-        return self._pending
+    async def _handler(delivery, conn, transport):
+        return {"ok": delivery} if deliver_ok else {"err": {"code": "channel_down"}}
 
-    async def deliver(self, delivery):
-        return {"ok": delivery} if self._deliver_ok else {"err": {"code": "channel_down"}}
+    deliver_by_channel = {channel: _handler for channel in ("dom", "email", "sms", "webhook", "slack", "teams")}
+    fns = {
+        "now": _now, "new_message_id": _new_message_id, "new_resume_token": _new_resume_token,
+        "read_routes": _read_routes, "read_pending": _read_pending, "read_events": _read_events,
+        "await_reply": _await_reply, "read_raw_config": _read_raw_config,
+        "write_delivery": _write_delivery, "mark_delivery": _mark_delivery, "emit_event": _emit_event,
+        "deliver_by_channel": deliver_by_channel,
+    }
+    return state, fns
 
-    async def mark(self, delivery, status):
-        self.marked.append((delivery["message_id"], status))
-        return {"ok": None}
+
+def _law_run_deliveries():
+    bad = []
+    d1 = {"message_id": "m1", "channel": "dom"}
+    d2 = {"message_id": "m2", "channel": "email"}
+    state, fns = _stand_ins(pending=[d1, d2])
+    result = asyncio.run(run_deliveries(None, None, fns["read_pending"], fns["deliver_by_channel"], fns["mark_delivery"], fns["emit_event"]))
+    if result != {"ok": {"executed": 2}}:
+        bad.append(f"run_deliveries reports how many pending records it processed: {result}")
+    if state["marked"] != [("m1", "delivered"), ("m2", "delivered")]:
+        bad.append(f"a successful delivery is marked delivered: {state['marked']}")
+    if state["emitted"] != [("alert.delivered", "m1", d1), ("alert.delivered", "m2", d2)]:
+        bad.append(f"a successful delivery emits alert.delivered: {state['emitted']}")
+    state2, fns2 = _stand_ins(pending=[d1], deliver_ok=False)
+    asyncio.run(run_deliveries(None, None, fns2["read_pending"], fns2["deliver_by_channel"], fns2["mark_delivery"], fns2["emit_event"]))
+    if state2["marked"] != [("m1", "failed")]:
+        bad.append(f"a failed delivery is marked failed: {state2['marked']}")
+    if state2["emitted"] != [("alert.delivery_failed", "m1", d1)]:
+        bad.append(f"a failed delivery emits alert.delivery_failed: {state2['emitted']}")
+    state3, fns3 = _stand_ins(pending=[])
+    if asyncio.run(run_deliveries(None, None, fns3["read_pending"], fns3["deliver_by_channel"], fns3["mark_delivery"], fns3["emit_event"])) != {"ok": {"executed": 0}}:
+        bad.append("run_deliveries with nothing pending processes nothing")
+    return bad
 
 
 def _law_message_type_matches():
@@ -560,8 +569,8 @@ def _law_delivery_plan():
     ]
     plan = delivery_plan(message, routes, 1000)
     if plan != [
-        {"message_id": "m1", "route_id": "r1", "channel": "dom", "recipient": {"type": "user", "id": "u1"}, "deliver_at": 1000, "status": "pending"},
-        {"message_id": "m1", "route_id": "r1", "channel": "email", "recipient": {"type": "role", "id": "admin"}, "deliver_at": 1300, "status": "pending"},
+        {"message_id": "m1", "route_id": "r1", "channel": "dom", "recipient": {"type": "user", "id": "u1"}, "endpoint": "", "deliver_at": 1000, "status": "pending"},
+        {"message_id": "m1", "route_id": "r1", "channel": "email", "recipient": {"type": "role", "id": "admin"}, "endpoint": "", "deliver_at": 1300, "status": "pending"},
     ]:
         bad.append(f"delivery_plan builds one pending record per channel, resolving recipient and deliver_at (now + delay): {plan}")
     return bad
@@ -754,60 +763,67 @@ def _law_build_message():
     return bad
 
 
-def _law_send_message():
+def _law_run_send():
     bad = []
     route = {"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1}
-    rt = _Runtime(routes=[route])
-    result = asyncio.run(send_message(_valid_message(), rt))
-    if result != {"ok": {"message_id": "m1", "delivered": 1}}:
-        bad.append(f"send_message validates, supervises, and reports the message id and delivery count: {result}")
-    if [e[0] for e in rt.emitted] != ["alert.sent"]:
-        bad.append(f"send_message routes a valid message (alert.sent emitted): {rt.emitted}")
-    rt2 = _Runtime(routes=[route])
-    err_result = asyncio.run(send_message(_valid_message(ack_scope="everywhere"), rt2))
-    if err_result.get("err", {}).get("code") != "invalid_ack_scope":
-        bad.append(f"send_message returns the validation fault for an invalid message: {err_result}")
-    if rt2.emitted != []:
-        bad.append(f"an invalid message is not dispatched: {rt2.emitted}")
-    return bad
-
-
-def _law_send():
-    bad = []
-    route = {"route_id": "r1", "message_type": "order.placed", "channels": [{"channel": "dom"}], "priority": 1}
-    rt = _Runtime(routes=[route])
     opts = {"termination": {"condition": "ttl", "ttl_seconds": 10}, "ack_scope": "session"}
-    result = asyncio.run(send("order.placed", {"type": "user", "id": "u1"}, {"total": 5}, opts, {}, rt))
+    state, fns = _stand_ins(routes=[route])
+    result = asyncio.run(run_send("order.placed", {"type": "user", "id": "u1"}, {"total": 5}, opts, {}, None, fns["new_message_id"], fns["now"], fns["read_routes"], fns["write_delivery"], fns["emit_event"]))
     if result != {"ok": {"message_id": "msg-1", "delivered": 1}}:
-        bad.append(f"send builds a message with the runtime's id and time, then dispatches it: {result}")
-    if [e[0] for e in rt.emitted] != ["alert.sent"]:
-        bad.append(f"send emits alert.sent for a routed message: {rt.emitted}")
+        bad.append(f"run_send builds, routes, queues, and reports the id and count: {result}")
+    if [e[0] for e in state["emitted"]] != ["alert.sent"]:
+        bad.append(f"run_send emits alert.sent for a routed message: {state['emitted']}")
+    if [d["channel"] for d in state["inserted"]] != ["dom"]:
+        bad.append(f"run_send writes one pending delivery per channel: {state['inserted']}")
+    state2, fns2 = _stand_ins(routes=[])
+    nr = asyncio.run(run_send("order.placed", {"type": "user", "id": "u1"}, {}, opts, {}, None, fns2["new_message_id"], fns2["now"], fns2["read_routes"], fns2["write_delivery"], fns2["emit_event"]))
+    if nr != {"ok": {"message_id": "msg-1", "delivered": 0}}:
+        bad.append(f"run_send with no route delivers nothing: {nr}")
+    if state2["emitted"] != [("alert.no_route", "msg-1", {"message_type": "order.placed"})]:
+        bad.append(f"run_send with no route emits an alert.no_route warning: {state2['emitted']}")
+    if state2["inserted"] != []:
+        bad.append(f"run_send with no route queues nothing: {state2['inserted']}")
+    state3, fns3 = _stand_ins(routes=[route])
+    err_result = asyncio.run(run_send("order.placed", {"type": "user", "id": "u1"}, {}, {"termination": {"condition": "ttl", "ttl_seconds": 10}, "ack_scope": "everywhere"}, {}, None, fns3["new_message_id"], fns3["now"], fns3["read_routes"], fns3["write_delivery"], fns3["emit_event"]))
+    if err_result.get("err", {}).get("code") != "invalid_ack_scope":
+        bad.append(f"run_send returns the validation fault for an invalid message: {err_result}")
+    if state3["emitted"] != []:
+        bad.append(f"an invalid message is not dispatched: {state3['emitted']}")
+    _state4, fns4 = _stand_ins(routes=[{"route_id": "bad"}])
+    bad_route = asyncio.run(run_send("order.placed", {"type": "user", "id": "u1"}, {}, opts, {}, None, fns4["new_message_id"], fns4["now"], fns4["read_routes"], fns4["write_delivery"], fns4["emit_event"]))
+    if bad_route.get("err", {}).get("code") != "incomplete_route":
+        bad.append(f"run_send returns the fault for a malformed route: {bad_route}")
     return bad
 
 
-def _law_send_and_wait():
+def _law_run_send_and_wait():
     bad = []
     route = {"route_id": "r1", "message_type": "approval.requested", "channels": [{"channel": "dom"}], "priority": 1}
     opts = {"termination": {"condition": "ttl", "ttl_seconds": 86400}, "ack_scope": "actor", "reply_options": [{"option_id": "approve", "label_id": "l"}]}
     reply = {"option_id": "approve", "actor_id": "u2", "reply_payload": {"note": "ok"}}
-    rt = _Runtime(routes=[route], reply=reply)
-    result = asyncio.run(send_and_wait("approval.requested", {"type": "role", "id": "manager"}, {"request": 1}, opts, {}, rt))
+    state, fns = _stand_ins(routes=[route], reply=reply)
+    args = ("approval.requested", {"type": "role", "id": "manager"}, {"request": 1}, opts, {}, None)
+    result = asyncio.run(run_send_and_wait(*args, fns["new_message_id"], fns["new_resume_token"], fns["now"], fns["read_routes"], fns["write_delivery"], fns["emit_event"], fns["await_reply"]))
     if result != {"ok": {"status": "replied", "option_id": "approve", "actor_id": "u2", "payload": {"note": "ok"}}}:
-        bad.append(f"send_and_wait returns the reply when one arrives: {result}")
-    sent_payload = rt.emitted[0][2]
+        bad.append(f"run_send_and_wait returns the reply when one arrives: {result}")
+    sent_payload = state["emitted"][0][2]
     if sent_payload.get("reply_required") is not True or sent_payload.get("resume_token") != "tok-1":
-        bad.append(f"send_and_wait marks the message reply_required with the runtime's resume token: {sent_payload}")
-    if rt.waited != ("msg-1", 86400):
-        bad.append(f"send_and_wait waits on the message id with the termination's ttl_seconds as the timeout: {rt.waited}")
-    rt2 = _Runtime(routes=[route], reply=None)
-    timeout = asyncio.run(send_and_wait("approval.requested", {"type": "role", "id": "manager"}, {"request": 1}, opts, {}, rt2))
+        bad.append(f"run_send_and_wait marks the message reply_required with the resume token: {sent_payload}")
+    if state["waited"] != ("msg-1", 86400):
+        bad.append(f"run_send_and_wait waits on the message id with the ttl_seconds as the timeout: {state['waited']}")
+    state2, fns2 = _stand_ins(routes=[route], reply=None)
+    timeout = asyncio.run(run_send_and_wait(*args, fns2["new_message_id"], fns2["new_resume_token"], fns2["now"], fns2["read_routes"], fns2["write_delivery"], fns2["emit_event"], fns2["await_reply"]))
     if timeout != {"ok": {"status": "timeout"}}:
-        bad.append(f"send_and_wait returns timeout when no reply arrives: {timeout}")
-    rt3 = _Runtime(routes=[route], reply=reply)
-    bad_opts = {"termination": {"condition": "ttl", "ttl_seconds": 86400}, "ack_scope": "nope"}
-    err_result = asyncio.run(send_and_wait("approval.requested", {"type": "role", "id": "manager"}, {"r": 1}, bad_opts, {}, rt3))
+        bad.append(f"run_send_and_wait returns timeout when no reply arrives: {timeout}")
+    state3, fns3 = _stand_ins(routes=[route], reply=reply)
+    bad_args = ("approval.requested", {"type": "role", "id": "manager"}, {"r": 1}, {"termination": {"condition": "ttl", "ttl_seconds": 86400}, "ack_scope": "nope"}, {}, None)
+    err_result = asyncio.run(run_send_and_wait(*bad_args, fns3["new_message_id"], fns3["new_resume_token"], fns3["now"], fns3["read_routes"], fns3["write_delivery"], fns3["emit_event"], fns3["await_reply"]))
     if err_result.get("err", {}).get("code") != "invalid_ack_scope":
-        bad.append(f"send_and_wait returns the validation fault for an invalid message: {err_result}")
+        bad.append(f"run_send_and_wait returns the validation fault for an invalid message: {err_result}")
+    _state4, fns4 = _stand_ins(routes=[{"route_id": "bad"}], reply=reply)
+    bad_route = asyncio.run(run_send_and_wait(*args, fns4["new_message_id"], fns4["new_resume_token"], fns4["now"], fns4["read_routes"], fns4["write_delivery"], fns4["emit_event"], fns4["await_reply"]))
+    if bad_route.get("err", {}).get("code") != "incomplete_route":
+        bad.append(f"run_send_and_wait returns the fault for a malformed route: {bad_route}")
     return bad
 
 
@@ -856,17 +872,43 @@ def _law_render_surface():
     return bad
 
 
-def _law_handle_reply():
+def _law_record_reply():
     bad = []
-    rt = _Runtime()
-    result = asyncio.run(handle_reply("m1", "approve", {"note": "ok"}, "u2", rt))
+    state, fns = _stand_ins()
+    result = asyncio.run(record_reply("m1", "approve", {"note": "ok"}, "u2", None, fns["emit_event"]))
     if result != {"ok": {"fragment": ""}}:
-        bad.append(f"handle_reply returns an empty fragment to remove the surface: {result}")
-    if rt.emitted != [
+        bad.append(f"record_reply returns an empty fragment to remove the surface: {result}")
+    if state["emitted"] != [
         ("alert.replied", "m1", {"option_id": "approve", "actor_id": "u2", "reply_payload": {"note": "ok"}}),
         ("alert.acknowledged", "m1", {"message_id": "m1", "actor_id": "u2"}),
     ]:
-        bad.append(f"handle_reply emits alert.replied then alert.acknowledged: {rt.emitted}")
+        bad.append(f"record_reply emits alert.replied then alert.acknowledged: {state['emitted']}")
+    return bad
+
+
+def _law_render_mailbox():
+    bad = []
+    actor = {"type": "user", "id": "u1"}
+    msg = {"message_id": "m1", "recipient": {"type": "user", "id": "u1"}, "sent_at": 1000, "ack_scope": "actor", "termination": {"condition": "never"}, "dom_surface": "toast", "subject_label_id": "alerts.s"}
+    event = {"event_type": "alert.sent", "timestamp": 1000, "payload": msg}
+    _state, fns = _stand_ins(events=[event])
+    html = asyncio.run(render_mailbox(actor, 2000, None, fns["read_events"]))
+    if html != render_surface(msg):
+        bad.append(f"render_mailbox renders the actor's pending messages as surfaces: {html}")
+    empty = asyncio.run(render_mailbox({"type": "user", "id": "nobody"}, 2000, None, fns["read_events"]))
+    if empty != "":
+        bad.append(f"an actor with no pending messages renders an empty string: {empty}")
+    return bad
+
+
+def _law_load_config():
+    bad = []
+    _state, fns = _stand_ins(raw_config={"delivery": {"poll_interval_seconds": 9}})
+    resolved = load_config(fns["read_raw_config"])
+    if resolved["delivery"]["poll_interval_seconds"] != 9:
+        bad.append(f"load_config merges the read config over the defaults: {resolved['delivery']}")
+    if resolved["routing"] != {"table": "alert_routes", "db_id": "primary"}:
+        bad.append(f"load_config keeps the defaults for an omitted section: {resolved['routing']}")
     return bad
 
 
@@ -894,7 +936,7 @@ def _law_event_catalog():
     # every event the module's boundaries emit is cataloged
     emitted = {"alert.sent", "alert.no_route", "alert.delivered", "alert.delivery_failed", "alert.replied", "alert.acknowledged"}
     if not emitted <= set(ALERT_EVENTS):
-        bad.append(f"every event supervise, execute_deliveries, and handle_reply emit is cataloged: {emitted - set(ALERT_EVENTS)}")
+        bad.append(f"every event run_send, run_deliveries, and record_reply emit is cataloged: {emitted - set(ALERT_EVENTS)}")
     return bad
 
 
@@ -904,7 +946,7 @@ def _law_alert_event():
     if shaped != {"ok": {"event_type": "alert.sent", "aggregate_type": "alert", "aggregate_id": "m1", "payload": {"total": 5}}}:
         bad.append(f"alert_event shapes a cataloged event for observe with the alert aggregate: {shaped}")
     unknown = alert_event("alert.teleported", "m1", {})
-    if unknown != {"err": {"code": "unknown_alert_event", "message": "'alert.teleported' is not a declared alert event", "category": "server", "detail": "alert.teleported"}}:
+    if unknown != {"err": {"code": "unknown_alert_event", "message": "'alert.teleported' is not a declared alert event", "category": "server", "results": [], "detail": "alert.teleported"}}:
         bad.append(f"an uncataloged event type is a full unknown_alert_event fault: {unknown}")
     return bad
 
@@ -939,8 +981,111 @@ def _law_resolve_config():
     return bad
 
 
+class _StandInConn:
+    """A stand-in honest-persist connection for the boundary and door laws: execute returns canned
+    rows and begin/commit/rollback are no-ops, so the real boundaries run without a database. Fixture."""
+
+    def __init__(self, rows=None):
+        self._rows = rows or []
+
+    async def execute(self, sql, params=None):
+        return {"rows": list(self._rows), "rowcount": len(self._rows)}
+
+    async def begin(self):
+        return None
+
+    async def commit(self):
+        return None
+
+    async def rollback(self):
+        return None
+
+
+class _StandInTransport:
+    """A stand-in channel transport: post records the call and reports success. Fixture."""
+
+    def __init__(self):
+        self.posted = []
+
+    async def post(self, url, body):
+        self.posted.append((url, body))
+        return {"ok": {"status": 200}}
+
+
+def _law_boundaries():
+    bad = []
+    from honest_alerts import boundaries
+
+    conn = _StandInConn()
+    transport = _StandInTransport()
+    delivery = {"message_id": "m1", "route_id": "r1", "channel": "webhook", "endpoint": "https://x", "status": "pending"}
+    if "ok" not in asyncio.run(boundaries.write_delivery(delivery, conn)):
+        bad.append("write_delivery appends a delivery record and returns the persist result")
+    if "ok" not in asyncio.run(boundaries.mark_delivery(delivery, "delivered", conn)):
+        bad.append("mark_delivery updates a record's status and returns the persist result")
+    if "ok" not in asyncio.run(boundaries.emit_event(alert_event("alert.sent", "m1", {"x": 1}), conn)):
+        bad.append("emit_event appends an alert event through honest-observe")
+    if "ok" not in asyncio.run(boundaries.deliver_dom(delivery, conn, transport)):
+        bad.append("deliver_dom records a DOM impression through the event log")
+    asyncio.run(boundaries.deliver_posted(delivery, conn, transport))
+    if len(transport.posted) != 1:
+        bad.append(f"deliver_posted posts the delivery through the transport: {transport.posted}")
+    if asyncio.run(boundaries.read_pending(_StandInConn(rows=[delivery]))) != [delivery]:
+        bad.append("read_pending returns the pending delivery records")
+    if asyncio.run(boundaries.read_routes(_StandInConn(rows=[{"route_id": "r1"}]))) != [{"route_id": "r1"}]:
+        bad.append("read_routes returns the routing records")
+    if asyncio.run(boundaries.read_events(_StandInConn(rows=[{"x": 1}]), {"type": "user", "id": "u1"})) != [{"x": 1}]:
+        bad.append("read_events returns the actor's events")
+    reply_conn = _StandInConn(rows=[{"payload": {"option_id": "approve", "actor_id": "u2", "reply_payload": {"n": 1}}}])
+    if asyncio.run(boundaries.await_reply(reply_conn, "m1", 5)) != {"option_id": "approve", "actor_id": "u2", "reply_payload": {"n": 1}}:
+        bad.append("await_reply returns the reply when its event arrives")
+    if asyncio.run(boundaries.await_reply(_StandInConn(), "m1", 0)) is not None:
+        bad.append("await_reply returns None when the wait times out")
+    if not isinstance(boundaries.now(), int):
+        bad.append("now returns the time in epoch seconds")
+    if not isinstance(boundaries.new_message_id(), str) or not isinstance(boundaries.new_resume_token(), str):
+        bad.append("the id and token readers return fresh strings")
+    return bad
+
+
+def _law_doors():
+    bad = []
+    import pathlib
+
+    from honest_alerts import handle_reply, send, send_and_wait, serve_mailbox, start, tick
+
+    conn = _StandInConn()
+    transport = _StandInTransport()
+    opts = {"termination": {"condition": "never"}, "ack_scope": "actor"}
+    actor = {"type": "user", "id": "u1"}
+    if "ok" not in asyncio.run(send("order.placed", actor, {}, opts, {}, conn)):
+        bad.append("send runs end to end through the module's own boundaries")
+    if "ok" not in asyncio.run(send_and_wait("order.placed", actor, {}, opts, {}, conn)):
+        bad.append("send_and_wait runs end to end through the module's own boundaries")
+    if asyncio.run(tick(conn, transport)) != {"ok": {"executed": 0}}:
+        bad.append("tick runs a delivery pass with nothing pending")
+    if asyncio.run(serve_mailbox(actor, 2000, conn)) != "":
+        bad.append("serve_mailbox renders an empty mailbox when nothing is pending")
+    if asyncio.run(handle_reply("m1", "approve", {}, "u2", conn)) != {"ok": {"fragment": ""}}:
+        bad.append("handle_reply records a reply and returns the empty fragment")
+    cfg = pathlib.Path("honest-alerts.toml")
+    created = not cfg.exists()
+    if created:
+        cfg.write_text("[delivery]\npoll_interval_seconds = 7\n")
+    try:
+        resolved = start()
+    finally:
+        if created:
+            cfg.unlink()
+    if resolved["delivery"]["poll_interval_seconds"] != 7:
+        bad.append(f"start reads and resolves the configuration file: {resolved}")
+    return bad
+
+
 _LAWS = {
     "exports": _law_exports,
+    "boundaries": _law_boundaries,
+    "doors": _law_doors,
     "vocabularies": _law_vocabularies,
     "config_defaults": _law_config_defaults,
     "resolve_config": _law_resolve_config,
@@ -965,15 +1110,15 @@ _LAWS = {
     "message_type_matches": _law_message_type_matches,
     "matching_routes": _law_matching_routes,
     "delivery_plan": _law_delivery_plan,
-    "supervise": _law_supervise,
-    "execute_deliveries": _law_execute_deliveries,
+    "run_deliveries": _law_run_deliveries,
     "build_message": _law_build_message,
-    "send_message": _law_send_message,
-    "send": _law_send,
-    "send_and_wait": _law_send_and_wait,
+    "run_send": _law_run_send,
+    "run_send_and_wait": _law_run_send_and_wait,
     "surface_defaults": _law_surface_defaults,
     "render_surface": _law_render_surface,
-    "handle_reply": _law_handle_reply,
+    "record_reply": _law_record_reply,
+    "render_mailbox": _law_render_mailbox,
+    "load_config": _law_load_config,
 }
 
 
