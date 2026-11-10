@@ -5,7 +5,7 @@ from honest_parse import language_of, line_col
 from honest_check.watchlists import IO_WATCH_LIST, NONDETERMINISTIC_WATCH_LIST
 from honest_check.constants import _APPROVED_BASES, _CACHE_DECORATORS, _HTTP_RESPONSE_MARKERS, _IO_CALLS, _IO_MODULE_PREFIXES, _LIFECYCLE_HOOKS, _TYPE_CHECK_CALLS
 from honest_check.nodes import base_types_of, call_arguments, called_name, canonical_name, decorator_expression, decorator_target, decorators_of, diagnostic, enclosing_function, in_non_boundary_function, is_boundary_decorator, literal_string, module_mutable_globals, nonlocal_names, own_body, param_names, underscore_self_name
-from honest_check.analysis import construction_maps, dispatch_variable, dotted_target, feature_state_flag, features_vocabulary, is_empty_default, is_link_decorated, is_orchestrator, link_declares_emits, link_is_impure, local_function_links, longest_shared_run, module_dict_literals, mutated_names, persist_write_targets, within_class_init
+from honest_check.analysis import body_has_call, canonical_body, construction_maps, dispatch_variable, dotted_target, feature_state_flag, features_vocabulary, is_empty_default, is_link_decorated, is_orchestrator, link_declares_emits, link_is_impure, local_function_links, longest_shared_run, module_dict_literals, mutated_names, persist_write_targets, within_class_init
 from honest_check.bindings import binding_keys, vocabulary_binding_pairs, vocabulary_types
 
 
@@ -1078,6 +1078,44 @@ def check_per_file(ctx):
                     )
         return findings
 
+    def check_p014():
+        """HC-P014: two or more top-level functions in this file whose bodies are structurally
+        identical once every literal value is blanked — one function written several times over
+        different constants, a failure to polymorphize (§HC-P014). canonical_body keeps names,
+        calls, operators and structure and blanks only literals, so two bodies match when they
+        differ only in the constants they name; body_has_call skips a body with no call, which
+        carries no shared behaviour. Each group of two or more matching functions fires once, at
+        the first member's def line, naming the whole group. A nested def is the inner scope's
+        own and is not compared; cross-file duplication is out of this per-file rule's reach."""
+        groups = {}
+        order = {}
+        for child in ctx["root"].named_children:
+            fdef = child.child_by_field_name("definition") if child.type == "decorated_definition" else child
+            if fdef is None or fdef.type != "function_definition":
+                continue
+            if not body_has_call(fdef):
+                continue
+            key = canonical_body(fdef)
+            groups.setdefault(key, []).append(fdef)
+            order.setdefault(key, len(order))
+        findings = []
+        for key in sorted(order, key=order.get):
+            members = groups[key]
+            if len(members) < 2:
+                continue
+            names = [m.child_by_field_name("name").text.decode("utf-8") for m in members]
+            findings.append(
+                diagnostic(ctx,
+                    "HC-P014",
+                    "error",
+                    f"Functions {', '.join(repr(n) for n in names)} have the same body. "
+                    "Collapse them into one function; pass any value they differ on as a "
+                    "parameter, dispatched through a lookup table.",
+                    members[0],
+                )
+            )
+        return findings
+
     per_file_rules = (
         check_classes,
         check_p001,
@@ -1092,6 +1130,7 @@ def check_per_file(ctx):
         check_p015,
         check_p010,
         check_p013,
+        check_p014,
         check_p018,
         check_p019,
         check_p020,

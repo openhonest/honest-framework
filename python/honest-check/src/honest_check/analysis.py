@@ -95,6 +95,30 @@ def dotted_target(ctx, call_node):
     return name_of(call_node.child_by_field_name("function"))
 
 
+def canonical_body(fdef):
+    """A function body's structural signature with every literal value blanked (§HC-P014).
+
+    Each body node becomes its grammar type, except an identifier, which keeps its name. So the
+    signature preserves structure, calls, operators and names, and blanks only the constants a
+    body tests against: two functions whose bodies differ only in the literals they name share a
+    signature, and two that call different helpers or read differently named parameters do not.
+    own_body does not descend into a nested def or lambda, so a body's shape is its own."""
+    tokens = []
+    for node in own_body(fdef):
+        if node.type == "identifier":
+            tokens.append("id:" + node.text.decode("utf-8"))
+        else:
+            tokens.append(node.type)
+    return tuple(tokens)
+
+
+def body_has_call(fdef):
+    """True when a function's own body contains a call — the mark of behaviour worth sharing
+    (§HC-P014). A body with no call (a bare return, a plain attribute read) carries no logic two
+    functions could collapse into one, so HC-P014 skips it."""
+    return any(node.type == "call" for node in own_body(fdef))
+
+
 def persist_write_targets(ctx):
     """The dotted call targets, as dotted_target would spell them, that resolve to a
     honest-persist database writer through this file's own imports (§3.1, HC-ST001).

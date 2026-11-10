@@ -555,6 +555,60 @@
       }
     },
     {
+      "id": "HC-P014-001",
+      "description": "Two top-level functions with one body over different constants are one function written twice.",
+      "category": "HC-P014",
+      "input": {
+        "language": "python",
+        "source": "def send_email(msg):\n    return deliver(msg, \"email\")\ndef send_sms(msg):\n    return deliver(msg, \"sms\")\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P014",
+            "severity": "error",
+            "line": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P014-clean-distinct",
+      "description": "Two functions that call different helpers have different bodies and do not fire.",
+      "category": "HC-P014",
+      "input": {
+        "language": "python",
+        "source": "def a(x):\n    return parse(x)\ndef b(x):\n    return tokenize(x)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P014-clean-trivial",
+      "description": "Two functions whose bodies hold no call carry no shared behaviour and do not fire.",
+      "category": "HC-P014",
+      "input": {
+        "language": "python",
+        "source": "def a(x):\n    return x\ndef b(y):\n    return y\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P014-clean-single",
+      "description": "A single function matches no other, so nothing fires.",
+      "category": "HC-P014",
+      "input": {
+        "language": "python",
+        "source": "def only(x):\n    return deliver(x, \"email\")\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
       "id": "HC-P005-001",
       "description": "A runtime type check in business logic should be a vocabulary declaration.",
       "category": "HC-P005",

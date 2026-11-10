@@ -1137,35 +1137,31 @@ FUNCTION check_HC_P013(vocabulary, binding):
 
 **Why this matters.** A connection pool routes on whatever the manifest carries. If the routing key is validated by a predicate (any string the predicate accepts), a caller can name a database the application never declared, and the pool will try to reach it. A bounded Set makes the set of reachable databases a closed, declared list — the type system becomes the access-control list. A ref recognizer is not flagged at the binding site: it names a recognizer defined elsewhere, and resolving it is out of scope for this structural check.
 
-#### HC-P014 — Recognizer reused across slots
+#### HC-P014 — Duplicated functions that should be one polymorphic function
 
-A single recognizer bound to two or more slot names in the same binding is a field-swap vulnerability. Auto-generation can enumerate valid values against the recognizer, but cannot detect that the wrong value has been placed in the wrong slot — the chain-contract check sees a type-valid manifest.
+A module that declares two or more functions whose bodies do the same thing over different values has failed to polymorphize. One function that takes the differing value, dispatched through a lookup table, handles every case; the copies are a hazard, because a fix applied to one copy is a fix the others silently miss. This is the across-function form of HC-P001, which catches the same failure inside one function as an if/elif chain that should be a dict dispatch.
+
+Sameness is behavioural, read from the source, never from the values. Two functions are the same behaviour when their bodies are structurally identical once every literal value is blanked: the same calls, the same operators, the same control flow, the same names, differing only in the constants they name. Four `line.strip().startswith(<prefix>)` predicates are one predicate written four times; `deliver_email` and `deliver_sms` that differ only in a channel string are one function written twice. Distinct value domains are the point, not an exemption — the rule exists to collapse same-logic-different-domain copies into one parameterized function. Value-set overlap is never the test: two functions with disjoint value sets still fire when their logic matches, and two functions with overlapping value sets but genuinely different logic do not.
 
 ```
-FUNCTION check_HC_P014(bindings):
-    FOR EACH binding IN bindings:
-        recognizer_to_slots ← {}
+FUNCTION check_HC_P014(module):
+    groups ← {}
+    FOR EACH function IN module.top_level_functions:
+        IF body_is_trivial(function): CONTINUE          // a bare return or pass carries no logic to share
+        key ← canonical_body(function)                  // literals blanked; names, calls, operators, structure kept
+        APPEND function TO groups[key]
 
-        FOR EACH (recognizer_name, slot_name) IN binding.entries:
-            APPEND slot_name TO recognizer_to_slots[recognizer_name]
-
-        FOR EACH (recognizer_name, slot_list) IN recognizer_to_slots:
-            IF len(slot_list) > 1:
-                EMIT error(HC-P014,
-                    f"Recognizer '{recognizer_name}' is bound to multiple slots: "
-                    f"{slot_list}. Each slot must have a semantically distinct "
-                    f"recognizer (e.g., sender_id / receiver_id rather than two "
-                    f"bindings of user_id). Without semantic separation, the chain "
-                    f"contract cannot catch a swap between these slots.")
+    FOR EACH (key, members) IN groups:
+        IF len(members) > 1:
+            EMIT error(HC-P014, members[0].location,
+                f"Functions {member_names} share one body over different values. "
+                f"Replace them with one function that takes the differing value, "
+                f"dispatched through a lookup table (HC-P001).")
 ```
 
-**Why this matters.** Swapping two arguments of the same kind (e.g. `transfer(from_id, to_id)` → `transfer(to_id, from_id)`) produces a manifest that passes every recognizer check, passes chain contracts, and passes purity — but behaves wrong. An end-to-end test catches the swap by checking observable behaviour; the generated suite cannot, because the type system has folded both slots into one kind. HC-P014 forces the developer either to use a distinct recognizer per slot or to accept that test generation must be backed up by a BDD scenario at the requirement level. When HC-P014 fires, test generation fails and the code is turned away as dishonest.
+**Scope.** Top-level functions in one file. A nested helper is the inner scope's own and is not compared, and cross-file duplication is out of this per-file rule's reach. `canonical_body` keeps identifier names, so two functions that call different helpers, or read differently named parameters, do not match; it blanks only literal values, so two functions that differ only in the constants they name do match. `body_is_trivial` excludes a function whose body is a single bare return or `pass`, which carries no logic worth sharing.
 
-**Resolution patterns:**
-
-1. **Distinct recognizers per semantic role.** `sender_id`, `receiver_id`, `assignee_id` — each with its own value space (e.g., prefixed IDs: `snd_<uuid>`, `rcv_<uuid>`).
-2. **Composed / sum types.** Declare a `transfer` composed type that captures `{from: user_id, to: user_id}` as a single slot. The composed type preserves both values but binds as a single slot.
-3. **Explicit acknowledgement.** A `# honest: allow-recognizer-reuse <reason>` comment suppresses HC-P014 at the binding site, but requires a BDD feature file named `{chain_name}_swap.feature` to be present and cover each slot's semantic role. honest-test verifies the feature presence.
+**Why this matters.** The same logic written several times drifts: the day a bug is found in one copy, the fix lands there and the other copies keep the bug, because nothing ties them together. A single function behind a dispatch table has one place to fix and one place to test. The resolution is one of two shapes — a parameter that carries the differing value, or a dispatch table (HC-P001) keyed on it — never a second copy.
 
 #### HC-P015 — Parameter default that bakes in a real value
 

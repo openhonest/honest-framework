@@ -416,6 +416,13 @@ _MSG_CASES = [
         "expected": [{'rule_id': 'HC-ST001', 'severity': 'error', 'message': "Persisted-state write 'transaction' in a non-boundary function writes the database off the boundary. Do the write at a boundary (@boundary / route handler), not in the pure interior.", 'source_location': 'case_HC-ST001.py:3:12', 'context': 'transaction(rows, conn)', 'fixable': False}],
     },
     {
+        "id": 'HC-P014',
+        "source": 'def send_email(msg):\n    return deliver(msg, "email")\ndef send_sms(msg):\n    return deliver(msg, "sms")\n',
+        "rule_config": {},
+        "hd": None,
+        "expected": [{'rule_id': 'HC-P014', 'severity': 'error', 'message': "Functions 'send_email', 'send_sms' have the same body. Collapse them into one function; pass any value they differ on as a parameter, dispatched through a lookup table.", 'source_location': 'case_HC-P014.py:1:1', 'context': 'def send_email(msg):', 'fixable': False}],
+    },
+    {
         "id": 'HC-P005',
         "source": 'def f(x):\n    return isinstance(x, int)\n',
         "rule_config": {},
@@ -469,7 +476,7 @@ _MSG_CASES = [
         "source": '@orchestrator\ndef flow_a(x):\n    a = step_one(x)\n    b = step_two(a)\n    c = step_three(b)\n    return c\n@orchestrator\ndef flow_b(x):\n    a = step_one(x)\n    b = step_two(a)\n    c = step_three(b)\n    return c\n',
         "rule_config": {'HC-OR003': {'min_run': 3}},
         "hd": None,
-        "expected": [{'rule_id': 'HC-OR003', 'severity': 'warning', 'message': "Orchestrators 'flow_a' and 'flow_b' share 3 consecutive operations. Consider extracting the shared sequence as a pure helper (if side-effect-free) or as a chain (if I/O is involved). Orchestrators are not composable (HC-OR001); reusable orchestration logic belongs in helpers or chains.", 'source_location': 'case_HC-OR003-identical.py:8:1', 'context': 'def flow_b(x):', 'fixable': False}],
+        "expected": [{'rule_id': 'HC-OR003', 'severity': 'warning', 'message': "Orchestrators 'flow_a' and 'flow_b' share 3 consecutive operations. Consider extracting the shared sequence as a pure helper (if side-effect-free) or as a chain (if I/O is involved). Orchestrators are not composable (HC-OR001); reusable orchestration logic belongs in helpers or chains.", 'source_location': 'case_HC-OR003-identical.py:8:1', 'context': 'def flow_b(x):', 'fixable': False}, {'rule_id': 'HC-P014', 'severity': 'error', 'message': "Functions 'flow_a', 'flow_b' have the same body. Collapse them into one function; pass any value they differ on as a parameter, dispatched through a lookup table.", 'source_location': 'case_HC-OR003-identical.py:2:1', 'context': 'def flow_a(x):', 'fixable': False}],
     },
     {
         "id": 'HC-OR003-disjoint',

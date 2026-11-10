@@ -234,11 +234,11 @@
       "firing_time": "Static",
       "startup": false,
       "lsp": true,
-      "description": "Recognizer reused across slots",
-      "prevents": "Cannot distinguish slots \u2014 recognizer reuse collapses semantic roles",
+      "description": "Duplicated functions that should be one polymorphic function",
+      "prevents": "Cannot fix all copies at once \u2014 one body written several times over different values drifts when one copy is fixed and the rest keep the bug",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": false
+      "emitted_by_honest_check": true
     },
     {
       "id": "HC-P015",
