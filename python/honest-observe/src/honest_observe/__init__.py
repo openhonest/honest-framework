@@ -8,11 +8,9 @@ stored by persist without importing it. The log storage itself is the runtime's 
 
 from honest_observe.browser import browser_classify, browser_request, browser_response, build_browser_event, dom_changed
 from honest_observe.config import (
-    auto_tail,
     development_mode,
+    development_subtoggle,
     framework_event_enabled,
-    include_manifests,
-    include_tracebacks,
     load_config,
     read_config,
 )
@@ -25,7 +23,7 @@ from honest_observe.devtools import (
     since_cutoff,
     tail_matches,
 )
-from honest_observe.emit import emit
+from honest_observe.emit import emit, run_emit
 from honest_observe.event_log import event_log_manifest, event_log_schema
 from honest_observe.hlc import hlc_compare, hlc_receive, hlc_send
 from honest_observe.ingest import (
@@ -61,10 +59,8 @@ __all__ = [
     "load_config",
     "read_config",
     "development_mode",
+    "development_subtoggle",
     "framework_event_enabled",
-    "include_manifests",
-    "include_tracebacks",
-    "auto_tail",
     "Event",
     "build_event",
     "extract_auth",

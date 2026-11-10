@@ -8,7 +8,7 @@ runtime. Each probe returns a list of failures; run() aggregates.
 
 import asyncio
 
-from honest_observe import apply_projection, build_event, emit, extract_auth, extract_meta, matches
+from honest_observe import apply_projection, build_event, extract_auth, extract_meta, matches, run_emit
 
 # A complete, valid set of envelope arguments — probes vary one thing at a time off this base.
 _BASE = {
@@ -51,7 +51,7 @@ def _probe_build_event():
 
     # empty required field (event_type) -> invalid_event naming it; the full fault is pinned.
     result = build_event(**{**_BASE, "event_type": ""})
-    if result != {"err": {"code": "invalid_event", "message": "Event is missing required field(s): ['event_type']", "category": "server", "detail": {"missing": ["event_type"]}}}:
+    if result != {"err": {"code": "invalid_event", "message": "Event is missing required field(s): ['event_type']", "category": "server", "results": [], "detail": {"missing": ["event_type"]}}}:
         bad.append(f"an empty required field should fault invalid_event in full: {result}")
 
     # an empty aggregate_id is also caught (a different required field).
@@ -130,78 +130,73 @@ def _probe_projection():
     return bad
 
 
-class _Runtime:
-    """A stand-in emit runtime (§3): canned id/timestamp/sequence/version, configured auth/meta
-    field names, an append that succeeds or fails, recording what it was handed."""
+def _stand_ins(append_ok=True):
+    """Stand-in boundaries for run_emit (§3): canned id, timestamp and sequence, and an append that
+    succeeds or fails, recording what it was handed. Each is a plain function a test hands in, not
+    an object."""
+    appended = []
 
-    def __init__(self, append_ok=True, auth_fields=(), meta_fields=()):
-        self._append_ok = append_ok
-        self.auth_fields = list(auth_fields)
-        self.meta_fields = list(meta_fields)
-        self.appended = []
-
-    def event_id(self):
+    def _id():
         return "019x2k"
 
-    def timestamp(self):
+    def _ts():
         return "2026-03-15T14:23:07.441832Z"
 
-    def sequence(self, aggregate_id):
+    async def _seq(aggregate_id, conn):
         return 7
 
-    def version(self, event_type):
-        return "1.0"
-
-    async def append(self, event):
-        self.appended.append(event)
-        if self._append_ok:
+    async def _append(event, conn):
+        appended.append(event)
+        if append_ok:
             return {"ok": {}}
-        return {"err": {"code": "log_write_failed", "message": "boom", "category": "server", "detail": None}}
+        return {"err": {"code": "log_write_failed", "message": "boom", "category": "server", "results": [], "detail": None}}
+
+    return appended, _id, _ts, _seq, _append
 
 
 def _probe_emit():
-    """The emit boundary (§3): assemble through the runtime and append. Success returns the
-    event_id and appends a complete envelope (id/version/sequence from the runtime, auth/meta from
-    context); a malformed envelope returns its validation fault and writes nothing; an append
-    failure becomes emit_failed."""
+    """The emit orchestration (§3): run_emit assembles the envelope with the handed-in boundaries
+    and appends it. Success returns the event_id and appends a complete envelope (id, version and
+    sequence from the boundaries, auth and meta from context); a malformed envelope returns its
+    validation fault and writes nothing; an append failure becomes emit_failed."""
 
     async def _run():
         bad = []
         context = {"caller_id": "u1", "release": "r1", "other": "x"}
 
-        # Success: ok(event_id); the appended envelope carries the runtime's values and the
+        # Success: ok(event_id); the appended envelope carries the boundaries' values and the
         # auth/meta pulled from context by the configured field names.
-        rt = _Runtime(auth_fields=["caller_id"], meta_fields=["release"])
-        result = await emit("hf.chain.completed", "chain", "c1", {"result": "ok"}, context, rt)
+        appended, _id, _ts, _seq, _append = _stand_ins()
+        result = await run_emit("hf.chain.completed", "chain", "c1", {"result": "ok"}, context, "1.0", None, _id, _ts, _seq, _append, ["caller_id"], ["release"])
         if result != {"ok": {"event_id": "019x2k"}}:
             bad.append(f"successful emit should return the event_id: {result}")
-        elif len(rt.appended) != 1:
+        elif len(appended) != 1:
             bad.append("a successful emit should append exactly one event")
         else:
-            event = rt.appended[0]
+            event = appended[0]
             if event["event_version"] != "1.0" or event["sequence"] != 7 or event["event_type"] != "hf.chain.completed":
                 bad.append(f"appended envelope wrong: {event}")
             if event.get("auth") != {"caller_id": "u1"} or event.get("meta") != {"release": "r1"}:
                 bad.append(f"emit should attach auth/meta from context: {event.get('auth')} {event.get('meta')}")
 
         # No configured auth/meta fields -> those keys are absent on the appended event.
-        rt2 = _Runtime()
-        await emit("hf.chain.completed", "chain", "c1", {}, context, rt2)
-        if "auth" in rt2.appended[0] or "meta" in rt2.appended[0]:
+        appended2, _id, _ts, _seq, _append = _stand_ins()
+        await run_emit("hf.chain.completed", "chain", "c1", {}, context, "1.0", None, _id, _ts, _seq, _append, [], [])
+        if "auth" in appended2[0] or "meta" in appended2[0]:
             bad.append("with no configured fields, auth/meta must be absent")
 
         # Malformed envelope (empty aggregate_id) -> validation fault, nothing appended.
-        rt3 = _Runtime()
-        bad_result = await emit("hf.chain.completed", "chain", "", {}, context, rt3)
+        appended3, _id, _ts, _seq, _append = _stand_ins()
+        bad_result = await run_emit("hf.chain.completed", "chain", "", {}, context, "1.0", None, _id, _ts, _seq, _append, [], [])
         if bad_result.get("err", {}).get("code") != "invalid_event":
             bad.append(f"an empty required field should return invalid_event: {bad_result}")
-        if rt3.appended:
+        if appended3:
             bad.append("a malformed envelope must not be appended")
 
         # Append failure -> emit_failed wrapping the cause.
-        rt4 = _Runtime(append_ok=False)
-        failed = await emit("hf.chain.completed", "chain", "c1", {}, context, rt4)
-        if failed != {"err": {"code": "emit_failed", "message": "Failed to append event to the log", "category": "server", "detail": {"cause": {"code": "log_write_failed", "message": "boom", "category": "server", "detail": None}}}}:
+        appended4, _id, _ts, _seq, _append = _stand_ins(append_ok=False)
+        failed = await run_emit("hf.chain.completed", "chain", "c1", {}, context, "1.0", None, _id, _ts, _seq, _append, [], [])
+        if failed != {"err": {"code": "emit_failed", "message": "Failed to append event to the log", "category": "server", "results": [], "detail": {"cause": {"code": "log_write_failed", "message": "boom", "category": "server", "results": [], "detail": None}}}}:
             bad.append(f"an append failure should become emit_failed wrapping the cause in full: {failed}")
         return bad
 
@@ -480,7 +475,7 @@ def _probe_browser():
     if "request_id" in no_req["ok"]:
         bad.append("request_id must be absent when not supplied")
     bad_event = build_browser_event("hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "", {}, "uuid-v4-3")
-    if bad_event != {"err": {"code": "invalid_event", "message": "Browser event is missing required field(s): ['session_id']", "category": "client", "detail": {"missing": ["session_id"]}}}:
+    if bad_event != {"err": {"code": "invalid_event", "message": "Browser event is missing required field(s): ['session_id']", "category": "client", "results": [], "detail": {"missing": ["session_id"]}}}:
         bad.append(f"an empty required field (session_id) should fault invalid_event in full: {bad_event}")
 
     # §8.4 the four automatic browser events.
@@ -661,7 +656,7 @@ def _probe_query():
 
     # An unknown name is a full fault as data — code, message, category, and detail all pinned.
     missing = run_named_projection(registry, "nope", events)
-    if missing != {"err": {"code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "detail": {"name": "nope"}}}:
+    if missing != {"err": {"code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "results": [], "detail": {"name": "nope"}}}:
         bad.append(f"an unknown projection name should be a complete fault as data: {missing}")
     return bad
 
@@ -789,7 +784,7 @@ def _probe_cli():
     from honest_observe import run_bucketed_projection
 
     unknown = run_bucketed_projection({}, "nope", span, 60)
-    if unknown != {"err": {"code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "detail": {"name": "nope"}}}:
+    if unknown != {"err": {"code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "results": [], "detail": {"name": "nope"}}}:
         bad.append(f"run_bucketed_projection should surface a complete unknown_projection fault: {unknown}")
 
     # main with no subcommand is an argparse usage error (exit 2) that names the program (required=True,
@@ -904,11 +899,9 @@ def _probe_config():
     import tempfile
 
     from honest_observe import (
-        auto_tail,
         development_mode,
         framework_event_enabled,
-        include_manifests,
-        include_tracebacks,
+        development_subtoggle,
         load_config,
         read_config,
     )
@@ -937,10 +930,10 @@ def _probe_config():
     # Validation, as data: a bad provider and a custom provider without fields both fault; custom with a
     # non-empty fields list is accepted.
     badprov = load_config({"auth": {"provider": "nope"}})
-    if badprov != {"err": {"code": "invalid_config", "message": "auth.provider must be one of honest-auth, custom, none; got 'nope'", "category": "client", "detail": {"provider": "nope"}}}:
+    if badprov != {"err": {"code": "invalid_config", "message": "auth.provider must be one of honest-auth, custom, none; got 'nope'", "category": "client", "results": [], "detail": {"provider": "nope"}}}:
         bad.append(f"an unrecognised auth provider should be a complete invalid_config fault: {badprov}")
     nofields = load_config({"auth": {"provider": "custom"}})
-    if nofields != {"err": {"code": "invalid_config", "message": "auth.provider 'custom' requires a non-empty fields list", "category": "client", "detail": {"provider": "custom"}}}:
+    if nofields != {"err": {"code": "invalid_config", "message": "auth.provider 'custom' requires a non-empty fields list", "category": "client", "results": [], "detail": {"provider": "custom"}}}:
         bad.append(f"a custom provider with no fields should be a complete invalid_config fault: {nofields}")
     withfields = load_config({"auth": {"provider": "custom", "fields": ["user_id"]}})
     if "ok" not in withfields or withfields["ok"]["auth"]["fields"] != ["user_id"]:
@@ -973,15 +966,15 @@ def _probe_config():
     # The three conveniences: false in production; in development each follows its own sub-toggle, so dev
     # mode with the sub-toggle off still reads false.
     convenience_checks = [
-        (include_manifests(prod), False, "manifests off in production"),
-        (include_manifests(dev), True, "manifests on with dev + sub-toggle"),
-        (include_manifests(dev_bare), False, "manifests off when dev on but sub-toggle off"),
-        (include_tracebacks(prod), False, "tracebacks off in production"),
-        (include_tracebacks(dev), True, "tracebacks on with dev + sub-toggle"),
-        (include_tracebacks(dev_bare), False, "tracebacks off when dev on but sub-toggle off"),
-        (auto_tail(prod), False, "auto_tail off in production"),
-        (auto_tail(dev), True, "auto_tail on with dev + sub-toggle"),
-        (auto_tail(dev_bare), False, "auto_tail off when dev on but sub-toggle off"),
+        (development_subtoggle(prod, "manifests"), False, "manifests off in production"),
+        (development_subtoggle(dev, "manifests"), True, "manifests on with dev + sub-toggle"),
+        (development_subtoggle(dev_bare, "manifests"), False, "manifests off when dev on but sub-toggle off"),
+        (development_subtoggle(prod, "tracebacks"), False, "tracebacks off in production"),
+        (development_subtoggle(dev, "tracebacks"), True, "tracebacks on with dev + sub-toggle"),
+        (development_subtoggle(dev_bare, "tracebacks"), False, "tracebacks off when dev on but sub-toggle off"),
+        (development_subtoggle(prod, "auto_tail"), False, "auto_tail off in production"),
+        (development_subtoggle(dev, "auto_tail"), True, "auto_tail on with dev + sub-toggle"),
+        (development_subtoggle(dev_bare, "auto_tail"), False, "auto_tail off when dev on but sub-toggle off"),
     ]
     for got, want, why in convenience_checks:
         if got != want:
@@ -994,7 +987,7 @@ def _probe_config():
         with os.fdopen(handle, "w") as fh:
             fh.write('[event_log]\ndb_id = "reporting"\n\n[development]\nenabled = true\nmanifests = true\n')
         loaded = read_config(path)
-        if "err" in loaded or loaded["ok"]["event_log"]["db_id"] != "reporting" or include_manifests(loaded["ok"]) is not True:
+        if "err" in loaded or loaded["ok"]["event_log"]["db_id"] != "reporting" or development_subtoggle(loaded["ok"], "manifests") is not True:
             bad.append(f"read_config should read and load the file: {loaded}")
     finally:
         os.remove(path)
@@ -1325,8 +1318,52 @@ def _probe_identity():
     return bad
 
 
+class _StandInConn:
+    """A stand-in honest-persist connection for the boundary probe: execute returns canned rows and
+    begin/commit/rollback are no-ops, so the real boundaries run without a database. Fixture."""
+
+    def __init__(self, rows=None):
+        self._rows = rows or []
+
+    async def execute(self, sql, params=None):
+        return {"rows": list(self._rows), "rowcount": len(self._rows)}
+
+    async def begin(self):
+        return None
+
+    async def commit(self):
+        return None
+
+    async def rollback(self):
+        return None
+
+
+def _probe_boundaries():
+    """The owned boundaries (§3): the id and timestamp readers, the sequence read and the append write
+    through honest-persist, and the emit door end to end, driven by a stand-in connection."""
+    from honest_observe import boundaries, emit
+
+    bad = []
+    if not isinstance(boundaries.new_event_id(), str):
+        bad.append("new_event_id returns a string id")
+    if not isinstance(boundaries.event_timestamp(), str):
+        bad.append("event_timestamp returns an ISO-8601 timestamp string")
+    conn = _StandInConn(rows=[{"event_id": "e1"}, {"event_id": "e2"}])
+    seq = asyncio.run(boundaries.next_sequence("agg", conn))
+    if seq != 2:
+        bad.append(f"next_sequence returns the count of the aggregate's events in the log: {seq}")
+    appended = asyncio.run(boundaries.append_event({"event_id": "e3"}, conn))
+    if "ok" not in appended:
+        bad.append(f"append_event writes the event and returns the persist result: {appended}")
+    result = asyncio.run(emit("hf.chain.completed", "chain", "c1", {"r": "ok"}, {}, "1.0", conn, [], []))
+    if "ok" not in result or "event_id" not in result["ok"]:
+        bad.append(f"emit assembles and appends through the module's own boundaries: {result}")
+    return bad
+
+
 def run():
     probes = {
+        "boundaries": _probe_boundaries(),
         "build_event": _probe_build_event(),
         "extract": _probe_extract(),
         "matches": _probe_matches(),
