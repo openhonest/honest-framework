@@ -1,9 +1,16 @@
-"""check_references folds the two cross-file reference rules over the whole set of
-template, stylesheet and script files and returns the dead references as data. This
-probe is the test-of-record for HC-REF002 and HC-REF003: both resolve references
-that cross files (an include target in a sibling root, a class defined by any
-component's stylesheet), so neither can be pinned by the single-source conformance
-suite the way check_source's per-file rules are.
+"""check_references folds the cross-file reference rules over the whole set of
+template, stylesheet, script and code files and returns the dead references as data.
+This probe is the test-of-record for HC-REF002, HC-REF003, HC-REF001 and HC-REF004:
+each resolves a reference that crosses files (an include target in a sibling root, a
+class defined by any component's stylesheet, a template action against the route map
+the code declares, an hf-* value against honest-format's manifest), so none can be
+pinned by the single-source conformance suite the way check_source's per-file rules are.
+
+HC-REF001 reads the route map off every route_table() the code files declare as data,
+and resolves each template action site (hx-get/hx-post/hx-put/hx-delete/hx-patch) against
+it; it is dormant where no route_table is declared. HC-REF004 resolves each authored hf-*
+value against the format_vocabulary this probe passes as check_references' second argument
+(None where no manifest is configured, which stands the rule down).
 
 Each case builds its own small multi-file `sources` list inline, calls the real
 check_references over it, and checks the findings two ways: the set of
@@ -139,6 +146,117 @@ _CASES = [
         ],
         "want": [("HC-REF003", "error", "c.js")],
     },
+    # ---- HC-REF001: template action target resolves to a mounted route ----
+    # The route map is the (method, path) pairs every route_table() in the code files
+    # declares as data. A route_table in a .py source makes HC-REF001 active.
+    #
+    # HC-REF001 fires — the template posts to /search, but only GET /search is mounted,
+    # so POST /search is a dead action.
+    {
+        "name": "HC-REF001 fires (action method not mounted)",
+        "sources": [
+            {"path": "factory.py", "text": 'def route_table():\n    return [{"method": "GET", "path": "/search"}]\n'},
+            {"path": "page.html", "text": '<button hx-post="/search">go</button>\n'},
+        ],
+        "want": [("HC-REF001", "error", "page.html")],
+    },
+    # HC-REF001 fires — the template gets /missing, which no route mounts.
+    {
+        "name": "HC-REF001 fires (action path not mounted)",
+        "sources": [
+            {"path": "factory.py", "text": 'def route_table():\n    return [{"method": "GET", "path": "/search"}]\n'},
+            {"path": "page.html", "text": '<div hx-get="/missing">x</div>\n'},
+        ],
+        "want": [("HC-REF001", "error", "page.html")],
+    },
+    # HC-REF001 clean — the action targets a mounted (GET, /search) route.
+    {
+        "name": "HC-REF001 clean (action resolves)",
+        "sources": [
+            {"path": "factory.py", "text": 'def route_table():\n    return [{"method": "GET", "path": "/search"}]\n'},
+            {"path": "page.html", "text": '<div hx-get="/search">x</div>\n'},
+        ],
+        "want": [],
+    },
+    # HC-REF001 clean — an interpolated path parameter normalizes to its route pattern:
+    # /items/{{item.id}} resolves against the mounted /items/{id}.
+    {
+        "name": "HC-REF001 clean (path parameter normalizes)",
+        "sources": [
+            {"path": "factory.py", "text": 'def route_table():\n    return [{"method": "GET", "path": "/items/{id}"}]\n'},
+            {"path": "page.html", "text": '<div hx-get="/items/{{item.id}}">x</div>\n'},
+        ],
+        "want": [],
+    },
+    # HC-REF001 skips a fully dynamic action value — hx-get="{{ url }}" carries no
+    # literal path, so it is unresolvable and skipped, the same bound REF002 takes.
+    {
+        "name": "HC-REF001 skips a fully dynamic action value",
+        "sources": [
+            {"path": "factory.py", "text": 'def route_table():\n    return [{"method": "GET", "path": "/search"}]\n'},
+            {"path": "page.html", "text": '<div hx-get="{{ url }}">x</div>\n'},
+        ],
+        "want": [],
+    },
+    # HC-REF001 dormant — no route_table() in any code file, so the route map is absent
+    # and the rule stands down rather than flag every action site.
+    {
+        "name": "HC-REF001 dormant (no route table declared)",
+        "sources": [
+            {"path": "page.html", "text": '<div hx-get="/missing">x</div>\n'},
+        ],
+        "want": [],
+    },
+    # ---- HC-REF004: behavioural hf-* value resolves to a declared vocabulary member ----
+    # The vocabulary is honest-format's manifest: each enumerated hf-* attribute mapped
+    # to its allowed values. A vocab of None (no manifest) stands the rule down.
+    #
+    # HC-REF004 fires — hf-format="curency" is a typo naming no declared formatter.
+    {
+        "name": "HC-REF004 fires (value names no member)",
+        "vocab": {"hf-format": ["currency", "date"]},
+        "sources": [
+            {"path": "page.html", "text": '<span hf-format="curency">x</span>\n'},
+        ],
+        "want": [("HC-REF004", "error", "page.html")],
+    },
+    # HC-REF004 clean — hf-format="currency" names a declared member.
+    {
+        "name": "HC-REF004 clean (value resolves)",
+        "vocab": {"hf-format": ["currency", "date"]},
+        "sources": [
+            {"path": "page.html", "text": '<span hf-format="currency">x</span>\n'},
+        ],
+        "want": [],
+    },
+    # HC-REF004 skips a free-value attribute — hf-decimals is not an enumerated vocabulary
+    # member, so it is absent from the map and not judged.
+    {
+        "name": "HC-REF004 skips a free-value attribute",
+        "vocab": {"hf-format": ["currency", "date"]},
+        "sources": [
+            {"path": "page.html", "text": '<span hf-decimals="2">x</span>\n'},
+        ],
+        "want": [],
+    },
+    # HC-REF004 skips an interpolated value — hf-format="{{ kind }}" carries no literal.
+    {
+        "name": "HC-REF004 skips an interpolated value",
+        "vocab": {"hf-format": ["currency", "date"]},
+        "sources": [
+            {"path": "page.html", "text": '<span hf-format="{{ kind }}">x</span>\n'},
+        ],
+        "want": [],
+    },
+    # HC-REF004 dormant — no manifest configured (vocab None), so a bad value is not judged.
+    {
+        "name": "HC-REF004 dormant (no manifest configured)",
+        "vocab": None,
+        "sources": [
+            {"path": "page.html", "text": '<span hf-format="curency">x</span>\n'},
+        ],
+        "want": [],
+    },
 ]
 
 
@@ -203,6 +321,17 @@ _MSG_CASES = [
         "sources": [{'path': 'page.html', 'text': '{% include "main.html" %}\n'}, {'path': 'sub/main.html', 'text': '<b>y</b>\n'}],
         "expected": [],
     },
+    {
+        "id": 'HC-REF001-unmounted',
+        "sources": [{'path': 'factory.py', 'text': 'def route_table():\n    return [{"method": "GET", "path": "/search"}]\n'}, {'path': 'page.html', 'text': '<div hx-get="/missing">x</div>\n'}],
+        "expected": [{'rule_id': 'HC-REF001', 'severity': 'error', 'message': "template action targets GET '/missing', which no route mounts. Point it at a mounted route, or add the route.", 'source_location': 'page.html:1:6', 'context': '', 'fixable': False}],
+    },
+    {
+        "id": 'HC-REF004-undeclared',
+        "vocab": {"hf-format": ["currency", "date"]},
+        "sources": [{'path': 'page.html', 'text': '<span hf-format="curency">x</span>\n'}],
+        "expected": [{'rule_id': 'HC-REF004', 'severity': 'error', 'message': "attribute hf-format=\"curency\" names no member of honest-format's declared vocabulary. Fix the value, or extend the vocabulary.", 'source_location': 'page.html:1:7', 'context': '', 'fixable': False}],
+    },
 ]
 
 def _canon(diags):
@@ -214,7 +343,7 @@ def _message_failures():
     from honest_check import check_references
     bad = []
     for case in _MSG_CASES:
-        got = check_references(case["sources"])
+        got = check_references(case["sources"], case.get("vocab"))
         if _canon(got) != _canon(case["expected"]):
             bad.append(f"record pinning {case['id']!r}: got {_canon(got)}, expected {_canon(case['expected'])}")
     return bad
@@ -231,7 +360,7 @@ def probe_check_references():
 
     bad = []
     for case in _CASES:
-        got = check_references(case["sources"])
+        got = check_references(case["sources"], case.get("vocab"))
         if not isinstance(got, list):
             bad.append(f"{case['name']}: check_references -> {got!r}, expected a list")
             continue

@@ -42,6 +42,7 @@ _EXPECTED_ALL = [
     "parse_args",
     "prepare_report",
     "read_declaration",
+    "read_format_manifest",
     "read_source",
     "resolve_exit_code",
     "run_check",

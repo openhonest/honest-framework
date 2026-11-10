@@ -382,7 +382,7 @@
       "prevents": "",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": false
+      "emitted_by_honest_check": true
     },
     {
       "id": "HC-REF002",
@@ -418,7 +418,7 @@
       "prevents": "",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": false
+      "emitted_by_honest_check": true
     },
     {
       "id": "HC-REF005",

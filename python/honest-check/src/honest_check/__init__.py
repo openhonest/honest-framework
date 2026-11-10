@@ -29,6 +29,7 @@ from honest_check.readers import (
     load_config,
     load_project_config,
     read_declaration,
+    read_format_manifest,
     read_source,
     write_report,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "parse_args",
     "prepare_report",
     "read_declaration",
+    "read_format_manifest",
     "read_source",
     "resolve_exit_code",
     "run_check",

@@ -21,6 +21,7 @@ from honest_check.readers import (
     load_config,
     load_project_config,
     read_declaration,
+    read_format_manifest,
     read_source,
     write_report,
 )
@@ -169,8 +170,10 @@ def run_check(argv):
             pair_source(path, read_source(path))
             for path in files
             if language_of(path).get("ok") in _REFERENCE_GRAMMARS
+            or language_of(path).get("ok") == "python"
         ]
-        diagnostics.extend(check_references(reference_sources))
+        format_vocabulary = read_format_manifest(project["format_manifest"])
+        diagnostics.extend(check_references(reference_sources, format_vocabulary))
 
         # The whole-program role pass (HC-R001): group the discovered code files by their
         # nearest module .hd and run check_roles once per group with that group's declaration

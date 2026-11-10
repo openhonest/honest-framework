@@ -5,11 +5,23 @@ rule produces is pinned by the conformance suite (section 9.2), not by a separat
 function."""
 
 import ast
+import re
 from honest_parse import language_of, line_col, parse, parse_source, walk
 from honest_check.constants import _CLASSLIST_METHODS, _INTERPOLATION_MARKERS, _TEMPLATE_GRAMMARS
 
+# The HTMX action attributes HC-REF001 reads: each names the HTTP method in its suffix
+# and the target path in its value. Attributes like hx-swap, hx-target and hx-ext carry no
+# (method, path) action and are not sites.
+_ACTION_ATTRS = {
+    "hx-get": "GET",
+    "hx-post": "POST",
+    "hx-put": "PUT",
+    "hx-delete": "DELETE",
+    "hx-patch": "PATCH",
+}
 
-def check_references(sources):
+
+def check_references(sources, format_vocabulary):
     """The pure cross-file reference core of the base-mode CLI path (§HC-REF002,
     §HC-REF003), the whole-set counterpart of check_source for references that resolve
     across files rather than within one.
@@ -84,6 +96,54 @@ def check_references(sources):
     templates = [s for s in sources if kind_of(s) == "template"]
     stylesheets = [s for s in sources if kind_of(s) == "stylesheet"]
     scripts = [s for s in sources if kind_of(s) == "script"]
+    code_sources = [
+        s for s in sources if language_of(s["path"]).get("ok") == "python"
+    ]
+
+    def html_attributes(text):
+        """(name, value_text, attribute_node) for each HTML attribute carrying a quoted
+        value, read under the html grammar: the attribute's name, the raw text of its value,
+        and the attribute node itself (whose span starts at the name, so a diagnostic points
+        at the attribute). HC-REF001 and HC-REF004 read their sites off this one pass."""
+        attributes = []
+        for node in walk(root_under(text, "html")):
+            if node.type != "attribute":
+                continue
+            name_node = next(
+                (c for c in node.named_children if c.type == "attribute_name"), None
+            )
+            value_node = next(
+                (c for c in node.named_children if c.type == "quoted_attribute_value"),
+                None,
+            )
+            if name_node is None or value_node is None:
+                continue
+            inner = next(
+                (c for c in value_node.named_children if c.type == "attribute_value"),
+                None,
+            )
+            if inner is None:
+                continue
+            attributes.append(
+                (name_node.text.decode("utf-8"), inner.text.decode("utf-8"), node)
+            )
+        return attributes
+
+    def normalize_path(path):
+        """A path with its interpolated and parameterized segments collapsed to one
+        placeholder, so a template's `/items/{{item.id}}` and a route's `/items/{id}` compare
+        equal. Jinja interpolation (`{{ ... }}`) is collapsed first, then a route parameter
+        (`{ ... }`)."""
+        path = re.sub(r"\{\{.*?\}\}", "{}", path)
+        return re.sub(r"\{[^}]*\}", "{}", path)
+
+    def is_dynamic_path(value):
+        """True when an action value carries no literal path to resolve — a fully dynamic
+        expression like `{{ url }}`. A value with literal path characters outside its
+        interpolation (`/items/{{item.id}}`) is not dynamic and resolves through
+        normalize_path, the same bound HC-REF002 takes for a variable include target."""
+        outside = re.sub(r"\{\{.*?\}\}", "", value)
+        return "{{" in value and not any(ch.isalnum() for ch in outside)
 
     # ---- HC-REF002: template include/extends target resolves to a template ----
 
@@ -266,6 +326,99 @@ def check_references(sources):
             findings.extend(report(script, script_class_tokens(script["text"])))
         return findings
 
-    return check_ref002() + check_ref003()
+    # ---- HC-REF001: template action target resolves to a mounted route ----
+
+    def py_string_value(string_node):
+        """The value a python `string` literal node spells, quotes and prefix resolved."""
+        return ast.literal_eval(string_node.text.decode("utf-8"))
+
+    def route_map():
+        """(declared, routes): whether any code file declares a route_table() at all, and the
+        set of (METHOD, normalized_path) pairs those route tables declare as data. honest-page
+        writes route_table() as module-level data a tool reads by parsing (honest-page §9), so
+        the route map is read here without running the application. `declared` is what gates
+        HC-REF001: with no route_table in view the route map is absent, not empty, so the rule
+        stands down rather than flag every action site."""
+        declared = False
+        routes = set()
+        for code in code_sources:
+            for node in walk(root_under(code["text"], "python")):
+                if node.type != "function_definition":
+                    continue
+                name_node = node.child_by_field_name("name")
+                if name_node is None or name_node.text.decode("utf-8") != "route_table":
+                    continue
+                declared = True
+                for literal in walk(node):
+                    if literal.type != "dictionary":
+                        continue
+                    pairs = {}
+                    for pair in literal.named_children:
+                        if pair.type != "pair":
+                            continue
+                        key = pair.child_by_field_name("key")
+                        value = pair.child_by_field_name("value")
+                        if (
+                            key is None
+                            or value is None
+                            or key.type != "string"
+                            or value.type != "string"
+                        ):
+                            continue
+                        pairs[py_string_value(key)] = py_string_value(value)
+                    if "method" in pairs and "path" in pairs:
+                        routes.add(
+                            (pairs["method"].upper(), normalize_path(pairs["path"]))
+                        )
+        return declared, routes
+
+    def check_ref001():
+        declared, routes = route_map()
+        if not declared:
+            return []
+        findings = []
+        for template in templates:
+            for name, value, node in html_attributes(template["text"]):
+                method = _ACTION_ATTRS.get(name)
+                if method is None or is_dynamic_path(value):
+                    continue
+                if (method, normalize_path(value)) in routes:
+                    continue
+                findings.append(
+                    finding(
+                        "HC-REF001",
+                        f"template action targets {method} {value!r}, which no route "
+                        "mounts. Point it at a mounted route, or add the route.",
+                        template["path"],
+                        node,
+                    )
+                )
+        return findings
+
+    # ---- HC-REF004: behavioural hf-* value resolves to a declared vocabulary member ----
+
+    def check_ref004():
+        if format_vocabulary is None:
+            return []
+        findings = []
+        for template in templates:
+            for name, value, node in html_attributes(template["text"]):
+                if not name.startswith("hf-"):
+                    continue
+                allowed = format_vocabulary.get(name)
+                if allowed is None or is_interpolated(value) or value in allowed:
+                    continue
+                findings.append(
+                    finding(
+                        "HC-REF004",
+                        f'attribute {name}="{value}" names no member of honest-format\'s '
+                        "declared vocabulary. Fix the value, or extend the vocabulary.",
+                        template["path"],
+                        node,
+                    )
+                )
+        return findings
+
+    return check_ref001() + check_ref002() + check_ref003() + check_ref004()
 
 

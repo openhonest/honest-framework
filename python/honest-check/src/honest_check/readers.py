@@ -7,6 +7,7 @@ is touched only here.
 """
 
 import fnmatch
+import json
 import os
 import tomllib
 
@@ -116,7 +117,7 @@ def load_project_config():
 
     toml_path = find_toml()
     if toml_path is None:
-        return {"exclude": [], "adoption": "Declared"}
+        return {"exclude": [], "adoption": "Declared", "format_manifest": ""}
     with open(toml_path, "rb") as handle:
         data = tomllib.load(handle)
     check = data.get("check", {})
@@ -124,6 +125,38 @@ def load_project_config():
     return {
         "exclude": check.get("exclude", []),
         "adoption": adoption if adoption in _ADOPTION_LEVELS else "Declared",
+        "format_manifest": check.get("format_manifest", ""),
+    }
+
+
+def read_format_manifest(path):
+    """Read honest-format's emitted manifest.json from a configured path and return the
+    FormatVocabulary it carries — each enumerated hf-* attribute name mapped to its closed
+    list of allowed values — or NOTHING (None) when no manifest is configured or it cannot be
+    read as that shape (section 9.4, §HC-REF004).
+
+    path is the [check] format_manifest value load_project_config read. An empty path means no
+    manifest is configured, so the reader answers None and stands HC-REF004 down rather than
+    resolving hf-* values against an empty vocabulary — the rule runs only where an application
+    declares which honest-format vocabulary its templates target. The spec states no fault for a
+    configured path that is missing or does not parse, so read_format_manifest names none and
+    answers None there too, the same posture read_source takes for a file unreadable after
+    discovery. It reads the filesystem and does nothing else: it does not scan templates, scrape
+    the runtime's dispatch tables, or check.
+    """
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as handle:
+            manifest = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    return {
+        attribute: values
+        for attribute, values in manifest.items()
+        if isinstance(values, list)
     }
 
 
