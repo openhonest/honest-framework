@@ -66,7 +66,7 @@ Feature: honest-test — generated from honest-test.hd, one scenario per functio
   Scenario: run_suite the live-value path runs every check that must call real functions over the loaded declarations
     Given src_dir: str
     When run_suite is called
-    Then enumerate_sets permutes each vocabulary and the honesty checks verify_purity, detect_mutation, test_idempotency, verify_boundary_isolation and verify_determinism run each link
+    Then enumerate_sets permutes each vocabulary and the honesty checks verify_purity, detect_mutation, test_idempotency and verify_under_monitor run each link
     And test_chain_contracts checks each chain's joins, test_auth_honesty probes each provider, and check_gate_honesty verifies each gate
     And the three state-machine tests test_valid_transitions, test_invalid_transitions and test_adversarial_state_machine exercise each machine
     And test_persist_schema_contract and enumerate_check_constraints drive each schema, and the three component checks test_css_isolation, test_route_isolation and test_startup_isolation compare the components
@@ -201,17 +201,17 @@ Feature: honest-test — generated from honest-test.hd, one scenario per functio
     And it returns the failure as a one-element list, or the empty list when the chain is idempotent
     And it performs no I/O of its own
 
-  Scenario: verify_boundary_isolation runs a link under the I/O monitor and warns io_detected for a non-boundary link
+  Scenario: verify_under_monitor with the io kind runs a link under the I/O monitor and warns io_detected for a non-boundary link
     Given link: Callable and test_manifest: Manifest and monitor: Callable
-    When verify_boundary_isolation is called
+    When verify_under_monitor is called with the io kind
     Then it runs the link inside the injected io_monitor and returns an io_detected warning Finding when the monitor recorded an I/O call and the link is not declared a boundary
     And monitor is framework record-and-restore instrumentation that patches known I/O functions to record a call and then restores the original, changing no result, so it is not the runtime rebinding section 4.8 forbids
     And it returns the warning as a one-element list, or the empty list when no I/O was detected
     And the warning reports and does not block
 
-  Scenario: verify_determinism runs a link under the call monitor and warns nondeterminism_detected for a non-boundary link
+  Scenario: verify_under_monitor with the nondeterminism kind runs a link under the call monitor and warns nondeterminism_detected for a non-boundary link
     Given link: Callable and test_manifest: Manifest and monitor: Callable
-    When verify_determinism is called
+    When verify_under_monitor is called with the nondeterminism kind
     Then it runs the link inside the injected call_monitor, which traps the symbols on the non-deterministic watch list, and returns a nondeterminism_detected warning Finding when the monitor recorded such a call and the link is not declared a boundary
     And this runtime trap is stricter than honest-check's static HC008, catching non-determinism entering through an attribute chain or dynamic dispatch that static analysis misses
     And the monitor's watch list is the subset of honest-check's NONDETERMINISTIC_WATCH_LIST honest-test carries and verifies against the published list in its conformance suite, so the two cannot drift

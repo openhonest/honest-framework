@@ -1413,8 +1413,8 @@
       "reason": "Section 4.5 runtime trap: a context manager that monkeypatches module attributes and records calls \u2014 a side effect, not a returned value. Its trapping of every watch-list symbol is proved by the determinism probe in laws_htest."
     },
     {
-      "function": "verify_determinism",
-      "reason": "Section 4.5: runs the link under the call monitor (I/O \u2014 it executes arbitrary link code under instrumentation), so its input is a live callable and its effect is the run. The boundary/exempt/pure outcomes are proved by the determinism probe."
+      "function": "verify_under_monitor",
+      "reason": "Sections 4.4, 4.5: runs the link under the injected monitor (I/O \u2014 it executes arbitrary link code under instrumentation), so its input is a live callable and its effect is the run. The boundary/exempt/pure outcomes for both the io and nondeterminism kinds are proved by the isolation and determinism probes."
     },
     {
       "function": "test_auth_honesty",

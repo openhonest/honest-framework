@@ -1,6 +1,6 @@
-"""Conformance fragment for the verify_determinism scenario (honest-test.feature ~line 211).
+"""Conformance fragment for the verify_under_monitor scenario (honest-test.feature ~line 211).
 
-Scenario: verify_determinism runs a link under the call monitor and warns
+Scenario: verify_under_monitor runs a link under the call monitor and warns
   nondeterminism_detected for a non-boundary link.
   Then it runs the link inside the injected call monitor, which traps the symbols
   on the non-deterministic watch list, and returns a nondeterminism_detected
@@ -14,7 +14,7 @@ of failure strings (empty when every case holds). No classes, no mocks, no
 monkeypatching of production code: the link is a real Callable injected as test
 input, boundary-ness is set with honest-type's real link() decorator, and the
 monitor is a real record-and-restore recording function defined below. It calls
-the real honest_test.verify_determinism.
+the real honest_test.verify_under_monitor.
 
 This is its own fragment file so the other scenarios' fragments never collide with
 it. run_conformance.py / laws_htest.py are untouched.
@@ -23,7 +23,7 @@ ASSUMED MONITOR CALLING CONVENTION (flagged as a gap; see the GAPS block in the
 report): the injected `monitor` is a callable `monitor(link, test_manifest)` that
 runs the link once under instrumentation and returns the record of watched
 non-deterministic calls the link made, as a list of symbol names (the empty list
-when none were detected). verify_determinism is assumed to call the monitor to run
+when none were detected). verify_under_monitor is assumed to call the monitor to run
 the link, treat a non-empty record as detected non-determinism, and read the link's
 boundary flag from honest-type's link_meta (the __honest_link__ metadata set by the
 link() decorator). Neither the monitor's signature/return shape nor the
@@ -34,7 +34,7 @@ import time
 
 from honest_type.chains import link
 
-from honest_test import verify_determinism
+from honest_test import verify_under_monitor
 
 
 # --- The injected call monitor: a real record-and-restore recording function. ---
@@ -106,20 +106,20 @@ _CASES = [
 
 
 def probe_verify_determinism():
-    """verify_determinism returns one nondeterminism_detected warning when a non-boundary link calls a watched non-deterministic source under the monitor, and the empty list when the link is deterministic or declared a boundary."""
+    """verify_under_monitor returns one nondeterminism_detected warning when a non-boundary link calls a watched non-deterministic source under the monitor, and the empty list when the link is deterministic or declared a boundary."""
     bad = []
     for case in _CASES:
-        got = verify_determinism(case["link"], case["test_manifest"], call_monitor)
+        got = verify_under_monitor(case["link"], case["test_manifest"], call_monitor, "nondeterminism")
         if not isinstance(got, list):
             bad.append(
-                f"verify_determinism({case['link'].__name__}) -> {got!r}, "
+                f"verify_under_monitor({case['link'].__name__}) -> {got!r}, "
                 f"expected a list"
             )
             continue
         got_codes = [f["code"] for f in got]
         if got_codes != case["expect_codes"]:
             bad.append(
-                f"verify_determinism({case['link'].__name__}) produced codes "
+                f"verify_under_monitor({case['link'].__name__}) produced codes "
                 f"{got_codes}, expected {case['expect_codes']}"
             )
             continue
@@ -128,7 +128,7 @@ def probe_verify_determinism():
         for finding in got:
             if finding["kind"] != "warning":
                 bad.append(
-                    f"verify_determinism({case['link'].__name__}) finding "
+                    f"verify_under_monitor({case['link'].__name__}) finding "
                     f"{finding['code']} has kind {finding['kind']!r}, "
                     f"expected 'warning'"
                 )

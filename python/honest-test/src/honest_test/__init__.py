@@ -42,8 +42,7 @@ from honest_test.honesty import (
     test_auth_honesty,
     test_chain_contracts,
     test_idempotency,
-    verify_boundary_isolation,
-    verify_determinism,
+    verify_under_monitor,
     verify_purity,
 )
 from honest_test.io_read import (
@@ -69,7 +68,7 @@ __all__ = [
     "fibonacci_sequence", "supplied_cases", "resolve_supplied_config", "enumerate_sets",
     "enumerate_test_cases", "adversarial_neighbors", "edit_distance_1", "unicode_confusables",
     "control_characters", "length_extensions", "encoding_variants", "verify_purity",
-    "detect_mutation", "test_idempotency", "verify_boundary_isolation", "verify_determinism",
+    "detect_mutation", "test_idempotency", "verify_under_monitor",
     "test_chain_contracts", "test_auth_honesty", "compute_expected_status", "check_gate_honesty",
     "test_valid_transitions", "test_invalid_transitions", "test_adversarial_state_machine",
     "test_persist_schema_contract", "enumerate_check_constraints", "test_css_isolation",

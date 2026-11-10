@@ -1,6 +1,6 @@
-"""Conformance fragment for the verify_boundary_isolation scenario (honest-test.feature ~line 203).
+"""Conformance fragment for the verify_under_monitor scenario (honest-test.feature ~line 203).
 
-Scenario: verify_boundary_isolation runs a link under the I/O monitor and warns
+Scenario: verify_under_monitor runs a link under the I/O monitor and warns
   io_detected for a non-boundary link.
   Then it runs the link under the injected I/O monitor and returns an io_detected
   warning Finding when the monitor recorded an I/O call and the link is not
@@ -15,12 +15,12 @@ monkeypatching: the links are real Callables injected as test input, declared wi
 honest-type's real @link() so their boundary flag is honest metadata, and the
 monitor is a real recording function injected as the io_monitor plug. A Manifest is
 a plain dict (honest-type's manifest shape). It calls the real
-honest_test.verify_boundary_isolation.
+honest_test.verify_under_monitor.
 
-MONITOR INTERFACE (pinned at the code stage, shared with verify_determinism §4.5):
+MONITOR INTERFACE (pinned at the code stage, shared with verify_under_monitor §4.5):
 the injected monitor is a callable `monitor(link, test_manifest)` that runs the link
 and returns the record of detected calls as a collection. An empty record means
-nothing was detected; a non-empty record means it was. verify_boundary_isolation
+nothing was detected; a non-empty record means it was. verify_under_monitor
 warns when the record is non-empty and the link is not a declared boundary. The
 boundary flag is read through honest-type's link metadata the @link() decorator
 attaches. The sibling determinism check uses the same collection interface, so one
@@ -32,7 +32,7 @@ it. run_conformance.py / laws_htest.py are untouched.
 
 from honest_type import link
 
-from honest_test import verify_boundary_isolation
+from honest_test import verify_under_monitor
 
 # A cooperating watched I/O sink. It stands in for a known I/O function (a file
 # write, a socket send) the framework's io_monitor would patch. It records that it
@@ -108,22 +108,22 @@ _CASES = [
 
 
 def probe_verify_boundary_isolation():
-    """verify_boundary_isolation returns one io_detected warning Finding when a non-boundary link performs I/O the monitor records, and the empty list when no I/O was detected or the link is a declared boundary."""
+    """verify_under_monitor returns one io_detected warning Finding when a non-boundary link performs I/O the monitor records, and the empty list when no I/O was detected or the link is a declared boundary."""
     bad = []
     for case in _CASES:
-        got = verify_boundary_isolation(
-            case["link"], case["test_manifest"], recording_monitor
+        got = verify_under_monitor(
+            case["link"], case["test_manifest"], recording_monitor, "io"
         )
         if not isinstance(got, list):
             bad.append(
-                f"verify_boundary_isolation({case['link'].__name__}) -> {got!r}, "
+                f"verify_under_monitor({case['link'].__name__}) -> {got!r}, "
                 f"expected a list"
             )
             continue
         got_codes = [f["code"] for f in got]
         if got_codes != case["expect_codes"]:
             bad.append(
-                f"verify_boundary_isolation({case['link'].__name__}) produced codes "
+                f"verify_under_monitor({case['link'].__name__}) produced codes "
                 f"{got_codes}, expected {case['expect_codes']}"
             )
             continue
@@ -132,7 +132,7 @@ def probe_verify_boundary_isolation():
         for finding in got:
             if finding["kind"] != "warning":
                 bad.append(
-                    f"verify_boundary_isolation({case['link'].__name__}) finding "
+                    f"verify_under_monitor({case['link'].__name__}) finding "
                     f"{finding['code']} has kind {finding['kind']!r}, "
                     f"expected 'warning'"
                 )

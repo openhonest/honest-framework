@@ -262,9 +262,9 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When call_monitor patches the symbols and the run calls them
     Then it records every call and restores each original on exit
 
-  Scenario: verify_determinism flags a non-boundary link that touches a non-deterministic source
+  Scenario: verify_under_monitor flags a non-boundary link that touches a non-deterministic source
     Given a link and a manifest
-    When verify_determinism runs the link under the monitor
+    When verify_under_monitor runs the link under the call monitor for the nondeterminism kind
     Then it warns for a non-boundary link that touched a source, and is silent for a boundary link or a link that touched none
 
   Scenario: io_watch_list lists the I/O sources a non-boundary link must not call
@@ -287,9 +287,9 @@ Feature: honest-test — exhaustive generation, honesty checks, and conformance 
     When io_monitor patches the symbols and the run calls them
     Then each call is recorded but not performed, and every symbol is restored after the run
 
-  Scenario: verify_boundary_isolation flags a non-boundary link that performs I/O
+  Scenario: verify_under_monitor flags a non-boundary link that performs I/O
     Given a link and a manifest
-    When verify_boundary_isolation runs the link under the I/O monitor
+    When verify_under_monitor runs the link under the I/O monitor for the io kind
     Then it warns for a non-boundary link that performed I/O, catching a fault after a blocked call, and is silent for a boundary link or a pure one
 
   Scenario: _humanize turns a name into spoken words

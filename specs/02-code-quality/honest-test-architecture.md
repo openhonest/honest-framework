@@ -394,7 +394,7 @@ Chains containing `boundary=True` links are exempt from idempotency testing.
 Links not declared `boundary=True` must not perform I/O. honest-test instruments known I/O calls for detection.
 
 ```
-FUNCTION verify_boundary_isolation(link, test_manifest):
+FUNCTION verify_under_monitor(link, test_manifest, monitor, kind="io"):   // §4.4, boundary isolation
     WITH io_monitor():
         result ← link(test_manifest)
 
@@ -405,14 +405,14 @@ FUNCTION verify_boundary_isolation(link, test_manifest):
 
 `io_monitor()` patches known I/O functions to detect calls without executing them.
 
-**The monitor is injected, and returns a collection.** The pseudocode shows the monitor as an internal context manager, but so that the check stays a pure function the reference implementation passes the monitor in as a callable: `monitor(link, test_manifest)` runs the link and returns the record of detected I/O calls as a collection. An empty record means no I/O; a non-empty record means I/O happened, and `verify_boundary_isolation` warns when the record is non-empty and the link is not a declared boundary. `verify_determinism` (§4.5) takes the same injected-callable monitor returning the same collection shape, so one monitor interface serves both checks. The boundary flag is read from the link's honest-type metadata.
+**The monitor is injected, and one function serves both checks.** The pseudocode shows the monitor as an internal context manager, but so that the check stays a pure function the reference implementation passes the monitor in as a callable: `monitor(link, test_manifest)` runs the link and returns the record of detected calls as a collection. An empty record means the watched effect did not happen; a non-empty record means it did, and the check warns when the record is non-empty and the link is not a declared boundary. Boundary isolation (§4.4) and determinism (§4.5) share this one body, so the reference implementation is a single `verify_under_monitor(link, test_manifest, monitor, kind)`: `kind` is `io` or `nondeterminism`, and it selects the injected monitor and the warning — the `(code, message)` pair — from a small table beside the function, rather than writing the body once per monitor. The boundary flag is read from the link's honest-type metadata.
 
 ### 4.5 Non-Determinism Detection
 
 Links not declared `boundary=True` must not access non-deterministic sources. The watch list is the same exhaustive, conformance-tested list published in honest-check (HC008 section) — `NONDETERMINISTIC_WATCH_LIST` per language. Both tools trap the same entries; both are verified by the same conformance fixtures.
 
 ```
-FUNCTION verify_determinism(link, test_manifest):
+FUNCTION verify_under_monitor(link, test_manifest, monitor, kind="nondeterminism"):   // §4.5, same function as §4.4
     // The published list is honest-check's NONDETERMINISTIC_WATCH_LIST (its
     // watchlists module, HC008). honest-test builds before honest-check, so it
     // carries the call-form subset it traps rather than importing that module;

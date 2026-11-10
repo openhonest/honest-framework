@@ -62,30 +62,27 @@ def test_idempotency(chain, test_manifest):
     return []
 
 
-def verify_boundary_isolation(link, test_manifest, monitor):
-    """Run a link under the injected I/O monitor and warn io_detected for a non-boundary link
-    that performed I/O (spec section 4.4). The monitor runs the link and returns the record of
-    detected I/O calls; a non-empty record means I/O happened. The warning reports, never blocks."""
-    if _is_boundary(link):
-        return []
-    detected = monitor(link, test_manifest)
-    if detected:
-        return [_finding("warning", "io_detected",
-                         "link performed I/O; add boundary=True if intentional")]
-    return []
+# The two monitored honesty checks (spec sections 4.4, 4.5) share one body and differ only in the
+# warning they raise. The check kind names which: io for boundary isolation (the io_monitor records
+# I/O), nondeterminism for determinism (the call_monitor records a non-deterministic source).
+_MONITORED_CHECKS = {
+    "io": ("io_detected", "link performed I/O; add boundary=True if intentional"),
+    "nondeterminism": ("nondeterminism_detected", "link called a non-deterministic source; it belongs at a boundary"),
+}
 
 
-def verify_determinism(link, test_manifest, monitor):
-    """Run a link under the injected call monitor and warn nondeterminism_detected for a
-    non-boundary link that reached a watched source (spec section 4.5). The monitor runs the link
-    and returns the record of detected calls; a non-empty record means non-determinism. Reports,
-    never blocks."""
+def verify_under_monitor(link, test_manifest, monitor, kind):
+    """Run a link under the injected monitor and warn for a non-boundary link the monitor caught
+    (spec sections 4.4, 4.5). The monitor runs the link and returns the record of detected calls; a
+    non-empty record means the watched effect happened. kind picks the warning from
+    _MONITORED_CHECKS — io for boundary isolation, nondeterminism for determinism — so one check is
+    parameterized by the kind rather than written once per monitor. The warning reports, never
+    blocks."""
     if _is_boundary(link):
         return []
-    detected = monitor(link, test_manifest)
-    if detected:
-        return [_finding("warning", "nondeterminism_detected",
-                         "link called a non-deterministic source; it belongs at a boundary")]
+    code, message = _MONITORED_CHECKS[kind]
+    if monitor(link, test_manifest):
+        return [_finding("warning", code, message)]
     return []
 
 
