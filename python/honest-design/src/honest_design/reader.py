@@ -59,14 +59,16 @@ def _read_type(node, source):
     return [_read_atom(a, source) for a in _children(node, "type_atom")]
 
 
-def _read_field(node, source) -> ir.Field:
+def _read_name_and_type(node, source):
+    """The {name, type} record a field node and a param node both carry — ir.Field and ir.Param
+    are the same shape, so one reader builds both rather than two copies of one body."""
     return {"name": _field_text(node, "name", source), "type": _read_type(_field(node, "type"), source)}
 
 
 # a type declaration's value is a record (fields), an alias (a type), or foreign (a source it names
 # and no fields, because describing someone else's object is a copy that drifts).
 _TYPE_VALUE = {
-    "record_type": lambda n, s: ([_read_field(f, s) for f in _children(n, "field")], [], ""),
+    "record_type": lambda n, s: ([_read_name_and_type(f, s) for f in _children(n, "field")], [], ""),
     "type": lambda n, s: ([], _read_type(n, s), ""),
     "foreign_type": lambda n, s: ([], [], _unquote(_field_text(n, "source", s))),
 }
@@ -129,10 +131,6 @@ def _read_example(node, source) -> ir.Example:
 _ROLE_COLUMN = {"boundary_in": 1, "reader": 1, "orchestrator": 2, "boundary_out": 4, "edge": 1}
 
 
-def _read_param(node, source) -> ir.Param:
-    return {"name": _field_text(node, "name", source), "type": _read_type(_field(node, "type"), source)}
-
-
 def _read_side_effect(node, source) -> ir.SideEffect:
     """One side of the world, with a dotted seam target split into the module and the door it enters.
 
@@ -170,7 +168,7 @@ def _read_function(node, source) -> ir.Function:
         "name": _field_text(node, "name", source),
         "role": role,
         "column": _ROLE_COLUMN.get(role, 3),
-        "params": [_read_param(p, source) for p in _children(params_node, "param")],
+        "params": [_read_name_and_type(p, source) for p in _children(params_node, "param")],
         "ret": _read_type(_field(signature, "ret"), source),
         "side_effects": [_read_side_effect(se, source) for se in _children(node, "side_effect")],
         "invokes": invokes,
