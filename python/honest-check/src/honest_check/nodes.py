@@ -356,26 +356,19 @@ def link_locals(fdef, body):
     return names
 
 
-def is_attribute_suffix(node):
-    """True when an identifier is the attribute part of an `x.name` access — the `.name`,
-    not a read of `name` itself. Reading `config.timeout` reads `config`, not a global
-    called `timeout` (§5.4)."""
+def node_is_field_child(node, parent_type, field_name):
+    """True when a node is the named field of a parent of the given type (§5.4).
+
+    Two reads use it: the attribute part of an `x.name` access (parent_type 'attribute', field
+    'attribute') — the `.name`, not a read of `name` itself, so `config.timeout` reads `config`,
+    not a global `timeout`; and the name of a keyword argument, the `k` in `f(k=v)` (parent_type
+    'keyword_argument', field 'name'), which names a parameter of the callee, not a global. In
+    each the identifier names a part of its parent, so the global-read rules skip it."""
     parent = node.parent
     return (
         parent is not None
-        and parent.type == "attribute"
-        and parent.child_by_field_name("attribute") == node
-    )
-
-
-def is_keyword_name(node):
-    """True when an identifier is a keyword argument's name — the `k` in `f(k=v)`, which
-    names a parameter of the callee, not a global read (§5.4)."""
-    parent = node.parent
-    return (
-        parent is not None
-        and parent.type == "keyword_argument"
-        and parent.child_by_field_name("name") == node
+        and parent.type == parent_type
+        and parent.child_by_field_name(field_name) == node
     )
 
 

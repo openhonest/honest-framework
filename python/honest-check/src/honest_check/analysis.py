@@ -5,7 +5,7 @@ and returns data; the rule logic that uses them stays nested-as-data in the sub-
 
 import ast
 from honest_check.constants import _EMPTY_CONSTRUCTORS, _PERSIST_WRITE_FUNCTIONS
-from honest_check.nodes import call_arguments, called_name, canonical_name, decorator_expression, decorator_target, decorators_of, enclosing_function, is_attribute_suffix, is_keyword_name, link_locals, literal_string, own_body, string_members, watched
+from honest_check.nodes import call_arguments, called_name, canonical_name, decorator_expression, decorator_target, decorators_of, enclosing_function, link_locals, literal_string, node_is_field_child, own_body, string_members, watched
 
 
 def dispatch_variable(ctx, condition):
@@ -173,17 +173,19 @@ def link_is_impure(ctx, fdef, watch, mutable_globals):
             if (
                 name in mutable_globals
                 and name not in locals_bound
-                and not is_attribute_suffix(node)
-                and not is_keyword_name(node)
+                and not node_is_field_child(node, "attribute", "attribute")
+                and not node_is_field_child(node, "keyword_argument", "name")
             ):
                 return True
     return False
 
 
-def is_link_decorated(ctx, fdef):
-    """True when a function carries a `@link` decorator, bare or called — the chain-link
-    declaration HC008 and HC001 both read for a declared link (§HC008, §4.2)."""
-    return any(decorator_target(d) == "link" for d in decorators_of(ctx, fdef))
+def has_decorator(ctx, fdef, name):
+    """True when a function carries a decorator whose target is `name`, bare or called — the
+    `@link` HC008 and HC001 read for a declared link, or the `@orchestrator` HC-OR001 and
+    HC-OR003 read (§HC008, §4.2). The decorator's target is matched by name the same way a
+    boundary decorator is."""
+    return any(decorator_target(d) == name for d in decorators_of(ctx, fdef))
 
 
 def local_function_links(ctx):
@@ -197,14 +199,8 @@ def local_function_links(ctx):
         if node.type != "function_definition":
             continue
         name_node = node.child_by_field_name("name")
-        links[name_node.text.decode("utf-8")] = is_link_decorated(ctx, node)
+        links[name_node.text.decode("utf-8")] = has_decorator(ctx, node, "link")
     return links
-
-
-def is_orchestrator(ctx, fdef):
-    """True when a function carries an `@orchestrator` decorator, bare or called — matched
-    by decorator name the same way a boundary decorator is (§4.2, HC-OR001)."""
-    return any(decorator_target(d) == "orchestrator" for d in decorators_of(ctx, fdef))
 
 
 def longest_shared_run(ctx, calls_a, calls_b):

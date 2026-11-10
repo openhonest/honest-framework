@@ -5,7 +5,7 @@ from honest_parse import language_of, line_col
 from honest_check.watchlists import IO_WATCH_LIST, NONDETERMINISTIC_WATCH_LIST
 from honest_check.constants import _APPROVED_BASES, _CACHE_DECORATORS, _HTTP_RESPONSE_MARKERS, _IO_CALLS, _IO_MODULE_PREFIXES, _LIFECYCLE_HOOKS, _TYPE_CHECK_CALLS
 from honest_check.nodes import base_types_of, call_arguments, called_name, canonical_name, decorator_expression, decorator_target, decorators_of, diagnostic, enclosing_function, in_non_boundary_function, is_boundary_decorator, literal_string, module_mutable_globals, nonlocal_names, own_body, param_names, underscore_self_name
-from honest_check.analysis import body_has_call, canonical_body, construction_maps, dispatch_variable, dotted_target, feature_state_flag, features_vocabulary, is_empty_default, is_link_decorated, is_orchestrator, link_declares_emits, link_is_impure, local_function_links, longest_shared_run, module_dict_literals, mutated_names, persist_write_targets, within_class_init
+from honest_check.analysis import body_has_call, canonical_body, construction_maps, dispatch_variable, dotted_target, feature_state_flag, features_vocabulary, has_decorator, is_empty_default, link_declares_emits, link_is_impure, local_function_links, longest_shared_run, module_dict_literals, mutated_names, persist_write_targets, within_class_init
 from honest_check.bindings import binding_keys, vocabulary_binding_pairs, vocabulary_types
 
 
@@ -365,7 +365,7 @@ def check_per_file(ctx):
         for node in nodes:
             if node.type != "function_definition":
                 continue
-            if not is_link_decorated(ctx, node):
+            if not has_decorator(ctx, node, "link"):
                 continue
             if any(is_boundary_decorator(ctx, d) for d in decorators_of(ctx, node)):
                 continue
@@ -421,7 +421,7 @@ def check_per_file(ctx):
         orchestrators = []
         names = set()
         for node in nodes:
-            if node.type != "function_definition" or not is_orchestrator(ctx, node):
+            if node.type != "function_definition" or not has_decorator(ctx, node, "orchestrator"):
                 continue
             name_node = node.child_by_field_name("name")
             name = name_node.text.decode("utf-8")
@@ -462,7 +462,7 @@ def check_per_file(ctx):
             return []
         orchestrators = []
         for node in nodes:
-            if node.type != "function_definition" or not is_orchestrator(ctx, node):
+            if node.type != "function_definition" or not has_decorator(ctx, node, "orchestrator"):
                 continue
             name_node = node.child_by_field_name("name")
             name = name_node.text.decode("utf-8")
@@ -509,7 +509,7 @@ def check_per_file(ctx):
             )
             if not produces_http:
                 continue
-            if is_link_decorated(ctx, node) and link_declares_emits(ctx, node):
+            if has_decorator(ctx, node, "link") and link_declares_emits(ctx, node):
                 continue
             name_node = node.child_by_field_name("name")
             name = name_node.text.decode("utf-8")
@@ -819,7 +819,7 @@ def check_per_file(ctx):
         def link_call_of(fdef):
             """The `@link(...)` call node decorating a function, or None when its @link is bare
             (`@link` with no call) — the decorator call HC002 reads accepts and emits from. Its
-            callers pass only link-decorated functions (link_defs is built from is_link_decorated),
+            callers pass only link-decorated functions (link_defs is built from has_decorator(..., "link")),
             so a `@link` decorator is always present; the one real None is the bare @link."""
             decorator = next(
                 d for d in decorators_of(ctx, fdef) if decorator_target(d) == "link"
@@ -841,7 +841,7 @@ def check_per_file(ctx):
             if node.type != "function_definition":
                 continue
             name_node = node.child_by_field_name("name")
-            if name_node is None or not is_link_decorated(ctx, node):
+            if name_node is None or not has_decorator(ctx, node, "link"):
                 continue
             link_defs[name_node.text.decode("utf-8")] = node
 
