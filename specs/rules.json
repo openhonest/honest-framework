@@ -242,7 +242,7 @@
     },
     {
       "id": "HC-P015",
-      "severity": "Warning",
+      "severity": "Error",
       "firing_time": "Static",
       "startup": false,
       "lsp": true,
@@ -286,11 +286,11 @@
       "prevents": "Cannot enumerate the callees \u2014 a call whose target set is unbounded makes the call graph infinite",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": false
+      "emitted_by_honest_check": true
     },
     {
       "id": "HC-P019",
-      "severity": "Warning",
+      "severity": "Error",
       "firing_time": "Static",
       "startup": false,
       "lsp": true,
@@ -298,11 +298,11 @@
       "prevents": "Cannot enumerate the miss \u2014 a lookup's fallback default serves an unknown key as a known one, so no generated case covers the unknown-key path",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": false
+      "emitted_by_honest_check": true
     },
     {
       "id": "HC-P020",
-      "severity": "Warning",
+      "severity": "Error",
       "firing_time": "Static",
       "startup": false,
       "lsp": true,
@@ -310,7 +310,7 @@
       "prevents": "Cannot enumerate the miss \u2014 a dispatch table read without a guard lets an unknown key stop the program with a bare KeyError, so no generated case covers the unknown-key path",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": false
+      "emitted_by_honest_check": true
     },
     {
       "id": "HC-R001",

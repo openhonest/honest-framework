@@ -246,7 +246,7 @@ FUNCTION discover_files(paths, exclude):
     RETURN files
 ```
 
-honest-check takes no language. honest-parse owns the extension-to-grammar table, and the grammar for each file is detected from its extension when honest-parse parses it. Discovery keeps a file when honest-parse recognizes its extension, and `check_source` parses each file under the grammar honest-parse selects for that file's path. A single run may therefore cover a mixed tree; each file is read under its own grammar, so a Python backend and a browser JavaScript client are checked together, each file under the right rules, with no language named at the boundary.
+honest-check takes no language. honest-parse owns the extension-to-grammar table, and the grammar for each file is detected from its extension when honest-parse parses it. Discovery keeps a file when honest-parse recognizes its extension, and `build_context` parses each file under the grammar honest-parse selects for that file's path. A single run may therefore cover a mixed tree; each file is read under its own grammar, so a Python backend and a browser JavaScript client are checked together, each file under the right rules, with no language named at the boundary.
 
 Extensions honest-parse recognizes:
 
@@ -308,7 +308,21 @@ declaration_graph = {
 
 Rules operate on this graph, not on raw ASTs. This separates parsing concerns from rule logic.
 
-**Module layout.** `check_source` is an orchestrator: it parses the source, builds a single check context (the parsed root, the walked node list, the import-alias map, the declared role map, the source bytes, the path, and the resolved rule config), and threads that context through a declared AST-helper layer and the rule sub-cores, then applies suppression. The helper layer is split across `nodes` (the small AST utilities), `analysis` (the heavier analyzers), and `bindings` (the vocabulary-and-binding reader); each helper is a declared pure function taking the context. The rules themselves stay nested-as-data inside their sub-cores — `check_construction` (the construction-time rules, dispatched by constructor) and `check_per_file` (the per-file HC-P, HC, and HC-HF rules) — and `apply_suppression` is the suppression pass. No single file holds the whole engine, so none is a god-file (slop-audit L1.17); the "rules are data, not a per-rule module-level def" principle is preserved, because the rules remain nested within their sub-core, while the shared helpers they call are the declared layer.
+**Module layout.** The checker keeps three kinds of function apart. The input and output functions are as thin as they can be, and each one talks only to an orchestrator. An orchestrator holds the business and routing logic, and it hands every piece of real processing to a pure function. The pure functions do all of that processing, and they do no input or output.
+
+`check_paths` is the orchestrator at startup, and `run_check` is the orchestrator for command-line checks. An orchestrator does no reading and no parsing itself. It calls the thin reader `read_source` to get the file's bytes, and it calls the thin reader `load_config` to get the project's rule configuration, and each reader hands its result back to the orchestrator. `read_source` returns the raw bytes, not decoded text, because honest-parse parses bytes and reports byte offsets, and a node's span is read by slicing those bytes; a decoded string would misalign the moment the file held a non-ASCII character. The orchestrator then calls `build_context`.
+
+The design declares `build_context` as a pure function. It takes the source bytes, the path, and the configuration from the orchestrator. It parses the source under the grammar honest-parse selects, resolves the import aliases by calling `resolve_aliases` on the parsed tree and the source bytes, walks the syntax-tree nodes, and reads the declared role map. It calls `resolve_aliases` and not `import_aliases`, because `import_aliases` reads the alias map off a finished context, and the context does not exist yet while `build_context` is assembling it. `resolve_aliases` is the one alias resolver of §3.3 and §3.5, so `build_context` reuses it rather than deriving the map a second way. It returns one record that holds the parsed root, the node list, the import-alias map, the declared role map, the source bytes, the path, and the configuration. That record is the check context. Only `build_context` builds it, and it runs no rule and does no input or output.
+
+The orchestrator takes the returned context and passes it to `check_source`, the pure function that runs the rules. `check_source` does not build the context. It passes the context to the rule groups, and then it applies suppression and returns the diagnostics. The rule groups pass the context down to the shared helpers they call, so `check_source` reaches the small helpers through the rule groups rather than calling them itself.
+
+Every function that reads the context receives it from the caller above it. No function builds its own context, and no helper does input or output to fetch missing data. So the context has one builder and a clear line of callers. `build_context` returns it to the orchestrator, the orchestrator passes it to `check_source`, `check_source` passes it to the rule groups, and the rule groups pass it to the helpers.
+
+Three submodules hold the shared helpers. `nodes` holds the small utilities for the syntax tree, `analysis` holds the heavier analyzers, and `bindings` holds the helpers that read vocabulary and binding data their callers supply. The design declares every helper as a pure function, and every helper takes the context.
+
+The rule groups keep their existing work. `check_construction` runs the construction-time rules and picks the ones that apply by constructor, `check_per_file` runs the per-file HC-P, HC, and HC-HF rules, and `apply_suppression` applies suppression to the diagnostics. The rules stay nested as data inside their rule group, and they do not become separate module-level definitions.
+
+This arrangement spreads the checking engine across modules instead of packing it into one oversized file, which slop-audit L1.17 forbids. It also keeps the roles apart. The thin input and output functions talk only to an orchestrator, the orchestrator routes and delegates, and `build_context`, `check_source`, the rule groups, and the shared helpers do every piece of processing as pure functions.
 
 ### 3.5 Shared Extraction API
 
@@ -348,7 +362,9 @@ FUNCTION matches_watchlist(name, watchlist) -> bool
 
 `ChainDecl`, `MachineDecl`, and `ClassRef` are records (a name, and for a chain its ordered link names). The functions open no file and execute none of the code they read; a construct that cannot be recognized is absent from the returned list, never an exception. honest-test's runner calls `resolve_aliases` once per file, then `extract_chains` and `extract_state_machines` with that alias map, binds each returned name to a live object through the imported module, and enumerates it.
 
-**These five functions carry the `edge` role.** honest-check is a hybrid: a tool with real boundaries (`startup_check`, `main`, the readers) that also publishes this pure import surface, which honest-test reaches directly by `import`. Declaring each as a plain `fn` left the world arriving at a pure function with no door between, which the declaration gate reads as the core reached past its boundaries. An `edge` is the honest name for that surface: a pure function (no I/O, every pure discipline enforced) that the world reaches by import, named by an `entry`. It is not a `boundary_in`, because no I/O happens at it, and the no-boundary library exemption does not apply, because honest-check has doors. The declaration gate accepts an `entry` landing on an `edge` as a valid arrival, and the map draws it on the input side under an "imported (pure)" heading, so every way into the module stays a named seam. The role is defined in honest-design's architecture (§ the role keywords).
+**honest-check publishes this surface, so the world reaches these functions by import, not through a door.** honest-check is a hybrid. It has real boundaries (`startup_check`, `main`, the readers), and it also publishes this pure surface, which honest-test reaches directly by `import`. A pure function the world imports still needs a declared arrival, or the declaration gate reads the world landing on a pure function as the core reached past its boundaries. An `entry` declares that arrival and names the imported function, and the map draws it on the input side under an "imported (pure)" heading, so every way into the module stays a named seam.
+
+Whether an imported function is an `edge` or a plain core function follows from one fact, and the `.hd` records that classification rather than this spec. A pure function the world reaches only by import, and that nothing inside honest-check calls, is an `edge`: no I/O, every pure discipline enforced, named by an `entry`. It is not a `boundary_in`, because no I/O happens at it, and the no-boundary library exemption does not apply, because honest-check has doors. A pure function the core also calls cannot be an `edge`, because the core reaches it; it stays a plain core function that an `entry` still exports. `resolve_aliases` is the second kind, because `build_context` calls it from inside the core (§3.4). honest-test imports the other four only, and nothing inside honest-check calls them, so each of those is an `edge`. The role keywords are defined in honest-design's architecture.
 
 ---
 
@@ -493,12 +509,12 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC-P011 | Error | ✓ | Framework lifecycle hook |
 | HC-P013 | Error | ✓ | Unbounded database routing key |
 | HC-P014 | Error | ✓ | Recognizer reused across slots |
-| HC-P015 | Warning | ✓ | Default parameter value (implicit default) |
+| HC-P015 | Error | ✓ | Default parameter value (implicit default) |
 | HC-P016 | Error | ✓ | Nonlocal closure over mutable state |
 | HC-P017 | Error | ✓ | Serializer not declared as chain link |
 | HC-P018 | Error | ✓ | Unbounded call target (provably-unbounded call site) |
-| HC-P019 | Warning | ✓ | Lookup read with a fallback default (`dict.get(key, default)`) |
-| HC-P020 | Warning | ✓ | Dispatch read with no reported miss (bare `TABLE[key]`) |
+| HC-P019 | Error | ✓ | Lookup read with a fallback default (`dict.get(key, default)`) |
+| HC-P020 | Error | ✓ | Dispatch read with no reported miss (bare `TABLE[key]`) |
 | HC-R001 | Error | ✓ | Orphan function (no role, not reachable) |
 | HC-OR001 | Error | ✓ | Orchestrator calls another orchestrator |
 | HC-OR003 | Warning | ✓ | Suspected duplication between orchestrators |
@@ -1179,7 +1195,7 @@ FUNCTION check_HC_P015(ast):
     FOR EACH function_def IN ast.all_functions:
         FOR EACH parameter IN function_def.parameters:
             IF parameter has a default value AND that value is not empty:
-                EMIT warning(HC-P015, parameter.location,
+                EMIT error(HC-P015, parameter.location,
                     f"Parameter '{parameter.name}' defaults to a real value. A default "
                     f"hides whether the caller chose the value or omitted it, and leaves "
                     f"the omitted-argument path untested. Make the parameter required, or "
@@ -1190,7 +1206,7 @@ FUNCTION check_HC_P015(ast):
 
 **Resolution.** Make the parameter required and let the caller pass the value, or, when absence is the honest nothing, default it to an empty value. The swallow is a default that stands in for a real choice; an empty default surfaces nothing because there is no choice to surface. Where a function must mirror a host framework's required signature and genuinely cannot drop a real-valued default, a `# honest: disable HC-P015 <reason>` directive suppresses the rule at that definition, naming why.
 
-**Severity.** HC-P015 emits a warning, not an error. A real-valued default is a smell the reader must retire, and a warning reports each one without turning the module away, which is the standing treatment for a principle the framework states and is still bringing its own code into line with.
+**Severity.** HC-P015 emits an error. A real-valued default manufactures an untested input region by construction, so the module does not pass until each one is made a required parameter or an explicit empty default.
 
 **Language equivalents:**
 
@@ -1471,7 +1487,7 @@ Soft rule. Static AST-based duplication detection across orchestrator bodies. Wh
 
 `min_run` is a required parameter with no built-in value. A parameter that defaults cannot distinguish a caller that chose the documented N from one that never knew the setting existed, and the two need different answers: the first is a decision and the second is a bug in the wiring. The setting sat in the configuration file unread for exactly this reason — nothing could thread it without writing the default twice.
 
-The documented N is 3, and the resolution happens at the boundary. `load_config` returns what the project declared, the boundary merges that over the documented values, and `check_source` takes the result as a required argument. A run configured with nothing is therefore a run that was handed the documented values explicitly, and it says so.
+The documented N is 3, and `build_context` resolves it. `load_config` reads what the project declared and returns it. `build_context` merges that over the documented values and puts the result in the check context that `check_source` reads. The reader does no merging, and the orchestrator does none; one pure function resolves the value. A run configured with nothing is therefore a run that was handed the documented values explicitly, and it says so.
 
 ```
 FUNCTION check_HC_OR003(ast, min_run):        # required: see above
@@ -1575,7 +1591,7 @@ FUNCTION check_HC_P019(ast):
     FOR EACH call IN ast.all_calls:
         IF call.func is an attribute access named "get"
            AND call has two or more positional arguments:
-            EMIT warning(HC-P019, call.location,
+            EMIT error(HC-P019, call.location,
                 "This lookup falls back to a default for a key the table does not hold, "
                 "so an unknown key is served as a known one and the miss is lost. If the "
                 "absent case is real, give it its own row with its own key. If the key can "
@@ -1583,7 +1599,7 @@ FUNCTION check_HC_P019(ast):
                 "expected keys.")
 ```
 
-**Severity.** HC-P019 emits a warning, not an error. The codebase holds many fallback lookups today, and a warning reports each without turning the module away while they are moved to an explicit row or a reported miss, the same treatment HC-P015 gets.
+**Severity.** HC-P019 emits an error. A fallback lookup files a miss as a hit and loses the unknown key, so the module does not pass until each one is given its own row or read without a fallback and reports the miss.
 
 **Language equivalents:**
 
@@ -1608,14 +1624,14 @@ FUNCTION check_HC_P020(ast):
         IF TABLE IN tables
            AND key is a variable, not a constant
            AND no 'key in TABLE' / 'key not in TABLE' test in the enclosing function:
-            EMIT warning(HC-P020, subscript.location,
+            EMIT error(HC-P020, subscript.location,
                 "This dispatch read raises a bare KeyError for a key the table does not "
                 "hold, naming neither the expected keys nor a fault. Guard it with "
                 "'if key not in TABLE' that reports the miss and names the expected keys, "
                 "or give the absent case its own row.")
 ```
 
-**Severity.** HC-P020 emits a warning, not an error. Bare dispatch reads are common in the codebase today, and a warning reports each without turning the module away while they are moved under a reported-miss guard, the same treatment HC-P019 and HC-P015 get.
+**Severity.** HC-P020 emits an error. A bare dispatch read stops the program on an unknown key and names neither the expected keys nor a fault, so the module does not pass until each one is guarded with a reported miss.
 
 **Language equivalents:**
 
@@ -2045,9 +2061,9 @@ An adoption level is a named, closed set of rules. A codebase declares one; the 
 
 | Level | What the codebase holds | Rules added at this level |
 |---|---|---|
-| **Structural** | The shape of the code: no classes, no dispatch chains, no hidden state in closures or constructors, no lifecycle hooks | HC-P001, HC-P003, HC-P007, HC-P011, HC-P016 |
+| **Structural** | The shape of the code: no classes, no dispatch chains, no hidden state in closures or constructors, no lifecycle hooks, no implicit defaults, no unclosed lookups | HC-P001, HC-P003, HC-P007, HC-P011, HC-P016, HC-P015, HC-P019, HC-P020 |
 | **Boundary** | I/O, faults, persistence, and identity cross only at declared boundaries; the interior is pure | HC-P002, HC-P004, HC-P005, HC-P006, HC-P010, HC-P013, HC-ST001, HC-A001, HC-A002 |
-| **Typed** | The vocabulary, chain, and state-machine type system holds | HC001–HC011, HC-SM01–HC-SM05, HC-P014, HC-P017 |
+| **Typed** | The vocabulary, chain, and state-machine type system holds | HC001–HC011, HC-SM01–HC-SM05, HC-P014, HC-P017, HC-P018 |
 | **Declared** | Everything is declared rather than inferred: roles, orchestration, static references, and user state | HC-R001, HC-R002, HC-R003, HC-R004, HC-R005, HC-OR001, HC-OR003, HC-REF001–HC-REF008, HC-ST002, HC-HF001, HC-HF002 |
 
 **Three rules hold at every level: HC-SYN, HC-SUP001, and HC-SUP002.** A codebase that does not parse has no level, and the suppression guarantee of section 7.4 cannot be level-dependent — if it were, a low level would silently buy the right to hide things, which is the dial problem again.
