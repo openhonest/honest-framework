@@ -238,7 +238,7 @@
       "prevents": "Cannot distinguish slots \u2014 recognizer reuse collapses semantic roles",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-P015",
@@ -286,7 +286,7 @@
       "prevents": "Cannot enumerate the callees \u2014 a call whose target set is unbounded makes the call graph infinite",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-P019",
@@ -298,7 +298,7 @@
       "prevents": "Cannot enumerate the miss \u2014 a lookup's fallback default serves an unknown key as a known one, so no generated case covers the unknown-key path",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-P020",
@@ -310,7 +310,7 @@
       "prevents": "Cannot enumerate the miss \u2014 a dispatch table read without a guard lets an unknown key stop the program with a bare KeyError, so no generated case covers the unknown-key path",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-R001",
@@ -382,7 +382,7 @@
       "prevents": "",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-REF002",
@@ -418,7 +418,7 @@
       "prevents": "",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-REF005",
@@ -466,7 +466,7 @@
       "prevents": "A seam that names another module without its door, which leaves HC-REF006 and HC-REF007 nothing to resolve.",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-REF009",
@@ -478,7 +478,7 @@
       "prevents": "A hidden coupling where one module writes a resource and another reads it, invisible because each declares only its own world side and neither names the other. A question, not a gate failure: a module may honestly stand alone.",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-REF010",
@@ -490,7 +490,7 @@
       "prevents": "A module that stands apart while earning nothing by standing apart: it touches no world and serves one caller, so its own file may be hiding a function that belongs in that caller. A question, not a gate failure: a second caller may be coming, and folding is a person's call. A module that owns a world side is never asked.",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-SM01",
@@ -562,7 +562,7 @@
       "prevents": "",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-ST002",
@@ -574,7 +574,7 @@
       "prevents": "",
       "enforced_by": "honest-check",
       "deferred_cases": [],
-      "emitted_by_honest_check": true
+      "emitted_by_honest_check": false
     },
     {
       "id": "HC-SUP001",

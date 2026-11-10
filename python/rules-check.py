@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""rules-check.py — the rule catalogue and the linter must agree.
+"""rules-check.py — the rule catalogue and the checker must agree.
 
 `specs/rules.json` is the single declaration of every honest-check rule: its id, severity, firing
 time, what it makes impossible, and which module enforces it. The spec tables are projections of
@@ -28,19 +28,31 @@ import sys
 # docstring text ("HC-P* rules", the "HC-XXXX" placeholder in the suppression example) and
 # reports it as an undeclared rule.
 ID = re.compile(r"HC-(?:[A-Z]{1,3}\d{2,3}|SYN)\b|HC\d{3}\b")
+# A rule is emitted where its id appears as a quoted literal in a rule-logic file. Two earlier
+# predicates were each wrong, in opposite directions. Matching the bare id counted a comment as
+# an implementation. Anchoring to diagnostic( to exclude the adoption table missed the mark two
+# ways at once: the id is diagnostic's SECOND argument, after ctx, so diagnostic\(\s*['"] matched
+# nothing and branded all sixty rules phantom; and most declared-tier rules build their finding
+# through another constructor, never diagnostic(, so even the right argument position would miss
+# them. The real line is the file, not the call shape: report.py advertises the catalogue (the
+# membership frozensets and the adoption table) without emitting anything, and every other source
+# file names a rule id only where it constructs that rule. So scan the quoted ids everywhere but
+# report.py.
 QUOTED_ID = re.compile(r"['\"](HC-(?:[A-Z]{1,3}\d{2,3}|SYN)|HC\d{3})['\"]")
+ADVERTISEMENT = "report.py"
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def emitted_ids(sources: list[str]) -> set[str]:
-    """Pure: every rule id the linter's own source EMITS, read as a quoted string rather than as
-    text anywhere in the file.
+    """Pure: every rule id emitted, read as a quoted literal in the rule sources it is given.
 
-    Matching the bare id counted a comment as an implementation. HC-REF005 was named in two
-    comments, both saying a missing declaration is its finding, and in no code at all; the
-    catalogue recorded it as emitted and this check agreed, so a rule that has never existed
-    passed as implemented from August to September. A rule reaches a reader by being constructed,
-    and construction means the id is a string in the source.
+    The caller passes every source file but report.py. report.py advertises the catalogue — the
+    membership frozensets and the adoption table — without constructing a single finding, so its
+    quoted ids once reported the whole catalogue as implemented. Every remaining file names a rule
+    id only where it builds that rule's finding, so a quoted id there is an emission, whatever
+    constructor carries it. Matching the bare id instead counted a comment as an implementation:
+    HC-REF005 was named in two comments saying a missing declaration is its finding, and in no code
+    at all, and from August to September a rule that had never existed passed as implemented.
 
     Takes the text, not the path, so the extraction is exercised without a filesystem."""
     return {m.group(1) for m in QUOTED_ID.finditer(" ".join(sources))}
@@ -60,12 +72,34 @@ def disagreements(catalogue: list[dict], emitted: set[str]) -> list[str]:
     return out
 
 
+def unplaced_rules(catalogue: list, placed: set) -> list[str]:
+    """Rules honest-check emits that the adoption level table does not place.
+
+    The level table is a second list of the same rules, so it drifts from the catalogue the way any
+    copy does. A rule missing from it used to be downgraded to info, which is a rule that runs,
+    reports real findings and blocks nothing. HC-P018 sat there from the day it was written and
+    HC-REF005 joined it on its first run, so the drift is checked rather than trusted.
+
+    placed is the full Declared-level membership, which main reads from report.enforced_rules_of
+    rather than scraping report.py's text. The earlier version split the source on symbol names
+    (_LEVEL_RULES, ALWAYS_ENFORCED) a later report.py no longer used, so it matched nothing and
+    placed came back empty.
+    """
+    return [f"  {r['id']} is emitted and the adoption level table does not place it, so it reports as info and blocks nothing."
+            for r in catalogue
+            if r["emitted_by_honest_check"] and r["id"] not in placed]
+
+
 def main() -> int:
+    from honest_check.report import enforced_rules_of, _LEVEL_ORDER
     catalogue = json.loads((ROOT / "specs/rules.json").read_text(encoding="utf-8"))["rules"]
     sources = [p.read_text(encoding="utf-8")
-               for p in sorted((ROOT / "python/honest-check/src/honest_check").rglob("*.py"))]
+               for p in sorted((ROOT / "python/honest-check/src/honest_check").rglob("*.py"))
+               if p.name != ADVERTISEMENT]
     emitted = emitted_ids(sources)
+    placed = set(enforced_rules_of(_LEVEL_ORDER[-1]))
     problems = disagreements(catalogue, emitted)
+    problems += unplaced_rules(catalogue, placed)
     if problems:
         print("rules-check: the catalogue and honest-check disagree.", file=sys.stderr)
         print("\n".join(problems), file=sys.stderr)
