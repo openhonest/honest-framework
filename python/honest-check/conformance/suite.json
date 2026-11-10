@@ -4275,6 +4275,76 @@
           }
         ]
       }
+    },
+    {
+      "id": "HC-P013-001",
+      "description": "A routing-key slot bound to a predicate recognizer lets an arbitrary identifier reach the pool; a bounded Set is required.",
+      "category": "HC-P013",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import vocabulary, binding, classify\nv = vocabulary({'db': lambda s: True})\nb = binding({'db': 'db_id'})\nr = classify(tok, v, bind=b)\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC011",
+            "severity": "info",
+            "line": 2
+          },
+          {
+            "rule": "HC-P013",
+            "severity": "error",
+            "line": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P013-002",
+      "description": "A routing-key slot bound to a bounded Set recognizer is honest: the reachable set is a closed, declared list.",
+      "category": "HC-P013",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import vocabulary, binding, classify\nv = vocabulary({'db': {'main', 'analytics'}})\nb = binding({'db': 'db_id'})\nr = classify(tok, v, bind=b)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P010-001",
+      "description": "A pure function that returns an instance of a locally-defined class returns an opaque object rather than serializable data.",
+      "category": "HC-P010",
+      "input": {
+        "language": "python",
+        "source": "class Thing:\n    pass\ndef build():\n    return Thing()\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P003",
+            "severity": "error",
+            "line": 1
+          },
+          {
+            "rule": "HC-P010",
+            "severity": "error",
+            "line": 4
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P010-002",
+      "description": "A pure function that returns a TypedDict instance returns serializable data and is honest.",
+      "category": "HC-P010",
+      "input": {
+        "language": "python",
+        "source": "from typing import TypedDict\nclass Thing(TypedDict):\n    x: int\ndef build():\n    return Thing(x=1)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
     }
   ]
 }

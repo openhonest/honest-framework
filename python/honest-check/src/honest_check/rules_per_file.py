@@ -4,7 +4,7 @@ import itertools
 from honest_parse import language_of, line_col
 from honest_check.watchlists import IO_WATCH_LIST, NONDETERMINISTIC_WATCH_LIST
 from honest_check.constants import _APPROVED_BASES, _CACHE_DECORATORS, _HTTP_RESPONSE_MARKERS, _IO_CALLS, _IO_MODULE_PREFIXES, _LIFECYCLE_HOOKS, _TYPE_CHECK_CALLS
-from honest_check.nodes import call_arguments, called_name, canonical_name, decorator_expression, decorator_target, decorators_of, diagnostic, enclosing_function, in_non_boundary_function, is_boundary_decorator, literal_string, module_mutable_globals, nonlocal_names, own_body, param_names, underscore_self_name
+from honest_check.nodes import base_types_of, call_arguments, called_name, canonical_name, decorator_expression, decorator_target, decorators_of, diagnostic, enclosing_function, in_non_boundary_function, is_boundary_decorator, literal_string, module_mutable_globals, nonlocal_names, own_body, param_names, underscore_self_name
 from honest_check.analysis import construction_maps, dispatch_variable, dotted_target, feature_state_flag, features_vocabulary, is_empty_default, is_link_decorated, is_orchestrator, link_declares_emits, link_is_impure, local_function_links, longest_shared_run, module_dict_literals, mutated_names, within_class_init
 from honest_check.bindings import binding_keys, vocabulary_binding_pairs, vocabulary_types
 
@@ -555,6 +555,93 @@ def check_per_file(ctx):
                 )
         return findings
 
+    def check_p010():
+        """HC-P010: a pure (non-boundary) function that returns an instance of a class this
+        file defines and that is not a TypedDict (§HC-P010). A TypedDict instance is a dict,
+        so it crosses a boundary as serializable data and is exempt; any other locally-defined
+        class is an opaque, behaviour-bearing object. Reported at the return statement. The
+        check reads only classes declared in this file: an imported name carries no class-ness
+        the tree can see, so a return of an imported constructor is not judged here."""
+        opaque_classes = set()
+        for node in nodes:
+            if node.type != "class_definition":
+                continue
+            superclasses = node.child_by_field_name("superclasses")
+            bases = (
+                [c.text.decode("utf-8") for c in superclasses.named_children if c.type != "keyword_argument"]
+                if superclasses is not None
+                else []
+            )
+            if "TypedDict" in bases:
+                continue
+            opaque_classes.add(node.child_by_field_name("name").text.decode("utf-8"))
+        findings = []
+        for node in nodes:
+            if node.type != "return_statement":
+                continue
+            value = node.named_children[0] if node.named_children else None
+            if value is None or value.type != "call":
+                continue
+            function = value.child_by_field_name("function")
+            if function is None or function.type != "identifier":
+                continue
+            name = function.text.decode("utf-8")
+            if name not in opaque_classes:
+                continue
+            if not in_non_boundary_function(ctx, node):
+                continue
+            findings.append(
+                diagnostic(ctx,
+                    "HC-P010",
+                    "error",
+                    f"Pure function returns an instance of {name!r}, an opaque object rather "
+                    "than serializable data. Return a dict or a TypedDict so the value crosses "
+                    "the boundary as data.",
+                    node,
+                )
+            )
+        return findings
+
+    def check_p013():
+        """HC-P013: a routing-key slot — db_id, tenant_id, or credential — bound to a type
+        whose recognizer is a predicate rather than a bounded Set (§HC-P013, honest-persist
+        §8.4). A predicate accepts any string the pool would then try to reach, so a caller
+        can name a database the application never declared; a bounded Set makes the reachable
+        set a closed, declared list. Reported at the binding() call, once per offending entry.
+        A set recognizer is honest and does not fire; a ref recognizer resolves elsewhere and
+        is out of scope for this structural check, so only the predicate kind is flagged."""
+        routing_keys = {"db_id", "tenant_id", "credential"}
+        findings = []
+        for vocab_calls, binding_call in vocabulary_binding_pairs(ctx):
+            kinds = {}
+            for vocab_call in vocab_calls:
+                positionals, _keywords = call_arguments(ctx, vocab_call)
+                if positionals and positionals[0].type == "dictionary":
+                    for name, (kind, _payload) in base_types_of(ctx, positionals[0]).items():
+                        kinds[name] = kind
+            positionals, _keywords = call_arguments(ctx, binding_call)
+            if not positionals or positionals[0].type != "dictionary":
+                continue
+            for pair in positionals[0].named_children:
+                if pair.type != "pair":
+                    continue
+                type_name = literal_string(pair.child_by_field_name("key"))
+                slot = literal_string(pair.child_by_field_name("value"))
+                if slot not in routing_keys or kinds.get(type_name) != "predicate":
+                    continue
+                findings.append(
+                    diagnostic(ctx,
+                        "HC-P013",
+                        "error",
+                        f"Routing key {slot!r} is bound to predicate recognizer "
+                        f"{type_name!r}. A predicate accepts any string the pool would try "
+                        "to reach; bind a bounded Set recognizer so the reachable set is a "
+                        "closed, declared list.",
+                        binding_call,
+                    )
+                )
+        return findings
+
     def check_hc010():
         """HC010: a declared @link whose emits vocabulary names a type its body never produces
         (§"Declared emission never produced"). For a `@link(accepts=A, emits=E, binds=B)`, a
@@ -834,6 +921,8 @@ def check_per_file(ctx):
         check_p005,
         check_p006,
         check_p015,
+        check_p010,
+        check_p013,
         check_hc008,
         check_hc001,
         check_hc002,
