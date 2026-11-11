@@ -60,6 +60,45 @@ def cross_declaration(sources, declaration, export_source, rule_ids):
     def body_yields(fdef):
         return any(node.type == "yield" for node in own_nodes(fdef))
 
+    def passed_to_format_encoder(node):
+        """True when a node is a direct argument of a `json.dump`/`json.dumps` call — the format
+        boundary HC-R006 leaves alone, because encoding a record the core already holds is
+        mechanical, not a transformation."""
+        parent = node.parent
+        if parent is None or parent.type != "argument_list":
+            return False
+        call = parent.parent
+        if call is None or call.type != "call":
+            return False
+        function = call.child_by_field_name("function")
+        if function is None or function.type != "attribute":
+            return False
+        attribute = function.child_by_field_name("attribute")
+        return attribute is not None and attribute.text.decode("utf-8") in ("dump", "dumps")
+
+    def assembles_record(fdef):
+        """True when a function's own body builds a new aggregate that it does not hand straight
+        to a format encoder — a comprehension, or a dictionary literal with at least one pair
+        (§HC-R006). This is the residue a transforming door leaves once its one I/O and its
+        handoff are set aside: the record it assembles or the representation it renders, work that
+        belongs to a pure function the orchestrator calls. A dict passed directly to json.dump or
+        json.dumps is the format boundary and does not count."""
+        comprehensions = {
+            "list_comprehension",
+            "set_comprehension",
+            "dictionary_comprehension",
+            "generator_expression",
+        }
+        for node in own_nodes(fdef):
+            if node.type in comprehensions:
+                return True
+            if node.type == "dictionary" and any(
+                child.type == "pair" for child in node.named_children
+            ):
+                if not passed_to_format_encoder(node):
+                    return True
+        return False
+
     def arity(fdef):
         params = fdef.child_by_field_name("parameters")
         return sum(1 for child in params.named_children if child.type != "comment")
@@ -119,6 +158,7 @@ def cross_declaration(sources, declaration, export_source, rule_ids):
                     ),
                     "calls": calls_of(fdef),
                     "arity": arity(fdef),
+                    "assembles_record": assembles_record(fdef),
                 }
             )
         return facts
@@ -255,6 +295,30 @@ def cross_declaration(sources, declaration, export_source, rule_ids):
             )
         return findings
 
+    def check_r006():
+        """A declared door whose body assembles a record or renders a representation beyond its
+        one I/O and its handoff — a transforming door, which hides an orchestrator the
+        declaration does not show (§HC-R006). A door the declaration does not mark boundary_in,
+        boundary_out or reader is skipped."""
+        doors = frozenset({"boundary_in", "boundary_out", "reader"})
+        findings = []
+        for fact in code_functions:
+            declaration_fn = declared.get(fact["name"])
+            if declaration_fn is None or declaration_fn["role"] not in doors:
+                continue
+            if not fact["assembles_record"]:
+                continue
+            findings.append(
+                finding(
+                    "HC-R006",
+                    f"'{fact['name']}' is a declared {declaration_fn['role']} and its body builds "
+                    "a record or representation rather than only touching the world and handing "
+                    "off. Move the transformation into a pure function the orchestrator calls.",
+                    fact["source_location"],
+                )
+            )
+        return findings
+
     def check_ref005():
         """The exported and defined surface resolves into the declaration (§HC-REF005): an
         exported name the declaration does not name, or a declared parameter count that
@@ -307,6 +371,7 @@ def cross_declaration(sources, declaration, export_source, rule_ids):
         "HC-R003": check_r003,
         "HC-R004": check_r004,
         "HC-R005": check_r005,
+        "HC-R006": check_r006,
         "HC-REF005": check_ref005,
     }
     selected = rule_ids if rule_ids else list(crossing_rules)

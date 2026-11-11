@@ -373,6 +373,18 @@
       "emitted_by_honest_check": true
     },
     {
+      "id": "HC-R006",
+      "severity": "Error",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": false,
+      "description": "A door transforms its input (a declared boundary whose body builds a record or renders a representation rather than only touching the world and handing off)",
+      "prevents": "An orchestrator hiding in a boundary: transformation the declaration does not show, which auto-generation cannot reach because the boundary claims to do none.",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
       "id": "HC-REF001",
       "severity": "Error",
       "firing_time": "Static",
