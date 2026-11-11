@@ -55,6 +55,31 @@ from honest_test.laws import law, verify_laws
 from honest_test.mutation import classify_mutant_result, mutate_source
 from honest_test.oracle import build_proof_event, evaluate_case, generate_scaffolding
 from honest_test.persist import enumerate_check_constraints, test_persist_schema_contract
+from honest_test.protocol import (
+    assert_body_bytes,
+    assert_body_html_selector,
+    assert_body_json_schema,
+    assert_charset,
+    assert_content_type,
+    assert_cookie_attribute,
+    assert_cookie_max_age,
+    assert_cookie_value,
+    assert_header,
+    assert_location,
+    assert_no_header,
+    assert_same_session_cookie,
+    assert_status,
+    assert_status_class,
+)
+from honest_test.request import (
+    carry_cookie,
+    reuse_session,
+    send_request,
+    with_body,
+    with_content_type,
+    with_cookie,
+    with_header,
+)
 from honest_test.runner import check_test_body, run_body_check, run_cli, run_suite
 from honest_test.sinks import print_report, write_coverage
 from honest_test.statemachine import (
@@ -78,4 +103,10 @@ __all__ = [
     "law", "verify_laws", "test_body_violations", "run_body_check", "check_test_body",
     "read_source", "read_config", "load_under_test", "run_suite", "run_cli",
     "print_report", "write_coverage",
+    "assert_status", "assert_status_class", "assert_content_type", "assert_charset",
+    "assert_header", "assert_no_header", "assert_body_bytes", "assert_body_json_schema",
+    "assert_body_html_selector", "assert_cookie_value", "assert_cookie_attribute",
+    "assert_cookie_max_age", "assert_location", "assert_same_session_cookie",
+    "with_header", "with_cookie", "with_body", "with_content_type",
+    "carry_cookie", "reuse_session", "send_request",
 ]

@@ -1,4 +1,4 @@
-Feature: honest-test — generated from honest-test.hd, one scenario per function with the two orchestrators split by branch (49 functions, 53 scenarios)
+Feature: honest-test — generated from honest-test.hd, one scenario per function with the orchestrators and the monitored checks split by branch (74 functions, 79 scenarios)
 
   # Doors. Both are host-started call-form entries the entry-check reports UNCHECKED.
 
@@ -452,3 +452,150 @@ Feature: honest-test — generated from honest-test.hd, one scenario per functio
     Then it returns a RunReport record carrying the counts the run measured, so a pure function produces the report rather than an orchestrator assembling it inline
     And it reads its arguments as data and touches no world
     And render_report and the two sinks take the RunReport it produced
+
+  # The §8.4 protocol-level assertion library (edge): pure response assertions, pure request builders, and the one injected client seam.
+
+  Scenario: assert_status checks the response status equals the expected code
+    Given response: Response and status: int
+    When assert_status is called
+    Then it returns the empty list when response.status equals status
+    And it returns one Finding naming the status field with the expected and actual codes when they differ
+    And it is pure, reads only the status field off the neutral record, and names no framework type
+
+  Scenario: assert_status_class checks the response status falls in the expected hundred-band
+    Given response: Response and status_class: str
+    When assert_status_class is called
+    Then status_class is one of the four closed values 2xx, 3xx, 4xx or 5xx captured from the step
+    And it returns the empty list when response.status sits in that band
+    And it returns one Finding naming the status field, the expected class and the actual status when it does not
+    And it is pure, reads only the status field, and names no framework type
+
+  Scenario: assert_content_type checks the response Content-Type equals the expected media type
+    Given response: Response and mime_type: str
+    When assert_content_type is called
+    Then it reads the Content-Type header off response.headers and returns the empty list when it equals mime_type
+    And it returns one Finding naming the Content-Type with the expected and actual values when they differ
+    And it is pure, reads only the headers field, and names no framework type
+
+  Scenario: assert_charset checks the response character set equals the expected one
+    Given response: Response and charset: str
+    When assert_charset is called
+    Then it returns the empty list when response.charset equals charset
+    And it returns one Finding naming the charset field with the expected and actual values when they differ
+    And it is pure, reads only the charset field, and names no framework type
+
+  Scenario: assert_header checks a named response header equals the expected value
+    Given response: Response and name: str and value: str
+    When assert_header is called
+    Then it reads response.headers at name and returns the empty list when the header is present and equals value
+    And it returns one Finding naming the header with the expected value and the actual value, or its absence, otherwise
+    And it is pure, reads only the headers field, and names no framework type
+
+  Scenario: assert_no_header checks a named header is absent from the response
+    Given response: Response and name: str
+    When assert_no_header is called
+    Then it returns the empty list when response.headers has no entry for name
+    And it returns one Finding naming the header and its unexpected value otherwise
+    And it is pure, reads only the headers field, and names no framework type
+
+  Scenario: assert_body_bytes checks the response body equals the expected bytes exactly
+    Given response: Response and literal: bytes
+    When assert_body_bytes is called
+    Then literal is the expected exact body bytes the step handler encodes before calling, so this function makes no encoding decision of its own and a mis-encoded body cannot slip past a silent decode
+    And it reads response.body and returns the empty list when it equals literal
+    And it returns one Finding naming the body field with the expected and actual bytes when they differ
+    And it is pure, reads only the body field, and names no framework type
+
+  Scenario: assert_body_json_schema checks the response body is JSON conforming to a schema
+    Given response: Response and schema: dict of str to any
+    When assert_body_json_schema is called
+    Then schema is the already-resolved JSON schema the step handler hands in as data, so this function reads no file and names no registry
+    And it parses response.body as JSON and returns the empty list when the parsed value conforms to schema
+    And it returns one Finding naming the body field and the first nonconformance otherwise
+    And it is pure, reads only the body field, and names no framework type
+
+  Scenario: assert_body_html_selector checks the response body is HTML containing an element the selector matches
+    Given response: Response and selector: str
+    When assert_body_html_selector is called
+    Then it parses response.body as HTML and returns the empty list when the selector matches at least one element
+    And it returns one Finding naming the selector and that it matched nothing otherwise
+    And it is pure, reads only the body field, and names no framework type
+
+  Scenario: assert_cookie_value checks the response sets a named cookie to the expected value
+    Given response: Response and name: str and value: str
+    When assert_cookie_value is called
+    Then it reads the named cookie from response.cookies and returns the empty list when it is set and its value equals value
+    And it returns one Finding naming the cookie with the expected value and the actual value, or its absence, otherwise
+    And it is pure, reads only the cookies field, and names no framework type
+
+  Scenario: assert_cookie_attribute checks a named response cookie carries a given attribute
+    Given response: Response and name: str and attribute: str
+    When assert_cookie_attribute is called
+    Then it reads the named cookie from response.cookies and returns the empty list when its attributes carry attribute
+    And it returns one Finding naming the cookie and the missing attribute otherwise
+    And it is pure, reads only the cookies field, and names no framework type
+
+  Scenario: assert_cookie_max_age checks a named response cookie's Max-Age equals the expected seconds
+    Given response: Response and name: str and max_age: int
+    When assert_cookie_max_age is called
+    Then it reads and parses the Max-Age entry from the named cookie's attributes and returns the empty list when it equals max_age
+    And it returns one Finding naming the cookie with the expected and actual Max-Age, or its absence, otherwise
+    And it is pure, reads only the cookies field, and names no framework type
+
+  Scenario: assert_location checks the response Location equals the expected URL
+    Given response: Response and url: str
+    When assert_location is called
+    Then it returns the empty list when response.location equals url
+    And it returns one Finding naming the location field with the expected and actual URLs when they differ
+    And it is pure, reads only the location field, and names no framework type
+
+  Scenario: assert_same_session_cookie checks two responses in a sequence share one session cookie value
+    Given response: Response and previous: Response
+    When assert_same_session_cookie is called
+    Then it reads the session cookie value off each response's cookies and returns the empty list when the two values are equal
+    And it returns one Finding naming the session cookie and the two values otherwise
+    And it is pure, reads only the two neutral records, and names no framework type
+
+  Scenario: with_header adds a header to a request under construction
+    Given request: Request and name: str and value: str
+    When with_header is called
+    Then it returns a new Request with that header set in headers and every other field carried unchanged
+    And it is pure and immutable: it builds and returns a new record rather than mutating the one handed in, and touches no world
+
+  Scenario: with_cookie adds a cookie to a request under construction
+    Given request: Request and name: str and value: str
+    When with_cookie is called
+    Then it returns a new Request with that cookie set in cookies and every other field carried unchanged
+    And it is pure and immutable: it builds and returns a new record rather than mutating the one handed in, and touches no world
+
+  Scenario: with_body sets the body of a request under construction
+    Given request: Request and content: str
+    When with_body is called
+    Then it returns a new Request with body set to content and every other field carried unchanged
+    And it is pure and immutable: it builds and returns a new record rather than mutating the one handed in, and touches no world
+
+  Scenario: with_content_type sets the Content-Type of a request under construction
+    Given request: Request and mime_type: str
+    When with_content_type is called
+    Then it returns a new Request with content_type set to mime_type and every other field carried unchanged
+    And it is pure and immutable: it builds and returns a new record rather than mutating the one handed in, and touches no world
+
+  Scenario: carry_cookie carries the previous response's Set-Cookie into the next request's Cookie
+    Given previous: Response and request: Request
+    When carry_cookie is called
+    Then it reads the Set-Cookie cookies off previous and returns a new Request with those carried into its cookies and every other field carried unchanged
+    And it is pure and immutable: it reads only the two records, builds and returns a new Request, and touches no world
+
+  Scenario: reuse_session reuses the session from the previous response in the next request
+    Given previous: Response and request: Request
+    When reuse_session is called
+    Then it reads the session cookie off previous and returns a new Request carrying that session into its cookies and every other field carried unchanged
+    And it is pure and immutable: it reads only the two records, builds and returns a new Request, and touches no world
+
+  Scenario: send_request sends an accumulated request through the injected client and records the response
+    Given client: Callable and method: str and path: str and request: Request
+    When send_request is called
+    Then method and path come from the When line and request is the accumulated Request the builders produced
+    And it calls the injected client, which sends the real request, reads the status, headers, cookies and body off its own framework's response, and returns honest-test's neutral Response already filled
+    And it returns that neutral Response for the assertions to read
+    And it does no I/O of its own: the client is the boundary, so it is edge, not a boundary

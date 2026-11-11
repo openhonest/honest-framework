@@ -744,6 +744,31 @@ FUNCTION check_ref009(modules, path):
                     f"'{resource}' and neither names the other. Confirm the coupling is intended.")
 ```
 
+#### HC-REF011 — Every workspace module declares itself
+
+HC-REF005 through HC-REF009 each read a module's `.hd`. A module that carries no `.hd` gives them nothing to read, so it passes every one of them by being invisible. That is the way out of the whole declaration tier: delete the declaration, and the architecture is no longer on the record, and no check says a word. honest-page is the case that proved it. It is a workspace member with a spec, a conformance suite running green, and a reference implementation the spec names by path, and for a time it carried no declaration and the gate reported clean. A gate you can leave by deleting a file is not a gate.
+
+HC-REF011 turns "Every reference resolves" on the set of modules. Every module that owes a declaration resolves to one, or the gate stops. Its subject is the workspace, not a single file: it reads the set of modules and the set of declarations and reports each module that is on the first and absent from the second. This is why it runs before any rule reads the content of a declaration. A missing declaration comes before every check over a declaration's content, so the membership check settles it first, and the later rules run only over modules that are on the record.
+
+**A module is a directory carrying a package manifest, and the check reads every language's tree.** A module is a directory that holds its language's manifest: `pyproject.toml`, `package.json`, `Cargo.toml`. The declaration language does not depend on the language a module is written in, so the membership check does not either. Reading only the Python tree is how four JavaScript modules once stayed invisible to it. The walk covers every tree the workspace holds, and a module in any of them owes a declaration the same way.
+
+```
+FUNCTION check_HC_REF011(workspace_roots, exempt):
+    members  ← { d FOR root IN workspace_roots
+                   FOR d IN directories_under(root)
+                   IF d carries a package manifest }            # I/O: the directory walk
+    declared ← { d FOR d IN members IF d carries a .hd }
+
+    FOR EACH module IN (members - declared) - exempt:
+        EMIT error(HC-REF011, module.path,
+            f"'{module.name}' is a workspace module and carries no .hd, so it escapes every "
+            "declaration check. Write its declaration, or exempt it by name with a reason.")
+```
+
+**A member is exempt only by name, with a reason, and the list only shrinks.** The rule subtracts the modules named on an exemption list, each carrying the reason it is not yet declared, the same adoption posture HC-REF005 takes toward a module it has not yet crossed. A module absent from the list owes a declaration. A module on the list is on the record as ungated, with its reason beside it, where a person can read why. Asserting that the rest will follow, without naming them on that list, is how a rule comes to exist in a catalogue and nowhere else. The list does not grow on its own: a new module is written with its declaration, not added to the exemptions.
+
+**Absence is a finding, never permission, and the two absences are kept apart.** A reader that returns the same empty answer for "a module that declares nothing" and "a module whose `.hd` will not parse" hides the second case inside the first, and the module passes on an error the gate should have raised. The decision keeps them apart: a member with no `.hd` is this rule's finding, and a member whose `.hd` is present but unreadable is a syntax finding (HC-SYN), not silent agreement. Collapsing the two into one empty value is the exact defect this tier exists to remove, so the reader reports which of the two it found.
+
 #### HC004 — Dead vocabulary type
 
 ```

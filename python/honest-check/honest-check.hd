@@ -443,6 +443,8 @@ module honest-check
 
   edge fn matches_watchlist : (name: str, watchlist: list<str>) -> bool note "the watchlist membership test HC008 runs, exposed for honest-test (section 3.5) so honest-test checks its own non-determinism watchlist against honest-check's and the two tools trap exactly the same calls (honest-test section 4.5). It answers whether a dotted call name matches an entry in a watchlist: an entry that carries no '*' matches by exact equality, and an entry that carries a '*' matches as a glob, the same membership HC008 runs against its IO_WATCH_LIST and NONDETERMINISTIC_WATCH_LIST (section 4.2). name is the dotted call name read off a call site — for example 'time.time', 'os.environ.get', 'requests.get' — the name HC008 tests. watchlist is the list of watchlist entries to test against, each a dotted name, some carrying a '*' glob (for example 'random.*', 'subprocess.run', 'fs.*'), exactly the entries section 4.2's IO_WATCH_LIST and NONDETERMINISTIC_WATCH_LIST hold for a language. It returns true when name matches any entry and false when it matches none. It reads nothing, opens nothing, executes nothing, and raises nothing."
 
+  edge fn undeclared_members : (members: list<str>, with_declaration: list<str>) -> list<str> note "the HC-REF011 membership decision (section 8, HC-REF011), exposed for the workspace membership gate membership-check.py so a module carrying no .hd cannot escape the declaration tier by being invisible. members is every workspace module the gate found carrying a package manifest; with_declaration is those of them found to also carry a .hd. It returns the members that carry no declaration and are not exempt by name, sorted, one per module that owes a declaration and has not written one. The exemption table EXEMPT_FROM_DECLARATION it subtracts is honest-check's own data: a module named there with the reason it is not yet declared, a decision a person made and can argue with, never a file silently missing. It reads nothing, opens nothing, executes nothing, and raises nothing; membership-check.py does the directory walk at the boundary and hands both sets here."
+
   # Each of the five shared-extraction functions is imported and called by honest-test on its own,
   # so each is named by its own import entry — the seam pattern, one entry per imported public
   # function. The entry-check confirms only the import and reports each UNCHECKED, which is what
@@ -452,6 +454,7 @@ module honest-check
   entry "import honest_check.declgraph" -> extract_state_machines
   entry "import honest_check.templates" -> template_class_references
   entry "import honest_check.watchlists" -> matches_watchlist
+  entry "import honest_check.declared" -> undeclared_members
 
   # The per-file check context: the one parse a run shares across the helper layer and the
   # rule sub-cores (section 3.4, section 3.5). check_source builds it once from the source it is

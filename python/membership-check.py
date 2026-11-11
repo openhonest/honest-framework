@@ -5,7 +5,7 @@ the content of a declaration. Reading only the Python tree is how four JavaScrip
 stayed invisible to it: the declaration language is independent of the language a module is
 written in, so the membership check has to be too.
 
-Run from python/ by lint-all.sh. The directory walk is the I/O; the decision is
+Run from python/ by check-all.sh. The directory walk is the I/O; the decision is
 honest_check.declared.undeclared_members, which is pure and takes two sets.
 """
 
@@ -35,7 +35,8 @@ def main():
     )
     if not missing:
         return 0
-    print("lint-all: these modules carry no .hd and no exemption: " + ", ".join(missing), file=sys.stderr)
+    print("HC-REF011: these modules carry no .hd and no exemption, so they escape every "
+          "declaration check: " + ", ".join(missing), file=sys.stderr)
     print("  Write the declaration, or add the module to EXEMPT_FROM_DECLARATION with its reason.", file=sys.stderr)
     return 1
 
