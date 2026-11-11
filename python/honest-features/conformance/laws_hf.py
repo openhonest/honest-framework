@@ -137,16 +137,16 @@ def _law_build_signature():
 def _law_verify_signature():
     bad = []
     sig = build_signature(_SECRET, "new_checkout", "on", 1710000000)
-    if verify_signature(_SECRET, "new_checkout", "on", 1710000000, sig, now=1710000030) is not True:
+    if verify_signature(_SECRET, "new_checkout", "on", 1710000000, sig, now=1710000030, window=60) is not True:
         bad.append("a matching signature within the window verifies")
-    if verify_signature(_SECRET, "new_checkout", "on", 1710000000, sig, now=1710000200) is not False:
+    if verify_signature(_SECRET, "new_checkout", "on", 1710000000, sig, now=1710000200, window=60) is not False:
         bad.append("a signature outside the replay window is rejected")
-    if verify_signature(_SECRET, "new_checkout", "on", 1710000000, "deadbeef", now=1710000030) is not False:
+    if verify_signature(_SECRET, "new_checkout", "on", 1710000000, "deadbeef", now=1710000030, window=60) is not False:
         bad.append("a non-matching signature is rejected")
-    # Boundaries of the default 60-second window: exactly 60 is still inside; 61 is the first reject.
-    if verify_signature(_SECRET, "new_checkout", "on", 1710000000, sig, now=1710000060) is not True:
+    # Boundaries of the 60-second window the caller passes: exactly 60 is still inside; 61 is the first reject.
+    if verify_signature(_SECRET, "new_checkout", "on", 1710000000, sig, now=1710000060, window=60) is not True:
         bad.append("a signature exactly at the window edge (60s) still verifies")
-    if verify_signature(_SECRET, "new_checkout", "on", 1710000000, sig, now=1710000061) is not False:
+    if verify_signature(_SECRET, "new_checkout", "on", 1710000000, sig, now=1710000061, window=60) is not False:
         bad.append("a signature one second past the window (61s) is rejected")
     return bad
 

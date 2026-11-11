@@ -15,9 +15,11 @@ def build_signature(secret, flag, state, timestamp):
     return hmac.new(secret, message, hashlib.sha256).hexdigest()
 
 
-def verify_signature(secret, flag, state, timestamp, signature, now, window=60):
+def verify_signature(secret, flag, state, timestamp, signature, now, window):
     """Verify a toggle signature (section 5.2): reject a timestamp outside the replay window, then
-    constant-time compare against the expected signature. `now` is injected boundary time. Pure."""
+    constant-time compare against the expected signature. `now` is injected boundary time, and
+    `window` is required, resolved at the boundary from config, so a caller never silently inherits
+    a replay tolerance it did not choose (HC-P015). Pure."""
     if abs(now - timestamp) > window:
         return False
     expected = build_signature(secret, flag, state, timestamp)

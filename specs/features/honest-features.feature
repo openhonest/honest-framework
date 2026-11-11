@@ -5,11 +5,6 @@ Feature: honest-features — runtime feature flags as a static vocabulary and a 
     When validate_vocabulary checks it
     Then a flag whose entry is not exactly states and initial_value, or has fewer than two distinct states, or an initial_value outside them, is a client fault, never a raise
 
-  Scenario: _flag_wellformed checks one flag entry's structure and contents
-    Given one flag entry
-    When _flag_wellformed inspects it
-    Then it holds only when the entry has exactly states and initial_value, a collection of at least two distinct states, and a member initial_value
-
   Scenario: initial_state builds the startup state from the initial values
     Given a flag vocabulary
     When initial_state is built

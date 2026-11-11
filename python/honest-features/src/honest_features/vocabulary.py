@@ -12,30 +12,29 @@ from honest_type import err, fault, ok
 _FLAG_KEYS = {"states", "initial_value"}
 
 
-def _flag_wellformed(spec):
-    """Whether one flag entry obeys the vocabulary rules (section 2.1, section 10.2): exactly the keys
-    `states` and `initial_value`, a `states` collection of at least two distinct members, and an
-    `initial_value` that is one of them. Checks structure before contents, so a malformed entry is a clean
-    False, never a KeyError. Pure."""
-    if set(spec) != _FLAG_KEYS:
-        return False
-    states = spec["states"]
-    # A flag declaration arrives from application code, so this predicate is deciding whether an
-    # unknown value is a well-formed declaration at all. It answers False rather than raising, which
-    # is what the docstring above promises, and it cannot answer without looking at the type.
-    if not isinstance(states, (list, set, tuple, frozenset)) or len(set(states)) < 2:  # honest: ignore HC-P005: validating an incoming declaration
-        return False
-    return spec["initial_value"] in states
-
-
 def validate_vocabulary(features):
     """Every flag entry obeys the vocabulary rules (section 2.1): exactly the keys `states` and
     `initial_value`, a `states` collection of at least two distinct members, and an `initial_value` that is
     one of them. Returns ok(features) or a client fault naming the offenders — a malformed entry is a clean
     fault, never a KeyError. Pure."""
+    def _flag_wellformed(spec):
+        """Whether one flag entry obeys the vocabulary rules (section 2.1, section 10.2): exactly the keys
+        `states` and `initial_value`, a `states` collection of at least two distinct members, and an
+        `initial_value` that is one of them. Checks structure before contents, so a malformed entry is a clean
+        False, never a KeyError. Pure."""
+        if set(spec) != _FLAG_KEYS:
+            return False
+        states = spec["states"]
+        # A flag declaration arrives from application code, so this predicate is deciding whether an
+        # unknown value is a well-formed declaration at all. It answers False rather than raising, which
+        # is what the docstring above promises, and it cannot answer without looking at the type.
+        if not isinstance(states, (list, set, tuple, frozenset)) or len(set(states)) < 2:  # honest: ignore HC-P005: validating an incoming declaration
+            return False
+        return spec["initial_value"] in states
+
     bad = [flag for flag, spec in features.items() if not _flag_wellformed(spec)]
     if bad:
-        return err(fault("invalid_vocabulary", f"flags violate the vocabulary rules: {bad}", "client", detail=bad))
+        return err(fault("invalid_vocabulary", f"flags violate the vocabulary rules: {bad}", "client", [], detail=bad))
     return ok(features)
 
 

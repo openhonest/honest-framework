@@ -209,7 +209,7 @@ def verify_signature(
     timestamp: int,
     signature: str,
     now: int,
-    window: int = 60,
+    window: int,
 ) -> bool:
     if abs(now - timestamp) > window:
         return False
@@ -218,7 +218,7 @@ def verify_signature(
     return hmac.compare_digest(expected, signature)
 ```
 
-`now` is passed in — reading the clock is I/O and belongs at the boundary, so `verify_signature` stays a pure function the tests can drive at any instant. `hmac.compare_digest` is required: string equality comparison is vulnerable to timing attacks.
+`now` is passed in — reading the clock is I/O and belongs at the boundary, so `verify_signature` stays a pure function the tests can drive at any instant. `window` is passed in for the same reason it is required rather than defaulted: a replay tolerance is a security decision, and a default would let a caller accept a 60-second window it never chose while hiding whether it chose or forgot (HC-P015). The boundary resolves it from config, commonly to 60 seconds, and passes it explicitly. `hmac.compare_digest` is required: string equality comparison is vulnerable to timing attacks.
 
 honest-features ships these as **pure functions over the state value** — `initial_state`, `feature_state`, `validate_toggle` (the 400 conditions), `apply_toggle`, `build_signature`, and `verify_signature`. The HTTP route below is an integration boundary: it holds the state value, reads the clock and the request, calls the pure functions, and emits the change event. (The FastAPI / pytest / A-B examples in this spec are illustrative integration; they thread the state value rather than a module global.)
 
