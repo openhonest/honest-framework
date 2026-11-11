@@ -141,7 +141,7 @@ def check_roles(sources, declaration):
     frontier = list(roled)
     while frontier:
         current = frontier.pop()
-        for callee in call_graph.get(current, ()):
+        for callee in (call_graph[current] if current in call_graph else ()):
             if callee not in reachable:
                 reachable.add(callee)
                 frontier.append(callee)

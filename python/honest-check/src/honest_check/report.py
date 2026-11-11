@@ -167,8 +167,9 @@ def enforced_rules_of(level):
     """
     cutoff = _LEVEL_ORDER.index(level)
     rules = set(_ALWAYS_RULES)
-    for name in _LEVEL_ORDER[: cutoff + 1]:
-        rules |= _RULES_ADDED_AT[name]
+    for name, added in _RULES_ADDED_AT.items():
+        if _LEVEL_ORDER.index(name) <= cutoff:
+            rules |= added
     return sorted(rules)
 
 
@@ -190,6 +191,10 @@ def prepare_report(diagnostics, args, adoption):
     for diagnostic in diagnostics:
         rule = diagnostic["rule_id"]
         severity = "info" if rule not in enforced else diagnostic["severity"]
+        if severity not in _SEVERITY_RANK:
+            raise ValueError(
+                f"diagnostic severity {severity!r} is not one of {sorted(_SEVERITY_RANK)}"
+            )
         if _SEVERITY_RANK[severity] < threshold:
             continue
         if include and rule not in include:
@@ -202,7 +207,7 @@ def prepare_report(diagnostics, args, adoption):
     if args["report_mode"]:
         for diagnostic in survivors:
             rule = diagnostic["rule_id"]
-            rule_counts[rule] = rule_counts.get(rule, 0) + 1
+            rule_counts[rule] = (rule_counts[rule] if rule in rule_counts else 0) + 1
 
     return {
         "diagnostics": survivors,

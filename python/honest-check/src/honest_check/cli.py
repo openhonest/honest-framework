@@ -69,6 +69,10 @@ def startup_check(paths, on_error, severity):
     hands the paths to check_paths, decides which findings reach the blocking severity, acts
     per on_error, and returns the same diagnostic list check_paths produced."""
     diagnostics = check_paths(paths)
+    if severity not in _SEVERITY_RANK:
+        raise HonestCheckError(
+            f"severity {severity!r} matched no rank; accepted are {sorted(_SEVERITY_RANK)}"
+        )
     threshold = _SEVERITY_RANK[severity]
     blocking = [d for d in diagnostics if _SEVERITY_RANK[d["severity"]] >= threshold]
 

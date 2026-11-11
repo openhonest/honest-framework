@@ -283,7 +283,7 @@ def cross_declaration(sources, declaration, export_source, rule_ids):
                     "HC-REF005",
                     f"'{name}' is exported by the module and declared in no .hd. Declare it, "
                     "or stop exporting it.",
-                    location_of.get(name, module_root),
+                    location_of[name] if name in location_of else module_root,
                 )
             )
         for name in sorted(declared_names & defined_names):

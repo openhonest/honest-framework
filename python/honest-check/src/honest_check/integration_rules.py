@@ -216,7 +216,7 @@ def check_hc_ref009(declarations, in_scope, paths):
         for writer_module, _writer_function in writers[resource]:
             if writer_module not in targets_in_scope:
                 continue
-            for reader_module, _reader_function in readers.get(resource, []):
+            for reader_module, _reader_function in (readers[resource] if resource in readers else []):
                 if writer_module == reader_module:
                     continue
                 findings.append(

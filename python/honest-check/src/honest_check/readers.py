@@ -88,8 +88,8 @@ def load_config():
         return {}
     with open(toml_path, "rb") as handle:
         data = tomllib.load(handle)
-    rules = data.get("rules", {})
-    or003 = rules.get("HC-OR003", {})
+    rules = data["rules"] if "rules" in data else {}
+    or003 = rules["HC-OR003"] if "HC-OR003" in rules else {}
     if "min_run" in or003:
         return {"HC-OR003": {"min_run": or003["min_run"]}}
     return {}
@@ -120,12 +120,12 @@ def load_project_config():
         return {"exclude": [], "adoption": "Declared", "format_manifest": ""}
     with open(toml_path, "rb") as handle:
         data = tomllib.load(handle)
-    check = data.get("check", {})
-    adoption = check.get("adoption", "Declared")
+    check = data["check"] if "check" in data else {}
+    adoption = check["adoption"] if "adoption" in check else "Declared"
     return {
-        "exclude": check.get("exclude", []),
+        "exclude": check["exclude"] if "exclude" in check else [],
         "adoption": adoption if adoption in _ADOPTION_LEVELS else "Declared",
-        "format_manifest": check.get("format_manifest", ""),
+        "format_manifest": check["format_manifest"] if "format_manifest" in check else "",
     }
 
 

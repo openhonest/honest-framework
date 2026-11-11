@@ -457,7 +457,7 @@ def check_per_file(ctx):
         body is normalized to the sequence of call names it makes, in source order; the shared
         run is the longest contiguous common run of those names. Reported once per pair, at the
         later orchestrator's `def` line."""
-        min_run = rule_config.get("HC-OR003", {}).get("min_run")
+        min_run = (rule_config["HC-OR003"] if "HC-OR003" in rule_config else {}).get("min_run")
         if min_run is None:
             return []
         orchestrators = []
