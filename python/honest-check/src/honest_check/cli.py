@@ -35,6 +35,15 @@ from honest_check.report import (
 # The minimum severity a finding must reach to block startup, ranked (section 2.3).
 _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
 
+# The outcome each on_error word names at startup (section 2.3): whether a block prints to stderr,
+# raises, and halts the process. Module-level data, so startup_check reads the outcome rather than
+# assembling it in the door (§HC-R006).
+_ON_ERROR_OUTCOMES = {
+    "warn": {"print": True, "raise": False, "halt": False},
+    "raise": {"print": False, "raise": True, "halt": False},
+    "halt": {"print": True, "raise": False, "halt": True},
+}
+
 # The grammars whose files carry the cross-file references check_references resolves: the
 # template grammars (html, jinja), the stylesheet grammar (css) and the script grammar
 # (javascript). run_check pairs only the discovered files honest-parse detects as one of
@@ -64,6 +73,13 @@ def check_paths(paths):
     return diagnostics
 
 
+def blocking_findings(diagnostics, threshold):
+    """The diagnostics whose severity reaches the blocking threshold (section 2.3). Pure:
+    startup_check resolves the threshold at the boundary and asks here which findings block, so
+    the filtered list is built off the boundary (§HC-R006)."""
+    return [d for d in diagnostics if _SEVERITY_RANK[d["severity"]] >= threshold]
+
+
 def startup_check(paths, on_error, severity):
     """The door the framework's development-mode startup integration calls (section 2.3). It
     hands the paths to check_paths, decides which findings reach the blocking severity, acts
@@ -74,7 +90,7 @@ def startup_check(paths, on_error, severity):
             f"severity {severity!r} matched no rank; accepted are {sorted(_SEVERITY_RANK)}"
         )
     threshold = _SEVERITY_RANK[severity]
-    blocking = [d for d in diagnostics if _SEVERITY_RANK[d["severity"]] >= threshold]
+    blocking = blocking_findings(diagnostics, threshold)
 
     def render_block():
         return "\n".join(
@@ -83,20 +99,16 @@ def startup_check(paths, on_error, severity):
         )
 
     # The on_error word picks an outcome as data (section 2.3): whether a block prints to
-    # stderr, raises, and halts the process. The door performs the I/O in its own body, so the
-    # stderr write sits at the boundary this function already is, not in a nested helper a .hd
-    # cannot name.
-    outcomes = {
-        "warn": {"print": True, "raise": False, "halt": False},
-        "raise": {"print": False, "raise": True, "halt": False},
-        "halt": {"print": True, "raise": False, "halt": True},
-    }
-    if on_error not in outcomes:
+    # stderr, raises, and halts the process. The outcomes table is module-level data, not built
+    # here, so this door touches the world and hands off rather than assembling a record in the
+    # boundary (§HC-R006). The door performs the I/O in its own body, so the stderr write sits at
+    # the boundary this function already is, not in a nested helper a .hd cannot name.
+    if on_error not in _ON_ERROR_OUTCOMES:
         raise HonestCheckError(
             f"on_error {on_error!r} matched no branch; accepted are "
-            f"{sorted(outcomes)}"
+            f"{sorted(_ON_ERROR_OUTCOMES)}"
         )
-    outcome = outcomes[on_error]
+    outcome = _ON_ERROR_OUTCOMES[on_error]
     if blocking and outcome["print"]:
         print(render_block(), file=sys.stderr)
     if blocking and outcome["raise"]:

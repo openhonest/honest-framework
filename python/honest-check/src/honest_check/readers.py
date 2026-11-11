@@ -88,6 +88,15 @@ def load_config():
         return {}
     with open(toml_path, "rb") as handle:
         data = tomllib.load(handle)
+    return resolve_rule_config(data)
+
+
+def resolve_rule_config(data):
+    """Build the [rules] RuleConfig from a parsed honest-check.toml table (section 3.1). Pure:
+    load_config does the read and hands the table here, so the config record is assembled off the
+    boundary (§HC-R006). honest-check's one configurable rule is HC-OR003, whose min_run has no
+    built-in default, so the config is {"HC-OR003": {"min_run": N}} when the project sets min_run
+    and the empty map otherwise, because there is nothing to fill in."""
     rules = data["rules"] if "rules" in data else {}
     or003 = rules["HC-OR003"] if "HC-OR003" in rules else {}
     if "min_run" in or003:
@@ -117,9 +126,20 @@ def load_project_config():
 
     toml_path = find_toml()
     if toml_path is None:
-        return {"exclude": [], "adoption": "Declared", "format_manifest": ""}
+        return resolve_project_config({})
     with open(toml_path, "rb") as handle:
         data = tomllib.load(handle)
+    return resolve_project_config(data)
+
+
+def resolve_project_config(data):
+    """Build the [check] ProjectConfig from a parsed honest-check.toml table (section 3.1,
+    section 9.4). Pure: load_project_config does the read and hands the table here, so the record
+    is built off the boundary, not in it. exclude is the glob list, the empty list when unset;
+    adoption is the declared AdoptionLevel, resolved to 'Declared' (the strictest) when the key
+    is absent or names no level the vocabulary carries; format_manifest is the path, the empty
+    string when unset. An empty table yields the default config, which is what the reader hands
+    this when no honest-check.toml exists."""
     check = data["check"] if "check" in data else {}
     adoption = check["adoption"] if "adoption" in check else "Declared"
     return {
@@ -153,11 +173,14 @@ def read_format_manifest(path):
         return None
     if not isinstance(manifest, dict):
         return None
-    return {
-        attribute: values
-        for attribute, values in manifest.items()
-        if isinstance(values, list)
-    }
+    return manifest
+
+
+def read_fault(problem, remedy):
+    """Build read_declaration's Fault — the {problem, remedy} record a failed .hd read answers
+    with (§HC-R002). Pure: read_declaration detects the failure at the boundary and names the two
+    sentences here, so the fault record is assembled off the boundary (§HC-R006)."""
+    return {"problem": problem, "remedy": remedy}
 
 
 def read_declaration(hd_path):
@@ -175,20 +198,20 @@ def read_declaration(hd_path):
     value is non-empty. Its one side effect is reading the filesystem.
     """
     if not os.path.isfile(hd_path):
-        return {
-            "problem": f"the declaration path {hd_path!r} named by --declaration does not "
-            "name a readable file.",
-            "remedy": "correct the --declaration path to the module's .hd.",
-        }
+        return read_fault(
+            f"the declaration path {hd_path!r} named by --declaration does not name a "
+            "readable file.",
+            "correct the --declaration path to the module's .hd.",
+        )
     with open(hd_path, "r", encoding="utf-8") as handle:
         text = handle.read()
     parsed = read_hd(text)
     if "ok" not in parsed:
-        return {
-            "problem": f"honest-design could not parse the declaration at {hd_path!r}: "
+        return read_fault(
+            f"honest-design could not parse the declaration at {hd_path!r}: "
             f"{parsed.get('err')!r}.",
-            "remedy": "fix the declaration so honest-design can parse it.",
-        }
+            "fix the declaration so honest-design can parse it.",
+        )
     modules = parsed["ok"]["modules"]
     return modules[0]
 
