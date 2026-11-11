@@ -791,9 +791,10 @@ def check_per_file(ctx):
         fires — HC001 already reports an undeclared chain link. A keyword may name a single
         vocabulary or a `|` union of vocabularies; a union resolves to the union of the named
         vocabularies' base-type names (the same emits resolution HC010 reads). The first link's
-        accepts is left unchecked here: its input is the derived boundary vocabulary (spec
-        §497, the route-map/template derivation), which needs cross-artifact inputs honest-check
-        does not ingest yet."""
+        accepts is not checked here, because its input is the derived boundary vocabulary (spec
+        §497), which needs the route map and the templates — a whole-set view this per-file pass
+        does not hold. That half of HC002 runs in check_references (references.py), the whole-set
+        reference pass that already reads the route map and the templates."""
         vocab_calls, _binding_calls = construction_maps(ctx)
 
         def vocab_arg_type_names(arg):

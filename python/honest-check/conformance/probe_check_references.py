@@ -257,6 +257,54 @@ _CASES = [
         ],
         "want": [],
     },
+    # HC002 first-link half (§497): the first link accepts a field the route's template never
+    # sends, so it fires at the chain site. The template sends only "q"; the link also accepts
+    # "missing".
+    {
+        "name": "HC002 first-link fires (accepts a field no template sends)",
+        "sources": [
+            {"path": "page.html", "text": '<input name="q" hx-get="/search">\n'},
+            {"path": "app.py", "text": 'def route_table():\n    return [{"method": "GET", "path": "/search", "chain": "c"}]\nacc = vocabulary({"q": {"a"}, "missing": {"b"}})\n@link(accepts=acc)\ndef first(m):\n    return m\nc = chain(first)\n'},
+        ],
+        "want": [("HC002", "error", "app.py")],
+    },
+    # HC002 first-link clean — every type the first link accepts is a field the template sends.
+    {
+        "name": "HC002 first-link clean (template sends every accepted field)",
+        "sources": [
+            {"path": "page.html", "text": '<input name="q" hx-get="/search">\n'},
+            {"path": "app.py", "text": 'def route_table():\n    return [{"method": "GET", "path": "/search", "chain": "c"}]\nacc = vocabulary({"q": {"a"}})\n@link(accepts=acc)\ndef first(m):\n    return m\nc = chain(first)\n'},
+        ],
+        "want": [],
+    },
+    # HC002 first-link exempt — a boundary=True first link is the intake boundary itself (§497).
+    {
+        "name": "HC002 first-link exempt (boundary=True first link)",
+        "sources": [
+            {"path": "page.html", "text": '<input name="q" hx-get="/search">\n'},
+            {"path": "app.py", "text": 'def route_table():\n    return [{"method": "GET", "path": "/search", "chain": "c"}]\nacc = vocabulary({"q": {"a"}, "missing": {"b"}})\n@link(accepts=acc, boundary=True)\ndef first(m):\n    return m\nc = chain(first)\n'},
+        ],
+        "want": [],
+    },
+    # HC002 first-link fires on a dynamic field name — the boundary is not knowable (§497).
+    {
+        "name": "HC002 first-link fires (dynamic field name, unknowable boundary)",
+        "sources": [
+            {"path": "page.html", "text": '<input name="{{ dyn }}" hx-get="/search">\n'},
+            {"path": "app.py", "text": 'def route_table():\n    return [{"method": "GET", "path": "/search", "chain": "c"}]\nacc = vocabulary({"q": {"a"}})\n@link(accepts=acc)\ndef first(m):\n    return m\nc = chain(first)\n'},
+        ],
+        "want": [("HC002", "error", "app.py")],
+    },
+    # HC002 first-link skip — the route names a chain no chain(...) defines (a handler, not a
+    # chain), so the check has no first link to read and stays silent.
+    {
+        "name": "HC002 first-link skip (route names a handler, not a chain)",
+        "sources": [
+            {"path": "page.html", "text": '<input name="q" hx-get="/search">\n'},
+            {"path": "app.py", "text": 'def route_table():\n    return [{"method": "GET", "path": "/search", "chain": "search"}]\nacc = vocabulary({"q": {"a"}, "missing": {"b"}})\n@link(accepts=acc)\ndef first(m):\n    return m\nc = chain(first)\n'},
+        ],
+        "want": [],
+    },
 ]
 
 
