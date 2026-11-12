@@ -12,6 +12,7 @@ is pure.
 import time
 
 from honest_gherkin.ir import step_fault
+from honest_gherkin.parse import parse_feature
 from honest_gherkin.registry import match_step
 
 # A match fault is already data (no exception); map its code to the step status it reports (section 7.1).
@@ -25,7 +26,7 @@ _EXCEPTION_TABLE = ((AssertionError, "failed", "assertion_failed"),)
 def _now_ms():
     """Read the wall clock in milliseconds (section 6.2): the one impure seam in the run model.
     A spoke may stub it to return 0 for fully repeatable runs."""
-    return time.perf_counter() * 1000.0  # honest: ignore HC-P004: the one sanctioned clock read, section 6.2
+    return time.perf_counter() * 1000.0
 
 
 def _classify_exception(exc):
@@ -45,7 +46,8 @@ def run_step(step, context, registry, scenario_name):
     if "err" in matched:
         code = matched["err"]["code"]
         fault = step_fault(code, matched["err"]["detail"], scenario_name=scenario_name, step_text=step["text"])
-        return {"result": {"step": step, "status": _MATCH_FAULT_STATUS[code], "fault": fault}, "context": context}
+        status = _MATCH_FAULT_STATUS[code] if code in _MATCH_FAULT_STATUS else "errored"
+        return {"result": {"step": step, "status": status, "fault": fault}, "context": context}
     handler = matched["ok"]["pattern"]["handler"]
     captures = matched["ok"]["captures"]
     # honest: disable HC-P002: the step runner turns a raised exception into a reported fault value, which is what a boundary is for
@@ -60,11 +62,11 @@ def run_step(step, context, registry, scenario_name):
     return {"result": {"step": step, "status": "ok", "fault": None}, "context": returned or context}
 
 
-def run_scenario(scenario, background, registry):
+def run_scenario(scenario, background, registry, now):
     """Run one scenario (section 6.2): fold the background steps then the scenario's own over an
     empty immutable context, stopping at the first non-ok step. The status is ok iff every executed
     step is ok, else err."""
-    start = _now_ms()
+    start = now()
     context = {}
     step_results = []
     status = "ok"
@@ -79,7 +81,7 @@ def run_scenario(scenario, background, registry):
         "name": scenario["name"],
         "status": status,
         "step_results": step_results,
-        "duration_ms": round(_now_ms() - start),
+        "duration_ms": round(now() - start),
     }
 
 
@@ -94,3 +96,35 @@ def fold_feature_report(feature, scenario_reports):
         "total_passed": total_passed,
         "total_failed": len(scenario_reports) - total_passed,
     }
+
+
+def run_feature(source, source_path, registry, now):
+    """Parse one feature's source and run it (sections 6, 8). On a parse ok it runs every scenario
+    with run_scenario and folds the result with fold_feature_report; on a parse err it returns a
+    failing FeatureReport carrying the bad_feature_syntax fault, so a malformed feature is reported
+    and never swallowed. Pure: read_feature_source reads the text at the boundary, and this only
+    composes the pure parse and run, so it performs no I/O and raises nothing."""
+    def _parse_failure_report(fault):
+        """One failing FeatureReport for a parse error: a single errored scenario carrying the
+        bad_feature_syntax fault, so the failure is surfaced as a failed run."""
+        step = {"kind": "given", "resolved_kind": "given", "text": fault["detail"], "source_line": 0}
+        scenario_report = {
+            "name": "bad feature syntax",
+            "status": "err",
+            "step_results": [{"step": step, "status": "errored", "fault": fault}],
+            "duration_ms": 0,
+        }
+        return {
+            "feature_name": source_path,
+            "source_path": source_path,
+            "scenarios": [scenario_report],
+            "total_passed": 0,
+            "total_failed": 1,
+        }
+
+    parsed = parse_feature(source, source_path)
+    if "err" in parsed:
+        return _parse_failure_report(parsed["err"])
+    feature = parsed["ok"]
+    reports = [run_scenario(scenario, feature["background_steps"], registry, now) for scenario in feature["scenarios"]]
+    return fold_feature_report(feature, reports)

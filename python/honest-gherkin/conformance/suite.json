@@ -421,7 +421,11 @@
     "run_step",
     "run_scenario",
     "fold_feature_report",
-    "run_feature_file",
+    "run_feature",
+    "read_feature_source",
+    "print_report",
+    "run_cli",
+    "main",
     "step_fault",
     "STEP_KINDS",
     "STEP_STATUSES",
@@ -439,45 +443,6 @@
     "FeatureReport",
     "StepFault"
    ]
-  },
-  {
-   "id": "failurereport-bad-syntax",
-   "failurereport": {
-    "path": "orders.feature",
-    "code": "bad_feature_syntax",
-    "detail": "line 2: step outside a scenario",
-    "step_text": "Given an orphan step"
-   },
-   "expect": {
-    "feature_name": "orders.feature",
-    "source_path": "orders.feature",
-    "scenarios": [
-     {
-      "name": "bad feature syntax",
-      "status": "err",
-      "step_results": [
-       {
-        "step": {
-         "kind": "given",
-         "resolved_kind": "given",
-         "text": "line 2: step outside a scenario",
-         "source_line": 0
-        },
-        "status": "errored",
-        "fault": {
-         "code": "bad_feature_syntax",
-         "scenario_name": "",
-         "step_text": "Given an orphan step",
-         "detail": "line 2: step outside a scenario"
-        }
-       }
-      ],
-      "duration_ms": 0
-     }
-    ],
-    "total_passed": 0,
-    "total_failed": 1
-   }
   }
  ],
  "value_oracle_exempt": [
@@ -502,8 +467,24 @@
    "reason": "Its report carries wall-clock duration (non-deterministic); the scenario runner the value oracle runs on."
   },
   {
-   "function": "run_feature_file",
-   "reason": "Reads the filesystem and reports wall-clock duration (non-deterministic); verified by its own conformance probe."
+   "function": "run_feature",
+   "reason": "Its report carries wall-clock duration (non-deterministic); the pure feature runner the laws exercise directly."
+  },
+  {
+   "function": "read_feature_source",
+   "reason": "Reads the filesystem (section 8); a boundary reader verified by the laws, not a portable value."
+  },
+  {
+   "function": "print_report",
+   "reason": "Writes to stdout (section 8); a boundary sink verified by the laws, not a portable value."
+  },
+  {
+   "function": "run_cli",
+   "reason": "The CLI orchestrator reads the filesystem, imports step modules and writes stdout (section 8); verified by the laws, not a portable value."
+  },
+  {
+   "function": "main",
+   "reason": "The CLI door hands argv to run_cli (section 8); verified by the laws, not a portable value."
   }
  ]
 }

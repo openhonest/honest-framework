@@ -1,74 +1,207 @@
-# honest-gherkin declared in .hd — the BDD execution engine. Pure but for the single I/O boundary
-# that reads a feature file; steps match a registry and the scenario folds over an immutable context.
+# honest-gherkin declared in .hd — the BDD execution engine of the Honest Framework (spec §1). It
+# parses a Gherkin-subset .feature file into an immutable IR, matches each step against a registry of
+# handlers threaded through as a value, folds each scenario's steps over an immutable context, and
+# reports the outcome as plain data. A BDD scenario is a pure fold of its steps over an immutable
+# context; matching, binding and failure are data, not exceptions; the registry is a value, never
+# global state (spec §1.1). Everything in §§2-7 is pure: the one I/O boundary is the CLI, where a door
+# hands argv to one orchestrator, three readers pull the feature text, the step modules and the
+# feature paths, and one sink writes each report to stdout (spec §8).
 
 module honest-gherkin
 
   layer tooling
 
-  # The surface, closed: every side of the world a boundary here touches, and no other.
-  inputs = { "filesystem" }
+  # The surface, closed: every side of the world a boundary here touches, and no other (spec §8).
+  inputs = { "file"    : "the filesystem the feature-file reader read_feature_source and the feature-file discoverer _discover_features pull .feature text and paths from (spec §8)",
+             "process" : "the running process the step-module loader _load_steps imports each --steps module from, to build the registry (spec §8.1, §8.2)",
+             "clock"   : "the wall clock the reader _now_ms reads for a scenario's duration, injected into the run so the engine stays pure (spec §6.2)" }
+  outputs = { "stdout" : "the standard-output stream the sink print_report writes each feature report's summary line to (spec §8)" }
 
   type Step = {
     kind: str
     text: str
-    resolved_kind: str
-  }
+    source_line: int
+  } note "one step of a scenario, the source-level IR of a single Given/When/Then/And/But line (spec §2). kind is the literal keyword the line was written with, lower-cased, exactly one of the five step kinds given, when, then, and, but (the STEP_KINDS set); the literal kind is preserved so a report can render the line as written (spec §2.1). text is the step text with the keyword stripped — everything after the leading keyword — which is what match_step matches against a registered pattern. source_line is the 1-based line number the step sat on in the source file, carried so a fault can name where the step is. An And or a But carries its own literal kind here; its resolved kind — the kind of the most recent Given/When/Then the parser tracked — is computed by the parser for grouping and is not a field of this record (spec §2.1)."
 
   type Scenario = {
     name: str
     steps: list<Step>
-  }
+    tags: list<str>
+    source_line: int
+  } note "one scenario of a feature, the source-level IR of a Scenario: block and the steps under it (spec §2). name is the scenario name, the free text after the Scenario: keyword; a scenario with no name is a structural violation the parser reports as a bad_feature_syntax fault (spec §3). steps is the ordered list of this scenario's own steps, each a Step, in source order. tags is the list of tag words attached to this scenario — the @tag lines that preceded the Scenario: line, with the leading @ stripped; it is the empty list when no tag preceded it (spec §1.6, §2). source_line is the 1-based line number the Scenario: line sat on."
 
   type Feature = {
     name: str
+    description: str
     scenarios: list<Scenario>
     background_steps: list<Step>
-  }
+    source_path: str
+  } note "one whole feature, the root source-level IR a feature file parses to (spec §2). name is the feature name, the free text after the Feature: keyword. description is the free text written between the Feature: line and the first Scenario: line, joined as it appeared (spec §2). scenarios is the ordered list of this feature's scenarios, each a Scenario, in source order. background_steps is reserved for the per-Feature Background follow-up and is always the empty list in M1 (spec §1.6, §2). source_path is the filesystem path the source text was read from, carried so a report can name the file. parse_feature produces a Feature wrapped in a ParsedFeature on success."
+
+  type StepPattern = {
+    kind: str
+    pattern: str
+    handler: Callable
+  } note "one registered step pattern, a single row of the step registry (spec §5). kind is the step kind this pattern answers for, one of the STEP_KINDS words (given, when, then, and, but). pattern is the {name}-style source pattern as the step module wrote it: a literal string with optional {name} or {name:type} placeholders, compiled on demand by compile_pattern when matching. handler is the step function this pattern binds to — a pure function that takes the immutable context and the bound, coerced captures as named arguments and returns a new context; it is held in the registry and invoked by the engine, never read apart, which is why it is a plain callable rather than a shape the engine inspects (spec §5)."
 
   type Registry = {
-    steps: dict<str, any>
-  }
+    patterns: list<StepPattern>
+  } note "the step registry, a value threaded through the run rather than global state (spec §5). patterns is the ordered list of every registered StepPattern, each a kind/pattern/handler row. empty_registry returns a Registry whose patterns list is empty; register_step returns a new Registry with one pattern appended and never mutates its argument. A step module's register(registry) builds one of these up by calling register_step once per pattern. match_step reads this value to find the one pattern a step text matches; no decorator and no module-global registry exists, so a step is registered only by threading this value (spec §5, §10 requirement 5)."
+
+  type CompiledPattern = {
+    regex: str
+    coercions: dict<str, str>
+  } note "the compiled form of one step pattern, the ok payload compile_pattern produces (spec §4). regex is the pattern translated to a full-text (both-ends-anchored) regular expression, each {name} or {name:type} placeholder turned into a named capture; it is anchored so a pattern matches the whole step text, not a substring (spec §4). coercions records, per placeholder name, the coercion to apply to that capture at bind time — the PLACEHOLDER_TYPES entry the placeholder named: identity for str, to-integer for int, to-float for float (spec §4). A placeholder whose type is not one of those three is not compiled; compile_pattern returns a bad_feature_syntax StepFault instead of a CompiledPattern (spec §4). The exact field names are honest-gherkin's rendering of the spec's prose, which fixes the behaviour (anchored full-text match, named captures, recorded per-placeholder coercion) but not a concrete field list."
+
+  type StepMatch = {
+    pattern: StepPattern
+    captures: dict<str, any>
+  } note "one successful match of a step against the registry, the ok payload match_step produces (spec §5). pattern is the single StepPattern whose compiled regex matched the step text. captures maps each placeholder name to its bound and coerced value — a string for a {name} or {name:str} placeholder, an integer for {name:int}, a float for {name:float} — ready to hand to the pattern's handler as named arguments (spec §4, §5). A StepMatch is produced only when exactly one registered pattern matches; zero matches or more than one yield a StepFault, not a StepMatch (spec §5.1)."
 
   type StepFault = {
     code: str
-    detail: dict<str, any>
     scenario_name: str
     step_text: str
-  }
+    detail: str
+  } note "one failure in the engine, carried as data and never raised inside the engine (spec §7). code is the fault kind, exactly one of the five closed FAULT_CODES words: step_unmatched (no registered pattern matched the step), ambiguous_step (more than one matched), assertion_failed (the handler raised an assertion failure), step_errored (the handler raised any other exception), bad_feature_syntax (the source, a pattern, or a placeholder type was malformed) — spec §7. scenario_name is the name of the scenario the fault arose in, the empty string when the fault is a parse fault that precedes any scenario. step_text is the text of the step that failed, the empty string for a parse fault not tied to a single step. detail is a human-readable sentence giving the particulars: the line number and message for a bad_feature_syntax fault, the competing patterns for an ambiguous_step, the assertion message for an assertion_failed (spec §3, §5.1, §7). step_fault builds one of these from its four parts."
+
+  type StepResult = {
+    step: Step
+    status: str
+    fault: StepFault | NOTHING
+  } note "the outcome of running one step, produced by run_step (spec §6.1). step is the Step that was run. status is the step's status, exactly one of the five STEP_STATUSES words: ok (the handler ran and returned), failed (the handler raised an assertion failure), unmatched (no registered pattern matched), ambiguous (more than one matched), errored (the handler raised any other exception) — spec §7.1. fault is the StepFault explaining a non-ok status, and is the absence value NOTHING exactly when status is ok, so a reader never has to tell a missing fault from a forgotten one (spec §6.1). The exception-classification table maps each catchable failure to its (status, fault code) pair: a match returning step_unmatched gives status unmatched, ambiguous_step gives ambiguous, a handler assertion gives failed/assertion_failed, any other handler exception gives errored/step_errored (spec §7.1)."
 
   type ScenarioReport = {
     name: str
     status: str
-    steps: list<any>
-  }
+    step_results: list<StepResult>
+    duration_ms: int
+  } note "the report of running one scenario, produced by run_scenario (spec §6.2). name is the scenario name. status is the scenario status, exactly one of the three SCENARIO_STATUSES words: ok iff every executed step is ok, err if any step was non-ok, skipped if the scenario was not run (spec §6.2, §7.1). step_results is the ordered list of StepResult values for the steps that were executed; the fold stops at the first non-ok step, so in M1 the steps after a failure are not run and do not appear here (spec §6.1, §6.2). duration_ms is the wall-clock run time in milliseconds — the one impure read inside run_scenario (reading the clock), which a spoke may treat as 0 in a repeatable-test mode (spec §6.2)."
 
   type FeatureReport = {
-    name: str
-    passed: int
-    failed: int
-  }
+    feature_name: str
+    source_path: str
+    scenarios: list<ScenarioReport>
+    total_passed: int
+    total_failed: int
+  } note "the report of running one whole feature, produced by fold_feature_report and by run_feature (spec §6.3, §8). feature_name is the name of the feature that ran. source_path is the filesystem path its source came from. scenarios is the ordered list of ScenarioReport values, one per scenario run. total_passed counts the scenarios whose status is ok; total_failed is the rest (spec §6.3). On a parse failure run_feature yields a FeatureReport whose single scenario carries the bad_feature_syntax fault, so a parse error is reported as a failure and never swallowed (spec §8). The CLI exit code is 0 iff total_failed is 0 across every feature, else 1 (spec §8.1)."
+
+  type ParsedFeature = {
+    ok: Feature
+    err: StepFault
+  } note "the result of parsing one feature file, the concrete Result shape parse_feature returns (spec §3). On success the ok arm carries the parsed Feature and the err arm is absent; on malformed input the err arm carries a StepFault with code bad_feature_syntax and the ok arm is absent (spec §3). It is a concrete ParsedFeature rather than the generic Result so the data path from parse_feature into run_feature, run_scenario and fold_feature_report carries a visible Feature — and through Feature its Scenarios and Steps — rather than hiding them behind an untyped ok. Parsing returns this fault as data and never raises: a step declared outside any scenario, a scenario with no name, or any other structural violation becomes err, with the line number and a human-readable message in the fault's detail (spec §3)."
 
   type Result = {
-    ok: any
+    ok: CompiledPattern | StepMatch
     err: StepFault
-  }
+  } note "the generic engine result the two engine functions that return a value-or-fault share: compile_pattern and match_step (spec §3, §4, §5.1). On success the ok arm carries the produced value — a CompiledPattern from compile_pattern, a StepMatch from match_step — and on failure the err arm carries a StepFault, so every one of these functions returns a fault as data and never raises (spec §3 normative change, §10 requirement 2). The ok arm is typed as the union of the two things this shared result wraps rather than an untyped any, so the two payload types the spec writes as Result[CompiledPattern] and Result[StepMatch] are named in the declaration rather than hidden. compile_pattern's ok is a CompiledPattern and its err a bad_feature_syntax fault; match_step's ok is a StepMatch and its err a step_unmatched or ambiguous_step fault (spec §4, §5.1)."
 
-  fn parse_feature : (source: str, source_path: str) -> Result
+  # ---- the parse line-kind engine declared as data (spec §3.1) ----
+  # The parser sorts each line into exactly one line kind by an ordered table of checks (first match
+  # wins), then a second table maps the line kind to a pure function that updates the running state.
+  # Both the sorting and the handling are table lookups, never an if/elif ladder on keywords (spec §3.1).
 
-  fn compile_pattern : (pattern: str) -> Result
+  dispatch line_kinds = {
+    "blank"    -> _is_blank,
+    "comment"  -> _starts_with,
+    "tag"      -> _starts_with,
+    "feature"  -> _starts_with,
+    "scenario" -> _starts_with,
+    "step"     -> _is_step
+  } note "the ordered line-classification table _classify folds a line through to sort it into exactly one line kind, first match wins (spec §3.1). Classification order is significant and the table encodes it: a # line is a comment even if it begins with the word Feature, so the comment check precedes the feature check. _is_blank answers the blank kind; _starts_with answers the comment, tag, feature and scenario kinds, each binding the keyword it tests for (#, @, Feature:, Scenario:); _is_step answers the step kind by recognizing a leading Given/When/Then/And/But keyword. A line that matches none of these is the description kind, handled by line_handlers' fall-through and so not a key here (spec §3.1)."
 
-  fn empty_registry : () -> Registry
+  dispatch line_handlers = {
+    "blank"       -> _on_ignore,
+    "comment"     -> _on_ignore,
+    "tag"         -> _on_tag,
+    "feature"     -> _on_feature,
+    "scenario"    -> _on_scenario,
+    "step"        -> _on_step,
+    "description" -> _on_description
+  } note "the line-kind-to-state-handler table parse_feature folds each classified line through to update the running parse state (spec §3.1). The key is the line kind _classify returned, plus description for a line that matched no classifier. _on_ignore drops a blank or comment line unchanged; _on_tag accumulates a pending tag awaiting the next scenario; _on_feature records the feature name and enters the feature header; _on_scenario flushes any scenario under construction, starts a new one, and attaches the pending tags; _on_step appends a step to the current scenario, tracking the last resolved kind so And/But inherit it; _on_description appends a free-text description line while the parser is in the feature header. Each handler takes the immutable state and the line and returns a new state (spec §3.1)."
 
-  fn register_step : (registry: Registry, kind: str, pattern: str, handler: Callable) -> Registry
+  # ---- the pure engine (spec §§2-7) ----
 
-  fn match_step : (step: Step, registry: Registry) -> Result
+  fn parse_feature : (source: str, source_path: str) -> ParsedFeature invokes _classify, line_handlers, _flush note "parses one feature file's text into a Feature, returning a ParsedFeature (spec §3). source is the full text of a Gherkin-subset .feature file — Feature:/Scenario:/Given/When/Then/And/But lines, @tag lines, # comments and blank lines, with {name}/{name:int}/{name:float} placeholders in step text (spec §1.6) — read at the boundary by read_feature_source and handed in, so this function is pure and opens no file. source_path is the filesystem path that text came from, carried onto the Feature and into any fault's detail. It reads the lines one at a time, sorts each into a line kind with _classify, and folds the matching line_handlers state handler over an immutable state dict (feature name, description lines, completed scenarios, pending tags, the scenario under construction, the last resolved step kind, an in-header flag, and an error list); at end of input the current scenario is flushed (spec §3.1). On well-formed input it returns a ParsedFeature whose ok arm is the Feature. On any structural violation — a step outside any scenario, a scenario with no name — it returns a ParsedFeature whose err arm is a StepFault with code bad_feature_syntax, the first error's line number and message in detail; it returns the fault as data and never raises (spec §3)."
 
-  fn run_step : (step: Step, context: dict<str, any>, registry: Registry, scenario_name: str) -> Result
+  fn compile_pattern : (pattern: str) -> Result note "compiles one {name}-style step pattern into a both-ends-anchored full-text regex with named captures and recorded per-placeholder coercions, returning a Result (spec §4). pattern is the literal source pattern a step module registered: a literal string with optional {name} placeholders (bind a string) or {name:type} placeholders (bind and coerce), where type is one of the three required PLACEHOLDER_TYPES keys str, int, float (spec §4). On success it returns a Result whose ok arm is a CompiledPattern. On a placeholder whose type is not in PLACEHOLDER_TYPES it returns a Result whose err arm is a StepFault with code bad_feature_syntax — returned, not raised (spec §4). A spoke may extend PLACEHOLDER_TYPES with more rows, but str, int and float are required of every spoke."
 
-  fn run_scenario : (scenario: Scenario, background: list<Step>, registry: Registry) -> ScenarioReport
+  fn empty_registry : () -> Registry note "returns an empty step registry, the starting value a run threads through (spec §5). It takes nothing and returns a Registry whose patterns list is empty. It is the seed register_step appends to and a step module's register(registry) builds up from; the registry is a value, never global state, so a fresh run starts from this empty value rather than from a module-level table (spec §5, §10 requirement 5)."
 
-  fn fold_feature_report : (feature: Feature, scenario_reports: list<ScenarioReport>) -> FeatureReport
+  fn register_step : (registry: Registry, kind: str, pattern: str, handler: Callable) -> Registry note "returns a new registry with one step pattern appended, never mutating its argument (spec §5). registry is the current Registry value to extend. kind is the step kind the pattern answers for, one of the STEP_KINDS words given, when, then, and, but. pattern is the {name}-style source pattern as a literal string. handler is the step function the pattern binds to — a pure function taking the immutable context and the bound captures as named arguments and returning a new context (spec §5). It builds a StepPattern from kind, pattern and handler, appends it to a copy of registry.patterns, and returns a new Registry; it never mutates the registry it was given, which is how a step module's register(registry) accumulates patterns by threading the value (spec §5, §8.2)."
 
-  fn step_fault : (code: str, detail: dict<str, any>, scenario_name: str, step_text: str) -> StepFault
+  fn match_step : (step: Step, registry: Registry) -> Result note "matches one step against the registry and returns a Result, never raising (spec §5.1). step is the Step to match — its text is matched against each registered pattern. registry is the Registry value holding the StepPatterns to try. It compiles each registered pattern (via compile_pattern), attempts a full-text match of the step text against each, and collects the matches: zero matches returns a Result whose err arm is a StepFault with code step_unmatched; more than one match returns a Result whose err arm is a StepFault with code ambiguous_step, the competing patterns listed in detail; exactly one match returns a Result whose ok arm is a StepMatch, its captures bound and coerced per the matched pattern's recorded coercions (spec §5.1). Unmatched and ambiguous steps are categorized data, enumerable by honest-test, never stack traces (spec §5.1)."
 
-  boundary_in fn run_feature_file : (path: str, registry: Registry) -> FeatureReport side_effect reads "filesystem"
+  fn run_step : (step: Step, context: dict<str, any>, registry: Registry, scenario_name: str) -> StepResult invokes _classify_exception note "runs one step and classifies the outcome into a StepResult (spec §6.1). step is the Step to run. context is the current immutable context dict the step handler reads and extends; a handler returns a new context, and a handler that returns a falsey value is treated as returning the unchanged context (spec §6.1). registry is the Registry whose patterns the step is matched against. scenario_name is the name of the scenario the step belongs to, stamped onto any fault. It matches the step against the registry, and on a successful match invokes the matched handler with the bound captures; the only exception that legitimately arises is inside the developer's own handler, which the engine catches at this single boundary and classifies into the fault vocabulary via the exception-type table: a match returning step_unmatched gives status unmatched, ambiguous_step gives ambiguous, a handler assertion failure gives status failed and code assertion_failed, any other handler exception gives status errored and code step_errored; a clean run gives status ok and a NOTHING fault (spec §6.1, §7.1). It returns the StepResult; on any non-ok status the calling scenario stops and the remaining steps are not run (spec §6.1)."
+
+  fn run_scenario : (scenario: Scenario, background: list<Step>, registry: Registry, now: Callable) -> ScenarioReport invokes run_step note "runs one scenario by folding its steps over an empty immutable context and returns a ScenarioReport (spec §6.2). scenario is the Scenario to run. background is the list of background Steps to run first, before the scenario's own steps; it is the empty list in M1, since per-Feature Background is out of scope and Feature.background_steps is always empty (spec §1.6, §6.2). registry is the Registry the steps are matched against. It folds the steps — background steps first, then the scenario's own — over an empty immutable context, running each with run_step, threading each step's returned context into the next, and stopping at the first non-ok step (spec §6.2). The scenario status is ok iff every executed step is ok, else err. duration_ms on the report is the wall-clock run time, the one impure read inside this function (reading the clock), which a spoke may treat as 0 in a repeatable-test mode (spec §6.2). It returns the ScenarioReport carrying the name, status, executed step_results and duration."
+
+  fn fold_feature_report : (feature: Feature, scenario_reports: list<ScenarioReport>) -> FeatureReport note "combines the per-scenario reports of one feature into a FeatureReport, a pure combine (spec §6.3). feature is the parsed Feature the reports came from, supplying feature_name and source_path. scenario_reports is the ordered list of ScenarioReport values, one per scenario that ran. It counts the scenarios whose status is ok into total_passed and the rest into total_failed, and returns a FeatureReport carrying feature_name, source_path, the scenario reports, and the two counts (spec §6.3). It reads no world and raises nothing."
+
+  fn step_fault : (code: str, detail: str, scenario_name: str, step_text: str) -> StepFault note "builds one StepFault record from its parts, the single constructor the engine routes every failure through (spec §7). code is the fault kind, one of the five FAULT_CODES words step_unmatched, ambiguous_step, assertion_failed, step_errored, bad_feature_syntax. detail is the human-readable sentence giving the particulars — a line number and message, the competing patterns, or an assertion message. scenario_name is the name of the scenario the fault arose in, the empty string for a parse fault that precedes any scenario. step_text is the text of the step that failed, the empty string for a parse fault not tied to a single step. It returns the StepFault assembled from these four values; it is pure, assembling a value rather than raising, which is how matching, binding and run failures stay data all the way to the edge (spec §3, §5.1, §7)."
+
+  fn run_feature : (source: str, source_path: str, registry: Registry, now: Callable) -> FeatureReport invokes parse_feature, run_scenario, fold_feature_report note "runs one whole feature from its source text and returns a FeatureReport; pure, because the text was already read at the boundary (spec §8). source is the full .feature file text, read at the boundary by read_feature_source and handed in so the parse-and-run stays pure and a test can drive it without touching the filesystem. source_path is the path that text came from, carried onto the report. registry is the Registry of step handlers to run the steps against. It calls parse_feature, and on ok runs every scenario with run_scenario and folds the per-scenario reports with fold_feature_report into one FeatureReport; on a parse err it yields a FeatureReport whose single scenario carries the bad_feature_syntax fault, so a parse failure is reported as a failure and never swallowed (spec §8). It returns the FeatureReport; it raises nothing, composing parse and run with every failure carried as data."
+
+  # ---- the parse line handlers (spec §3.1), reached as data through the two dispatch tables ----
+
+  fn _is_blank : (line: str) -> bool note "classification predicate for the blank line kind (spec §3.1). line is the raw source line being classified. It returns true when the line is empty or holds only whitespace, which the parser tolerates between other lines (spec §1.6). It is the first check in the line_kinds table and reads no world."
+
+  fn _starts_with : (line: str, prefix: str) -> bool note "classification predicate for the keyword line kinds — comment, tag, feature and scenario (spec §3.1). line is the raw source line being classified. prefix is the keyword this line kind tests for, bound per kind by the line_kinds table: # for a comment, @ for a tag, Feature: for the feature line, Scenario: for a scenario line. It returns true when the line, ignoring leading whitespace, begins with that prefix. The classification order in the line_kinds table makes a # line a comment before it can be read as a feature, so the comment test precedes the feature test (spec §3.1). It reads no world."
+
+  fn _is_step : (line: str) -> bool note "classification predicate for the step line kind (spec §3.1). line is the raw source line being classified. It returns true when the line, ignoring leading whitespace, begins with one of the five step keywords Given, When, Then, And or But followed by step text, which marks the line as a step belonging to the current scenario (spec §1.6, §3.1). It reads no world; a line matching no classifier falls through to the description kind."
+
+  fn _on_ignore : (state: dict<str, any>, line: str) -> dict<str, any> note "state handler for the blank and comment line kinds (spec §3.1). state is the immutable parse-state dict being folded forward; line is the current source line. It returns the state unchanged, because a blank line or a # comment contributes nothing to the IR (spec §1.6, §3.1). It reads no world."
+
+  fn _on_tag : (state: dict<str, any>, line: str) -> dict<str, any> note "state handler for the tag line kind (spec §3.1). state is the immutable parse-state dict; line is the @tag source line. It returns a new state with the line's tag words (the @-prefixed words, with the @ stripped) appended to the pending-tags list, which awaits the next Scenario: line and is attached to that scenario when it opens (spec §1.6, §2, §3.1). It reads no world and mutates nothing."
+
+  fn _on_feature : (state: dict<str, any>, line: str) -> dict<str, any> note "state handler for the feature line kind (spec §3.1). state is the immutable parse-state dict; line is the Feature: source line. It returns a new state recording the feature name (the text after Feature:) and setting the in-feature-header flag, so the description lines that follow until the first Scenario: are accumulated as the feature description (spec §2, §3.1). It reads no world."
+
+  fn _on_scenario : (state: dict<str, any>, line: str) -> dict<str, any> invokes _flush note "state handler for the scenario line kind (spec §3.1). state is the immutable parse-state dict; line is the Scenario: source line. It returns a new state that flushes any scenario under construction into the completed-scenarios list, starts a new scenario from the name after Scenario:, attaches and clears the pending tags, and clears the in-feature-header flag (spec §2, §3.1). A Scenario: line with no name is a structural violation recorded in the state's error list, which becomes a bad_feature_syntax fault at end of input (spec §3). It reads no world."
+
+  fn _on_step : (state: dict<str, any>, line: str) -> dict<str, any> note "state handler for the step line kind (spec §3.1). state is the immutable parse-state dict; line is the Given/When/Then/And/But source line. It returns a new state appending a Step (its literal kind, the text with the keyword stripped, and the source line number) to the current scenario's steps, and updating the last-resolved-kind when the keyword is Given/When/Then so a following And or But inherits it as its resolved kind (spec §2.1, §3.1). A step line that appears before any Scenario: is a structural violation recorded in the error list, which becomes a bad_feature_syntax fault (spec §3). It reads no world."
+
+  fn _on_description : (state: dict<str, any>, line: str) -> dict<str, any> note "state handler for the description line kind (spec §3.1). state is the immutable parse-state dict; line is a free-text line that matched no other line kind. It returns a new state appending the line to the accumulated description while the parser is in the feature header — the free text between the Feature: line and the first Scenario: (spec §2, §3.1). It reads no world."
+
+  fn _classify : (line: str) -> str invokes line_kinds note "sorts one source line into exactly one line kind, first match wins (spec §3.1). line is the raw source line to classify. It folds the line through the ordered line_kinds table of predicates and returns the name of the first kind whose predicate matches — one of blank, comment, tag, feature, scenario, step — or description when no predicate matches, which is the fall-through line_handlers handles (spec §3.1). Classification order is significant: a # line is a comment even if it begins with the word Feature, so the table's order is the rule and _classify honours it. It reads no world; parse_feature calls it once per line."
+
+  # ---- engine helpers the spec names, each reached by its caller(s) ----
+
+  fn _flush : (state: dict<str, any>) -> dict<str, any> note "the scenario-flush helper (spec §3.1): moves the scenario under construction into the completed-scenarios list, or returns the state unchanged when there is none. state is the immutable parse-state dict being folded forward. It is pure and shared by two callers — the _on_scenario handler flushes the previous scenario before starting the next, and parse_feature flushes the last one at end of input (spec §3.1). It reads no world and mutates nothing, returning a new state."
+
+  fn _classify_exception : (exc: any) -> list<str> note "the §7.1 exception classifier (spec §7.1): maps a caught handler exception to its (step_status, fault_code) pair through the most-specific-first exception table. exc is the exception run_step caught at its single handler boundary. It returns the pair as a two-element list of strings — a handler assertion failure gives failed and assertion_failed, and any other exception the catch-all errored and step_errored (spec §7.1). run_step calls it to convert an exception to fault data at once; it reads no world and raises nothing."
+
+  reader fn _now_ms : () -> float side_effect reads "clock" note "the wall-clock read in milliseconds (spec §6.2), the one impure seam in the run model. It takes nothing and returns the current monotonic time in milliseconds; run_scenario calls it to bracket the step fold and record a duration. Reading the clock is its one side effect, which is why the duration a run reports is non-deterministic, and a spoke may stub _now_ms to return 0 for a fully repeatable test mode (spec §6.2)."
+
+  # ---- the I/O boundary (spec §8): one door, one orchestrator, three readers, one sink ----
+
+  reader fn read_feature_source : (path: str) -> str side_effect reads "file" note "the feature-file reader on the filesystem side (spec §8). path is the filesystem path of one .feature file, discovered by _discover_features before this reader is called. It reads that one file's text from disk and returns it, so the pure run_feature can parse and run it without touching the filesystem; it reads and does nothing else — it does not parse, match, run or write (spec §8). Its one side effect is reading the filesystem."
+
+  reader fn _discover_features : (path: str) -> list<str> side_effect reads "file" note "the feature-file discoverer on the filesystem side (spec §8, §8.1). path is the positional CLI path, either a single .feature file or a directory. It returns the flat list of .feature file paths to run: the one file when path names a file, or every *.feature found by searching the directory recursively when path names a directory (spec §8.1). It reads the filesystem to discover the files and does nothing else; the orchestrator reads each returned path's text with read_feature_source. Its one side effect is reading the filesystem."
+
+  reader fn _load_steps : (module_paths: list<str>, registry: Registry) -> Registry side_effect reads "process" note "the step-module loader on the process side (spec §8.1, §8.2). module_paths is the list of dotted module paths named by the repeated --steps flags, in order. registry is the starting Registry value to thread through them (an empty_registry from the orchestrator). It imports each named module from the running process and calls that module's register(registry) builder, which calls register_step once per pattern and returns the accumulated registry; it threads the registry through the modules in order and returns the fully built Registry (spec §8.1, §8.2). Importing a module is the one thing it touches in the world — the running process — and it does nothing else: it does not parse features, match or run. The step-module contract is a single pure builder register(registry) -> registry with no decorator, no global and no import-time side effect (spec §8.2). Its one side effect is reading the process."
+
+  boundary_out fn print_report : (report: FeatureReport) -> NOTHING side_effect writes "stdout" note "the report sink, the CLI's one output boundary (spec §8). report is the FeatureReport one feature's run produced. It writes that report's summary line to standard output and returns nothing; it is a terminus that only writes — it neither formats a decision nor calls anything inward, and report formatting beyond the summary line is a per-spoke choice left unstandardized (spec §1.5, §8). It cannot meaningfully fault for the engine's purposes: a report is plain data and a failed stdout write is not an engine fault, so it declares none. Its one side effect is writing stdout."
+
+  orchestrator fn run_cli : (argv: list<str>) -> int invokes _discover_features, _load_steps, read_feature_source, run_feature, print_report, empty_registry note "the orchestrator the CLI door hands the argument vector to; it holds the CLI's logic (spec §8, §8.1). argv is the argument vector the door read from the process: the positional path (a .feature file or a directory) and the repeated --steps dotted module paths. It builds the registry by seeding empty_registry and threading it through the --steps modules with _load_steps; discovers the .feature files under the path with _discover_features; and for each discovered file reads its text with read_feature_source, runs it with the pure run_feature, and writes the report with the sink print_report (spec §8). It returns the process exit code: 0 iff total_failed is 0 across every feature run, else 1 (spec §8.1). The reads happen in the readers and the running in the pure core, so the orchestrator only sequences them; it is launched by the door and does no filesystem or process read of its own beyond calling the readers."
+
+  boundary_in fn main : (argv: list<str>) -> int invokes run_cli note "the command-line door, the single I/O entry to the engine (spec §8). argv is the argument vector the module's __main__ shim read from the process and passed in — the honest-gherkin run <path> [--steps <dotted.module.path> ...] invocation (spec §8.1). It carries only I/O: it hands argv straight to the orchestrator run_cli and returns the exit code run_cli decides, turning it into the process exit — it holds no discovery, no registry building, no parsing and no running, all of which live on run_cli's path (spec §8). The exit code is 0 iff total_failed is 0 across all features, else 1 (spec §8.1). The world reaches it through the cli:__main__ entry below, which the entry-check reports UNCHECKED rather than confirming."
+
+  # main is the CLI door the world reaches via `python -m honest_gherkin`. It hands argv to one
+  # orchestrator (run_cli), which builds the registry, discovers the features, runs the pure core
+  # over each, and writes each report. A cli:__main__ entry, reported UNCHECKED by the entry-check.
+  entry "cli:__main__" -> main
+
+  # The public engine surface: every function the module exports is reached by import, named here so
+  # the entry-check reads each entrance (spec §1.4, §8.2).
+  entry "import honest_gherkin" -> parse_feature
+  entry "import honest_gherkin" -> compile_pattern
+  entry "import honest_gherkin" -> empty_registry
+  entry "import honest_gherkin" -> register_step
+  entry "import honest_gherkin" -> match_step
+  entry "import honest_gherkin" -> run_step
+  entry "import honest_gherkin" -> run_scenario
+  entry "import honest_gherkin" -> fold_feature_report
+  entry "import honest_gherkin" -> step_fault
+  entry "import honest_gherkin" -> run_feature
+  entry "import honest_gherkin.run" -> _classify_exception
+  entry "import honest_gherkin.run" -> _now_ms

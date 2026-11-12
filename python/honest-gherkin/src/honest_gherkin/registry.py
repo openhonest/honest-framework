@@ -29,15 +29,14 @@ def register_step(registry, kind, pattern, handler):
     return {"patterns": [*registry["patterns"], step_pattern]}
 
 
-def _coerce_captures(match, captures):
-    """Bind each named capture, coercing it to its recorded type via PLACEHOLDER_TYPES (section 5.1)."""
-    return {entry["name"]: PLACEHOLDER_TYPES[entry["type"]]["coerce"](match.group(entry["name"])) for entry in captures}
-
-
 def match_step(step, registry):
     """Match a step against the registry (section 5.1). Returns ok(StepMatch) for exactly one match,
     err(step_unmatched) for none, err(ambiguous_step) for more than one. A non-compiling pattern is
     skipped. Pure; the handler is not invoked here."""
+    def _coerce_captures(match, captures):
+        """Bind each named capture, coercing it to its recorded type via PLACEHOLDER_TYPES (section 5.1)."""
+        return {entry["name"]: PLACEHOLDER_TYPES[entry["type"]]["coerce"](match.group(entry["name"])) for entry in captures}
+
     matches = []
     for step_pattern in registry["patterns"]:
         compiled = compile_pattern(step_pattern["pattern"])

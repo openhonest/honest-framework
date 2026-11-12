@@ -131,6 +131,8 @@ Line kinds: `blank`, `comment`, `tag`, `feature`, `scenario`, `step`, `descripti
 
 The parser state is an immutable dict folded forward: feature name, accumulated description lines, completed scenarios, pending tags (awaiting the next scenario), the current scenario under construction, the last resolved step kind, an in-feature-header flag, and an accumulated error list. Each handler returns a new state. At end of input the current scenario is flushed; if the error list is non-empty, the first error becomes the returned `bad_feature_syntax` fault.
 
+The flush — moving the scenario under construction into the completed list — is the pure helper `_flush(state) -> state`. It is shared by two callers: the scenario handler flushes the previous scenario before starting the next, and `parse_feature` flushes the last one at end of input.
+
 ---
 
 ## 4. Pattern Compilation and Binding
@@ -211,9 +213,11 @@ On any non-ok status the scenario stops; remaining steps are not run (and are no
 
 ### 6.2 Running one scenario
 
-`run_scenario(scenario, background, registry) -> ScenarioReport`
+`run_scenario(scenario, background, registry, now) -> ScenarioReport`
 
 Fold the steps — background steps first, then the scenario's own — over an **empty immutable context**. Each step produces a `StepResult` and, on success, a new context for the next step. Stop at the first non-ok step. The scenario status is `ok` iff every executed step is `ok`, else `err`.
+
+`now` is the clock reader, **injected** as a parameter so `run_scenario` stays pure: it calls `now()` to bracket the fold and record `duration_ms`, but reads no clock of its own. The orchestrator passes the real reader `_now_ms`; a test passes a stub for a repeatable duration.
 
 ```
 ScenarioReport = {
@@ -224,7 +228,7 @@ ScenarioReport = {
 }
 ```
 
-`duration_ms` is wall-clock time for the run. It is the one impure read inside `run_scenario` (reading the clock); a spoke may treat it as 0 in a repeatable-test mode.
+`duration_ms` is wall-clock time for the run. The clock read is isolated in the reader `_now_ms() -> Float` (milliseconds), the one impure seam in the run model. The orchestrator injects `_now_ms` as the `now` parameter, so `run_scenario` brackets the fold by calling the injected `now()` and never reads the clock itself.
 
 ### 6.3 Combining scenario reports into a feature report
 
@@ -284,17 +288,19 @@ The exception-classification table maps each catchable failure to a `(step_statu
 | handler raised an assertion failure | `failed` | `assertion_failed` |
 | handler raised any other exception | `errored` | `step_errored` |
 
-The table is ordered most-specific-first; the catch-all (any other exception) is last. This is the one place the engine touches exceptions, and it converts them to data immediately.
+The table is ordered most-specific-first; the catch-all (any other exception) is last. The classifier `_classify_exception(exc) -> (step_status, fault_code)` reads this table and `run_step` calls it on a caught handler exception. This is the one place the engine touches exceptions, and it converts them to data immediately.
 
 ---
 
 ## 8. The I/O Boundary
 
-Exactly one module performs I/O. Everything in §§2-7 is pure.
+I/O is confined to one door, one orchestrator, and three readers. Everything in §§2-7, and the running itself, is pure.
 
-`run_feature_file(path: String, registry: StepRegistry) -> FeatureReport`
+The command-line door `main(argv) -> Integer` carries only I/O: it hands the argument vector to the orchestrator and returns the exit code the orchestrator decides. The orchestrator `run_cli(argv) -> Integer` holds the CLI's logic. It builds the registry from the `--steps` modules with the reader `_load_steps`, discovers the `.feature` files under the path with the reader `_discover_features`, and for each file reads the text with the reader `read_feature_source` and runs it with the pure `run_feature`, writes each report with the sink `print_report`, and returns `0` iff `total_failed == 0` across all features, else `1`.
 
-Reads the file, calls `parse_feature`, and — on `ok` — runs every scenario and folds the report. On a parse `err`, it yields a `FeatureReport` whose single scenario carries the `bad_feature_syntax` fault (a spoke chooses the exact surfacing, but a parse failure must be reported as a failure, never swallowed).
+`run_feature(source: String, source_path: String, registry: StepRegistry, now) -> FeatureReport` is pure. It calls `parse_feature`, and on `ok` runs every scenario and folds the report; on a parse `err` it yields a `FeatureReport` whose single scenario carries the `bad_feature_syntax` fault. A parse failure is reported as a failure, never swallowed. The text is read at the boundary by `read_feature_source` and the clock reader `now` is injected, so the parse-and-run stays pure and a test drives it without touching the filesystem. `run_feature` threads `now` into each `run_scenario`.
+
+`read_feature_source(path: String) -> String` reads one file's text and nothing else. `print_report(report: FeatureReport)` writes one report's summary line to stdout. The door does no work beyond the handoff, the orchestrator holds the registry and the per-file loop, and the readers only read.
 
 ### 8.1 The CLI
 
@@ -302,7 +308,7 @@ Reads the file, calls `parse_feature`, and — on `ok` — runs every scenario a
 honest-gherkin run <path> [--steps <dotted.module.path> ...]
 ```
 
-`<path>` is a `.feature` file or a directory (searched recursively for `*.feature`). Each `--steps` module exports `register(registry) -> registry`; the CLI threads the registry through them in order. Exit code is `0` iff `total_failed == 0` across all features, else `1`.
+`<path>` is a `.feature` file or a directory (searched recursively for `*.feature`). Each `--steps` module exports `register(registry) -> registry`; the orchestrator threads the registry through them in order. Exit code is `0` iff `total_failed == 0` across all features, else `1`.
 
 ### 8.2 The step-module contract
 

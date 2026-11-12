@@ -12,7 +12,6 @@ import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
-import honest_gherkin.run as run_module
 from honest_gherkin import (
     compile_pattern,
     empty_registry,
@@ -27,11 +26,12 @@ from honest_gherkin import (
 from honest_gherkin.cli import (
     _discover_features,
     _load_steps,
-    _parse_failure_report,
     main,
-    run_feature_file,
+    print_report,
+    read_feature_source,
+    run_cli,
 )
-from honest_gherkin.run import _classify_exception
+from honest_gherkin.run import _classify_exception, _now_ms, run_feature
 
 
 def _step(text):
@@ -314,7 +314,7 @@ def _probe_run():
 
     # All steps ok: context threads through; status ok; duration is a non-negative int.
     passing = scenario("pass", ["a user named ada", "nothing changes", "the user is ada"])
-    report = run_scenario(passing, [], registry)
+    report = run_scenario(passing, [], registry, _now_ms)
     if report["status"] != "ok":
         bad.append(f"a passing scenario should be ok: {report}")
     if [r["status"] for r in report["step_results"]] != ["ok", "ok", "ok"]:
@@ -324,13 +324,13 @@ def _probe_run():
 
     # Background steps run first, and their context threads into the scenario's own steps.
     bg_step = {"kind": "given", "resolved_kind": "given", "text": "a user named ada", "source_line": 1}
-    bg_report = run_scenario(scenario("bg", ["the user is ada"]), [bg_step], registry)
+    bg_report = run_scenario(scenario("bg", ["the user is ada"]), [bg_step], registry, _now_ms)
     if bg_report["status"] != "ok":
         bad.append(f"background should run first and thread context into the scenario: {bg_report}")
 
     # A failing Then (assertion) stops the scenario; the failed step is reported, later steps are not.
     failing = scenario("fail", ["a user named ada", "the user is missing", "the user is ada"])
-    fr = run_scenario(failing, [], registry)
+    fr = run_scenario(failing, [], registry, _now_ms)
     if fr["status"] != "err":
         bad.append(f"a failing scenario should be err: {fr}")
     if len(fr["step_results"]) != 2:
@@ -342,20 +342,20 @@ def _probe_run():
         bad.append(f"the fault should carry the scenario name: {last['fault']}")
 
     # Any other handler exception -> errored / step_errored.
-    err_report = run_scenario(scenario("boom", ["it explodes"]), [], registry)
+    err_report = run_scenario(scenario("boom", ["it explodes"]), [], registry, _now_ms)
     eb = err_report["step_results"][-1]
     if err_report["status"] != "err" or eb["status"] != "errored" or eb["fault"]["code"] != "step_errored":
         bad.append(f"a non-assertion exception -> errored / step_errored: {err_report}")
 
     # An unmatched step -> unmatched / step_unmatched (no exception involved); ok steps before it stand.
-    um = run_scenario(scenario("um", ["this matches nothing"]), [], registry)
+    um = run_scenario(scenario("um", ["this matches nothing"]), [], registry, _now_ms)
     ub = um["step_results"][-1]
     if um["status"] != "err" or ub["status"] != "unmatched" or ub["fault"]["code"] != "step_unmatched":
         bad.append(f"an unmatched step -> unmatched / step_unmatched: {um}")
 
     # An ambiguous step -> ambiguous / ambiguous_step.
     amb_registry = register_step(register_step(empty_registry(), "given", "a {x}", set_user), "given", "{y} thing", set_user)
-    amb = run_scenario(scenario("amb", ["a thing"]), [], amb_registry)
+    amb = run_scenario(scenario("amb", ["a thing"]), [], amb_registry, _now_ms)
     ab = amb["step_results"][-1]
     if amb["status"] != "err" or ab["status"] != "ambiguous" or ab["fault"]["code"] != "ambiguous_step":
         bad.append(f"an ambiguous step -> ambiguous / ambiguous_step: {amb}")
@@ -410,22 +410,21 @@ def _probe_run():
 
     # duration_ms is milliseconds: stub the clock (the one sanctioned impure seam, §6.2) to a known
     # delta and assert the *1000.0 conversion factor exactly.
-    saved_clock = run_module.time.perf_counter
-    ticks = iter([10.0, 12.5])
-    run_module.time.perf_counter = lambda: next(ticks)
-    try:
-        timed = run_scenario(scenario("timed", ["a user named ada"]), [], registry)
-    finally:
-        run_module.time.perf_counter = saved_clock
+    # now returns milliseconds, so two reads 2500 ms apart give a duration of 2500 — asserted by
+    # injecting a stub clock directly, with no monkeypatching.
+    ticks = iter([10000.0, 12500.0])
+    timed = run_scenario(scenario("timed", ["a user named ada"]), [], registry, lambda: next(ticks))
     if timed["duration_ms"] != 2500:
         bad.append(f"duration_ms should convert seconds to ms via *1000.0: {timed['duration_ms']}")
     return bad
 
 
 def _probe_io():
-    """run_feature_file / _discover_features / _load_steps / main / _parse_failure_report (§8): the
-    single I/O boundary. A well-formed feature runs and passes; a parse failure is surfaced as a
-    failing report, never swallowed; the CLI threads --steps modules and maps results to exit codes."""
+    """read_feature_source / run_feature / _discover_features / _load_steps / print_report / run_cli
+    / main (§8): the door, the orchestrator, the three readers and the sink. read_feature_source
+    reads a file and run_feature parses and runs it purely; a parse failure is surfaced as a failing
+    report, never swallowed; _discover_features finds the files; print_report writes one line; and
+    run_cli and main thread --steps modules and map results to exit codes."""
     bad = []
     here = Path(__file__).parent
     sample = str(here / "_sample.feature")
@@ -435,59 +434,46 @@ def _probe_io():
     if len(registry["patterns"]) != 2:
         bad.append(f"_load_steps should thread register() through the module: {registry}")
 
-    # A runnable feature with matching steps passes every scenario; the report carries its path.
-    report = run_feature_file(sample, registry)
+    # read_feature_source reads the text; the pure run_feature parses and runs it. A runnable
+    # feature passes every scenario, and the report carries its path.
+    source = read_feature_source(sample)
+    report = run_feature(source, sample, registry, _now_ms)
     if report["total_failed"] != 0 or report["total_passed"] < 1:
         bad.append(f"a runnable feature should pass: {report}")
     if report["source_path"] != sample:
         bad.append(f"the report should carry the source path: {report['source_path']!r}")
 
-    with tempfile.TemporaryDirectory() as directory:
-        # A parse failure is surfaced as a failing report carrying bad_feature_syntax, not raised.
-        broken_path = Path(directory) / "broken.feature"
-        broken_path.write_text("Feature: X\n  Given an orphan step\n", encoding="utf-8")
-        broken = run_feature_file(str(broken_path), registry)
-        fault = broken["scenarios"][0]["step_results"][0]["fault"]
-        if broken["total_failed"] != 1 or fault["code"] != "bad_feature_syntax":
-            bad.append(f"a parse failure should be a failing report carrying bad_feature_syntax: {broken}")
+    # run_feature on a malformed source surfaces a failing report carrying bad_feature_syntax,
+    # never a raise.
+    broken = run_feature("Feature: X\n  Given an orphan step\n", "broken.feature", registry, _now_ms)
+    fault = broken["scenarios"][0]["step_results"][0]["fault"]
+    if broken["total_failed"] != 1 or fault["code"] != "bad_feature_syntax":
+        bad.append(f"a parse failure should be a failing report carrying bad_feature_syntax: {broken}")
 
+    with tempfile.TemporaryDirectory() as directory:
         # _discover_features: a directory is searched recursively; a single file is taken as-is.
         (Path(directory) / "extra.feature").write_text("Feature: A\n\n  Scenario: s\n    Given x\n", encoding="utf-8")
+        (Path(directory) / "more.feature").write_text("Feature: B\n\n  Scenario: t\n    Given y\n", encoding="utf-8")
         found = _discover_features(directory)
         if len(found) != 2 or not all(str(path).endswith(".feature") for path in found):
             bad.append(f"_discover_features should find every .feature under a directory: {found}")
         if _discover_features(sample) != [Path(sample)]:
             bad.append(f"_discover_features on a single file should return just that file: {_discover_features(sample)}")
 
-    # _parse_failure_report directly: one failing scenario carrying the fault, metadata set.
-    pf_fault = step_fault("bad_feature_syntax", "no Feature declared")
-    pf = _parse_failure_report("x.feature", pf_fault)
-    if pf["total_failed"] != 1 or pf["scenarios"][0]["step_results"][0]["fault"] is not pf_fault:
-        bad.append(f"_parse_failure_report should carry the fault as a single failure: {pf}")
-
-    # main maps results to exit codes: a passing run exits 0; an all-unmatched run exits 1.
-    if main(["run", sample, "--steps", "_sample_steps"]) != 0:
-        bad.append("a passing run should exit 0")
-    if main(["run", sample]) != 1:
-        bad.append("a run with no registered steps should exit 1 (every step unmatched)")
-
-    # main prints one summary line per feature; assert the observable output, not just the exit code,
-    # so the format string and the print loop are pinned.
+    # print_report writes one summary line to stdout; assert the observable output so the format
+    # string is pinned.
     buffer = io.StringIO()
     with redirect_stdout(buffer):
-        main(["run", sample, "--steps", "_sample_steps"])
+        print_report(report)
     if f"{sample}: 1 passed, 0 failed" not in buffer.getvalue():
-        bad.append(f"main should print the per-feature summary line: {buffer.getvalue()!r}")
+        bad.append(f"print_report should write the per-feature summary line: {buffer.getvalue()!r}")
 
-    # main(None) reads sys.argv (the real CLI entry); the argv slice and `import sys` are pinned here.
-    saved_argv = sys.argv
-    sys.argv = ["honest-gherkin", "run", sample, "--steps", "_sample_steps"]
-    try:
-        argv_status = main(None)
-    finally:
-        sys.argv = saved_argv
-    if argv_status != 0:
-        bad.append("main(None) should read sys.argv[1:] and exit 0 on a passing run")
+    # run_cli and main map results to exit codes: a passing run exits 0; an all-unmatched run
+    # exits 1. main is the door and hands straight to run_cli, so both are exercised.
+    if run_cli(["run", sample, "--steps", "_sample_steps"]) != 0:
+        bad.append("run_cli on a passing run should exit 0")
+    if main(["run", sample]) != 1:
+        bad.append("main on a run with no registered steps should exit 1 (every step unmatched)")
 
     # The subcommand is required: no subcommand exits via argparse, never falls through to run.
     try:
