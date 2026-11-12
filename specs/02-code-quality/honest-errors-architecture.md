@@ -6,13 +6,13 @@
 
 ## 1. Purpose and Scope
 
-honest-errors is the **error-policy leaf** of the Honest Framework. It normalizes raw failure payloads (browser-JavaScript errors, server-side exceptions) into one canonical `ExceptionReport`, decides what should *happen* to a report as a function of the environment, and throttles repeat notifications. It performs no I/O. It is composed by two modules that do: honest-observe (which records the report as an event) and honest-alerts (whose supervisor delivers any notification the policy calls for).
+honest-errors is the Honest Framework's error-policy module. It normalizes a raw failure payload (a browser's JavaScript error object, or a server's Python exception) into one canonical `ExceptionReport`, decides what should *happen* to a report as a function of the environment, and throttles repeat notifications. It does not record the report and it does not send a notification: honest-observe records the report as an event, and honest-alerts delivers any notification the policy calls for.
 
-honest-errors exists as its own module, rather than being merged into observe or alerts, for one reason: error handling is **common to both**. observe needs the capture-and-normalize half; alerts needs the decide-and-throttle half; both share the `ExceptionReport` type and the rate-limiter. Splitting the capability across the two consumers would either duplicate that shared core or force one consumer to depend on the other. A shared leaf composed by both is the DRY, composition-first answer — the module-level form of `pipe(...)`.
+honest-errors owns the shape of a failure report and the policy that decides what happens to one: the normalization, the environment-to-behavior decision, and the throttle. honest-observe uses the normalizers; honest-alerts uses the behavior table and the rate-limiter; both read the same `ExceptionReport` type.
 
 ### 1.1 The abstract requirement
 
-> *A failure becomes one canonical report; what happens to that report is a pure function of the environment and the report's own content; and repeat notifications are suppressed by a deterministic throttle. None of this performs I/O.*
+> *A failure becomes one canonical report; what happens to that report is a pure function of the environment and the report's own content; and repeat notifications are suppressed by a deterministic throttle.*
 
 honest-errors turns the question "what do we do when something breaks?" into data: a normalized report, a list of named behaviors, and a throttle decision. The acts of logging and sending are left to the modules that own those boundaries.
 
@@ -24,11 +24,11 @@ honest-errors turns the question "what do we do when something breaks?" into dat
 | Environment → behaviors as a dispatch table | `if env == "production"` ladders drifting out of sync; an environment silently getting no policy |
 | Throttle decision is data (`RateLimitDecision`), never an exception | Notification storms, or a throttle that swallows errors as a side effect instead of reporting suppression |
 | Finite vocabularies (severity, environment, behavior, reason) as frozensets | Free-string states that cannot be listed, and so cannot be tested in full or checked ahead of time |
-| No I/O in the module | Hidden environment reads / clock reads / sends buried inside "pure" policy functions — the thing that makes error handling untestable |
+| Environment, time, and `now` are arguments to the policy functions | Hidden environment reads, clock reads, or sends buried inside "pure" policy functions, which is what makes error handling untestable |
 
 ### 1.3 Relationship to honest-observe and honest-alerts
 
-honest-errors is a leaf; both of these compose it. It depends on neither.
+honest-observe and honest-alerts each use a part of honest-errors. It depends on neither.
 
 | Consumer | What it composes from honest-errors |
 |---|---|
@@ -48,7 +48,7 @@ honest-errors is a leaf; both of these compose it. It depends on neither.
 
 - **Recording the report.** honest-observe writes it to the event log. honest-errors never logs.
 - **Sending a notification.** honest-alerts' supervisor delivers it over a channel. honest-errors never sends.
-- **Reading the environment or the clock.** These are passed in as arguments by the composing boundary. honest-errors never calls `os.getenv` or reads a wall clock inside a policy function.
+- **Reading the environment or the clock.** The environment, the timestamp, and `now` are passed in as arguments. honest-errors never calls `os.getenv` or reads a wall clock inside a policy function.
 - **Capturing a fault.** A fault in the tree is never caught. It comes back to the orchestrator as a returned `Fault`, and the orchestrator decides whether a boundary raises it or an output boundary logs it. honest-errors makes neither decision.
 - **Capturing the exception.** The boundary (`@catch_at_boundary`, an HTTP error handler, a browser hook) catches; honest-errors only normalizes what it is handed.
 
@@ -119,7 +119,7 @@ Each function validates the raw payload against the required keys for its shape 
 should_bypass_dedup(severity) -> Bool      # True iff severity == critical
 ```
 
-A pure predicate. Critical failures are never silenced by the throttle (§5). This is the one product rule baked into the leaf, expressed as data, not control flow.
+A pure predicate. Critical failures are never silenced by the throttle (§5). This is the one product rule honest-errors carries, expressed as data, not control flow.
 
 ---
 

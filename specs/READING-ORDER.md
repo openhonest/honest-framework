@@ -111,7 +111,7 @@ One line per document. "Assumes" names what a reader needs first. "Canonical" me
 | `honest-check-architecture.md` | 1,737 | **Canonical** for all 52 rules, the three invocation surfaces, suppression policy, and adoption levels. | honest-type, honest-design |
 | `honest-test-architecture.md` | 1,080 | **Canonical** for generation, honesty tests, mutation adequacy, and coverage. | honest-check, honest-gherkin |
 | `honest-gherkin-architecture.md` | 385 | **Canonical** for the BDD engine. Built before `test`, which runs on it. | honest-type |
-| `honest-errors-architecture.md` | 237 | **Canonical** for the report intermediate representation, normalization, behaviour policy, and the rate limiter. A pure leaf, no I/O. | honest-type |
+| `honest-errors-architecture.md` | 237 | **Canonical** for the report intermediate representation, normalization, behaviour policy, and the rate limiter. Normalizes a browser error object and a Python exception into one report. | honest-type |
 | `honest-observe-architecture.md` | 1,653 | **Canonical** for the event envelope, projections, OpenTelemetry export, browser instrumentation, and threshold feedback. | honest-type, honest-errors |
 | `honest-rca-architecture.md` | 165 | **Canonical** for the causal intermediate representation, the fixpoint traversal, and the attestation. | honest-observe, methodology/root-cause-analysis |
 | `honest-persist-architecture.md` | 1,306 | **Canonical** for schema, query, pool, and migration. Section 10 is the forbidden list. | honest-type, honest-observe |

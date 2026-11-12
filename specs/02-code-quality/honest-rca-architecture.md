@@ -38,7 +38,7 @@ honest-rca composes three already-built modules and owns none of their concerns:
 
 ### 1.5 What honest-rca does not cover
 
-- Collecting evidence from the world (reading logs, running blame, querying traces) — that is boundary I/O; honest-rca operates on evidence items already assembled.
+- Collecting evidence from the world (reading logs, running blame, querying traces). honest-rca does not do that collecting; a Symptom is described by a person, and the evidence is assembled from honest-observe, honest-parse, and version history.
 - Deciding the fix or applying it — honest-rca finds and bounds the terminus; poka-yoke design and the patch are elsewhere.
 - Program analysis from scratch — the deterministic relations (data/control flow, change sets, timestamps) are read from parse/observe/history, not recomputed.
 
@@ -71,7 +71,7 @@ Three closed vocabularies make honest-rca exhaustively testable (honest-test bui
 
 `evidence_set(items) -> EvidenceSet` assembles a bounded evidence set and stamps its `hash`. `evidence_hash(items) -> str` is a pure, order-independent digest of the items: the same set of items in any order yields the same hash, and any change to an item's id, kind, ref, or relations changes it. The hash is what makes an attestation reproducible — re-deriving `E` and re-running `M` must reproduce the attestation exactly, and the hash is the key that proves the same `E` was searched.
 
-Assembling the items from the world — reading observe's log, running blame, loading config — is boundary I/O and lives at the edge; `evidence_set` receives items already read.
+The items come from observe's log, from blame, and from config; honest-rca does not read any of those. `evidence_set` takes the items and stamps the set's hash.
 
 ---
 
@@ -141,10 +141,10 @@ Because the signal, evidence, and bound vocabularies are closed (§2.1), honest-
 
 - **reads observe:** evidence items of kind `event` carry `precedes` from observe's log ordering and request-id join; honest-rca never emits events.
 - **reads parse/check:** evidence items of kind `code` carry `flows_to` from parse's data/control-flow facts; honest-rca never re-parses.
-- **reads history:** evidence items of kind `history` carry `changed_with` from blame/change sets, assembled at the boundary.
+- **reads history:** evidence items of kind `history` carry `changed_with` from blame/change sets.
 - **feeds poka-yoke:** a design-root attestation names the category and references the poka-yoke; honest-rca does not implement the fix.
 
-honest-rca imports none of these at runtime for its decision core; the evidence arrives as data assembled at the boundary, and the decision functions are pure over it.
+honest-rca's decisions are pure functions of the evidence, the symptom, and the method it works on.
 
 ---
 
