@@ -37,5 +37,5 @@ def alert_event(event_type, aggregate_id, payload):
     arguments (event_type, the alert aggregate, the message id, the payload), or a server fault if the
     event type is not in the catalog. Pure."""
     if event_type not in ALERT_EVENTS:
-        return err(fault("unknown_alert_event", f"'{event_type}' is not a declared alert event", "server", detail=event_type))
+        return err(fault("unknown_alert_event", f"'{event_type}' is not a declared alert event", "server", [], detail=event_type))
     return ok({"event_type": event_type, "aggregate_type": ALERT_AGGREGATE, "aggregate_id": aggregate_id, "payload": payload})

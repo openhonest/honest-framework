@@ -23,9 +23,9 @@ def validate_channel_config(config):
     Pure; a sub-schema's fault propagates unchanged."""
     missing = [field for field in _CHANNEL_CONFIG_REQUIRED if field not in config]
     if missing:
-        return err(fault("incomplete_channel_config", f"a channel config is missing required fields: {missing}", "client", detail=missing))
+        return err(fault("incomplete_channel_config", f"a channel config is missing required fields: {missing}", "client", [], detail=missing))
     if config["channel"] not in CHANNELS:
-        return err(fault("invalid_channel", f"'{config['channel']}' is not a declared channel", "client", detail=config["channel"]))
+        return err(fault("invalid_channel", f"'{config['channel']}' is not a declared channel", "client", [], detail=config["channel"]))
     if "recipient_spec" in config:
         recipient = validate_actor_ref(config["recipient_spec"])
         if "err" in recipient:
@@ -39,12 +39,12 @@ def validate_escalation_rule(rule):
     Returns ok(rule) or a client fault. Pure."""
     missing = [field for field in _ESCALATION_REQUIRED if field not in rule]
     if missing:
-        return err(fault("incomplete_escalation", f"an escalation rule is missing required fields: {missing}", "client", detail=missing))
+        return err(fault("incomplete_escalation", f"an escalation rule is missing required fields: {missing}", "client", [], detail=missing))
     escalate_to = validate_actor_ref(rule["escalate_to"])
     if "err" in escalate_to:
         return escalate_to
     if "escalate_channel" in rule and rule["escalate_channel"] not in CHANNELS:
-        return err(fault("invalid_channel", f"'{rule['escalate_channel']}' is not a declared channel", "client", detail=rule["escalate_channel"]))
+        return err(fault("invalid_channel", f"'{rule['escalate_channel']}' is not a declared channel", "client", [], detail=rule["escalate_channel"]))
     return ok(rule)
 
 
@@ -55,9 +55,9 @@ def validate_alert_route(route):
     propagates unchanged. Independent guards, not a discriminant dispatch."""
     missing = [field for field in _ALERT_ROUTE_REQUIRED if field not in route]
     if missing:
-        return err(fault("incomplete_route", f"an alert route is missing required fields: {missing}", "client", detail=missing))
+        return err(fault("incomplete_route", f"an alert route is missing required fields: {missing}", "client", [], detail=missing))
     if "sender_type" in route and route["sender_type"] not in ACTOR_TYPES:
-        return err(fault("invalid_actor_type", f"'{route['sender_type']}' is not a declared actor type", "client", detail=route["sender_type"]))
+        return err(fault("invalid_actor_type", f"'{route['sender_type']}' is not a declared actor type", "client", [], detail=route["sender_type"]))
     for config in route["channels"]:
         checked = validate_channel_config(config)
         if "err" in checked:

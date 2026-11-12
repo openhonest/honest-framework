@@ -245,7 +245,7 @@ The entire "dynamic vs. static" framing is a thirty-year red herring. The real v
 
 The Honest Framework implements this as `honest-type`. Python and JavaScript ship first; Ruby and PHP follow. The goal is an idiomatic implementation for every dynamic language that can benefit from it, with the same recognizer tables and binding tables running at every boundary in the stack. HTTP request parameters, DOM attribute values, function chain inputs, database query results. One mechanism, every layer.
 
-The browser library classifies HTML attribute tokens. The server middleware classifies HTTP parameters. The function chain validates inputs at every link. The pre-commit linter verifies chain compatibility. All of them use the same code: a pure function that takes a string and returns a boolean.
+The browser library classifies HTML attribute tokens. The server middleware classifies HTTP parameters. The function chain validates inputs at every link. The pre-commit checker verifies chain compatibility. All of them use the same code: a pure function that takes a string and returns a boolean.
 
 A Set membership check is the most primitive possible expression of "this value belongs to this category." Every type system ever built, classes, annotations, compilers, inheritance hierarchies, generic constraints, is a more elaborate way of answering that same question. The elaboration was never the goal. It was the cost of working around class-based architecture. Remove the classes, and the primitive is all you need.
 

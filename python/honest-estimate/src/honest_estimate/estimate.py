@@ -10,7 +10,7 @@ measured and inductive dimensions) are not here — this leaf is the declaration
 from math import log2
 
 from honest_design import read_hd
-from honest_design.result import err, fault, ok
+from honest_design import err, fault, ok
 
 # §7.1 — the boundary role is the authority. A boundary/orchestrator role IS an elementary process.
 _BOUNDARY_ROLES = frozenset({"boundary_in", "boundary_out", "orchestrator"})
@@ -117,20 +117,61 @@ def _bits_of(type_name, sets, vocabs, records, seen, process, path, open_flags):
     return 0.0
 
 
+def _closed_names(type_name, sets, vocabs, records, seen):
+    """The set of closed set/vocabulary names a type reaches, recursing composed types, cycle-safe. A
+    raw scalar, an unknown name, or a cycle reaches nothing. The name-level companion to _bits_of: depth
+    sums bits and cases over the distinct names a process commits to (§6.1)."""
+    if sets.get(type_name, 0) > 0 or vocabs.get(type_name, 0) > 0:
+        return {type_name}
+    if type_name in records and type_name not in seen:
+        reached = set()
+        for field in records[type_name]:
+            reached |= _closed_names(_head_atom(field["type"]), sets, vocabs, records, seen | {type_name})
+        return reached
+    return set()
+
+
+def _dispatched_names(f, functions, sets, vocabs, records):
+    """The distinct closed vocabularies one elementary process commits to (§6.1, Rulings 1 and 2): those
+    its input parameters carry, those on its own eXit return, and those returned by a pure function or
+    reader it invokes and dispatches on. Each name once; a vocabulary reached by two channels is one
+    commitment, not two."""
+    names = set()
+    for param in f["params"]:
+        names |= _closed_names(_head_atom(param["type"]), sets, vocabs, records, frozenset())
+    for atom in f.get("ret", []):
+        names |= _closed_names(atom["name"], sets, vocabs, records, frozenset())
+    for callee in f["invokes"]:
+        helper = functions.get(callee)
+        if helper is not None and helper["role"] in ("fn", "reader"):
+            for atom in helper.get("ret", []):
+                names |= _closed_names(atom["name"], sets, vocabs, records, frozenset())
+    return names
+
+
 def depth(module):
-    """The depth reading (§6.1, §7.4): bits of specified case-distinction over the processes' input
-    parameters, recursing into composed types. Inputs only — a deterministic contract distinguishes no
-    more cases than its input partition admits, so the return type adds no depth."""
+    """The depth reading (§6.1, §7.4): bits and cases of specified case-distinction over the closed
+    vocabularies each elementary process commits to. A process commits through its input parameters, its
+    own eXit return, and the returns of the pure functions or readers it dispatches on; a vocabulary
+    reached by more than one channel counts once. Bits is the sum of log-2 of each vocabulary's
+    cardinality; cases is the sum of the cardinalities, so a ten-way and a four-way are fourteen cases,
+    not forty. An open scalar input with no declared partition contributes nothing and is flagged."""
     sets, vocabs, records = _cardinalities(module)
+    cardinality = {**sets, **vocabs}
+    functions = {f["name"]: f for f in module["functions"]}
     processes = set(elementary_processes(module))
     bits = 0.0
+    cases = 0
     open_flags = []
     for f in module["functions"]:
         if f["name"] not in processes:
             continue
         for param in f["params"]:
-            bits += _bits_of(_head_atom(param["type"]), sets, vocabs, records, frozenset(), f["name"], param["name"], open_flags)
-    return {"bits": bits, "open_flags": open_flags}
+            _bits_of(_head_atom(param["type"]), sets, vocabs, records, frozenset(), f["name"], param["name"], open_flags)
+        for name in _dispatched_names(f, functions, sets, vocabs, records):
+            bits += log2(cardinality[name])
+            cases += cardinality[name]
+    return {"bits": bits, "cases": cases, "open_flags": open_flags}
 
 
 def size(source):
@@ -151,6 +192,7 @@ def size(source):
             "cosmic_cfp": cfp(module),
             "vfp": vfp(module),
             "bits_of_case_distinction": measured["bits"],
+            "case_count": measured["cases"],
             "open_vocab_flags": measured["open_flags"],
             "cfp_certified": False,
         }
@@ -169,16 +211,23 @@ def quality(mutants_total, mutants_equivalent, escaped_defects, process_count):
     }
 
 
-def cost(cosmic_cfp, rate_model):
-    """The projected COST band in dollars, dated (§6.2, I6). Computed from an injected, priced, dated
-    rate model; when the model is absent no dollar figure is produced and the result is marked
-    uncalibrated. No constant is fabricated here — the caller supplies the model (§5.3, §13)."""
+def cost(cosmic_cfp, case_count, work_class, rate_model):
+    """The projected COST band in dollars, dated (§6.2, I6), the sum of a breadth term and a depth term.
+    The breadth term is CFP times the per-CFP rates; the depth term is the case count (§6.1) times a
+    per-case rate. Both rates are read from the injected model's `rates` under the work class, because
+    effort per case varies by the kind of work. When the model is absent, or prices no rate for this
+    work class, no dollar figure is produced and the result is marked uncalibrated; the caller supplies
+    the model and no constant is fabricated here (§5.3, §13)."""
     if rate_model is None:
-        return {"total": None, "compute": None, "oversight": None, "tooling": None, "priced_at_date": None, "price_basis": "uncalibrated — verify", "uncalibrated": True}
-    compute = cosmic_cfp * rate_model["compute_per_cfp"]
-    oversight = cosmic_cfp * rate_model["oversight_per_cfp"]
-    tooling = cosmic_cfp * rate_model["tooling_per_cfp"]
-    return {"total": compute + oversight + tooling, "compute": compute, "oversight": oversight, "tooling": tooling, "priced_at_date": rate_model["price_date"], "price_basis": rate_model["price_basis"], "uncalibrated": False}
+        return {"total": None, "compute": None, "oversight": None, "tooling": None, "cases": None, "priced_at_date": None, "price_basis": "uncalibrated — verify", "work_class": work_class, "uncalibrated": True}
+    rates = rate_model["rates"].get(work_class)
+    if rates is None:
+        return {"total": None, "compute": None, "oversight": None, "tooling": None, "cases": None, "priced_at_date": rate_model["price_date"], "price_basis": f"uncalibrated — no rate for work class {work_class!r}", "work_class": work_class, "uncalibrated": True}
+    compute = cosmic_cfp * rates["compute_per_cfp"]
+    oversight = cosmic_cfp * rates["oversight_per_cfp"]
+    tooling = cosmic_cfp * rates["tooling_per_cfp"]
+    cases = case_count * rates["per_case"]
+    return {"total": compute + oversight + tooling + cases, "compute": compute, "oversight": oversight, "tooling": tooling, "cases": cases, "priced_at_date": rate_model["price_date"], "price_basis": rate_model["price_basis"], "work_class": work_class, "uncalibrated": False}
 
 
 def duration(cosmic_cfp, rate_model):
@@ -222,7 +271,7 @@ def estimate(source, rate_model, jones_constants, build_inputs):
     return ok(
         {
             "size": report,
-            "cost": cost(report["cosmic_cfp"], rate_model),
+            "cost": cost(report["cosmic_cfp"], report["case_count"], build_inputs["work_class"], rate_model),
             "duration": duration(report["cosmic_cfp"], rate_model),
             "quality": quality(build_inputs["mutants_total"], build_inputs["mutants_equivalent"], build_inputs["escaped_defects"], report["vfp"]["total"]),
             "jones": jones(build_inputs["native"], jones_constants),

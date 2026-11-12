@@ -1,14 +1,15 @@
 {
   "version": "0.1",
   "module": "honest-type",
-  "note": "Unit 1 — vocabulary construction contract (sections 2, 3). Set members as arrays; the runner builds the vocabulary and checks ok vs VocabularyError. classify() cases follow with unit 2.",
+  "note": "Vocabulary construction contract (sections 2, 3). Set members as arrays; the runner builds the vocabulary and checks ok vs a returned fault value (a construction error is data, not a raise — section 11.2). classify() cases follow.",
   "cases": [
     {
       "id": "value-rejection-shape",
       "call": "rejection",
       "args": [
         "tok",
-        "unrecognized"
+        "unrecognized",
+        null
       ],
       "expect": {
         "token": "tok",
@@ -35,43 +36,28 @@
       }
     },
     {
-      "id": "value-is-bounded-insensitive",
-      "module": "honest_type.recognizers",
-      "call": "is_bounded",
+      "id": "recognize-unknown-kind",
+      "call": "recognize",
       "args": [
+        "x",
         {
-          "kind": "insensitive",
-          "members": [
-            "a"
-          ]
+          "kind": "bogus"
         }
       ],
-      "expect": true
-    },
-    {
-      "id": "value-is-bounded-set",
-      "module": "honest_type.recognizers",
-      "call": "is_bounded",
-      "args": [
-        {
-          "kind": "set",
-          "members": [
-            "a"
-          ]
+      "expect": {
+        "code": "unknown_recognizer_kind",
+        "message": "recognize got an unknown recognizer kind 'bogus'; the accepted kinds are set, insensitive, predicate; no matcher ran",
+        "category": "server",
+        "results": [],
+        "detail": {
+          "accepted": [
+            "set",
+            "insensitive",
+            "predicate"
+          ],
+          "arrived": "bogus"
         }
-      ],
-      "expect": true
-    },
-    {
-      "id": "value-is-bounded-predicate",
-      "module": "honest_type.recognizers",
-      "call": "is_bounded",
-      "args": [
-        {
-          "kind": "predicate"
-        }
-      ],
-      "expect": false
+      }
     },
     {
       "id": "linkmeta-rich-all-fields",
@@ -846,9 +832,10 @@
       "initial": {},
       "expect": "err",
       "expect_code": "non_result_return",
-      "expect_fault_input": true,
-      "expect_fault_link": true,
-      "expect_message": "Link returned neither ok nor err",
+      "expect_detail": {
+        "link": "_link_bad"
+      },
+      "expect_message_contains": "returned neither ok nor err",
       "expect_category": "server"
     },
     {
@@ -877,7 +864,7 @@
       "expect": "err",
       "expect_code": "validation_failed",
       "expect_fault_results": true,
-      "expect_message": "One or more validation checks failed",
+      "expect_message_contains": "validation checks failed",
       "expect_category": "client"
     },
     {
@@ -1134,9 +1121,10 @@
       "initial": {},
       "expect": "err",
       "expect_code": "non_result_return",
-      "expect_fault_input": true,
-      "expect_fault_link": true,
-      "expect_message": "Link returned neither ok nor err",
+      "expect_detail": {
+        "link": "_link_async_bad"
+      },
+      "expect_message_contains": "returned neither ok nor err",
       "expect_category": "server"
     },
     {
@@ -1165,7 +1153,7 @@
       "expect": "err",
       "expect_code": "validation_failed",
       "expect_fault_results": true,
-      "expect_message": "One or more validation checks failed",
+      "expect_message_contains": "validation checks failed",
       "expect_category": "client"
     },
     {
@@ -1372,13 +1360,16 @@
         "args": [
           "unrecognized",
           "bad",
-          "server"
+          "server",
+          [],
+          {}
         ],
         "expected": {
           "code": "unrecognized",
           "message": "bad",
           "category": "server",
-          "detail": null
+          "results": [],
+          "detail": {}
         }
       }
     },
@@ -1391,7 +1382,8 @@
             "code": "unrecognized",
             "message": "bad",
             "category": "server",
-            "detail": null
+            "results": [],
+            "detail": {}
           }
         ],
         "expected": {
@@ -1399,7 +1391,34 @@
             "code": "unrecognized",
             "message": "bad",
             "category": "server",
-            "detail": null
+            "results": [],
+            "detail": {}
+          }
+        }
+      }
+    },
+    {
+      "id": "value-recognize-unknown-kind",
+      "value_case": {
+        "function": "recognize",
+        "args": [
+          "x",
+          {
+            "kind": "bogus"
+          }
+        ],
+        "expected": {
+          "code": "unknown_recognizer_kind",
+          "message": "recognize got an unknown recognizer kind 'bogus'; the accepted kinds are set, insensitive, predicate; no matcher ran",
+          "category": "server",
+          "results": [],
+          "detail": {
+            "accepted": [
+              "set",
+              "insensitive",
+              "predicate"
+            ],
+            "arrived": "bogus"
           }
         }
       }
@@ -1423,7 +1442,8 @@
         "function": "rejection",
         "args": [
           "tok",
-          "why"
+          "why",
+          null
         ],
         "expected": {
           "token": "tok",
@@ -1463,7 +1483,8 @@
         "args": [
           {
             "x": "1"
-          }
+          },
+          {}
         ],
         "expected": {
           "ok": {

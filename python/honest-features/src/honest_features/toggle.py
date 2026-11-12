@@ -12,9 +12,9 @@ def validate_toggle(features, flag, state):
     """The toggle request conditions (section 5.1): the flag must be declared and the state must be one
     of its declared states. Returns ok({flag, state}) or a client fault. Pure."""
     if flag not in features:
-        return err(fault("unknown_flag", f"'{flag}' is not a declared flag", "client", detail=flag))
+        return err(fault("unknown_flag", f"'{flag}' is not a declared flag", "client", [], detail=flag))
     if state not in features[flag]["states"]:
-        return err(fault("invalid_state", f"'{state}' is not a state of '{flag}'", "client", detail=state))
+        return err(fault("invalid_state", f"'{state}' is not a state of '{flag}'", "client", [], detail=state))
     return ok({"flag": flag, "state": state})
 
 

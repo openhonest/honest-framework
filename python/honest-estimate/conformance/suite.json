@@ -10,6 +10,7 @@
             "cosmic_cfp": 4,
             "vfp": { "total": 2, "ifpug_countable": 0, "beyond_ifpug_internal": 2, "internal_share_ratio": 1.0, "under_declared": false },
             "bits_of_case_distinction": 3.0,
+            "case_count": 6,
             "open_vocab_flags": [],
             "cfp_certified": false
           }
@@ -28,6 +29,7 @@
             "cosmic_cfp": 2,
             "vfp": { "total": 1, "ifpug_countable": 0, "beyond_ifpug_internal": 1, "internal_share_ratio": 1.0, "under_declared": false },
             "bits_of_case_distinction": 1.0,
+            "case_count": 2,
             "open_vocab_flags": [ { "process": "act", "param": "note", "type": "str" } ],
             "cfp_certified": false
           }
@@ -49,16 +51,16 @@
       "id": "vc-cost-calibrated",
       "value_case": {
         "function": "cost",
-        "expected": { "total": 60, "compute": 20, "oversight": 30, "tooling": 10, "priced_at_date": "2026-07-27", "price_basis": "provider X", "uncalibrated": false },
-        "args": [10, { "compute_per_cfp": 2, "oversight_per_cfp": 3, "tooling_per_cfp": 1, "price_date": "2026-07-27", "price_basis": "provider X" }]
+        "expected": { "total": 80, "compute": 20, "oversight": 30, "tooling": 10, "cases": 20, "priced_at_date": "2026-07-27", "price_basis": "provider X", "work_class": "specified", "uncalibrated": false },
+        "args": [10, 4, "specified", { "rates": { "specified": { "compute_per_cfp": 2, "oversight_per_cfp": 3, "tooling_per_cfp": 1, "per_case": 5 } }, "price_date": "2026-07-27", "price_basis": "provider X" }]
       }
     },
     {
       "id": "vc-cost-uncalibrated",
       "value_case": {
         "function": "cost",
-        "expected": { "total": null, "compute": null, "oversight": null, "tooling": null, "priced_at_date": null, "price_basis": "uncalibrated — verify", "uncalibrated": true },
-        "args": [10, null]
+        "expected": { "total": null, "compute": null, "oversight": null, "tooling": null, "cases": null, "priced_at_date": null, "price_basis": "uncalibrated — verify", "work_class": "specified", "uncalibrated": true },
+        "args": [10, 4, "specified", null]
       }
     },
     {

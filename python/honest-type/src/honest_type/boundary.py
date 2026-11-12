@@ -41,7 +41,7 @@ def catch_at_boundary(handler, fault_to_output, success_output, server_default, 
         try:
             result = handler(value)
         except Exception as exc:
-            return server_default(fault("unhandled_exception", str(exc), "server"))
+            return server_default(fault("unhandled_exception", str(exc), "server", [], {}))
         if "err" in result:
             failure = result["err"]
             category_default = {"server": server_default, "client": client_default}.get(
@@ -69,6 +69,7 @@ def check_rejections(manifest, policy=None) -> dict:
                 reason,
                 "Input rejected at the boundary",
                 _REJECTION_CATEGORY.get(reason, "client"),
+                [],
                 {"rejections": blocking},
             )
         )

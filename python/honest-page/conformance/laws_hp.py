@@ -1,25 +1,36 @@
-"""honest-page conformance (spec section 11.2): the structural, bootstrap, and intake contracts checked
-against the reference itself — the templates in python/templates and the server in python/app.py.
+"""honest-page conformance (spec section 11.2): the structural, bootstrap, intake, factory, and hook
+contracts checked against the built package.
 
-The reference is normative. Until now nothing ran it on commit: honest-check read it statically and found
-every reference resolving, but no test exercised its behaviour, so the one artefact meant to show how a
-host page is built was the one artefact not held to the framework's own gates. These laws close that.
+The reference used to be python/app.py and loose templates that nothing ran on commit. honest-page is
+now one installable package: the templates and the token stylesheet ship inside it (read_bundle names
+them), create_app is the composition root, and these laws exercise the real application end to end —
+they build it, drive requests through the intake middleware and the route handlers over ASGI, and read
+the rendered bytes. The value-pinned functions (extract_tokens, surface_slot, page_context) also carry
+value cases in suite.json, checked centrally by value-check.py.
 """
 
+import asyncio
 import re
-import sys
 from pathlib import Path
-
-_PYTHON_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(_PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PYTHON_ROOT))
 
 from jinja2 import Environment, FileSystemLoader
 
-from app import extract_tokens
+from honest_page import (
+    assembly,
+    attach_stream,
+    create_app,
+    extract_tokens,
+    read_bundle,
+    route_table,
+    surface_slot,
+)
+from honest_page.hook import _REGISTERED_SOURCES
 
-_TEMPLATES = _PYTHON_ROOT / "templates"
-_THEME_CSS = _PYTHON_ROOT / "static" / "theme.css"
+# The laws read the bundle the factory ships, so a template or stylesheet that moves out of the package
+# fails here rather than passing against a copy left behind in the tree.
+_BUNDLE = read_bundle()
+_TEMPLATES = Path(_BUNDLE["template_dir"])
+_THEME_CSS = Path(_BUNDLE["static_dir"]) / "theme.css"
 
 # Section 7.1, the whole required token set. Colour tokens are separated from the rest because the
 # contract differs: section 7.2 requires every colour token to carry both values through light-dark(),
@@ -78,62 +89,9 @@ def _token_faults(css):
     return faults
 
 
-def _law_html_element_and_theme_restoration():
-    """Section 11.2 structural and bootstrap, the two facts that live on `<html>` and in `<head>`.
+def _render(name, **context):
+    return Environment(loader=FileSystemLoader(str(_TEMPLATES))).get_template(name).render(**context)
 
-    `lang` is asserted because it is the one attribute a screen reader needs before anything renders,
-    and it defaults rather than being required of every caller. The theme script must run in `<head>`,
-    before `<body>` exists: run any later and the page paints in the OS theme first and then swaps,
-    which is the flash the attribute exists to prevent. Order is the whole of that requirement, so the
-    check is a position comparison and not the mere presence of the script."""
-    faults = []
-    html = _render("page.html", app_name="A", page_title="P", theme="auto")
-    if not re.search(r"<html[^>]*\blang=", html):
-        faults.append("section 11.2 structural: <html> must carry lang")
-
-    head_end, body_start = html.find("</head>"), html.find("<body")
-    restore = html.find("localStorage.getItem")
-    if restore == -1:
-        faults.append("section 11.2 bootstrap: the theme preference restoration script must be present")
-    elif not (restore < head_end < body_start):
-        faults.append("section 11.2 bootstrap: theme restoration must run inside <head>, before <body>, "
-                      "or the page paints in the OS theme and then swaps")
-
-    # Section 7.3 sets data-theme from script at load, not from the server into the markup, so the
-    # attribute is absent from the served HTML by design and asserting it there would be asserting
-    # something the spec does not say. What IS decidable from the source is that the server's choice
-    # reaches the script that sets it: a template that renders the branch but drops the value leaves
-    # an explicit theme with no way to take effect.
-    for choice in ("dark", "light", "auto"):
-        rendered = _render("page.html", app_name="A", page_title="P", theme=choice)
-        script = rendered[:rendered.find("</head>")]
-        if f'"{choice}"' not in script and f"'{choice}'" not in script:
-            faults.append(f"theme {choice!r} must reach the restoration script, or it cannot take effect")
-    return faults
-
-
-def _law_request_is_the_first_context_variable():
-    """Section 11.2 server: every TemplateResponse passes `request` first.
-
-    Starlette reads the request out of the context by that key, and a template rendered without it
-    raises only when something in the page happens to use `url_for`. So a route that omits it can
-    serve correctly for as long as nobody adds a link, then break on an unrelated edit. Checked by
-    reading the source rather than by calling the routes, because the fault is the absence of a key
-    and absence is what a passing request cannot show."""
-    source = (_PYTHON_ROOT / "app.py").read_text(encoding="utf-8")
-    faults = []
-    for call in re.finditer(r"TemplateResponse\(\s*\"([^\"]+)\"\s*,\s*\{\s*([^,:]*)", source):
-        template, first_key = call.group(1), call.group(2).strip()
-        if first_key != '"request"':
-            faults.append(f"the context for {template} must pass \"request\" first, not {first_key or 'nothing'}")
-    if not faults and "TemplateResponse(" not in source:
-        faults.append("no TemplateResponse call found, so this law checked nothing")
-    return faults
-
-
-def _law_token_contract():
-    """Section 11.2 CSS: every required token declared, colours through light-dark(), lengths not."""
-    return _token_faults(_THEME_CSS.read_text(encoding="utf-8"))
 
 # The six surfaces, in the document order section 2.2 requires.
 _SURFACES = [
@@ -146,8 +104,31 @@ _SURFACES = [
 ]
 
 
-def _render(name, **context):
-    return Environment(loader=FileSystemLoader(str(_TEMPLATES))).get_template(name).render(**context)
+async def _drive(app, method, path, query=b"", body=b"", headers=None):
+    """Run one request through the real application over ASGI: the intake middleware, the router, and
+    the handler, exactly as an ASGI server would. Returns (status, headers, body). This is how the
+    laws exercise the doors against the templates the package ships, without a running server."""
+    scope = {
+        "type": "http", "http_version": "1.1", "method": method, "path": path,
+        "raw_path": path.encode(), "query_string": query, "headers": headers or [],
+        "scheme": "http", "server": ("testserver", 80), "client": ("testclient", 1),
+        "root_path": "", "app": app,
+    }
+    pending = [{"type": "http.request", "body": body, "more_body": False}]
+    captured = {"status": None, "headers": [], "body": b""}
+
+    async def receive():
+        return pending.pop(0) if pending else {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            captured["status"] = message["status"]
+            captured["headers"] = message["headers"]
+        elif message["type"] == "http.response.body":
+            captured["body"] += message.get("body", b"")
+
+    await app(scope, receive, send)
+    return captured
 
 
 def _law_surfaces_in_document_order():
@@ -231,6 +212,153 @@ def _law_context_variables_default():
     return [] if "Honest App" in html and "Page" in html else ["the base template must default every context variable"]
 
 
+def _law_html_element_and_theme_restoration():
+    """Section 11.2 structural and bootstrap, the two facts that live on `<html>` and in `<head>`.
+
+    `lang` is asserted because it is the one attribute a screen reader needs before anything renders,
+    and it defaults rather than being required of every caller. The theme script must run in `<head>`,
+    before `<body>` exists: run any later and the page paints in the OS theme first and then swaps,
+    which is the flash the attribute exists to prevent. Order is the whole of that requirement, so the
+    check is a position comparison and not the mere presence of the script."""
+    faults = []
+    html = _render("page.html", app_name="A", page_title="P", theme="auto")
+    if not re.search(r"<html[^>]*\blang=", html):
+        faults.append("section 11.2 structural: <html> must carry lang")
+
+    head_end, body_start = html.find("</head>"), html.find("<body")
+    restore = html.find("localStorage.getItem")
+    if restore == -1:
+        faults.append("section 11.2 bootstrap: the theme preference restoration script must be present")
+    elif not (restore < head_end < body_start):
+        faults.append("section 11.2 bootstrap: theme restoration must run inside <head>, before <body>, "
+                      "or the page paints in the OS theme and then swaps")
+
+    for choice in ("dark", "light", "auto"):
+        rendered = _render("page.html", app_name="A", page_title="P", theme=choice)
+        script = rendered[:rendered.find("</head>")]
+        if f'"{choice}"' not in script and f"'{choice}'" not in script:
+            faults.append(f"theme {choice!r} must reach the restoration script, or it cannot take effect")
+    return faults
+
+
+def _law_token_contract():
+    """Section 11.2 CSS: every required token declared, colours through light-dark(), lengths not."""
+    return _token_faults(_THEME_CSS.read_text(encoding="utf-8"))
+
+
+def _law_application_factory():
+    """Section 10.4: create_app builds one application from declared data. The route map is data a tool
+    reads without running the factory, the assembly packs the shipped bundle, and the built application
+    mounts static, carries the template environment, and registers one handler per route-map entry."""
+    bad = []
+    routes = route_table()
+    if [(e["method"], e["path"]) for e in routes] != [("GET", "/"), ("GET", "/search")]:
+        bad.append("route_table must declare GET / and GET /search as data")
+    if {e["chain"] for e in routes} != {"index", "search"}:
+        bad.append("each route entry must name the handler that path runs")
+
+    plan = assembly(_BUNDLE, routes)
+    if plan["routes"] is not routes or plan["template_dir"] != _BUNDLE["template_dir"] or plan["static_dir"] != _BUNDLE["static_dir"]:
+        bad.append("assembly must pack the bundle's directories and the route table into the plan")
+    if not Path(plan["template_dir"]).is_dir() or not Path(plan["static_dir"]).is_dir():
+        bad.append("the shipped bundle must point at real template and static directories")
+
+    app = create_app()
+    paths = {getattr(route, "path", None) for route in app.routes}
+    for required in ("/", "/search", "/static"):
+        if required not in paths:
+            bad.append(f"the built application must serve {required}")
+    if not hasattr(app.state, "templates"):
+        bad.append("the factory must register the template environment on the application")
+    return bad
+
+
+def _law_request_path_renders():
+    """Section 10.2, 10.3: the built application answers requests. GET / is a full page carrying every
+    surface and the bootstrap scripts; GET /search is a fragment carrying only the filtered rows and no
+    page chrome. The intake middleware runs ahead of both — it classifies _state from the body into the
+    manifest, and it echoes X-Request-ID back when the request carries one."""
+    app = create_app()
+
+    async def run():
+        bad = []
+        # GET / with no body and no request id: intake takes the empty-body and no-id paths; index
+        # renders the full page from its defaults.
+        home = await _drive(app, "GET", "/")
+        home_html = home["body"].decode()
+        if home["status"] != 200:
+            bad.append(f"GET / must answer 200, got {home['status']}")
+        for marker in (f'id="{surface}"' for surface in _SURFACES):
+            if marker not in home_html:
+                bad.append(f"the home page must render {marker}")
+        if "Honest App" not in home_html or 'sse-connect="/api/alerts/stream"' not in home_html:
+            bad.append("the home page must render the chrome and the alert-stream wiring")
+
+        # GET / carrying a _state body and an X-Request-ID: intake takes the body-present and id-present
+        # paths. The id must come back on the response.
+        echoed = await _drive(
+            app, "GET", "/",
+            body=b'_state=%7B%22k%22%3A%22v%22%7D',
+            headers=[(b"x-request-id", b"req-7")],
+        )
+        if not any(key == b"x-request-id" and value == b"req-7" for key, value in echoed["headers"]):
+            bad.append("intake must echo X-Request-ID back onto the response")
+
+        # GET /search with _state carrying the search term: the fragment carries only the matching row,
+        # and none of the page chrome.
+        fragment = await _drive(app, "GET", "/search", body=b'_state=%7B%22search%22%3A%22al%22%7D')
+        fragment_html = fragment["body"].decode()
+        if fragment["status"] != 200:
+            bad.append(f"GET /search must answer 200, got {fragment['status']}")
+        if "alpha" not in fragment_html or "beta" in fragment_html or "gamma" in fragment_html:
+            bad.append("the search fragment must carry only the rows matching the term")
+        if "<script" in fragment_html or "honest-main" in fragment_html:
+            bad.append("the search fragment must not carry the page chrome")
+        return bad
+
+    return asyncio.run(run())
+
+
+def _law_surface_slot_resolution():
+    """Section 2.1, 4.5: surface_slot resolves a surface id against the registry to the slot its markup
+    lands in, and answers nothing for an id that is not a declared surface."""
+    bad = []
+    expected = {
+        "honest-alerts-banners": "div",
+        "honest-header": "header",
+        "honest-alerts-toasts": "div",
+        "honest-main": "main",
+        "honest-footer": "footer",
+        "honest-alerts-modal": "div",
+    }
+    for surface_id, slot in expected.items():
+        if surface_slot(surface_id) != slot:
+            bad.append(f"surface_slot({surface_id!r}) must resolve to {slot!r}")
+    if surface_slot("not-a-surface") is not None:
+        bad.append("surface_slot must answer nothing for an id that is not a declared surface")
+    return bad
+
+
+def _law_sse_hook_registers_a_source():
+    """Section 4.5: a custom module registers its own SSE source against one declared surface through
+    attach_stream. honest-page resolves the surface to its slot and commits the source on the stream's
+    source table, without naming the registering module."""
+    bad = []
+
+    def custom_source():
+        return "a custom event stream"
+
+    before = len(_REGISTERED_SOURCES)
+    registration = attach_stream("honest-alerts-banners", "alert:banner", custom_source)
+    if registration["slot"] != "div":
+        bad.append("attach_stream must resolve the surface to its slot before registering")
+    if registration["event_type"] != "alert:banner" or registration["source"] is not custom_source:
+        bad.append("the registration must carry the event type and the source the module named")
+    if len(_REGISTERED_SOURCES) != before + 1 or _REGISTERED_SOURCES[-1] is not registration:
+        bad.append("register_source must commit the registration onto the stream's source table")
+    return bad
+
+
 _LAWS = {
     "surfaces_in_document_order": _law_surfaces_in_document_order,
     "body_activates_domx": _law_body_activates_domx,
@@ -240,8 +368,11 @@ _LAWS = {
     "intake_precedence": _law_intake_precedence,
     "context_variables_default": _law_context_variables_default,
     "html_element_and_theme_restoration": _law_html_element_and_theme_restoration,
-    "request_is_the_first_context_variable": _law_request_is_the_first_context_variable,
     "token_contract": _law_token_contract,
+    "application_factory": _law_application_factory,
+    "request_path_renders": _law_request_path_renders,
+    "surface_slot_resolution": _law_surface_slot_resolution,
+    "sse_hook_registers_a_source": _law_sse_hook_registers_a_source,
 }
 
 

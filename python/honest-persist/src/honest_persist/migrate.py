@@ -284,7 +284,7 @@ async def inspect(conn, dialect):
     inspector is registered for the dialect."""
     inspector = _INSPECTORS.get(dialect)
     if inspector is None:
-        return err(fault("unsupported_dialect", f"no schema inspector for dialect '{dialect}'", "server", {}))
+        return err(fault("unsupported_dialect", f"no schema inspector for dialect '{dialect}'", "server", [], {}))
     return await inspector(conn)
 
 
@@ -309,7 +309,7 @@ async def migrate(schema, conn, dialect):
         return err(fault(
             "migration_ambiguous",
             "Diff is ambiguous; a human must resolve the renames before applying",
-            "server",
+            "server", [],
             {"ambiguities": result["ambiguities"]},
         ))
     applied = await apply(result, expanded, conn, dialect)

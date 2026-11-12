@@ -3,10 +3,11 @@ name = "honest-observe"
 version = "0.1.0"
 description = "Event-sourced observability: one append-only event log, projections as pure folds."
 requires-python = ">=3.11"
-dependencies = ["honest-type"]
+dependencies = ["honest-type", "honest-persist"]
 
 [tool.uv.sources]
 honest-type = { workspace = true }
+honest-persist = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

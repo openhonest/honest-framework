@@ -8,6 +8,8 @@ set passed to `vocabulary()` is normalized to a Set recognizer; `predicate()` an
 
 from typing import Any, Callable
 
+from honest_type.types import fault
+
 
 def predicate(fn: Callable[[str], bool]) -> dict:
     """An open-ended recognizer wrapping a String -> Boolean callable."""
@@ -42,9 +44,19 @@ def _match_predicate(token: str, recognizer: dict) -> bool:
 _MATCHERS = {"set": _match_set, "insensitive": _match_insensitive, "predicate": _match_predicate}
 
 
-def recognize(token: str, recognizer: dict) -> bool:
-    """True if `token` matches `recognizer`. Table dispatch on kind."""
-    return _MATCHERS[recognizer["kind"]](token, recognizer)
+def recognize(token: str, recognizer: dict) -> bool | dict:
+    """True if `token` matches `recognizer`, dispatched on the recognizer's kind through a table.
+    An unknown kind hits the terminal entry and returns a server fault naming the accepted kinds
+    (spec 13.7), rather than letting the lookup miss in silence."""
+    matcher = _MATCHERS.get(recognizer["kind"])
+    if matcher is None:
+        return fault(
+            "unknown_recognizer_kind",
+            f"recognize got an unknown recognizer kind {recognizer['kind']!r}; "
+            f"the accepted kinds are {', '.join(_MATCHERS)}; no matcher ran",
+            "server", [], {"accepted": list(_MATCHERS), "arrived": recognizer["kind"]},
+        )
+    return matcher(token, recognizer)
 
 
 def is_bounded(recognizer: dict) -> bool:

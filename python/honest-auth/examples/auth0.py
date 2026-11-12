@@ -35,7 +35,7 @@ def auth0_provider(domain, audience):
         # TEMPLATE — fail closed until wired. Verify the JWT against
         #   https://{domain}/.well-known/jwks.json  and check iss/aud/exp, then:
         #     return ok({"id": claims["sub"], "email": claims.get("email")})
-        return err(fault("unauthenticated", "auth0 provider is a template and is not wired yet", "unauthenticated"))
+        return err(fault("unauthenticated", "auth0 provider is a template and is not wired yet", "unauthenticated", [], {}))
 
     def test_tokens(class_name, context):
         # TEMPLATE — once resolve is wired, mint a real token per class from an Auth0 test tenant

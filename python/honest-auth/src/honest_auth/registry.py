@@ -22,7 +22,7 @@ def validate_provider(provider):
     err(invalid_provider) listing the missing fields. Pure."""
     missing = [name for name in _REQUIRED_FIELDS if name not in provider]
     if missing:
-        return err(fault("invalid_provider", f"AuthProvider is missing required fields: {missing}", "client", detail=missing))
+        return err(fault("invalid_provider", f"AuthProvider is missing required fields: {missing}", "client", [], detail=missing))
     return ok(provider)
 
 
@@ -31,7 +31,7 @@ def register_auth_provider(registry, provider):
     err(already_registered) if one is already registered, err(invalid_provider) if the provider is
     malformed, else ok(new_registry). Never mutates its argument. Pure."""
     if registry["provider"] is not None:
-        return err(fault("already_registered", "an AuthProvider is already registered for this application", "client"))
+        return err(fault("already_registered", "an AuthProvider is already registered for this application", "client", [], {}))
     validated = validate_provider(provider)
     if "err" in validated:
         return validated

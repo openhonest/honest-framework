@@ -1,41 +1,46 @@
-"""emit (section 3): the one I/O boundary that writes an event to the log.
+"""emit (section 3): write one event to the log.
 
-emit assembles a validated envelope (the pure build_event of section 2) and appends it. Everything
-it cannot compute purely — the event_id, the timestamp, the per-aggregate sequence, the event-type
-version, the auth/meta field names, and the log writer itself — is reached through one injected
-`runtime`, never a global, a clock, or an import. Injecting `append` is what keeps honest-observe a
-leaf above persist: observe is *stored by* persist but never *imports* it, so the dependency runs
-one way and there is no cycle.
-
-emit is async because the append is I/O. It does not catch — append returns a Result and emit
-threads it; a malformed envelope returns its own validation fault, and nothing is written.
+emit is the door the world calls. It hands its input to run_emit with honest-observe's own
+boundaries (new_event_id, event_timestamp, next_sequence and append_event, from boundaries).
+run_emit assembles the validated envelope, the pure build_event of section 2, and appends it. A
+test drives run_emit with a stand-in for each boundary and never touches the log. emit is async
+because the append is I/O. Neither catches: append returns a Result and run_emit threads it, and a
+malformed envelope returns its own validation fault with nothing written.
 """
 
 from honest_type import err, fault, ok
 
+from honest_observe.boundaries import append_event, event_timestamp, new_event_id, next_sequence
 from honest_observe.events import build_event, extract_auth, extract_meta
 
 
-async def emit(event_type, aggregate_type, aggregate_id, payload, context, runtime):
-    """Write one event to the log (section 3). Returns ok({event_id}), the envelope's validation
-    fault if a required field is empty (nothing is written), or err(emit_failed) if the append
-    fails. I/O — through the injected runtime only."""
+async def run_emit(event_type, aggregate_type, aggregate_id, payload, context, event_version, conn, new_event_id, event_timestamp, next_sequence, append_event, auth_fields, meta_fields):
+    """Assemble the envelope with the handed-in boundaries and append it (section 3). Returns
+    ok({event_id}), the envelope's validation fault if a required field is empty with nothing
+    written, or err(emit_failed) if the append fails."""
     built = build_event(
         event_type,
-        runtime.version(event_type),
+        event_version,
         aggregate_type,
         aggregate_id,
         payload,
-        runtime.event_id(),
-        runtime.timestamp(),
-        runtime.sequence(aggregate_id),
-        auth=extract_auth(context, runtime.auth_fields),
-        meta=extract_meta(context, runtime.meta_fields),
+        new_event_id(),
+        event_timestamp(),
+        await next_sequence(aggregate_id, conn),
+        auth=extract_auth(context, auth_fields),
+        meta=extract_meta(context, meta_fields),
     )
     if "err" in built:
         return built
     event = built["ok"]
-    written = await runtime.append(event)
+    written = await append_event(event, conn)
     if "err" in written:
-        return err(fault("emit_failed", "Failed to append event to the log", "server", {"cause": written["err"]}))
+        return err(fault("emit_failed", "Failed to append event to the log", "server", [], {"cause": written["err"]}))
     return ok({"event_id": event["event_id"]})
+
+
+async def emit(event_type, aggregate_type, aggregate_id, payload, context, event_version, conn, auth_fields, meta_fields):
+    """The door: the world calls emit; it hands its input to run_emit with honest-observe's own
+    boundaries. The event version and the auth and meta field names are the caller's, passed as
+    data, not read from an injected object."""
+    return await run_emit(event_type, aggregate_type, aggregate_id, payload, context, event_version, conn, new_event_id, event_timestamp, next_sequence, append_event, auth_fields, meta_fields)

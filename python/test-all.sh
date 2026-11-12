@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-all.sh — full behavioral sweep for CI: run every honest-* module's conformance
-# suite (section 9.2). The counterpart to lint-all.sh (full structural sweep).
+# suite (section 9.2). The counterpart to check-all.sh (full structural sweep).
 set -uo pipefail
 cd "$(dirname "$0")"            # -> python/
 

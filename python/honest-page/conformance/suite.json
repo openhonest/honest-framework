@@ -1,0 +1,96 @@
+{
+  "version": "0.1",
+  "module": "honest-page",
+  "value_oracle_exempt": [
+    {"function": "read_bundle", "reason": "A reader of the filesystem; its value is the shipped template and static directories, proven in laws_hp.py."},
+    {"function": "route_table", "reason": "Returns the route map as RouteEntry records; its structure is proven in laws_hp.py."},
+    {"function": "assembly", "reason": "Returns the mount plan record; proven structurally in laws_hp.py, not pinned as one JSON value."},
+    {"function": "install", "reason": "An output boundary that creates the application and writes HTTP; the app object cannot be a JSON value case. Proven in laws_hp.py."},
+    {"function": "build_app", "reason": "An orchestrator returning the ASGI application handle; a JSON value case cannot carry an app object. Proven in laws_hp.py."},
+    {"function": "create_app", "reason": "The composition root; returns the ASGI application handle, not a pinnable value. Proven in laws_hp.py."},
+    {"function": "intake", "reason": "A door over the request and the next handler; its effect is on request state, proven in laws_hp.py with a stand-in request."},
+    {"function": "index", "reason": "A door that returns a rendered HTTP response; its contract is proven in laws_hp.py against the templates."},
+    {"function": "search", "reason": "A door that returns a rendered fragment; proven in laws_hp.py against the templates."},
+    {"function": "search_chain", "reason": "The reference keeps its body a trivial demo (spec 10.2); its rows are not a normative value. Proven in laws_hp.py."},
+    {"function": "run_search", "reason": "An orchestrator that delegates to search_chain; its value equals the chain's, proven in laws_hp.py."},
+    {"function": "build_home", "reason": "An orchestrator that delegates to page_context; its value equals page_context's, proven in laws_hp.py."},
+    {"function": "build_manifest", "reason": "An orchestrator that delegates to extract_tokens; its value equals extract_tokens', proven in laws_hp.py."},
+    {"function": "attach", "reason": "An orchestrator over surface_slot and register_source; registration cannot be a JSON value. Proven in laws_hp.py."},
+    {"function": "attach_stream", "reason": "The hook door; registers a custom SSE source, no pinnable return. Proven in laws_hp.py."},
+    {"function": "register_source", "reason": "An output boundary that registers a source on the stream and writes HTTP; proven in laws_hp.py."}
+  ],
+  "cases": [
+    {
+      "id": "value-extract-tokens-merge",
+      "value_case": {
+        "function": "extract_tokens",
+        "args": [{"id": "7"}, {"page": "2"}, {"search": "hi"}],
+        "expected": {"id": "7", "page": "2", "search": "hi"}
+      }
+    },
+    {
+      "id": "value-extract-tokens-state-wins",
+      "value_case": {
+        "function": "extract_tokens",
+        "args": [{"q": "path"}, {"q": "query"}, {"q": "state"}],
+        "expected": {"q": "state"}
+      }
+    },
+    {
+      "id": "value-extract-tokens-query-beats-path",
+      "value_case": {
+        "function": "extract_tokens",
+        "args": [{"q": "path"}, {"q": "query"}, {}],
+        "expected": {"q": "query"}
+      }
+    },
+    {
+      "id": "value-extract-tokens-path-survives",
+      "value_case": {
+        "function": "extract_tokens",
+        "args": [{"q": "path"}, {}, {}],
+        "expected": {"q": "path"}
+      }
+    },
+    {
+      "id": "value-surface-slot-header",
+      "value_case": {
+        "function": "surface_slot",
+        "args": ["honest-header"],
+        "expected": "header"
+      }
+    },
+    {
+      "id": "value-surface-slot-main",
+      "value_case": {
+        "function": "surface_slot",
+        "args": ["honest-main"],
+        "expected": "main"
+      }
+    },
+    {
+      "id": "value-surface-slot-banners",
+      "value_case": {
+        "function": "surface_slot",
+        "args": ["honest-alerts-banners"],
+        "expected": "div"
+      }
+    },
+    {
+      "id": "value-surface-slot-unknown",
+      "value_case": {
+        "function": "surface_slot",
+        "args": ["not-a-surface"],
+        "expected": null
+      }
+    },
+    {
+      "id": "value-page-context-defaults-around-title",
+      "value_case": {
+        "function": "page_context",
+        "args": ["Home"],
+        "expected": {"app_name": "Honest App", "page_title": "Home", "lang": "en", "theme": "auto", "request_id": ""}
+      }
+    }
+  ]
+}

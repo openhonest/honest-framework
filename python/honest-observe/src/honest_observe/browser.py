@@ -37,7 +37,7 @@ def build_browser_event(event_type, event_version, timestamp, session_id, payloa
         event["request_id"] = request_id
     missing = [name for name in _BROWSER_REQUIRED if not event[name]]
     if missing:
-        return err(fault("invalid_event", f"Browser event is missing required field(s): {missing}", "client", {"missing": missing}))
+        return err(fault("invalid_event", f"Browser event is missing required field(s): {missing}", "client", [], {"missing": missing}))
     return ok(event)
 
 

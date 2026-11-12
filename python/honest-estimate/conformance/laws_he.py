@@ -22,7 +22,7 @@ from honest_estimate.estimate import (
     _under_declared,
 )
 
-_RATE = {"compute_per_cfp": 2, "oversight_per_cfp": 3, "tooling_per_cfp": 1, "fast_cfp_per_day": 6, "slow_cfp_per_day": 3, "price_date": "2026-07-27", "price_basis": "provider X"}
+_RATE = {"rates": {"specified": {"compute_per_cfp": 2, "oversight_per_cfp": 3, "tooling_per_cfp": 1, "per_case": 5}}, "fast_cfp_per_day": 6, "slow_cfp_per_day": 3, "price_date": "2026-07-27", "price_basis": "provider X"}
 _NATIVE = {"loc_per_fp": 50, "cost_per_fp": 1000, "defect_potential": 5, "schedule": 10}
 _JONES = {"loc_per_fp": 100, "cost_per_fp": 2000, "defect_potential": 4, "schedule": 8}
 
@@ -48,8 +48,8 @@ def _module(functions=(), sets=(), vocabularies=(), types=(), routes=(), entries
     }
 
 
-def _fn(name, role="fn", invokes=(), params=(), side_effects=()):
-    return {"name": name, "role": role, "invokes": list(invokes), "params": list(params), "side_effects": list(side_effects)}
+def _fn(name, role="fn", invokes=(), params=(), side_effects=(), ret=()):
+    return {"name": name, "role": role, "invokes": list(invokes), "params": list(params), "side_effects": list(side_effects), "ret": [{"name": r} for r in ret]}
 
 
 def _param(name, type_name):
@@ -85,6 +85,7 @@ def _probe_size_success():
             "cosmic_cfp": 4,
             "vfp": {"total": 2, "ifpug_countable": 0, "beyond_ifpug_internal": 2, "internal_share_ratio": 1.0, "under_declared": False},
             "bits_of_case_distinction": 3.0,
+            "case_count": 6,
             "open_vocab_flags": [],
             "cfp_certified": False,
         }
@@ -96,6 +97,7 @@ def _probe_size_success():
             "cosmic_cfp": 2,
             "vfp": {"total": 1, "ifpug_countable": 0, "beyond_ifpug_internal": 1, "internal_share_ratio": 1.0, "under_declared": False},
             "bits_of_case_distinction": 1.0,
+            "case_count": 2,
             "open_vocab_flags": [{"process": "act", "param": "note", "type": "str"}],
             "cfp_certified": False,
         }
@@ -295,8 +297,12 @@ def _probe_bits_of():
 
 
 def _probe_depth():
-    """Only a process's input parameters contribute; a helper's parameters are skipped."""
+    """A process commits through its input params, its own eXit, and the returns of fns/readers it
+    dispatches on; a non-process helper's own params are skipped; a vocabulary reached by two channels
+    counts once (§6.1, Rulings 1 and 2)."""
     bad = []
+    lang = {"name": "Lang", "sets": ["G"]}
+    # Input only: proc takes S(2); helper carries no boundary role, so its own param is skipped.
     module = _module(
         functions=[
             _fn("proc", role="boundary_in", params=[_param("m", "S")]),
@@ -304,9 +310,73 @@ def _probe_depth():
         ],
         sets=[_set("S", 2)],
     )
-    # proc is the only process; helper carries no role -> its param is skipped.
-    if depth(module) != {"bits": 1.0, "open_flags": []}:
+    if depth(module) != {"bits": 1.0, "cases": 2, "open_flags": []}:
         bad.append(f"depth should skip a non-process function's params: {depth(module)}")
+    # Dispatched vocab: an orchestrator that invokes a fn returning a 10-member vocab counts it, though
+    # the orchestrator's own inputs are open. This is the parse pattern.
+    disp = _module(
+        functions=[
+            _fn("run", role="orchestrator", invokes=["choose"], params=[_param("p", "str")]),
+            _fn("choose", role="fn", params=[_param("p", "str")], ret=["Lang"]),
+        ],
+        sets=[_set("G", 10)],
+        vocabularies=[lang],
+    )
+    got = depth(disp)
+    if not math.isclose(got["bits"], math.log2(10)) or got["cases"] != 10 or got["open_flags"] != [{"process": "run", "param": "p", "type": "str"}]:
+        bad.append(f"depth should count a vocab returned by an invoked fn, path still flagged: {got}")
+    # Own eXit: a boundary_out returning the vocab counts it too.
+    exit_mod = _module(
+        functions=[_fn("classify", role="boundary_out", params=[_param("x", "str")], ret=["Lang"])],
+        sets=[_set("G", 10)],
+        vocabularies=[lang],
+    )
+    got = depth(exit_mod)
+    if not math.isclose(got["bits"], math.log2(10)) or got["cases"] != 10:
+        bad.append(f"depth should count a vocab on the process's own eXit: {got}")
+    # Distinct once: Lang reached on the input AND via the invoked fn's return is one commitment.
+    dedup = _module(
+        functions=[
+            _fn("both", role="orchestrator", invokes=["choose"], params=[_param("m", "Lang")], ret=["str"]),
+            _fn("choose", role="fn", params=[_param("p", "str")], ret=["Lang"]),
+        ],
+        sets=[_set("G", 10)],
+        vocabularies=[lang],
+    )
+    got = depth(dedup)
+    if not math.isclose(got["bits"], math.log2(10)) or got["cases"] != 10:
+        bad.append(f"depth should count a vocab reached by two channels once: {got}")
+    return bad
+
+
+def _probe_depth_edges():
+    """The channel edges (§6.1): a composed-type input recurses to its closed fields and breaks a cycle;
+    an invoked target that is not a pure function or reader does not contribute through the caller, and
+    an invoked name the module does not declare is skipped."""
+    bad = []
+    # Composed-type input: R carries a closed MODE field and a self-reference. _closed_names reaches
+    # MODE and stops at the cycle, so the process commits to MODE once.
+    rec_mod = _module(
+        functions=[_fn("p", role="boundary_in", params=[_param("r", "R")])],
+        sets=[_set("MODE", 2)],
+        types=[_record("R", [("mode", "MODE"), ("self", "R")])],
+    )
+    got = depth(rec_mod)
+    if not math.isclose(got["bits"], 1.0) or got["cases"] != 2:
+        bad.append(f"depth should recurse a composed input to its closed field and break the cycle: {got}")
+    # Invoked non-fn and undeclared invoke: `o` dispatches on an orchestrator (filtered) and a ghost
+    # name (absent), so `o` itself commits nothing; the orchestrator `sub` still counts MODE on its own
+    # eXit. Total is MODE once, from sub.
+    edge_mod = _module(
+        functions=[
+            _fn("o", role="orchestrator", invokes=["sub", "ghost"], params=[_param("x", "str")]),
+            _fn("sub", role="orchestrator", params=[_param("y", "str")], ret=["MODE"]),
+        ],
+        sets=[_set("MODE", 2)],
+    )
+    got = depth(edge_mod)
+    if not math.isclose(got["bits"], 1.0) or got["cases"] != 2:
+        bad.append(f"depth should not count a non-fn invoke or an undeclared invoke through the caller: {got}")
     return bad
 
 
@@ -324,13 +394,20 @@ def _probe_quality():
 
 
 def _probe_cost():
-    """A projected dollar band from an injected model; uncalibrated with no model, no figure fabricated."""
+    """Cost sums a breadth term (CFP times the per-CFP rates) and a depth term (cases times the per-case
+    rate), both read under the work class; a missing model or an unpriced class yields no figure and
+    fabricates no constant."""
     bad = []
-    got = cost(10, _RATE)
-    if got != {"total": 60, "compute": 20, "oversight": 30, "tooling": 10, "priced_at_date": "2026-07-27", "price_basis": "provider X", "uncalibrated": False}:
+    got = cost(10, 4, "specified", _RATE)
+    want = {"total": 80, "compute": 20, "oversight": 30, "tooling": 10, "cases": 20, "priced_at_date": "2026-07-27", "price_basis": "provider X", "work_class": "specified", "uncalibrated": False}
+    if got != want:
         bad.append(f"cost calibrated: {got}")
-    if cost(10, None) != {"total": None, "compute": None, "oversight": None, "tooling": None, "priced_at_date": None, "price_basis": "uncalibrated — verify", "uncalibrated": True}:
-        bad.append(f"cost uncalibrated: {cost(10, None)}")
+    no_model = cost(10, 4, "specified", None)
+    if no_model != {"total": None, "compute": None, "oversight": None, "tooling": None, "cases": None, "priced_at_date": None, "price_basis": "uncalibrated — verify", "work_class": "specified", "uncalibrated": True}:
+        bad.append(f"cost uncalibrated with no model: {no_model}")
+    no_rate = cost(10, 4, "exploratory", _RATE)
+    if no_rate["uncalibrated"] is not True or no_rate["total"] is not None or "exploratory" not in no_rate["price_basis"] or no_rate["work_class"] != "exploratory":
+        bad.append(f"cost uncalibrated when the work class is unpriced: {no_rate}")
     return bad
 
 
@@ -369,12 +446,12 @@ def _probe_bits_per_process():
 def _probe_estimate():
     """The full §13 artifact for one module, and the size fault on a malformed source."""
     bad = []
-    build = {"mutants_total": 10, "mutants_equivalent": 2, "escaped_defects": 1, "native": _NATIVE, "honest_check_clean": True}
+    build = {"mutants_total": 10, "mutants_equivalent": 2, "escaped_defects": 1, "native": _NATIVE, "honest_check_clean": True, "work_class": "specified"}
     got = estimate(_HD_B, _RATE, _JONES, build)
     ok_body = got.get("ok", {})
     if ok_body.get("size", {}).get("cosmic_cfp") != 2:
         bad.append(f"estimate should embed the size reading: {got}")
-    if ok_body.get("cost", {}).get("total") != 12 or ok_body.get("duration", {}).get("uncalibrated") is not False:
+    if ok_body.get("cost", {}).get("total") != 22 or ok_body.get("duration", {}).get("uncalibrated") is not False:
         bad.append(f"estimate should project cost and duration from the model: {ok_body.get('cost')} {ok_body.get('duration')}")
     if ok_body.get("quality", {}).get("mutation_density_per_process") != 8.0:
         bad.append(f"estimate should embed the quality proxy: {ok_body.get('quality')}")
@@ -419,6 +496,7 @@ _PROBES = (
     _probe_head_atom,
     _probe_bits_of,
     _probe_depth,
+    _probe_depth_edges,
 )
 
 

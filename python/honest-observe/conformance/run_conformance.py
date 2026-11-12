@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 import honest_observe as _ho
-from honest_observe import build_event, emit, matches
+from honest_observe import build_event, matches, run_emit
 
 
 def _count_fold(state, event):
@@ -42,39 +42,34 @@ def _check_matches(case):
     return got == case["expect"], f"got {got}"
 
 
-class _Runtime:
-    """A stand-in emit runtime (section 3): canned id/timestamp/sequence/version, an append that
-    succeeds or fails per the case, recording what it was handed. Fixture - not linted."""
+def _stand_ins(spec):
+    """Stand-in boundaries for run_emit (section 3): canned id, timestamp and sequence, and an
+    append that succeeds or fails per the case while recording what it was handed. Fixture - not
+    linted."""
+    appended = []
 
-    def __init__(self, spec):
-        self._spec = spec
-        self.auth_fields = spec.get("auth_fields", [])
-        self.meta_fields = spec.get("meta_fields", [])
-        self.appended = []
+    def _id():
+        return spec["event_id"]
 
-    def event_id(self):
-        return self._spec["event_id"]
+    def _ts():
+        return spec["timestamp"]
 
-    def timestamp(self):
-        return self._spec["timestamp"]
+    async def _seq(aggregate_id, conn):
+        return spec["sequence"]
 
-    def sequence(self, aggregate_id):
-        return self._spec["sequence"]
-
-    def version(self, event_type):
-        return self._spec["version"]
-
-    async def append(self, event):
-        self.appended.append(event)
-        if self._spec.get("append_ok", True):
+    async def _append(event, conn):
+        appended.append(event)
+        if spec.get("append_ok", True):
             return {"ok": {}}
         return {"err": {"code": "log_write_failed", "message": "boom", "category": "server", "detail": None}}
+
+    return appended, _id, _ts, _seq, _append
 
 
 def _check_emit(case):
     spec = case["emit"]
-    runtime = _Runtime(spec)
-    result = asyncio.run(emit(spec["event_type"], spec["aggregate_type"], spec["aggregate_id"], spec["payload"], spec["context"], runtime))
+    _appended, _id, _ts, _seq, _append = _stand_ins(spec)
+    result = asyncio.run(run_emit(spec["event_type"], spec["aggregate_type"], spec["aggregate_id"], spec["payload"], spec["context"], spec["version"], None, _id, _ts, _seq, _append, spec.get("auth_fields", []), spec.get("meta_fields", [])))
     if case["expect"] == "ok":
         return "ok" in result and result["ok"]["event_id"] == case["expect_event_id"], f"got {result}"
     return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"

@@ -22,3 +22,17 @@ def resolve_config(raw):
     defaults for that section overlaid with the raw values, so provided keys win and omitted ones keep
     their default. Returns the resolved config with every section present."""
     return {section: {**defaults, **raw.get(section, {})} for section, defaults in ALERT_CONFIG_DEFAULTS.items()}
+
+
+def load_config(read_raw_config):
+    """Read the configuration file and resolve it over the defaults (section 11). The read is the
+    handed-in boundary; the resolve is pure, so a test drives this with a stand-in reader."""
+    return resolve_config(read_raw_config())
+
+
+def start():
+    """The door the configure entry calls (section 11): load the configuration with the module's own
+    file reader."""
+    from honest_alerts import boundaries
+
+    return load_config(boundaries.read_raw_config)

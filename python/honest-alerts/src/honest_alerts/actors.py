@@ -28,5 +28,5 @@ def validate_actor_ref(ref):
     """An ActorRef names a declared actor type (section 2.1, 2.2). Returns ok(ref) or a client fault.
     Pure. id and tenant_id are optional and not constrained here."""
     if ref.get("type") not in ACTOR_TYPES:
-        return err(fault("invalid_actor_type", f"'{ref.get('type')}' is not a declared actor type", "client", detail=ref.get("type")))
+        return err(fault("invalid_actor_type", f"'{ref.get('type')}' is not a declared actor type", "client", [], detail=ref.get("type")))
     return ok(ref)

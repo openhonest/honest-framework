@@ -53,10 +53,10 @@ def validate_termination(spec):
     (section 3.3). Returns ok(spec) or a client fault. Pure."""
     condition = spec.get("condition")
     if condition not in TERMINATION_CONDITIONS:
-        return err(fault("invalid_termination", f"'{condition}' is not a declared termination condition", "client", detail=condition))
+        return err(fault("invalid_termination", f"'{condition}' is not a declared termination condition", "client", [], detail=condition))
     missing = [field for field in _TERMINATION_REQUIRED[condition] if field not in spec]
     if missing:
-        return err(fault("incomplete_termination", f"a '{condition}' termination is missing required fields: {missing}", "client", detail=missing))
+        return err(fault("incomplete_termination", f"a '{condition}' termination is missing required fields: {missing}", "client", [], detail=missing))
     return ok(spec)
 
 
@@ -65,9 +65,9 @@ def validate_reply_option(option):
     (section 3.2). Returns ok(option) or a client fault. Pure."""
     missing = [field for field in _REPLY_OPTION_REQUIRED if field not in option]
     if missing:
-        return err(fault("incomplete_reply_option", f"a reply option is missing required fields: {missing}", "client", detail=missing))
+        return err(fault("incomplete_reply_option", f"a reply option is missing required fields: {missing}", "client", [], detail=missing))
     if "style" in option and option["style"] not in REPLY_STYLES:
-        return err(fault("invalid_reply_style", f"'{option['style']}' is not a declared reply style", "client", detail=option["style"]))
+        return err(fault("invalid_reply_style", f"'{option['style']}' is not a declared reply style", "client", [], detail=option["style"]))
     return ok(option)
 
 
@@ -78,7 +78,7 @@ def validate_message(message):
     a discriminant dispatch; a sub-schema's fault is propagated unchanged."""
     missing = [field for field in _MESSAGE_REQUIRED if field not in message]
     if missing:
-        return err(fault("incomplete_message", f"message is missing required fields: {missing}", "client", detail=missing))
+        return err(fault("incomplete_message", f"message is missing required fields: {missing}", "client", [], detail=missing))
     sender = validate_actor_ref(message["sender"])
     if "err" in sender:
         return sender
@@ -89,11 +89,11 @@ def validate_message(message):
     if "err" in termination:
         return termination
     if message["ack_scope"] not in ACK_SCOPES:
-        return err(fault("invalid_ack_scope", f"'{message['ack_scope']}' is not a declared ack scope", "client", detail=message["ack_scope"]))
+        return err(fault("invalid_ack_scope", f"'{message['ack_scope']}' is not a declared ack scope", "client", [], detail=message["ack_scope"]))
     if "channel" in message and message["channel"] not in CHANNELS:
-        return err(fault("invalid_channel", f"'{message['channel']}' is not a declared channel", "client", detail=message["channel"]))
+        return err(fault("invalid_channel", f"'{message['channel']}' is not a declared channel", "client", [], detail=message["channel"]))
     if "dom_surface" in message and message["dom_surface"] not in DOM_SURFACES:
-        return err(fault("invalid_dom_surface", f"'{message['dom_surface']}' is not a declared DOM surface", "client", detail=message["dom_surface"]))
+        return err(fault("invalid_dom_surface", f"'{message['dom_surface']}' is not a declared DOM surface", "client", [], detail=message["dom_surface"]))
     for option in message.get("reply_options", []):
         checked = validate_reply_option(option)
         if "err" in checked:

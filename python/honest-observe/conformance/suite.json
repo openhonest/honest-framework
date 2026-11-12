@@ -859,7 +859,7 @@
    "value_case": {
     "function": "build_browser_event",
     "args": ["hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "", {}, "uuid-v4-3"],
-    "expected": {"err": {"code": "invalid_event", "message": "Browser event is missing required field(s): ['session_id']", "category": "client", "detail": {"missing": ["session_id"]}}}
+    "expected": {"err": {"code": "invalid_event", "message": "Browser event is missing required field(s): ['session_id']", "category": "client", "results": [], "detail": {"missing": ["session_id"]}}}
    }
   },
   {

@@ -36,10 +36,10 @@ def _dev_resolver(users):
     def resolve(token):
         username, _, password = token.partition(":")
         if username not in users:
-            return err(fault("forged", "no such dev user", "unauthenticated"))
+            return err(fault("forged", "no such dev user", "unauthenticated", [], {}))
         if users[username] == "" or users[username] == password:
             return ok({"id": username})
-        return err(fault("bad_password", "wrong password for the dev user", "unauthenticated"))
+        return err(fault("bad_password", "wrong password for the dev user", "unauthenticated", [], {}))
 
     return resolve
 

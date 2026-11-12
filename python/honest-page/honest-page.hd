@@ -2,13 +2,18 @@
 # order it must render them, and the reference application that renders them. The implementation
 # is templates plus python/app.py, which the architecture spec names as normative; this file is
 # the module's statement of itself, which until the surfaces block existed could not be written.
+# create_app is the composition root (spec §10.4): the host imports it and calls it for the app the
+# ASGI server runs. It hands off to build_app, which pulls the bundle, lays out the assembly, and
+# installs it; the install boundary is the one HTTP write and names FastAPI as the Python driver.
 
 module honest-page
 
   layer application
 
-  # The surface, closed: every side of the world a boundary here touches, and no other.
-  inputs = { "HTTP" }
+  # The surface, closed: every side of the world a boundary here touches, and no other. The factory
+  # pulls the bundled template and static directories, then installs routes and middleware, which is
+  # the one HTTP write; every request door reads HTTP and answers by its return.
+  inputs  = { "HTTP", "file" }
   outputs = { "HTTP" }
 
   # The six required surfaces, in the document order section 2.2 requires. The order is the
@@ -24,17 +29,61 @@ module honest-page
     "honest-alerts-modal" as div
   ]
 
+  type RouteEntry = {
+    method: str
+    path: str
+    chain: str
+  }
+
+  type Assembly = {
+    static_dir: str
+    template_dir: str
+    routes: list<RouteEntry>
+  }
+
   fn search_chain : (manifest: dict<str, any>) -> list<any>
 
-  fn extract_tokens : (path_params: dict<str, str>, query_params: dict<str, str>, state: dict<str, any>) -> list<str>
+  orchestrator fn run_search : (manifest: dict<str, any>) -> list<any> invokes search_chain
 
-  boundary_in fn intake : (request: any, call_next: any) -> any side_effect reads "HTTP"
+  fn page_context : (page_title: str) -> dict<str, any>
 
-  boundary_in fn index : (request: any) -> any side_effect reads "HTTP"
+  orchestrator fn build_home : (page_title: str) -> dict<str, any> invokes page_context
 
-  boundary_in fn search : (request: any) -> any side_effect reads "HTTP"
+  fn extract_tokens : (path_params: dict<str, str>, query_params: dict<str, str>, state: dict<str, any>) -> dict<str, any>
 
-  boundary_out fn alerts_stream : (request: any) -> any side_effect writes "HTTP"
+  orchestrator fn build_manifest : (path_params: dict<str, str>, query_params: dict<str, str>, state: dict<str, any>) -> dict<str, any> invokes extract_tokens
+
+  boundary_in fn intake : (request: any, call_next: any) -> any awaited invokes build_manifest side_effect reads "HTTP"
+
+  boundary_in fn index : (request: any) -> any invokes build_home side_effect reads "HTTP"
+
+  boundary_in fn search : (request: any) -> any invokes run_search side_effect reads "HTTP"
+
+  reader fn read_bundle : () -> dict<str, str> side_effect reads "file" note "the bundled template and static directories, as shipped"
+
+  fn route_table : () -> list<RouteEntry> note "the route map: module-level data honest-check reads by parsing, never by calling the factory"
+
+  fn assembly : (bundle: dict<str, str>, routes: list<RouteEntry>) -> Assembly note "what to mount, in order: static, templates, intake ahead of every route, one handler per route-map entry"
+
+  boundary_out fn install : (plan: Assembly) -> any side_effect writes "HTTP" note "creates the application object and applies the plan; FastAPI is the Python driver, served by any ASGI host"
+
+  orchestrator fn build_app : () -> any invokes read_bundle, route_table, assembly, install
+
+  boundary_in fn create_app : () -> any invokes build_app note "the composition root: the host imports it and calls it for the app the ASGI server runs"
+
+  # The SSE extension hook (spec §4.5): a custom module registers its own source against one declared
+  # surface. honest-page names no custom module; the registering module names this door in its own
+  # declaration, so the page contract stays fixed as modules are added.
+  fn surface_slot : (surface_id: str) -> str | NOTHING note "resolves a surface id against PageSurfaces; nothing when the id is not a declared surface"
+
+  boundary_out fn register_source : (slot: str, event_type: str, source: any) -> any side_effect writes "HTTP"
+
+  orchestrator fn attach : (surface_id: str, event_type: str, source: any) -> any invokes surface_slot, register_source
+
+  boundary_in fn attach_stream : (surface_id: str, event_type: str, source: any) -> any invokes attach note "the hook: a module registers its own SSE source against one declared surface"
 
   route "GET /" -> index
   route "GET /search" -> search
+
+  entry "call:create_app" -> create_app
+  entry "call:attach_stream" -> attach_stream

@@ -51,7 +51,7 @@ def authentication_honesty(provider, context):
         if outcome != _EXPECTED[class_name]:
             violations.append({"class": class_name, "expected": _EXPECTED[class_name], "got": outcome})
     if violations:
-        return err(fault("authentication_dishonest", "the provider does not honour the token-class contract", "server", detail=violations))
+        return err(fault("authentication_dishonest", "the provider does not honour the token-class contract", "server", [], detail=violations))
     return ok(provider)
 
 

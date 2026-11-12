@@ -20,9 +20,9 @@ def authenticate(provider, token):
     before `resolve_actor`; otherwise the provider's `resolve_actor` resolves it to `ok(actor)` or
     `err(fault)`. Pure; the recognizer and resolver are the provider's injected boundary I/O."""
     if token is None or token == "":
-        return err(fault("unauthenticated", "no credential was presented at the boundary", "unauthenticated"))
+        return err(fault("unauthenticated", "no credential was presented at the boundary", "unauthenticated", [], {}))
     if not provider["actor_recognizer"](token):
-        return err(fault("malformed_token", "token does not match the provider's wire format", "client"))
+        return err(fault("malformed_token", "token does not match the provider's wire format", "client", [], {}))
     return provider["resolve_actor"](token)
 
 

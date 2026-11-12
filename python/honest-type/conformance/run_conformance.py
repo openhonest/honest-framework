@@ -1,5 +1,8 @@
 """honest-type conformance runner (sections 2, 3, 6, 9 — units 1-2).
 
+A malformed vocabulary, merge or state machine comes back as a fault VALUE (section 11.2: a
+construction error is data, not a raise); the runner reads the returned fault, it never catches.
+
 Each case is data. Two kinds:
   - construction: {declarations, expect: ok|error, error_contains?} — vocabulary() contract.
   - classify:     {declarations, binding?, tokens, expect_manifest?, expect_rejections?,
@@ -17,8 +20,6 @@ import sys
 from pathlib import Path
 
 from honest_type import (
-    StateMachineError,
-    VocabularyError,
     binding,
     catch_at_boundary,
     chain,
@@ -38,6 +39,7 @@ from honest_type import (
     validate_all,
     vocabulary,
 )
+from honest_type.boundary import DEFAULT_REJECTION_POLICY
 
 
 def _build_sm(case):
@@ -62,7 +64,7 @@ def _link_set_role(manifest):
 
 
 def _link_fault(manifest):
-    return err(fault("boom", "boom", "server"))
+    return err(fault("boom", "boom", "server", [], {}))
 
 
 def _link_bad(manifest):
@@ -70,13 +72,13 @@ def _link_bad(manifest):
 
 
 def _link_unrecognized(manifest):
-    return err(fault("unrecognized", "no", "client"))
+    return err(fault("unrecognized", "no", "client", [], {}))
 
 
 def _link_client_fault(manifest):
     # A client-category fault whose code is NOT in _FAULT_TO_OUTPUT, so the boundary routes it by
     # category default (client) — exercising the "client" arm of the category table.
-    return err(fault("denied", "no", "client"))
+    return err(fault("denied", "no", "client", [], {}))
 
 
 def _link_raise(manifest):
@@ -106,7 +108,7 @@ async def _link_async(manifest):
 
 
 async def _link_async_fault(manifest):
-    return err(fault("async_boom", "async link failed", "client"))
+    return err(fault("async_boom", "async link failed", "client", [], {}))
 
 
 async def _link_async_bad(manifest):
@@ -160,21 +162,23 @@ def _composed(spec):
 
 
 def _check_construction(case):
-    caught = None
-    try:
-        composed = [_composed(spec) for spec in case.get("composed_types", [])]
-        vocabulary({name: set(members) for name, members in case["declarations"].items()}, composed_types=composed)
-        result, message = "ok", ""
-    except VocabularyError as exc:
-        result, message, caught = "error", str(exc), exc
+    composed_types = [_composed(spec) for spec in case.get("composed_types", [])]
+    built = vocabulary(
+        {name: set(members) for name, members in case["declarations"].items()},
+        composed_types=composed_types,
+    )
+    # A malformed vocabulary comes back as a fault value, not a raise; a built vocabulary has no code.
+    failure = built if "code" in built else None
+    outcome = "error" if failure else "ok"
     if "expect_fault" in case:
-        got = getattr(caught, "fault", None) or {}
-        ok = all(got.get(field) == value for field, value in case["expect_fault"].items())
-        return ok, f"got {result} fault={getattr(caught, 'fault', None)}"
+        got = failure or {}
+        matched = failure is not None and all(got.get(field) == value for field, value in case["expect_fault"].items())
+        return matched, f"got {outcome} fault={failure}"
+    message = failure.get("message", "") if failure else ""
     needles = case.get("error_contains", [])
     needles = [needles] if isinstance(needles, str) else needles
-    ok = result == case["expect"] and all(needle in message for needle in needles)
-    return ok, f"got {result} ({message[:60]})"
+    ok = outcome == case["expect"] and all(needle in message for needle in needles)
+    return ok, f"got {outcome} ({message[:60]})"
 
 
 def _check_classify(case):
@@ -211,17 +215,16 @@ def _check_merge(case):
 
     va = build(case["merge_a"], case.get("merge_a_composed", []))
     vb = build(case["merge_b"], case.get("merge_b_composed", []))
-    try:
-        merged = merge(va, vb)
-        result, message = "ok", ""
-    except VocabularyError as exc:
-        merged, result, message = None, "error", str(exc)
+    merged = merge(va, vb)
+    failure = merged if "code" in merged else None  # a collision comes back as a fault value
+    outcome = "error" if failure else "ok"
+    message = failure.get("message", "") if failure else ""
     needles = case.get("error_contains", [])
     needles = [needles] if isinstance(needles, str) else needles
-    ok = result == case["expect"] and all(needle in message for needle in needles)
+    ok = outcome == case["expect"] and all(needle in message for needle in needles)
     if case["expect"] == "ok":
-        ok = ok and isinstance(merged, dict) and "base_types" in merged and "composed_types" in merged
-    return ok, f"got {result} ({message[:60]})"
+        ok = ok and failure is None and "base_types" in merged and "composed_types" in merged
+    return ok, f"got {outcome} ({message[:60]})"
 
 
 def _check_chainrun(case):
@@ -232,13 +235,14 @@ def _check_chainrun(case):
     if case["expect"] == "err":
         failure = result.get("err", {})
         matched = "err" in result and failure.get("code") == case["expect_code"]
-        for field in ("input", "results", "link"):
-            if case.get(f"expect_fault_{field}") and field not in failure:
-                matched = False
-        for field in ("message", "category"):
+        if case.get("expect_fault_results") and "results" not in failure:
+            matched = False
+        for field in ("detail", "message", "category"):
             key = f"expect_{field}"
             if key in case:
                 matched = matched and failure.get(field) == case[key]
+        if "expect_message_contains" in case:
+            matched = matched and case["expect_message_contains"] in failure.get("message", "")
         return matched, f"got {result}"
     manifest = result.get("ok", {})
     matched = "ok" in result and all(
@@ -259,7 +263,7 @@ def _check_boundary(case):
 
 
 def _check_rejections(case):
-    result = check_rejections(case["rejection_manifest"])
+    result = check_rejections(case["rejection_manifest"], case.get("policy", DEFAULT_REJECTION_POLICY))
     if case["expect"] == "err":
         failure = result.get("err", {})
         matched = "err" in result and failure.get("code") == case["expect_code"]
@@ -297,18 +301,17 @@ def _check_statemachine(case):
             if key in case:
                 matched = matched and failure.get(field) == case[key]
         return matched, f"got {result}"
-    try:
-        machine = _build_sm(case)
-        outcome, message = "ok", ""
-    except StateMachineError as exc:
-        machine, outcome, message = None, "error", str(exc)
+    built = _build_sm(case)
+    failure = built if "code" in built else None  # an invalid machine comes back as a fault value
+    outcome = "error" if failure else "ok"
+    message = failure.get("message", "") if failure else ""
     ok_ = outcome == case["expect"] and case.get("error_contains", "") in message
-    if machine is not None:
+    if failure is None:
         if "expect_initial" in case:
-            ok_ = ok_ and machine["initial"] == case["expect_initial"]
+            ok_ = ok_ and built["initial"] == case["expect_initial"]
         if "expect_terminal" in case:
             # terminal is an immutable tuple (section 7c); compare it as a sequence against the case list.
-            ok_ = ok_ and list(machine["terminal"]) == case["expect_terminal"]
+            ok_ = ok_ and list(built["terminal"]) == case["expect_terminal"]
     return ok_, f"got {outcome} ({message[:40]})"
 
 
@@ -384,7 +387,12 @@ def run(suite_path):
     for case in suite["cases"]:
         if "value_case" in case:
             continue  # value cases are checked centrally by value-check.py; a module cannot run the oracle on itself
-        ok, detail = _CHECKERS[_kind(case)](case)
+        try:
+            ok, detail = _CHECKERS[_kind(case)](case)
+        except Exception as exc:
+            # The contract returns faults as data; a function that raises instead fails its own case
+            # here rather than killing the run, so the report names every case that is off-contract.
+            ok, detail = False, f"raised {type(exc).__name__}: {exc}"
         if ok:
             passed += 1
         else:

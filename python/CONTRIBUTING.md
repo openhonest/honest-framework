@@ -1,6 +1,6 @@
 # Contributing to the Python reference implementation
 
-This is the under-the-covers guide: how the implementation is built, why it is shaped the way it is, and how to extend it without breaking the one rule that drives everything. If you only want to *use* the linter, read [`honest-check/README.md`](honest-check/README.md) instead.
+This is the under-the-covers guide: how the implementation is built, why it is shaped the way it is, and how to extend it without breaking the one rule that drives everything. If you only want to *use* the checker, read [`honest-check/README.md`](honest-check/README.md) instead.
 
 ## The one rule
 
@@ -29,7 +29,7 @@ Every module here must itself pass `honest-check`. The constraints, in practice:
 
 ## tree-sitter is the only parser
 
-Source is parsed with tree-sitter and nothing else — no Python `ast`, no Lark, no regex parsing. tree-sitter is what makes the linter language-agnostic (the same rule shape applies to Python, Rust, C). `honest-check/src/honest_check/parse.py` is the single parsing boundary; every rule consumes the tree it returns.
+Source is parsed with tree-sitter and nothing else — no Python `ast`, no Lark, no regex parsing. tree-sitter is what makes the checker language-agnostic (the same rule shape applies to Python, Rust, C). `honest-check/src/honest_check/parse.py` is the single parsing boundary; every rule consumes the tree it returns.
 
 ## How a module is laid out
 
@@ -50,10 +50,10 @@ There are **no hand-coded per-case tests**. The conformance suite is data; the r
 
 `.githooks/pre-commit` runs on any commit that stages `python/*.py`:
 
-1. `lint-affected.sh` — `honest-check` (structural) over the modules with staged changes.
+1. `check-affected.sh` — `honest-check` (structural) over the modules with staged changes.
 2. `test-affected.sh` — the conformance suites (behavioural) of those modules plus their transitive dependents, with the dependency graph read live from each    `pyproject.toml`.
 
-No Python commit lands while the framework fails its own linter or its own conformance. `lint-all.sh` / `test-all.sh` are the CI-wide counterparts. Install the hooks once with `../bootstrap.sh`.
+No Python commit lands while the framework fails its own checker or its own conformance. `check-all.sh` / `test-all.sh` are the CI-wide counterparts. Install the hooks once with `../bootstrap.sh`.
 
 Commit messages carry a research-instrumentation prefix (the colon is required): `spec:` `design:` `impl:` `refactor:` `test:` `fix:` `chore:` `docs:`. A commit-msg hook enforces it.
 
@@ -71,7 +71,7 @@ Commit messages carry a research-instrumentation prefix (the colon is required):
 1. Implement it in `rules.py` as a pure function over the parsed tree, returning `Diagnostic`s. Cite the spec rule ID it implements in the docstring.
 2. Register it in `_ALL_CHECKS`.
 3. Add conformance cases to `honest-check/conformance/suite.json`: source-as-data plus the diagnostics it must produce (and counter-cases that must produce none).
-4. Run the suite. Keep the linter clean on its own source.
+4. Run the suite. Keep the checker clean on its own source.
 
 A rule that is not yet automated is tracked in [`honest-check/COMPLIANCE-AUDIT.md`](honest-check/COMPLIANCE-AUDIT.md) and manually enforced until it is. The principle-to-rule map is in [`honest-check/PRINCIPLES-COVERAGE.md`](honest-check/PRINCIPLES-COVERAGE.md).
 

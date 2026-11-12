@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pre-commit — Verification First: no commit lands while the framework fails its own linter,
+# pre-commit — Verification First: no commit lands while the framework fails its own checker,
 # its conformance suites, its 100% dogfooding bar, or its function-point invariant (one gherkin
 # scenario per function). Each gate fires only when its inputs are staged; a commit that touches
 # neither Python nor a feature file is never blocked.
@@ -14,9 +14,13 @@ root=$(git rev-parse --show-toplevel)
 staged=$(git diff --cached --name-only --diff-filter=ACM)
 py=$(printf '%s\n' "$staged" | grep -E '^python/.*\.py$' || true)
 feat=$(printf '%s\n' "$staged" | grep -E '\.feature$' || true)
+hd=$(printf '%s\n' "$staged" | grep -E '\.hd$' || true)
 gram=$(printf '%s\n' "$staged" | grep -E '^python/tree-sitter-[a-z-]+/grammar\.js$' || true)
 
-[ -z "$py" ] && [ -z "$feat" ] && [ -z "$gram" ] && exit 0
+# A .hd staged on its own is the first step of the build order (declaration before code), so it
+# must still reach the declaration gate below. Before this it did not: a .hd committed alone ran
+# no check at all, because the guard looked only at Python, features and grammars.
+[ -z "$py" ] && [ -z "$feat" ] && [ -z "$hd" ] && [ -z "$gram" ] && exit 0
 
 # The grammar gate fires on a staged tree-sitter grammar: its generated parser must be staged
 # with it and must be what the CLI generates, or the old parser keeps parsing under a new grammar.
@@ -27,7 +31,7 @@ fi
 
 if [ -n "$py" ]; then
     echo "honest-check gate (staged Python detected)…"
-    "$root/python/lint-affected.sh" || exit 1   # structural: must be Honest Code
+    "$root/python/check-affected.sh" || exit 1   # structural: must be Honest Code
     "$root/python/coverage-all.sh"  || exit 1   # behavioural: all conformance suites pass AND 100% line+branch coverage
 fi
 
@@ -70,10 +74,34 @@ fi
 
 # The declaration gate: every .hd parses and validates, and each package's declaration agrees with its
 # code (HC-R002, HC-R003). Fires on a staged .hd or staged Python, since either side can break the pact.
-if [ -n "$py" ] || printf '%s\n' "$staged" | grep -qE '\.hd$'; then
-    echo "hd-check (declarations against code)…"
-    "$root/python/hd-check.sh" || exit 1
+hd_targets=$(printf '%s\n' "$staged" | sed -nE \
+    -e 's#^python/(honest-[^/]+)/src/.*#\1#p' \
+    -e 's#^python/(honest-[^/]+)/honest-[^/]+\.hd#\1#p' | sort -u)
+if [ -n "$hd_targets" ]; then
+    echo "honest-pre-commit (declarations against code, affected modules only)…"
+    # shellcheck disable=SC2086  -- intentional word-split into module arguments
+    "$root/python/honest-pre-commit.sh" $hd_targets || exit 1
 fi
+
+# The red gate: a module whose declaration, features or tests are staged but which has no source yet
+# is in its red phase. The build order writes the code last, after a failing test proves what the
+# code must do, so that test MUST fail now. A conformance suite that passes with no code behind it
+# means the code landed early, or the test asserts nothing. This enforces build-order step 4 ("make
+# sure the test is red") rather than trusting it. A module with source is past this phase and is
+# skipped, so an ordinary commit, where every module has source, pays nothing here.
+for m in $(printf '%s\n' "$staged" | sed -nE 's#^python/(honest-[^/]+)/.*#\1#p' | sort -u); do
+    [ -d "$root/python/$m/src" ] && continue
+    [ -f "$root/python/$m/conformance/run_conformance.py" ] || continue
+    echo "red gate ($m has no source yet; its tests must be red)…"
+    if ( cd "$root/python" && uv run --all-packages python "$m/conformance/run_conformance.py" >/dev/null 2>&1 ); then
+        echo "red gate: $m conformance PASSED, but $m has no source." >&2
+        echo "  The build order is .hd, features, red tests, then code. A test that passes with no" >&2
+        echo "  code behind it means the code landed early, or the test asserts nothing. Commit the" >&2
+        echo "  red tests first, then the code that turns them green." >&2
+        exit 1
+    fi
+    echo "red gate: $m conformance is red, as it must be before the code is written."
+done
 
 # The mutation gate fires on staged module source: every staged src file must be mutation-adequate
 # (each surviving mutant caught by a conformance case or declared equivalent in mutants_setaside.json).

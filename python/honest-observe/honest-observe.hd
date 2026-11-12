@@ -1,12 +1,18 @@
-# honest-observe declared in .hd — event-sourced observability. emit writes through an injected
-# runtime; projections are pure folds; the rest builds events and metrics as pure data.
+# honest-observe declared in .hd — event-sourced observability. emit reaches the world through the
+# module's own boundaries: a random source for the event id, the clock for its timestamp, and the
+# honest-persist log it reads for the next sequence and appends to. A connection to honest-persist
+# is carried in as a handle. Projections are pure folds; the rest builds events and metrics as pure
+# data. No capability is handed in as an object.
 
 module honest-observe
 
   layer tooling
 
-  # The surface, closed: every side of the world a boundary here touches, and no other.
-  outputs = { "honest-persist" }
+  # The surface, closed: every side the boundaries here touch, and no other.
+  inputs  = { "random" : "the fresh event id",
+              "clock" : "the event timestamp",
+              "honest-persist" : "the event log, read for the next sequence number" }
+  outputs = { "honest-persist" : "the appended event" }
 
   type Event = {
     event_type: str
@@ -25,9 +31,24 @@ module honest-observe
     value: any
   }
 
-  boundary_out fn emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, runtime: any) -> Event awaited side_effect writes "honest-persist"
+  # The world calls emit; emit hands its input to run_emit, which pulls the id, the time and the next
+  # sequence, builds the event, and appends it. The event version is supplied by the caller, not read
+  # from an injected object.
+  boundary_in fn emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, event_version: int, conn: any) -> Event awaited invokes run_emit
+
+  orchestrator fn run_emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, event_version: int, conn: any) -> Event awaited invokes new_event_id, event_timestamp, next_sequence, build_event, append_event
+
+  reader fn new_event_id : () -> str side_effect reads "random"
+
+  reader fn event_timestamp : () -> str side_effect reads "clock"
+
+  reader fn next_sequence : (aggregate_id: str, conn: any) -> int awaited side_effect reads "honest-persist"
+
+  boundary_out fn append_event : (event: Event, conn: any) -> Event awaited side_effect writes "honest-persist"
 
   fn build_event : (event_type: str, event_version: int, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, event_id: str, timestamp: str, sequence: int) -> Event
+
+  entry "call:emit" -> emit
 
   fn apply_projection : (events: list<Event>, fold: Callable, initial_state: any) -> any
 

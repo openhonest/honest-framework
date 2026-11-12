@@ -40,6 +40,7 @@ def _classify_token(token, vocab):
                 "predicate_error",
                 f"Predicate for type '{type_name}' threw on token '{token}'",
                 "server",
+                [],
                 {"type_name": type_name, "token": token, "exception": error},
             )
         if not ok:
@@ -51,6 +52,7 @@ def _classify_token(token, vocab):
                 "vocabulary_overlap",
                 f"Token '{token}' matches both '{matched_type}' and '{type_name}'",
                 "server",
+                [],
                 {"token": token, "types": [matched_type, type_name]},
             )
         matched_type = type_name
@@ -148,7 +150,7 @@ def classify(tokens, vocab, bind=None):
             received_type = type(token).__name__  # honest: ignore HC-P005: section 9.5 requires the received type
             return {"err": fault("non_string_token",
                                  f"classify() requires string tokens. Got: {received_type} {token!r}",
-                                 "server", {"token": token, "received_type": received_type})}
+                                 "server", [], {"token": token, "received_type": received_type})}
         if token == "":
             rejections.append(rejection("", "empty_token"))
             continue

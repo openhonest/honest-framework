@@ -30,7 +30,7 @@ for src in honest-*/src/honest_*; do
         echo "  NO .hd  $pkg has $src but no $pkg/$pkg.hd — code without a declaration is undeclared by construction."
     fi
 done
-echo "hd-check: module-declaration existence — $([ "$missing_hd" -eq 0 ] && echo 'every module with src/ carries its .hd' || echo "$missing_hd module(s) have src/ and no .hd")."
+echo "honest-pre-commit: module-declaration existence — $([ "$missing_hd" -eq 0 ] && echo 'every module with src/ carries its .hd' || echo "$missing_hd module(s) have src/ and no .hd")."
 echo ""
 
 uv run --package honest-design python - <<'PY'
@@ -50,7 +50,7 @@ for path in files:
         for fault in validate(module):
             bad += 1
             print(f"  INVALID {path} [{module['name']}]: {fault['code']} — {fault['message']}")
-print(f"hd-check: {len(files)} .hd declaration(s), {bad} problem(s)")
+print(f"honest-pre-commit: {len(files)} .hd declaration(s), {bad} problem(s)")
 sys.exit(1 if bad else 0)
 PY
 status=$(( $? || missing_hd ))
@@ -84,7 +84,7 @@ in_scope = sorted(n for n in declarations if not targets or paths[n].split("/")[
 findings = check_seams(declarations, paths, in_scope)
 for d in findings:
     print(f"  {d['rule_id']} {d['source_location']}: {d['message']}")
-print(f"hd-check: cross-module seams checked across {len(declarations)} declaration(s), "
+print(f"honest-pre-commit: cross-module seams checked across {len(declarations)} declaration(s), "
       f"{len(findings)} unresolved.")
 sys.exit(1 if findings else 0)
 PY
@@ -128,7 +128,7 @@ for hd in honest-*/honest-*.hd; do
     in_scope "$pkg" || continue
     case " $NOT_CROSSED " in *" $pkg "*) continue;; esac
     exports="$pkg/src/${pkg//-/_}/__init__.py"
-    [ -f "$exports" ] || { echo "  hd-check: $pkg is gated for HC-REF005 and has no $exports"; status=1; continue; }
+    [ -f "$exports" ] || { echo "  honest-pre-commit: $pkg is gated for HC-REF005 and has no $exports"; status=1; continue; }
     out=$(uv run --package honest-check python -m honest_check.cli --declaration "$hd" --exports "$exports" --rule HC-REF005 "$pkg/src" 2>&1) || { status=1; printf '%s\n' "$out"; }
 done
 crossed=0
@@ -136,7 +136,7 @@ for hd in honest-*/honest-*.hd; do
     pkg=${hd%%/*}
     case " $NOT_CROSSED " in *" $pkg "*) ;; *) crossed=$((crossed + 1));; esac
 done
-echo "hd-check: HC-REF005 gates $crossed package(s); $(printf '%s\n' $NOT_CROSSED | wc -l | tr -d ' ') still to cross."
+echo "honest-pre-commit: HC-REF005 gates $crossed package(s); $(printf '%s\n' $NOT_CROSSED | wc -l | tr -d ' ') still to cross."
 
 # Every exported function must be reachable by the world, through the declaration alone: it is the
 # target of an entry or a route, or something reachable from one calls it. A function the world
@@ -207,7 +207,7 @@ for path in sorted(glob.glob("honest-*/honest-*.hd")):
             bad += 1
             print(f"  UNREACHABLE {package} [{module['name']}]: '{name}' is exported and no entry, route "
                   f"or declared call reaches it. Declare who starts it.")
-print(f"hd-check: world-reachability checked on {checked} declaration(s), {bad} unreachable export(s).")
+print(f"honest-pre-commit: world-reachability checked on {checked} declaration(s), {bad} unreachable export(s).")
 sys.exit(1 if bad else 0)
 PY
 status=$(( status || $? ))

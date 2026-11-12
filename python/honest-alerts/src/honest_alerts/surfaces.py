@@ -1,20 +1,17 @@
-"""DOM actor surfaces (section 9): render a message as a server-rendered HTMX fragment.
+"""DOM actor surfaces and the reply endpoint (sections 9, 9.1).
 
-When a message is addressed to a dom actor it renders as a visual surface declared by its dom_surface.
-Rendering is pure: message in, HTML string out; serving the fragment over HTTP and the SSE stream that
-pushes it (section 4.2) are the boundary's job. The surface type selects the renderer through a table,
-not a branch: banner, toast, modal, and inline are cards; a badge is a count.
-
-Each surface also carries a default termination (SURFACE_DEFAULT_TERMINATION), applied at send time by
-build_message when the sender omits one. The reply endpoint (section 9.1) is handle_reply: it records
-the reply and the acknowledgment and returns the empty fragment HTMX swaps in to remove the surface.
-
-The fragment embeds only trusted identifiers (the message id, i18n label ids, and declared option ids);
-no free user text is rendered, so no escaping is applied here. Reply buttons post the chosen option to
-the reply endpoint as an HTMX form field.
+Rendering is pure: a message in, an HTML string out; the surface type selects the renderer through a
+table, not a branch. render_mailbox is the orchestrator that reads an actor's events, projects the
+pending messages, and renders each. record_reply is the orchestrator that records a reply as
+alert.replied then alert.acknowledged. Both take the boundaries they touch as arguments; the doors
+serve_mailbox and handle_reply wire the module's own boundaries and hand off to them.
 """
 
 from honest_type import ok
+
+from honest_alerts import boundaries
+from honest_alerts.events import alert_event
+from honest_alerts.mailbox import mailbox
 
 # The termination each surface defaults to when the sender does not declare one (section 9). Its keys
 # are exactly the DOM surfaces (pinned by the surface_defaults law). "Persists until dismissed" for the
@@ -67,10 +64,30 @@ def render_surface(message):
     return _SURFACE_RENDERERS[message["dom_surface"]](message)
 
 
-async def handle_reply(message_id, option_id, reply_payload, actor_id, runtime):
-    """The reply endpoint (section 9.1): record the chosen option as alert.replied and then
-    alert.acknowledged, and return the empty fragment HTMX swaps in to remove the surface. I/O only
-    through the injected runtime."""
-    await runtime.emit("alert.replied", message_id, {"option_id": option_id, "actor_id": actor_id, "reply_payload": reply_payload})
-    await runtime.emit("alert.acknowledged", message_id, {"message_id": message_id, "actor_id": actor_id})
+async def render_mailbox(actor_ref, at_time, conn, read_events):
+    """Render an actor's pending messages (sections 4, 9): read the actor's events, project the pending
+    messages, and render each as its surface. I/O only through the handed-in read_events boundary."""
+    events = await read_events(conn, actor_ref)
+    pending = mailbox(actor_ref, events, at_time)
+    return "".join(render_surface(event["payload"]) for event in pending)
+
+
+async def record_reply(message_id, option_id, reply_payload, actor_id, conn, emit_event):
+    """Record a reply (section 9.1): emit alert.replied with the chosen option, then alert.acknowledged.
+    Returns ok({fragment}) with the empty fragment HTMX swaps in to remove the surface. I/O only through
+    the handed-in emit_event boundary."""
+    await emit_event(alert_event("alert.replied", message_id, {"option_id": option_id, "actor_id": actor_id, "reply_payload": reply_payload}), conn)
+    await emit_event(alert_event("alert.acknowledged", message_id, {"message_id": message_id, "actor_id": actor_id}), conn)
     return ok({"fragment": ""})
+
+
+async def serve_mailbox(actor_ref, at_time, conn):
+    """The door for the mailbox route (section 9): hand the request to render_mailbox with the module's
+    own read_events boundary."""
+    return await render_mailbox(actor_ref, at_time, conn, boundaries.read_events)
+
+
+async def handle_reply(message_id, option_id, reply_payload, actor_id, conn):
+    """The door for the reply route (section 9.1): hand the reply to record_reply with the module's own
+    emit_event boundary."""
+    return await record_reply(message_id, option_id, reply_payload, actor_id, conn, boundaries.emit_event)

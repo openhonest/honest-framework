@@ -332,7 +332,7 @@ def validate_schema(schema):
             if dependency not in known:
                 errors.append(f"view '{view_name}' depends_on unknown object '{dependency}'")
     if errors:
-        return err(fault("schema_invalid", "Schema has broken references", "server", {"errors": errors}))
+        return err(fault("schema_invalid", "Schema has broken references", "server", [], {"errors": errors}))
     return ok(schema)
 
 
@@ -388,7 +388,7 @@ def diff(current, target, decisions=None):
     execution_order = topological_sort(operations, dependencies)
     if execution_order is None:
         return err(fault(
-            "schema_cycle", "Schema dependency graph contains a cycle", "server",
+            "schema_cycle", "Schema dependency graph contains a cycle", "server", [],
             {"operations": operations}))
     ambiguities = detect_ambiguities(current_tables, target_tables, decisions or {})
     return diff_result(operations, dependencies, execution_order, ambiguities)

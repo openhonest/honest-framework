@@ -1,0 +1,67 @@
+# honest-check_cli declared in .hd — the command-line checker. The shell invokes it with a
+# declaration, the rules to run, and the source paths. It crosses the .hd declaration against the
+# code it describes: the rules that need both the parse tree and what the declaration says
+# (HC-R002, HC-R003), plus the members a declaration leaves unaccounted for. It prints the
+# diagnostics and returns the shell an exit code.
+
+module honest-check_cli
+
+  layer tooling
+
+  # The surface, closed: the shell calls in, the checker reads the declaration and the sources, and
+  # it writes the diagnostics to the console.
+  inputs = {
+    "command line" : "the shell invokes the checker with the declaration, the rules, and the source paths",
+    "filesystem" : "the .hd declaration and the source files it is crossed against"
+  }
+  outputs = { "console" : "the diagnostics the checker prints" }
+
+  type Diagnostic = {
+    rule_id: str
+    severity: str
+    message: str
+    source_location: str
+  }
+
+  # What the shell hands in, read off the command line once.
+  type Invocation = {
+    declaration: str
+    sources: list<str>
+    members: set<str>
+  }
+
+  # A declaration that will not parse stops the cross: what went wrong, and what to do instead.
+  type Fault = {
+    code: str
+    message: str
+  }
+
+  # Pure rules: each reads a parsed tree against what the declaration says.
+  fn check_hc_r002 : (root: any, source: bytes, path: str, roles: dict<str, str>) -> list<Diagnostic> note "the HC-R002 rule: an output boundary that calls inward, read against the roles the declaration assigns"
+  fn check_hc_r003 : (root: any, source: bytes, path: str, awaited: dict<str, bool>) -> list<Diagnostic> note "the HC-R003 rule: an async def the declaration does not mark awaited, or the word over a plain def, read against the declaration's awaited set"
+
+  # Pure readers of the declaration text: parse the .hd string already in hand, no world access.
+  fn declared_roles : (declaration: str) -> dict<str, str> | Fault note "each function's declared role from the .hd text, or a fault when the declaration does not parse"
+  fn declared_awaited : (declaration: str) -> dict<str, bool> | Fault note "which declared functions are awaited, or a fault when the declaration does not parse"
+  fn undeclared_members : (members: set<str>, with_declaration: set<str>) -> list<str> note "the exported names no declaration mentions: a plain set difference"
+
+  # Pure: the command line in hand, split into what the run needs.
+  fn read_invocation : (argv: list<str>) -> Invocation note "splits the command line into the declaration path, the source paths, and the members to account for"
+
+  # What the orchestrator pulls from the world.
+  reader fn read_declaration : (path: str) -> str side_effect reads "filesystem" note "pulls the .hd declaration text from disk"
+  reader fn read_tree : (path: str) -> any side_effect reads "filesystem" note "reads a source file and parses it into a tree for the rules to read"
+  reader fn read_bytes : (path: str) -> bytes side_effect reads "filesystem" note "pulls a source file's raw bytes, which the rules read beside the tree"
+
+  # The sink: the folded diagnostics to the console.
+  boundary_out fn print_report : (diagnostics: list<Diagnostic>) -> NOTHING side_effect writes "console" note "writes the folded diagnostics to the console for the shell to show"
+
+  # The orchestrator the door hands to: crosses one declaration against its sources.
+  orchestrator fn cross : (argv: list<str>) -> list<Diagnostic> | Fault invokes read_invocation, read_declaration, declared_roles, declared_awaited, read_tree, read_bytes, check_hc_r002, check_hc_r003, undeclared_members, print_report note "reads the declaration and each source, derives the declared roles and awaited set, runs the crossing rules over every source, names the members that owe a declaration, prints the folded diagnostics and answers them back; a declaration that will not parse returns the fault instead"
+
+  # The door: the shell invokes it with the whole command line.
+  boundary_in fn run : (argv: list<str>) -> int raises CliError side_effect reads "command line" invokes cross note "the command-line entry; hands the command line to the orchestrator and returns the exit code the shell reads, raising when the declaration itself cannot be read"
+
+  # run is the door the shell reaches. A call-form entry, so the entry-check reports it UNCHECKED
+  # rather than confirming it.
+  entry "call:cli" -> run

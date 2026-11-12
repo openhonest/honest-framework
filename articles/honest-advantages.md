@@ -51,11 +51,11 @@ Predicates (`s.isdigit()`, UUID format checks) handle the edge cases that cannot
 
 ### Zero drift between static checker, test suite, and runtime
 
-*Most frameworks have three separate tools checking your types: a linter, a test suite, and the runtime validator. Each one has its own rules. They disagree in subtle ways. honest-type uses the same tables for all three. If the linter says it is fine, the tests say it is fine, and production says it is fine. Always. No surprises at 2am.*
+*Most frameworks have three separate tools checking your types: a checker, a test suite, and the runtime validator. Each one has its own rules. They disagree in subtle ways. honest-type uses the same tables for all three. If the checker says it is fine, the tests say it is fine, and production says it is fine. Always. No surprises at 2am.*
 
 TypeScript types vanish at runtime. Pydantic validates at runtime but has no static equivalent using the same code. mypy and the runtime are different beasts. Every popular framework has this gap.
 
-honest-type runs the same tables at all three checkpoints: pre-commit via honest-check (set intersection), test suite via honest-test (exhaustive enumeration), production via honest-type (runtime classification at every boundary). Same code. Same tables. Same semantics. There is no gap between what the linter thinks and what the runtime does.
+honest-type runs the same tables at all three checkpoints: pre-commit via honest-check (set intersection), test suite via honest-test (exhaustive enumeration), production via honest-type (runtime classification at every boundary). Same code. Same tables. Same semantics. There is no gap between what the checker thinks and what the runtime does.
 
 ---
 
@@ -63,7 +63,7 @@ honest-type runs the same tables at all three checkpoints: pre-commit via honest
 
 *Type annotations are a second job. You write the code and then you annotate the code. honest-check skips that. It reads the dispatch tables you already wrote and uses them to check your types. No annotations. No extra syntax. The checking is free because the tables were already there.*
 
-honest-check builds an AST, reads the vocabulary tables the developer already wrote, and verifies type compatibility across all possible input combinations without requiring a single annotation in the code. No mypy. No Pyright. No TypeScript. No annotations cluttering the source. The tables are already there because they are the dispatch tables Honest Code requires. The linter is free.
+honest-check builds an AST, reads the vocabulary tables the developer already wrote, and verifies type compatibility across all possible input combinations without requiring a single annotation in the code. No mypy. No Pyright. No TypeScript. No annotations cluttering the source. The tables are already there because they are the dispatch tables Honest Code requires. The checker is free.
 
 ---
 

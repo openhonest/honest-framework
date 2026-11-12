@@ -23,21 +23,20 @@ class Rejection(TypedDict):
     detail: str | None
 
 
-class Fault(TypedDict, total=False):
-    """A processing error. Data, not an exception (section 11.2). `code`, `message`, and `category`
-    ('client'|'server') are always present — a fault without a category is itself a server error.
-    `link`, `input`, and `results` are the named chain-fault fields (the link that produced it, the
-    manifest passed to it, and — for validation_failed — every accumulated result), present only when
-    set; `detail` carries any other fault-specific context (a rejected token, a state machine's state
-    and event, the boundary rejections)."""
+class Fault(TypedDict):
+    """A processing error. Data, not an exception (sections 11.2, 13.2). Every field is always present.
+    code/message/category say what went wrong and who is responsible ('client'|'server'); a fault
+    without a category is itself a server error. results holds every accumulated result for a
+    validate_all fault and is [] otherwise. detail carries the fault's enumerable facts as structured
+    data a test or caller reads without parsing the message (the failing link, a dispatch fault's
+    accepted keys and arriving value, a rejected token, a state machine's state and event) and is {}
+    when there is none."""
 
     code: str
     message: str
     category: str
-    detail: dict[str, Any] | None
-    link: str
-    input: Any
     results: list
+    detail: dict[str, Any]
 
 
 def ticket(type_name: str, value: str) -> Ticket:
@@ -48,17 +47,11 @@ def rejection(token, reason: str, detail=None) -> Rejection:
     return {"token": token, "reason": reason, "detail": detail}
 
 
-def fault(code: str, message: str, category: str, detail=None, link=None, input=None, results=None) -> Fault:
-    """A fault (section 11.2). code/message/category always present; the named chain fields
-    link/input/results are added only when supplied; detail carries any other context."""
-    out: Fault = {"code": code, "message": message, "category": category, "detail": detail}
-    if link is not None:
-        out["link"] = link
-    if input is not None:
-        out["input"] = input
-    if results is not None:
-        out["results"] = results
-    return out
+def fault(code: str, message: str, category: str, results: list, detail: dict) -> Fault:
+    """A fault (sections 11.2, 13.2). Every field is passed explicitly: results is [] unless this is a
+    validate_all fault, detail is {} unless there is structured context. Nothing is defaulted, so a
+    caller can never omit a field by accident and manufacture an untested input region."""
+    return {"code": code, "message": message, "category": category, "results": results, "detail": detail}
 
 
 def ok(manifest) -> dict:

@@ -10,7 +10,7 @@ in, instrumentation is skipped entirely — zero overhead when disabled.
 
 This whole file is the boundary: it reads the clock, catches at the I/O edge, classifies the
 exception that names the fault, and logs a swallowed emit failure to stderr. Those are exactly the
-behaviours the linter forbids in pure business logic, so HC-P004/HC-P002/HC-P005 are disabled here.
+behaviours the checker forbids in pure business logic, so HC-P004/HC-P002/HC-P005 are disabled here.
 """
 
 # honest: disable HC-P004, HC-P002, HC-P005: this module is the instrumented database boundary: it executes queries, reports driver errors as fault values, and guards primitive shapes

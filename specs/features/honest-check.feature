@@ -5,7 +5,7 @@ Feature: honest-check — the static checker, the honesty gate
   fourth pure core runs the whole-program orphan pass over a package's code; a fifth pure
   core runs the whole-program authentication pass over the project's code; three
   orchestrators pull files and seams and share those cores; three
-  doors reach the world (startup integration, the CLI, and the hd-check seam gate); the
+  doors reach the world (startup integration, the CLI, and the honest-pre-commit seam gate); the
   cross-module seam checks resolve the references one module's .hd writes into others; the
   rest read the filesystem, parse the argument vector, pair a path with its text, or render
   the report.
@@ -219,10 +219,10 @@ Feature: honest-check — the static checker, the honesty gate
     And it never derives seams itself and never calls declared_seams directly, because each rule it invokes derives that module's seams once through declared_seams
     But it reads nothing, opens no file and touches no world — the declarations arrive already parsed from the door — returning the flat combined list of every Diagnostic the two rules produced across the in-scope modules, empty when every in-scope module's seams resolve, and raising nothing
 
-  Scenario: check_seams is the hd-check gate door that routes the seam inputs to the orchestrator
+  Scenario: check_seams is the honest-pre-commit gate door that routes the seam inputs to the orchestrator
     Given declarations: dict<str, Declaration> and paths: dict<str, str> and in_scope: list<str>
     When check_seams is called
-    Then it is the single entry point the external hd-check dogfood gate reaches into the cross-module seam checks: it hands its three inputs straight to the orchestrator run_seam_rules and returns the combined diagnostic list the orchestrator produced, holding no resolution logic itself
+    Then it is the single entry point the external honest-pre-commit dogfood gate reaches into the cross-module seam checks: it hands its three inputs straight to the orchestrator run_seam_rules and returns the combined diagnostic list the orchestrator produced, holding no resolution logic itself
     And declarations is every loaded module's parsed declaration keyed by its module name, the whole map in view because resolving an in-scope module's seam into module M needs M's declaration whether or not M is in scope; paths is each module's .hd path keyed by the same name, stamped into each diagnostic; in_scope is the affected set to report on, the empty list meaning every loaded module is in scope
     And it returns the flat list of every Diagnostic the cross-module rules produced — one HC-REF006 error per seam into a module that declares no function of the named door, one HC-REF007 error per seam onto a function that is not a boundary_in — and the empty list when every in-scope module's seams resolve
     But because the gate supplies the declarations already parsed, this door opens no file, reads no world and writes none, and raises nothing: an unresolved seam comes back as a Diagnostic

@@ -1,5 +1,5 @@
-"""check_seams is the hd-check gate door that routes the seam inputs to the
-orchestrator (feature: "check_seams is the hd-check gate door that routes the
+"""check_seams is the honest-pre-commit gate door that routes the seam inputs to the
+orchestrator (feature: "check_seams is the honest-pre-commit gate door that routes the
 seam inputs to the orchestrator").
 
 The door takes (declarations, paths, in_scope), hands them straight to
@@ -27,7 +27,7 @@ A stub returning [] passes the scope and clean cases but fails both firing
 cases, so the probe is not vacuous.
 
 Spec authority: specs/features/honest-check.feature, scenario "check_seams is
-the hd-check gate door that routes the seam inputs to the orchestrator".
+the honest-pre-commit gate door that routes the seam inputs to the orchestrator".
 """
 
 # Each module's .hd text, reused across cases.

@@ -194,11 +194,11 @@ def parse_check(expression):
     vocabulary - never a silently dropped guarantee."""
     tokens = _tokenize(expression)
     if any(token["type"] == "unknown" for token in tokens):
-        return err(fault("uncompilable_check", f"CHECK uses an unsupported token: {expression}", "server", {"expression": expression}))
+        return err(fault("uncompilable_check", f"CHECK uses an unsupported token: {expression}", "server", [], {"expression": expression}))
     cursor = {"pos": 0}
     tree = _parse_or(tokens, cursor)
     if tree is None or _peek(tokens, cursor)["type"] != "end":
-        return err(fault("uncompilable_check", f"CHECK cannot be compiled: {expression}", "server", {"expression": expression}))
+        return err(fault("uncompilable_check", f"CHECK cannot be compiled: {expression}", "server", [], {"expression": expression}))
     return ok(tree)
 
 
@@ -273,7 +273,7 @@ def validate_checks(schema, dialect):
     for table_name, table in schema.items():
         for expression in table_checks(table):
             if "err" in parse_check(expression):
-                return err(fault("uncompilable_check", f"CHECK on '{table_name}' can be neither natively enforced on '{dialect}' nor compiled: {expression}", "server", {"table": table_name, "expression": expression, "dialect": dialect}))
+                return err(fault("uncompilable_check", f"CHECK on '{table_name}' can be neither natively enforced on '{dialect}' nor compiled: {expression}", "server", [], {"table": table_name, "expression": expression, "dialect": dialect}))
     return ok(schema)
 
 
@@ -290,5 +290,5 @@ def enforce_checks(schema, table, row, dialect):
         if "err" in compiled:
             return compiled
         if not check_holds(compiled["ok"], row):
-            return err(fault("check_violation", f"Row violates CHECK ({expression})", "client", {"expression": expression, "row": row}))
+            return err(fault("check_violation", f"Row violates CHECK ({expression})", "client", [], {"expression": expression, "row": row}))
     return ok(row)

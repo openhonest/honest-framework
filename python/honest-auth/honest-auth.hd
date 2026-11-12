@@ -27,6 +27,7 @@ module honest-auth
     code: str
     message: str
     category: str
+    results: list<any>
     detail: dict<str, any>
   }
 

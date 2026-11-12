@@ -22,6 +22,7 @@ module honest-estimate
 
   type Depth = {
     bits: float
+    cases: int
     open_flags: list<OpenFlag>
   }
 
@@ -29,9 +30,14 @@ module honest-estimate
     cosmic_cfp: int
     vfp: Vfp
     bits_of_case_distinction: float
+    case_count: int
     open_vocab_flags: list<OpenFlag>
     cfp_certified: bool
   }
+
+  set work_classes = { "assembly", "port", "specified", "exploratory" }
+
+  vocabulary WorkClass = { work_classes }
 
   fn elementary_processes : (module: dict<str, any>) -> list<str>
 
@@ -45,7 +51,7 @@ module honest-estimate
 
   fn quality : (mutants_total: int, mutants_equivalent: int, escaped_defects: int, process_count: int) -> dict<str, any>
 
-  fn cost : (cosmic_cfp: int, rate_model: dict<str, any>) -> dict<str, any>
+  fn cost : (cosmic_cfp: int, case_count: int, work_class: WorkClass, rate_model: dict<str, any>) -> dict<str, any>
 
   fn duration : (cosmic_cfp: int, rate_model: dict<str, any>) -> dict<str, any>
 

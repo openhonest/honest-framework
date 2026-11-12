@@ -10,11 +10,6 @@ from types import MappingProxyType
 from honest_type.types import err, fault, ok
 
 
-class StateMachineError(Exception):
-    """A state machine that cannot be built: a transition references an unknown state or
-    event, a transition lands on an unknown state, or the initial state is unknown."""
-
-
 def _names(declaration):
     """The set of names from a states/events declaration: a vocabulary's Set members, or a
     plain set of names used directly."""
@@ -27,21 +22,25 @@ def _names(declaration):
 
 
 def state_machine(states, events, transitions, initial, terminal=None):
-    """Build a validated state machine (section 7c). Construction fails (StateMachineError)
-    when a transition references an unknown state or event, lands on an unknown state, or the
-    initial state is not declared - an invalid machine cannot be constructed."""
+    """Build a validated state machine (section 7c). Returns the machine, or a Fault value when a
+    transition references an unknown state or event, lands on an unknown state, or the initial state
+    is not declared (section 11.2) - an invalid machine comes back as data, never a raise."""
     state_names = _names(states)
     event_names = _names(events)
     table = dict(transitions)
     for (state, event), target in table.items():
         if state not in state_names:
-            raise StateMachineError(f"Transition from unknown state '{state}'.")
+            return fault("unknown_state_in_transition", f"Transition from unknown state '{state}'.",
+                         "server", [], {"state": state})
         if event not in event_names:
-            raise StateMachineError(f"Transition on unknown event '{event}'.")
+            return fault("unknown_event_in_transition", f"Transition on unknown event '{event}'.",
+                         "server", [], {"event": event})
         if target not in state_names:
-            raise StateMachineError(f"Transition to unknown state '{target}'.")
+            return fault("unknown_target_state", f"Transition to unknown state '{target}'.",
+                         "server", [], {"target": target})
     if initial not in state_names:
-        raise StateMachineError(f"Initial state '{initial}' is not a declared state.")
+        return fault("unknown_initial_state", f"Initial state '{initial}' is not a declared state.",
+                     "server", [], {"initial": initial})
     return MappingProxyType({
         "states": state_names,
         "events": event_names,
@@ -55,13 +54,13 @@ def transition(machine, current_state, event):
     """Apply one event (section 7c). Returns ok({"state": next}) or err(fault). Pure: the
     machine is stateless; the caller stores the result."""
     if current_state not in machine["states"]:
-        return err(fault("invalid_state", f"Unknown state '{current_state}'", "server", {"state": current_state}))
+        return err(fault("invalid_state", f"Unknown state '{current_state}'", "server", [], {"state": current_state}))
     if event not in machine["events"]:
-        return err(fault("invalid_event", f"Unknown event '{event}'", "client", {"event": event}))
+        return err(fault("invalid_event", f"Unknown event '{event}'", "client", [], {"event": event}))
     key = (current_state, event)
     if key not in machine["transitions"]:
         return err(
             fault("no_transition", f"No transition for ({current_state}, {event})", "client",
-                  {"state": current_state, "event": event})
+                  [], {"state": current_state, "event": event})
         )
     return ok({"state": machine["transitions"][key]})

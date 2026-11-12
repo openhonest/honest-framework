@@ -34,7 +34,7 @@ def mutator_of(kind):
     for row in _STATE_KINDS:
         if row["kind"] == kind:
             return ok(row["mutator"])
-    return err(fault("unknown_state_kind", f"'{kind}' is not a declared kind of state", "client", detail=kind))
+    return err(fault("unknown_state_kind", f"'{kind}' is not a declared kind of state", "client", [], detail=kind))
 
 
 def dom_region_kind(declared, server_driven):

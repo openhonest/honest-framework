@@ -2,7 +2,7 @@
 
 A living lexicon, maintained in parallel with the Python reference build. Each entry is the working definition as implemented, with the governing spec section where one applies. Terms are added as each module/rule tier lands.
 
-Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1), `specs/02-code-quality/honest-type-architecture.md`, `specs/02-code-quality/honest-check-architecture.md`, `principles/honest-code-principles.md`, `principles/poka-yoke.md`.
+Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1), `specs/02-code-quality/honest-type-architecture.md`, `specs/02-code-quality/honest-check-architecture.md`, `specs/02-code-quality/honest-code-principles.md`, `principles/poka-yoke.md`.
 
 ---
 
@@ -51,11 +51,11 @@ Specs referenced: `specs/01-framework/honest-framework-spec.md` (Tier 1), `specs
 | **DATAOS** | "DOM As The Authority On State." The DOM *is* the state store; no parallel client-side data model. |
 | **Poka-yoke** | The meta-principle: every framework decision must make a *named category of bug* structurally impossible, or it does not earn its complexity. |
 
-## honest-check (the linter / pre-auto-generation gate)
+## honest-check (the checker / pre-auto-generation gate)
 
 | Term | Definition |
 |---|---|
-| **honest-check** | The static linter. Answers one question: *can the complete auto-generated test suite be generated from this code's declarations?* If not, the code is dishonest and is rejected at the pre-commit boundary. |
+| **honest-check** | The static checker. Answers one question: *can the complete auto-generated test suite be generated from this code's declarations?* If not, the code is dishonest and is rejected at the pre-commit boundary. |
 | **Rule (HCxxx / HC-Pxxx / HC-SMxx)** | A single static check; each names a reason auto-generation cannot proceed. Implemented as a pure `check(root_node, source_bytes, path) → [Diagnostic]`, registered in `_ALL_CHECKS`. |
 | **Diagnostic** | A reported violation: `{rule, severity, path, line, col, message}`. The single record that drives every output format. |
 | **Severity** | `error` / `warning` / `info`. Any `error` sets exit code 1; default reporting threshold is `warning` (infos hidden). |

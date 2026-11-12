@@ -1,0 +1,76 @@
+# feature_gen reads one module's .hd declaration and deterministically writes its .feature file:
+# one Scenario per declared function, grouped by column. The Given comes from the parameter
+# types, the When from the function name, the Then from the return type, the invokes list, and
+# the side effects. honest-design's read_hd gives every field this needs, so nothing here reads
+# the .hd a second way.
+#
+# This is a generator, not a checker: feature-gate.sh (one scenario per function) still runs
+# against whatever this writes. A generated scenario is correct and complete; it is plainer than
+# a hand-written one, because the domain color in a hand-written scenario comes from a person
+# reading the surrounding comments, and the structure does not need that color to be true.
+
+module feature_gen
+
+  layer tooling
+
+  note "reads a module's .hd and writes its .feature file: one Scenario per function, Given/When/Then built from the signature, invokes, and side effects"
+
+  inputs  = { "file:hd"      : "the module's own .hd declaration, read by honest-design" }
+  outputs = { "file:feature" : "the generated .feature file, one scenario per declared function" }
+
+  # honest-design owns the shape of a parsed module and its functions; this module takes it as
+  # foreign rather than redeclaring a shape it does not own.
+  type Module   = foreign "honest-design"
+  type Function = foreign "honest-design"
+
+  type Fault = { what: str
+                 instead: str }
+
+  # ---- the pure core ----
+
+  fn type_text : (t: list<any>) -> str
+    note "renders a .hd type (a union of named atoms, each with its own generic args) back to its source spelling: 'str', 'T | Fault', 'list<Param>'"
+
+  fn given_clause : (fn: Function) -> str invokes type_text
+    note "one Given line naming every parameter the function declares, and its type"
+
+  fn when_clause : (fn: Function) -> str
+    note "one When line naming the function"
+
+  fn then_clause : (fn: Function) -> str invokes type_text
+    note "the function's own .hd note, verbatim, when it has one; otherwise the return type and side effects, with an invokes list of six or fewer also joined in, a longer list left to invoke_lines"
+
+  fn invoke_lines : (fn: Function) -> list<str>
+    note "one 'And it calls NAME' line per callee, produced only when the invokes list has more than six names, the point where the Then sentence stops reading as a sentence"
+
+  fn scenario_text : (fn: Function) -> str invokes given_clause, when_clause, then_clause, invoke_lines
+    note "one Scenario block: the title line, then Given, When, Then, and an And line per callee when the invokes list was too long for Then"
+
+  fn column_heading : (column: int) -> str
+    note "the comment header for one column: 1 the doors and readers, 2 the orchestrators, 3 the pure core, 4 the writers"
+
+  fn group_by_column : (functions: list<Function>) -> dict<int, list<Function>>
+    note "groups the module's functions by column, keeping each group in declared order"
+
+  fn feature_text : (module_name: str, functions: list<Function>) -> str invokes group_by_column, column_heading, scenario_text
+    note "assembles the full .feature text: the Feature header naming the module and its function count, then one column-headed block per non-empty column"
+
+  # ---- the boundaries ----
+
+  reader fn read_module : (hd_path: str) -> Module | Fault side_effect reads "file:hd"
+    note "reads the .hd file through honest-design's read_hd and returns its first declared module, or a fault when the file is malformed or declares no module"
+
+  boundary_out fn write_feature : (feature_path: str, text: str) -> bool side_effect writes "file:feature"
+
+  # ---- the orchestrator ----
+
+  orchestrator fn generate_feature : (hd_path: str, feature_path: str) -> bool | Fault invokes read_module, feature_text, write_feature
+    note "reads the module, builds the feature text, writes it; a read fault short-circuits before any write"
+
+  # ---- the door ----
+
+  boundary_in fn run : (hd_path: str, feature_path: str) -> bool | Fault invokes generate_feature
+
+  chain generating = run -> generate_feature
+
+  entry "cli:__main__" -> run

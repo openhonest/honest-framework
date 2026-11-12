@@ -54,7 +54,7 @@ def build_event(event_type, event_version, aggregate_type, aggregate_id, payload
         event["meta"] = meta
     missing = [name for name in _REQUIRED if not event[name]]
     if missing:
-        return err(fault("invalid_event", f"Event is missing required field(s): {missing}", "server", {"missing": missing}))
+        return err(fault("invalid_event", f"Event is missing required field(s): {missing}", "server", [], {"missing": missing}))
     return ok(event)
 
 

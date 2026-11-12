@@ -6,6 +6,6 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 args=$(git diff --cached --name-only --diff-filter=ACM \
-       | sed -nE 's#^python/honest-([a-z]+)/src/.*/([^/]+\.py)$#\1:\2#p' | sort -u)
+       | sed -nE 's#^python/honest-([a-z_]+)/src/.*/([^/]+\.py)$#\1:\2#p' | sort -u)
 [ -z "$args" ] && { echo "mutate-affected: no staged module source — nothing to mutate."; exit 0; }
 uv run python mutate.py $args

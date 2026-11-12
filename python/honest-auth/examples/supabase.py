@@ -37,7 +37,7 @@ def supabase_provider(project_ref):
         # TEMPLATE — fail closed until wired. Verify the JWT with your project's signing scheme (shared
         # HS256 secret OR asymmetric JWKS), check iss/exp, then:
         #     return ok({"id": claims["sub"], "email": claims.get("email"), "role": claims.get("role")})
-        return err(fault("unauthenticated", "supabase provider is a template and is not wired yet", "unauthenticated"))
+        return err(fault("unauthenticated", "supabase provider is a template and is not wired yet", "unauthenticated", [], {}))
 
     def test_tokens(class_name, context):
         # TEMPLATE — once resolve is wired, mint a real token per class from a Supabase test project

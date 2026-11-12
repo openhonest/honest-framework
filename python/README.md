@@ -2,7 +2,7 @@
 
 **Honest Framework isn't a framework you switch to. It's a discipline you switch on, inside the one you already use.**
 
-Keep the framework you build on — Rails, Django, Spring. Move your business logic out of your models and into plain functions, drop the callbacks and signals that bite you at 3am, and let a linter keep you honest. Whole classes of bug stop happening, and your tests stop needing a database. Nothing new to learn — a few habits to unlearn.
+Keep the framework you build on — Rails, Django, Spring. Move your business logic out of your models and into plain functions, drop the callbacks and signals that bite you at 3am, and let a checker keep you honest. Whole classes of bug stop happening, and your tests stop needing a database. Nothing new to learn — a few habits to unlearn.
 
 This is the active reference implementation of the Honest Framework. It is a uv workspace: one shared virtual environment and lockfile, with each `honest-<name>/` an independently publishable package implementing exactly one spec module.
 
@@ -10,16 +10,16 @@ The normative source is the specification, not this code. The flow is **spec →
 
 ## Two audiences
 
-The packages built so far are **substrate** — the type system and the linter that the rest of the framework stands on. They are not the surface an application author works against. Read the path that fits you:
+The packages built so far are **substrate** — the type system and the checker that the rest of the framework stands on. They are not the surface an application author works against. Read the path that fits you:
 
-- **You want to *use* the framework** to build an application. The adopter-facing surface lives in the upper-layer modules (components, dom, page), which are   still being built. The one substrate package you invoke directly today is the   linter: see [`honest-check/README.md`](honest-check/README.md). Everything else   here runs underneath the modules you will actually call.
+- **You want to *use* the framework** to build an application. The adopter-facing surface lives in the upper-layer modules (components, dom, page), which are   still being built. The one substrate package you invoke directly today is the   checker: see [`honest-check/README.md`](honest-check/README.md). Everything else   here runs underneath the modules you will actually call.
 - **You want to work *on* the framework** — add a rule, implement a module, fix a bug. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Packages
 
 | Package | Role | Adopter-facing? |
 |---|---|---|
-| [`honest-check`](honest-check/) | The static linter — the honesty gate. Parses source with tree-sitter and flags structural dishonesty. Also the toolchain that gates this repo. | Yes — you run it on your tree. |
+| [`honest-check`](honest-check/) | The static checker — the honesty gate. Parses source with tree-sitter and flags structural dishonesty. Also the toolchain that gates this repo. | Yes — you run it on your tree. |
 | [`honest-type`](honest-type/) | The pure-function-table type system — recognizers, vocabularies, `classify()`, links, chains. The substrate the upper modules build on. | No — plumbing. The modules call it for you. |
 | [`honest-test`](honest-test/) | The auto-generated verification layer — test cases derived from declarations (Set enumeration, adversarial neighbours). The behavioural half of the gate. | No — plumbing. You declare; it generates. |
 | [`honest-parse`](honest-parse/) | The shared tree-sitter parsing boundary — the single place source is parsed. honest-check and honest-test both depend on it. | No — plumbing. |
@@ -36,7 +36,7 @@ The package inventory and per-module status are the authoritative checkpoint; th
 
 ## The honesty gate
 
-Any code that passes `honest-check` is, by definition, structurally Honest Code. The linter is the operational definition: code that passes cannot represent the bug categories the framework eliminates (hidden state via classes, if/elif/else value-dispatch, I/O off the boundary, catching exceptions in business logic, and the rest). A pre-commit hook runs the gate on every commit, so no dishonest Python lands. Enable it once per clone from the repo root:
+Any code that passes `honest-check` is, by definition, structurally Honest Code. The checker is the operational definition: code that passes cannot represent the bug categories the framework eliminates (hidden state via classes, if/elif/else value-dispatch, I/O off the boundary, catching exceptions in business logic, and the rest). A pre-commit hook runs the gate on every commit, so no dishonest Python lands. Enable it once per clone from the repo root:
 
 ```sh
 ./bootstrap.sh
@@ -80,17 +80,17 @@ All Python runs through `uv` from the workspace root (`python/`):
 # Run one module's conformance (its suite.json contract + its generative laws)
 uv run --package honest-check python honest-check/conformance/run_conformance.py
 
-# Lint a path with the linter
+# Lint a path with the checker
 uv run honest-check <path-to-source>
 
 # Gate scripts
-./lint-all.sh        # honest-check (structural) across all modules
+./check-all.sh        # honest-check (structural) across all modules
 ./test-all.sh        # every module's conformance (suite.json + laws)
 ./coverage-all.sh    # conformance + 100% line/branch coverage gate — the dogfooding bar
-./lint-affected.sh   # structural check, staged modules only
+./check-affected.sh   # structural check, staged modules only
 ./test-affected.sh   # conformance for staged modules + dependents
 
-# The pre-commit hook runs lint-affected then coverage-all: no Python lands unless it
+# The pre-commit hook runs check-affected then coverage-all: no Python lands unless it
 # is structurally honest AND its suites pass at 100% coverage.
 ```
 

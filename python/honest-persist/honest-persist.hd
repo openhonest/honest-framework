@@ -35,7 +35,7 @@ module honest-persist
 
   fn validate_schema : (schema: Schema) -> list<any>
 
-  fn to_sql : (operation: Operation, dialect: str) -> str
+  fn to_sql : (operation: Operation, dialect: str) -> str | NOTHING note "the DDL for an operation, or nothing when no renderer covers its type"
 
   fn select : (table: str, columns: list<str>, where: dict<str, any>) -> Query
 

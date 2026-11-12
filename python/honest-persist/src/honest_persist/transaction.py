@@ -52,7 +52,7 @@ async def transaction(writes, conn, emit=None, db_id="", request_id=None):
         except Exception as exc:
             await conn.rollback()
             await _emit_transaction(emit, db_id, len(writes), "constraint_violation", index, time.perf_counter_ns() - start, request_id)
-            return err(fault("write_failed", str(exc), "server", {"failed_at": index}))
+            return err(fault("write_failed", str(exc), "server", [], {"failed_at": index}))
     await conn.commit()
     await _emit_transaction(emit, db_id, len(writes), "ok", None, time.perf_counter_ns() - start, request_id)
     return ok({"results": results})

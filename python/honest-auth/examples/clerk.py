@@ -33,7 +33,7 @@ def clerk_provider(frontend_api):
         # TEMPLATE — fail closed until wired. Verify the JWT against
         #   https://{frontend_api}/.well-known/jwks.json  and check iss/exp (and azp if used), then:
         #     return ok({"id": claims["sub"], "session": claims.get("sid")})
-        return err(fault("unauthenticated", "clerk provider is a template and is not wired yet", "unauthenticated"))
+        return err(fault("unauthenticated", "clerk provider is a template and is not wired yet", "unauthenticated", [], {}))
 
     def test_tokens(class_name, context):
         # TEMPLATE — once resolve is wired, mint a real session token per class from a Clerk test

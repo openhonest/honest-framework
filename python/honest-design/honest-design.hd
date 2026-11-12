@@ -16,7 +16,7 @@ module honest-design
   #
   # Four doors face the caller. read_hd is the one a sibling package imports, so it carries an
   # import entry. validate, render and reach are called by the Architecture Explorer and the
-  # hd-check gate, which run honest-design from outside the framework, so they carry host-loop
+  # honest-pre-commit gate, which run honest-design from outside the framework, so they carry host-loop
   # call: entries that the checker notes and does not verify.
   inputs  = { "honest-parse" : "the syntax tree honest-parse builds from .hd source" }
   outputs = { }

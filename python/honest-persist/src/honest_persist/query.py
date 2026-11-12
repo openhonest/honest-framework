@@ -107,14 +107,14 @@ def _check_columns(schema, table, names):
     (section 7.3). Pure."""
     declared = _declared_columns(schema, table)
     if declared is None:
-        return err(fault("unknown_table", f"Table '{table}' is not declared in the schema", "server", {"table": table}))
+        return err(fault("unknown_table", f"Table '{table}' is not declared in the schema", "server", [], {"table": table}))
     unknown = _unknown_columns(declared, names)
     if unknown:
         return err(
             fault(
                 "unknown_column",
                 f"Column(s) {unknown} not declared on table '{table}'",
-                "server",
+                "server", [],
                 {"table": table, "columns": unknown, "declared": sorted(declared)},
             )
         )
@@ -129,7 +129,7 @@ def checked_select(schema, table, columns=None, where=None, order_by=None, joins
     for spec in joins or []:
         if spec["table"] not in schema:
             return err(
-                fault("unknown_table", f"Join table '{spec['table']}' is not declared in the schema", "server", {"table": spec["table"]})
+                fault("unknown_table", f"Join table '{spec['table']}' is not declared in the schema", "server", [], {"table": spec["table"]})
             )
     return ok(select(table, columns=columns, where=where, order_by=order_by, joins=joins, limit=limit, offset=offset))
 

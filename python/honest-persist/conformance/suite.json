@@ -677,6 +677,7 @@
       "code": "uncompilable_check",
       "message": "CHECK on 't' can be neither natively enforced on 'turso' nor compiled: x @@ 1",
       "category": "server",
+      "results": [],
       "detail": {
        "table": "t",
        "expression": "x @@ 1",
@@ -810,6 +811,7 @@
       "code": "check_violation",
       "message": "Row violates CHECK (price > 0)",
       "category": "client",
+      "results": [],
       "detail": {
        "expression": "price > 0",
        "row": {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-affected.sh — behavioral half of the gate: run the conformance suite (section 9.2)
 # of each honest-* module with staged changes. The suite cases are data (source + expected
-# diagnostics); the runner is one generic harness. Paired with lint-affected.sh (structural).
+# diagnostics); the runner is one generic harness. Paired with check-affected.sh (structural).
 set -uo pipefail
 cd "$(dirname "$0")"            # -> python/
 

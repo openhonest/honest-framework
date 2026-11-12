@@ -32,7 +32,7 @@ def firebase_provider(project_id):
         # TEMPLATE — fail closed until wired. Verify the ID token against Google's public certs and
         # check iss == "https://securetoken.google.com/{project_id}", aud == project_id, exp, then:
         #     return ok({"id": claims["sub"], "email": claims.get("email")})
-        return err(fault("unauthenticated", "firebase provider is a template and is not wired yet", "unauthenticated"))
+        return err(fault("unauthenticated", "firebase provider is a template and is not wired yet", "unauthenticated", [], {}))
 
     def test_tokens(class_name, context):
         # TEMPLATE — once resolve is wired, mint a real ID token per class from the Firebase Admin SDK

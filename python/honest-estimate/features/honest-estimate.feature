@@ -36,6 +36,16 @@ Feature: honest-estimate (implementation supplement)
     Then it returns log-2 of a set or vocabulary, the sum over a composed type's fields, or zero with an open flag otherwise
     And a self-referential composed type is broken by the cycle guard and flagged, never recursed infinitely
 
+  Scenario: _closed_names reaches the closed vocabularies a type names
+    Given a type name and the module's sets, vocabularies, and records
+    When _closed_names walks the type
+    Then it returns the set of closed set and vocabulary names it reaches, recursing a composed type's fields and breaking a cycle
+
+  Scenario: _dispatched_names gathers the vocabularies one process commits to
+    Given an elementary process and the module's functions
+    When _dispatched_names reads its input params, its own eXit, and the returns of the pure functions or readers it invokes
+    Then it returns each distinct closed vocabulary once
+
   Scenario: _bits_per_process divides depth bits by the process count
     Given a size report
     When _bits_per_process reads its bits and VFP total

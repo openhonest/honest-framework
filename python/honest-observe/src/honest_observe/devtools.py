@@ -195,7 +195,7 @@ def run_named_projection(registry: dict, name: str, events: list):
     registered — the events are passed in, so reading the log stays the CLI's concern."""
     declaration = registry.get(name)
     if declaration is None:
-        return err(fault("unknown_projection", f"No projection named '{name}' in the registry", "client", {"name": name}))
+        return err(fault("unknown_projection", f"No projection named '{name}' in the registry", "client", [], {"name": name}))
     return ok(_fold_declared(declaration, events))
 
 
@@ -213,7 +213,7 @@ def run_bucketed_projection(registry: dict, name: str, events: list, window: int
     it holds at least one event — or err(fault 'unknown_projection') when the name is not registered."""
     declaration = registry.get(name)
     if declaration is None:
-        return err(fault("unknown_projection", f"No projection named '{name}' in the registry", "client", {"name": name}))
+        return err(fault("unknown_projection", f"No projection named '{name}' in the registry", "client", [], {"name": name}))
     buckets = {}
     for event in events:
         buckets.setdefault(_bucket_start(event["timestamp"], window), []).append(event)

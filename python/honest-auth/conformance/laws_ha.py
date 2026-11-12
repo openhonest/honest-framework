@@ -20,7 +20,7 @@ def _provider(recognizer=None, resolver=None, fault_mapping=None):
     return {
         "name": "p",
         "actor_recognizer": recognizer or (lambda token: token != "bad"),
-        "resolve_actor": resolver or (lambda token: ok("actor") if token == "good" else err(fault("nope", "no", "unauthenticated"))),
+        "resolve_actor": resolver or (lambda token: ok("actor") if token == "good" else err(fault("nope", "no", "unauthenticated", [], {}))),
         "test_token_generator": lambda class_name, context: class_name,
         "fault_mapping": fault_mapping or {},
     }
@@ -33,7 +33,7 @@ def _honest_provider():
     return {
         "name": "honest",
         "actor_recognizer": lambda token: token != "bad",
-        "resolve_actor": lambda token: ok("alice") if token == "good" else err(fault(token, "no valid identity", "unauthenticated")),
+        "resolve_actor": lambda token: ok("alice") if token == "good" else err(fault(token, "no valid identity", "unauthenticated", [], {})),
         "test_token_generator": lambda class_name, context: {"valid": "good", "malformed": "bad"}.get(class_name, class_name),
         "fault_mapping": {},
     }
@@ -271,7 +271,7 @@ def _law_resolve_actor_deterministic():
 
     def flaky(token):
         calls.append(1)
-        return ok("a") if len(calls) % 2 == 0 else err(fault("x", "y", "unauthenticated"))
+        return ok("a") if len(calls) % 2 == 0 else err(fault("x", "y", "unauthenticated", [], {}))
 
     if resolve_actor_deterministic(_provider(resolver=flaky), "good"):
         bad.append("a resolver that returns different results for the same token is not deterministic")

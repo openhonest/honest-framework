@@ -7,7 +7,7 @@ primary key, so a pending insert appears, a pending update overrides, and a pend
 all before the write has reached the backend; `drain_queue` persists the pending writes through an
 injected `execute`. The background supervisor, JSONL durability, retry and backoff, and stall
 detection are the I/O layer on top; everything here is the pure data core plus the one drain boundary,
-so this file needs no linter directives.
+so this file needs no checker directives.
 """
 
 import json

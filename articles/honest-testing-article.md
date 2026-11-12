@@ -105,7 +105,7 @@ The guarantee is absolute. Enumeration, not sampling: every permutation runs, ev
 
 The same predicate tables run at every boundary in the live application. HTTP parameters, DOM attributes, function chain inputs. Every token is classified or rejected. The same code that ran at pre-commit and in the test suite runs here.
 
-All three checkpoints use the same vocabulary definitions. The same predicate functions. The same binding tables. There is no drift between what the linter thinks, what the tests cover, and what production enforces.
+All three checkpoints use the same vocabulary definitions. The same predicate functions. The same binding tables. There is no drift between what the checker thinks, what the tests cover, and what production enforces.
 
 A compiler gives you checkpoint 1. Maybe. If your type system is expressive enough and your codebase is small enough for the type checker to finish in reasonable time.
 
@@ -151,7 +151,7 @@ The case for static typing was never really about *when* errors are caught. It w
 
 That syllogism has a hidden premise: *the only mechanism for type checking is a compiler.*
 
-The Honest Framework removes that premise. Bounded vocabularies make type checking a `for` loop, not a constraint solver. The pre-commit linter catches structural errors. The test harness proves behavioral correctness exhaustively. The runtime enforces the same rules in production. All three use the same code.
+The Honest Framework removes that premise. Bounded vocabularies make type checking a `for` loop, not a constraint solver. The pre-commit checker catches structural errors. The test harness proves behavioral correctness exhaustively. The runtime enforces the same rules in production. All three use the same code.
 
 The compile-time advantage was real, but it was a consequence of a specific architectural choice (classes and unbounded type spaces), not a fundamental law of computing. Change the architecture, and the advantage transfers to a simpler mechanism that provides stronger guarantees.
 
