@@ -17,7 +17,7 @@ Last verified: 2026-11-11.
 | honest-features | ✅ `7dd4984` (11-11) | 0 | complete this pass (all gates green) |
 | honest-gherkin | ✅ `33c46b1` (11-11) | 0 | complete this pass (all gates green) |
 | honest-design | ❌ not this pass | 25 | NOT rewritten; grammar spec-rewritten 07-17, code predates the new standard |
-| honest-errors | ✅ this pass (11-11) | 0 | complete this pass (all gates green); clean-slate rebuild — prototype deleted, §9's six corrections encoded in the .hd/tests |
+| honest-errors | ⛔ dissolving | 0 | NOT complete. It passed every gate yet is a displaced boundary: it declares JSErrorPayload and PythonExceptionPayload, records that copy a browser error and a CPython exception it does not own, and declares no door, so it is a bag of functions. It folds into observe (the two normalizers), alerts (behavior table, throttle, email body) and honest-type (ExceptionReport); the code fold lands when observe and alerts are rebuilt. The gates could not catch this because no sibling declares the seam yet, so HC-REF007 has nothing to judge. |
 | honest-state | ❌ not this pass | 0 | NOT rewritten (07-19); 0 errors incidentally |
 | honest-estimate | ❌ not this pass | 9 | NOT rewritten (07-27) |
 | honest-auth | ❌ not this pass | 6 | NOT rewritten (08-25) |
