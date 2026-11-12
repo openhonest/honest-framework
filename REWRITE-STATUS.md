@@ -21,7 +21,7 @@ Last verified: 2026-11-11.
 | honest-state | ❌ not this pass | 0 | NOT rewritten (07-19); 0 errors incidentally |
 | honest-estimate | ❌ not this pass | 9 | NOT rewritten (07-27) |
 | honest-auth | ❌ not this pass | 6 | NOT rewritten (08-25) |
-| honest-rca | ✅ this pass (11-11) | 0 | complete this pass (all gates green); clean-slate rebuild of the apophatic root-cause leaf |
+| honest-rca | ⛔ not complete | 11 | NOT complete. The path law (commit 16802b5) flags 11 arrivals: EvidenceItem across seven functions, Symptom on trace and attest, Method on causal_graph and attest. Its pure functions take records that nothing in the module returns, and it declares no door or orchestrator to hand them in, so a Symptom (something a person describes and hands in) arrives with no declared path. I wrongly cleared it on the type-ownership test, which was not the governing law. It needs a door or a fold, same question as errors. The 0-errors column was base-mode honest-check; the 11 are the hd-status path law. |
 | honest-page | ❌ not this pass | 3 | NOT rewritten (07-22) |
 | honest-alerts | ❌ not this pass | 23 | NOT rewritten (07-xx) |
 | honest-observe | ❌ not this pass | 76 | NOT rewritten (07-xx) |
