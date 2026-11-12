@@ -1,22 +1,65 @@
-# honest-errors declared in .hd — the error-policy leaf. All pure: two raw payloads normalized to
-# one report, behaviour as a pure function of the environment, a state-threaded throttle. No I/O
-# (logging and sending belong to honest-observe and honest-alerts, which compose this leaf).
+# honest-errors declared in .hd — the error-policy leaf of the Honest Framework (spec §1). It
+# normalizes raw failure payloads (browser-JavaScript errors, server-side Python exceptions) into one
+# canonical ExceptionReport, decides what should happen to a report as a pure function of the
+# environment, and throttles repeat notifications with a pure, state-threaded rate-limiter. A failure
+# becomes one canonical report; what happens to that report is a pure function of the environment and
+# the report's own content; and repeat notifications are suppressed by a deterministic throttle —
+# none of it performs I/O (spec §1.1). It is a pure leaf: it touches no file, clock, environment or
+# network. environment, timestamp and now are always arguments, never read inside (spec §1.5, §3,
+# §5). It has no boundary of its own, no door, reader, sink or orchestrator; the world reaches its
+# pure functions by import from a sibling (honest-observe composes the normalizers, honest-alerts
+# composes the behavior table and the rate-limiter — spec §1.3). Faults are data: the classifiers and
+# behaviors_for return a Fault in a Result or a union arm, never a raise (spec §8.2). It depends only
+# on honest-type, whose Result and Fault it references by name.
+# Architecture: ../../specs/02-code-quality/honest-errors-architecture.md
 
 module honest-errors
 
   layer correctness
 
-  set SEVERITIES = { "critical", "error", "warning", "info" }
-  set ENVIRONMENTS = { "development", "production", "test" }
-  set BEHAVIOR_NAMES = { "log", "email" }
-  set SUPPRESS_REASONS = { "rate_limit_hourly", "rate_limit_dedup" }
+  # No boundary, so no I/O surface. The world arrives only through the import entries at the foot of
+  # the file: a sibling module imports a public function (spec §1.3, §1.5).
+  inputs  = { }
+  outputs = { }
+
+  # The bounded vocabularies (spec §2.1). Each is a closed set of words and must be a frozenset in the
+  # code, never a free str: honest-test enumerates them and honest-check treats them as discriminant
+  # sets. Each set is wrapped by a vocabulary so a record field can bind to it.
+
+  set SEVERITIES = { "debug" : "diagnostic detail, the lowest level",
+                     "info" : "an informational event, not a failure",
+                     "warning" : "a recoverable or non-fatal condition",
+                     "error" : "a failure; the default severity of the Python normalization path (spec §3)",
+                     "critical" : "a severe failure; the one severity that bypasses the throttle (spec §3.1)" } note "the closed set of report severities (spec §2.1). ExceptionReport.severity is exactly one of these five words. critical is the single level should_bypass_dedup lets past the rate-limiter; the Python path defaults to error and the JS path derives critical-or-error from the payload (spec §3, §3.1)."
+  vocabulary Severity = { SEVERITIES }
+
+  set ENVIRONMENTS = { "development" : "a developer's machine; its policy is log only (spec §4)",
+                       "production" : "the live deployment; its policy is log then email (spec §4)",
+                       "test" : "an automated test run; its policy is log only (spec §4)" } note "the closed set of deployment environments (spec §2.1). The environment is supplied as an argument by the composing boundary, never read from os.getenv inside the module (spec §1.5, §3). behaviors_for keys its policy table on exactly these three words; an environment outside this set has no policy and yields an unknown_environment Fault (spec §4)."
+  vocabulary Environment = { ENVIRONMENTS }
+
+  set BEHAVIOR_NAMES = { "log" : "record the report as an event; the composing orchestrator hands this to honest-observe's log boundary (spec §4)",
+                         "email" : "send a notification; the composing orchestrator hands this to honest-alerts, which uses format_email_body for the body (spec §4, §6)" } note "the closed set of named behaviors a policy may list (spec §2.1). HandlerBehavior.name is exactly one of these two words. honest-errors declares behaviors as data and never executes them; the consumer interprets each one (spec §4)."
+  vocabulary BehaviorName = { BEHAVIOR_NAMES }
+
+  set SUPPRESS_REASONS = { "rate_limit_hourly" : "the hourly send count reached max_per_hour (spec §5 step 2)",
+                           "rate_limit_dedup" : "this key fired again within dedup_window_seconds (spec §5 step 3)" } note "the closed set of throttle-suppression reasons (spec §2.1). A RateLimitDecision carries one of these two words when it suppresses a send (should_send False); when a send is allowed (should_send True) the decision carries no reason — the empty string, which is outside this set (spec §5)."
+  vocabulary SuppressReason = { SUPPRESS_REASONS }
+
+  # The report IR (spec §2). All TypedDicts; no classes, no methods. The two raw payload shapes
+  # collapse to one ExceptionReport so every downstream consumer is source-agnostic.
 
   type JSErrorPayload = {
     message: str
     source: str
     lineno: int
     colno: int
-  }
+    stack: str
+    url: str
+    user_agent: str
+    timestamp: str
+    context: dict<str, any>
+  } note "the raw browser-JavaScript error payload classify_js_payload normalizes (spec §2). message is the error message text; source is the script URL the error fired in; lineno and colno are the 1-based line and column of the error in that script; stack is the captured JavaScript stack trace; url is the page URL the error occurred on; user_agent is the browser's user-agent string; timestamp is the browser-supplied event time carried on the payload, distinct from the caller-supplied timestamp argument classify_js_payload stamps onto the report; context is a free bag of extra key/value detail the browser hook attached. classify_js_payload validates the required keys of this shape and returns a malformed_payload Fault when one is absent (spec §3). The spec writes the payload's own timestamp field type as an ellipsis; it is rendered str here."
 
   type PythonExceptionPayload = {
     exception_type: str
@@ -24,46 +67,80 @@ module honest-errors
     tb_file: str
     tb_line: int
     tb_function: str
-  }
+    traceback: str
+    context: dict<str, any>
+  } note "the raw server-side Python exception payload classify_py_payload normalizes (spec §2). exception_type is the exception class name; message is the exception's message text; tb_file, tb_line and tb_function are the file, 1-based line and function name of the innermost traceback frame; traceback is the full formatted traceback text; context is a free bag of extra key/value detail the boundary attached. classify_py_payload validates the required keys of this shape and returns a malformed_payload Fault when one is absent (spec §3). The spec writes the payload's traceback field type as an ellipsis; it is rendered str here."
 
   type ExceptionReport = {
     exception_type: str
     message: str
-    severity: str
-    environment: str
+    severity: Severity
+    environment: Environment
     file: str
     line: int
     function: str
     traceback: str
     context: dict<str, any>
     timestamp: str
-  }
+  } note "the one canonical report both normalizers produce, the ten-field shape every downstream consumer reads (spec §2). exception_type is the exception or error type name; message is the failure message; severity is the report severity, one of the SEVERITIES words; environment is the deployment environment, one of the ENVIRONMENTS words, supplied as an argument; file, line and function locate the failure (the source file, its 1-based line, and the enclosing function); traceback is the formatted trace text; context is the free key/value detail carried from the payload; timestamp is the ISO-8601 time the failure occurred, supplied by the caller and not read from a clock (spec §2, §1.5). Both classify_js_payload and classify_py_payload must produce this exact field decomposition (spec §8.1). dedup_key and format_email_body each read a report of this shape."
 
   type HandlerBehavior = {
-    name: str
+    name: BehaviorName
     order: int
-  }
+  } note "one named behavior in an environment's policy, carried as data (spec §4). name is the behavior to perform, one of the BEHAVIOR_NAMES words log or email. order is the position the behavior runs in within the environment's list, a 0-based integer (log is 0, email is 1 in the production policy). behaviors_for returns a list of these; honest-errors declares them and the composing orchestrator interprets each, never this module (spec §4)."
 
   type DedupKey = {
     exception_type: str
     file: str
     line: int
-  }
+  } note "the throttle's identity for a report, the fields that decide whether two failures are the same for deduplication (spec §5). exception_type is the report's exception or error type name; file is the report's source file; line is the report's 1-based line. dedup_key projects these three fields out of an ExceptionReport, and check_rate_limit compares a key against the recent-send cache in the state (spec §5)."
 
-  # Fault is honest-type's, referenced by name and not redeclared here.
+  type RateLimitConfig = {
+    dedup_window_seconds: int
+    max_per_hour: int
+  } note "the throttle's two tunable limits, supplied by the caller (spec §5). dedup_window_seconds is how recently the same DedupKey must have fired for a repeat to be suppressed as a duplicate. max_per_hour is the ceiling on sends within the trailing hour, above which a send is suppressed. check_rate_limit reads both; the module reads no config file — the caller passes this value in (spec §5, §1.5)."
 
-  fn classify_js_payload : (payload: JSErrorPayload, environment: str, timestamp: str) -> ExceptionReport | Fault note "normalizes a browser error payload to an ExceptionReport, critical when the message says so, or a malformed_payload fault naming the missing keys"
+  type RateLimitDecision = {
+    should_send: bool
+    reason: SuppressReason
+  } note "the throttle's answer, returned as data and never an exception or a silent drop (spec §5). should_send is true when the send may go out and false when it is suppressed. reason is the suppression reason when should_send is false — one of the SUPPRESS_REASONS words rate_limit_hourly (the hourly cap was reached) or rate_limit_dedup (this key fired again inside the window); when should_send is true the decision carries the empty string, the not-suppressed value that sits outside SUPPRESS_REASONS (spec §5). Returning suppression as data is what lets honest-test enumerate every suppression path (spec §5, §8.6)."
 
-  fn classify_py_payload : (payload: PythonExceptionPayload, environment: str, timestamp: str) -> ExceptionReport | Fault note "normalizes a server exception payload to an ExceptionReport at error severity, or a malformed_payload fault naming the missing keys"
+  type State = {
+    dedup_cache: dict<str, int>
+    hourly_sends: list<int>
+  } note "the throttle's threaded state, owned by the caller and never a module global (spec §5). dedup_cache maps each seen DedupKey (serialized to a string) to the time its last send fired, so a repeat inside dedup_window_seconds can be detected. hourly_sends is the list of send times within the trailing hour, so the hourly count can be measured against max_per_hour. new_state builds an empty one; check_rate_limit returns a new State and never mutates the one it was given (spec §5). Times are integer timestamps at the resolution of the now argument; the spec writes the empty cache and list ({} and []) but does not pin the value types, which are rendered int here."
 
-  fn should_bypass_dedup : (severity: str) -> bool note "tells whether a severity skips the throttle; only critical does"
+  # The pure functions (spec §3-§6). Every function is pure: no file, clock, environment or network
+  # read, and no raise. A construction or validation failure comes back as data — a Fault inside a
+  # Result or on a union arm — which only a host boundary (in honest-observe or honest-alerts) ever
+  # turns into an exception or a logged event (spec §1.5, §8.2). Result and Fault are honest-type's,
+  # referenced by name and not redeclared here.
 
-  fn behaviors_for : (environment: str) -> list<HandlerBehavior> | Fault note "looks up the ordered behaviors for an environment, or an unknown_environment fault naming the environment given and the ones accepted"
+  fn classify_js_payload : (payload: JSErrorPayload, environment: Environment, timestamp: str) -> Result note "normalizes a raw browser-JavaScript error payload into one canonical ExceptionReport, returning a Result (spec §3). payload is the raw JSErrorPayload the browser hook captured and the boundary handed in. environment is the deployment environment, one of the ENVIRONMENTS words, supplied as an argument and stamped onto the report, never read from os.getenv (spec §1.5, §3). timestamp is the ISO-8601 time the failure occurred, supplied by the caller and stamped onto the report, never read from a clock (spec §1.5). It validates the payload against the required keys of the JS shape: when a required key is absent it returns a Result whose err arm is a malformed_payload Fault naming the missing keys; otherwise it returns a Result whose ok arm is the ExceptionReport (spec §3, §8.2). The report severity is derived from the payload by a small predicate nested here — a message marked critical yields critical, else error — not an if-ladder that would grow per rule (spec §3). It is pure: it reads no world and returns its error as data, never raising (spec §1.5, §8.2, §8.3)."
 
-  fn dedup_key : (report: ExceptionReport) -> DedupKey note "takes the throttle's identity for a report: its exception type, file and line"
+  fn classify_py_payload : (payload: PythonExceptionPayload, environment: Environment, timestamp: str) -> Result note "normalizes a raw server-side Python exception payload into one canonical ExceptionReport, returning a Result (spec §3). payload is the raw PythonExceptionPayload the boundary (an @catch_at_boundary handler or an HTTP error handler) captured and handed in. environment is the deployment environment, one of the ENVIRONMENTS words, supplied as an argument and stamped onto the report, never read inside (spec §1.5, §3). timestamp is the ISO-8601 failure time, supplied by the caller and stamped onto the report, never read from a clock (spec §1.5). It validates the payload against the required keys of the Python shape: when a required key is absent it returns a Result whose err arm is a malformed_payload Fault naming the missing keys; otherwise it returns a Result whose ok arm is the ExceptionReport, at severity error (the Python path's default — spec §3). It produces the same ten-field ExceptionReport decomposition as classify_js_payload, so downstream code never branches on the source (spec §8.1). It is pure and returns its error as data, never raising (spec §1.5, §8.2)."
 
-  fn new_state : () -> dict<str, any> note "builds an empty throttle state with no dedup entries and no recorded sends"
+  fn should_bypass_dedup : (severity: Severity) -> bool note "tells whether a severity skips the throttle entirely (spec §3.1). severity is the report severity, one of the SEVERITIES words. It returns true only when severity is critical and false for every other severity: a critical failure is never silenced by the rate-limiter, the one product rule baked into the leaf and expressed as data rather than control flow (spec §3.1). It is a pure predicate: it reads no world and raises nothing."
 
-  fn check_rate_limit : (key: DedupKey, config: dict<str, any>, state: dict<str, any>, now: int) -> dict<str, any> note "decides whether a send may go out and returns the decision with the next state, suppressing for the hourly cap or a recent duplicate and never changing the state it was given"
+  fn behaviors_for : (environment: Environment) -> list<HandlerBehavior> | Fault note "looks up the ordered list of named behaviors for an environment, a pure dict lookup over the environment-to-behaviors table BEHAVIORS_BY_ENV (spec §4). environment is the deployment environment, one of the ENVIRONMENTS words, supplied as an argument (spec §1.5). The table carries exactly three rows: development maps to [ log at order 0 ]; production maps to [ log at order 0, email at order 1 ]; test maps to [ log at order 0 ] (spec §4). For an environment the table carries it returns that environment's list of HandlerBehavior values; for an environment the table does not carry — one with no policy — it returns an unknown_environment Fault whose message names the environment it was given and the environments it accepts. It does not fall back to another environment's policy: a fallback would file an environment nobody wrote a rule for under a rule written for a different one (spec §4). Adding an environment or changing a policy is editing the table, never editing control flow. It is pure and returns the fault as data, never raising (spec §4, §8.2, §8.5). The returned list is data: honest-errors declares the behaviors and the composing orchestrator interprets each one, handing log to honest-observe and email to honest-alerts; this module executes no behavior (spec §4)."
 
-  fn format_email_body : (report: ExceptionReport) -> str note "renders a report as a plain-text email body, cutting the context to its first ten entries"
+  fn dedup_key : (report: ExceptionReport) -> DedupKey note "projects the throttle's identity out of a report (spec §5). report is the canonical ExceptionReport to key. It returns a DedupKey carrying the report's exception_type, file and line — the three fields that decide whether two failures are the same for deduplication. The composing orchestrator passes this key to check_rate_limit (spec §5, §7). It is a pure projection: it reads no world and raises nothing."
+
+  fn new_state : () -> State note "builds the throttle's empty starting state, the seed the caller threads forward (spec §5). It takes nothing and returns a State whose dedup_cache is an empty map and whose hourly_sends is an empty list. The caller owns this value and threads it through each check_rate_limit call; the state is never a module global (spec §5). It is pure: it reads no world and raises nothing."
+
+  fn check_rate_limit : (key: DedupKey, config: RateLimitConfig, state: State, now: int) -> tuple<RateLimitDecision, State> note "decides whether a send may go out and returns the decision together with the next state, a pure function of the prior state that never mutates its argument (spec §5). key is the report's DedupKey from dedup_key. config is the RateLimitConfig carrying dedup_window_seconds and max_per_hour. state is the current throttle State the caller threads in. now is the current time, supplied as an argument and not read from a clock, so the throttle is testable without mocking time and honest-test drives now directly (spec §5). It computes in order: prune hourly_sends older than one hour relative to now; if the hourly count is at max_per_hour return should_send false with reason rate_limit_hourly; if this key fired within dedup_window_seconds return should_send false with reason rate_limit_dedup; otherwise record the send, prune stale dedup entries, and return should_send true with the empty reason (spec §5). It returns the pair (RateLimitDecision, new State) — the grammar has no tuple type, so the spec's (RateLimitDecision, State') pair is rendered tuple<RateLimitDecision, State>. It returns a new State and never mutates the one it was given; suppression is returned data, never an exception or a silent drop, which is what lets honest-test enumerate every suppression path (spec §5, §8.6)."
+
+  fn format_email_body : (report: ExceptionReport) -> str note "renders a report into a plain-text email body, a pure function of the ExceptionReport shape honest-errors owns (spec §6). report is the canonical ExceptionReport to render. It returns the body text assembled from the report's severity, environment, time, type, message, location, truncated context and traceback. It performs no sending — an email behavior in honest-alerts uses this body to build a Message; the rendering lives here, not in alerts, because it is a pure function of the report shape this module owns (spec §6). It reads no world and raises nothing."
+
+  # The world arrives here. honest-errors is a pure leaf with no boundary, so each public function is
+  # reached by a sibling module importing it: honest-observe imports the normalizers, honest-alerts
+  # imports the behavior table, the rate-limiter and the email-body formatter (spec §1.3). Each entry
+  # names that import so the entry-check reads every entrance.
+  entry "import honest_errors" -> classify_js_payload
+  entry "import honest_errors" -> classify_py_payload
+  entry "import honest_errors" -> should_bypass_dedup
+  entry "import honest_errors" -> behaviors_for
+  entry "import honest_errors" -> dedup_key
+  entry "import honest_errors" -> new_state
+  entry "import honest_errors" -> check_rate_limit
+  entry "import honest_errors" -> format_email_body

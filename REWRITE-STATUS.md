@@ -17,7 +17,7 @@ Last verified: 2026-11-11.
 | honest-features | ✅ `7dd4984` (11-11) | 0 | complete this pass (all gates green) |
 | honest-gherkin | ✅ `33c46b1` (11-11) | 0 | complete this pass (all gates green) |
 | honest-design | ❌ not this pass | 25 | NOT rewritten; grammar spec-rewritten 07-17, code predates the new standard |
-| honest-errors | ❌ not this pass | 7 | NOT rewritten (last real commit 07-19) |
+| honest-errors | ✅ this pass (11-11) | 0 | complete this pass (all gates green); clean-slate rebuild — prototype deleted, §9's six corrections encoded in the .hd/tests |
 | honest-state | ❌ not this pass | 0 | NOT rewritten (07-19); 0 errors incidentally |
 | honest-estimate | ❌ not this pass | 9 | NOT rewritten (07-27) |
 | honest-auth | ❌ not this pass | 6 | NOT rewritten (08-25) |
@@ -27,4 +27,4 @@ Last verified: 2026-11-11.
 | honest-observe | ❌ not this pass | 76 | NOT rewritten (07-xx) |
 | honest-persist | ⏭️ replace | 257 | slated for wholesale replacement; do not back-fix |
 
-Rewrite order so far (newest last): honest-type → honest-check → honest-test → (honest-parse) → honest-features → honest-gherkin. Update this register row-by-row as each module is finished; a module is complete only when ALL gates pass, never from one gate alone.
+Rewrite order so far (newest last): honest-type → honest-check → honest-test → (honest-parse) → honest-features → honest-gherkin → honest-errors. Update this register row-by-row as each module is finished; a module is complete only when ALL gates pass, never from one gate alone.

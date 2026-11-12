@@ -1,240 +1,241 @@
-"""honest-errors conformance: the generative proof (the behavioural circle).
+"""honest-errors generative laws (spec sections 2-6).
 
-Probes every branch a data file cannot reach: the JS severity predicate, the payload defaults,
-the rate-limiter's pruning and every suppression path with state threading, and the email
-formatter. The boundaries (< vs <=, the hour constant, the context limit) are pinned at their exact
-edges, the suppression paths assert the full threaded state, the email body is pinned verbatim, the
-faults carry exact messages, the four vocabularies are pinned to a hand-written oracle, and the
-public surface is checked against __all__ — so a mechanical mutation of any of these fails a probe.
-Each probe returns a list of failures; run() aggregates.
+The suite.json cases pin exact values at representative points. These laws assert the properties that
+must hold across a whole bounded vocabulary or over a sequence of calls: every severity obeys the
+bypass rule, every environment has a valid policy, removing any one required payload key is reported
+as a malformed payload, and the rate-limiter threads state without mutating its argument. Each law
+returns a list of failure strings; run() prints them and returns an exit code.
 """
 
+import copy
+
+import honest_errors
 from honest_errors import (
-    BEHAVIOR_NAMES,
-    ENVIRONMENTS,
-    SEVERITIES,
-    SUPPRESS_REASONS,
     behaviors_for,
     check_rate_limit,
     classify_js_payload,
     classify_py_payload,
     dedup_key,
-    format_email_body,
     new_state,
     should_bypass_dedup,
 )
 
-_TS = "2026-01-01T00:00:00Z"
+_JS_PAYLOAD = {
+    "message": "undefined is not a function",
+    "source": "https://app.example/x.js",
+    "lineno": 42,
+    "colno": 7,
+    "stack": "Error\n  at f (x.js:42:7)",
+    "url": "https://app.example/page",
+    "user_agent": "Mozilla/5.0",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "context": {},
+}
+
+_PY_PAYLOAD = {
+    "exception_type": "ValueError",
+    "message": "bad value",
+    "tb_file": "app.py",
+    "tb_line": 10,
+    "tb_function": "handle",
+    "traceback": "Traceback (most recent call last):\n  ValueError: bad value",
+    "context": {},
+}
+
+_REPORT = {
+    "exception_type": "KeyError",
+    "message": "missing k",
+    "severity": "error",
+    "environment": "production",
+    "file": "svc.py",
+    "line": 73,
+    "function": "lookup",
+    "traceback": "tb",
+    "context": {},
+    "timestamp": "2026-03-03T09:00:00Z",
+}
 
 
-def _probe_normalize():
-    """Normalization (§3): both shapes to one report, faults as data, severity predicate, and the
-    optional-field defaults."""
-    bad = []
-
-    # JS, full payload, message marked critical -> critical; optional fields used verbatim.
-    full = {"message": "Critical failure", "source": "app.js", "lineno": 42, "colno": 5, "stack": "at f", "function": "h", "context": {"u": 1}}
-    result = classify_js_payload(full, "production", _TS)
-    report = result.get("ok", {})
-    if report.get("severity") != "critical" or report.get("traceback") != "at f" or report.get("function") != "h" or report.get("context") != {"u": 1}:
-        bad.append(f"JS full/critical report wrong: {result}")
-    if report.get("exception_type") != "JavaScriptError" or report.get("timestamp") != _TS:
-        bad.append("JS report should carry JavaScriptError type and the supplied timestamp")
-
-    # JS, minimal payload, ordinary message -> error; optional fields default.
-    minimal = {"message": "boom", "source": "app.js", "lineno": 1, "colno": 1}
-    report = classify_js_payload(minimal, "test", _TS)["ok"]
-    if report["severity"] != "error" or report["traceback"] != "" or report["function"] != "" or report["context"] != {}:
-        bad.append(f"JS minimal report should default optional fields and be 'error': {report}")
-
-    # JS missing a required key -> malformed_payload naming it, with the exact message and category.
-    miss = classify_js_payload({"message": "x", "source": "a", "lineno": 1}, "test", _TS)
-    if miss.get("err", {}).get("code") != "malformed_payload" or "colno" not in miss["err"]["detail"]["missing"]:
-        bad.append(f"a JS payload missing colno should fault: {miss}")
-    if miss["err"]["message"] != "JS error payload missing key(s): ['colno']" or miss["err"]["category"] != "client":
-        bad.append(f"a JS malformed fault should carry the exact message and the client category: {miss['err']}")
-
-    # Python, full payload -> severity defaults to error.
-    py = {"exception_type": "ValueError", "message": "bad", "tb_file": "x.py", "tb_line": 10, "tb_function": "g", "traceback": "TB", "context": {"k": 2}}
-    report = classify_py_payload(py, "production", _TS)["ok"]
-    if report["severity"] != "error" or report["exception_type"] != "ValueError" or report["file"] != "x.py" or report["line"] != 10:
-        bad.append(f"Python report wrong: {report}")
-
-    # Python minimal -> traceback/context default.
-    report = classify_py_payload({"exception_type": "E", "message": "m", "tb_file": "f", "tb_line": 1, "tb_function": "fn"}, "test", _TS)["ok"]
-    if report["traceback"] != "" or report["context"] != {}:
-        bad.append("Python minimal should default traceback/context")
-
-    # Python missing a required key -> malformed_payload with the exact message and server category.
-    py_miss = classify_py_payload({"exception_type": "E", "message": "m", "tb_file": "f", "tb_line": 1}, "test", _TS)
-    if py_miss.get("err", {}).get("code") != "malformed_payload" or "tb_function" not in py_miss["err"]["detail"]["missing"]:
-        bad.append("a Python payload missing tb_function should fault, naming it in the detail")
-    if py_miss["err"]["message"] != "Python exception payload missing key(s): ['tb_function']" or py_miss["err"]["category"] != "server":
-        bad.append(f"a Python malformed fault should carry the exact message and the server category: {py_miss['err']}")
-
-    # should_bypass_dedup: critical bypasses, others do not.
-    if not should_bypass_dedup("critical") or should_bypass_dedup("error"):
-        bad.append("should_bypass_dedup must be true only for critical")
-    return bad
+def law_bypass_iff_critical():
+    """§3.1: should_bypass_dedup is true for exactly one severity, critical, across the whole set."""
+    out = []
+    for severity in honest_errors.SEVERITIES:
+        actual = should_bypass_dedup(severity)
+        want = severity == "critical"
+        if actual is not want:
+            out.append(f"should_bypass_dedup({severity!r}) = {actual!r}, expected {want!r}")
+    return out
 
 
-def _probe_behaviors():
-    """Behavior policy (§4): each declared environment, and the development default for unknowns."""
-    bad = []
-    if behaviors_for("production") != [{"name": "log", "order": 0}, {"name": "email", "order": 1}]:
-        bad.append("production behaviors wrong")
-    if behaviors_for("development") != [{"name": "log", "order": 0}, {"name": "reraise", "order": 1}]:
-        bad.append("development behaviors wrong")
-    if behaviors_for("test") != [{"name": "log", "order": 0}]:
-        bad.append("test behaviors wrong")
-    if behaviors_for("staging") != behaviors_for("development"):
-        bad.append("an unknown environment should fall back to development")
-    return bad
+def law_every_environment_has_a_valid_policy():
+    """§4: behaviors_for returns, for every declared environment, a list whose every name is a
+    BEHAVIOR_NAMES word and whose orders are the contiguous 0..n-1."""
+    out = []
+    for environment in honest_errors.ENVIRONMENTS:
+        result = behaviors_for(environment)
+        if not isinstance(result, list):
+            out.append(f"behaviors_for({environment!r}) = {result!r}, expected a list")
+            continue
+        for behavior in result:
+            if behavior["name"] not in honest_errors.BEHAVIOR_NAMES:
+                out.append(f"behaviors_for({environment!r}) has name {behavior['name']!r} outside BEHAVIOR_NAMES")
+        orders = [behavior["order"] for behavior in result]
+        if orders != list(range(len(result))):
+            out.append(f"behaviors_for({environment!r}) orders = {orders}, expected {list(range(len(result)))}")
+    return out
 
 
-def _probe_ratelimit():
-    """The throttle (§5): every suppression path, the hourly/dedup pruning, the exact boundaries, and
-    state threading. Never mutates the input state."""
-    bad = []
-    key = dedup_key({"exception_type": "ValueError", "file": "x.py", "line": 10, "message": "m"})
-    if key != {"exception_type": "ValueError", "file": "x.py", "line": 10}:
-        bad.append(f"dedup_key wrong: {key}")
-    if new_state() != {"dedup_cache": {}, "hourly_sends": []}:
-        bad.append("new_state wrong")
-    config = {"dedup_window_seconds": 60, "max_per_hour": 3}
-
-    # Allow from empty state; the send is recorded; the input state is untouched.
-    start = new_state()
-    decision, state = check_rate_limit(key, config, start, 1000)
-    if decision != {"should_send": True, "reason": ""} or state["hourly_sends"] != [1000] or "ValueError|x.py|10" not in state["dedup_cache"]:
-        bad.append(f"empty state should allow and record: {decision} {state}")
-    if start != {"dedup_cache": {}, "hourly_sends": []}:
-        bad.append("check_rate_limit must not mutate its state argument")
-
-    # Hourly suppression at max_per_hour; a >1h-old send is pruned (not counted). The full threaded
-    # state is pinned, not just the decision, so the returned state's keys are constrained too.
-    decision, state = check_rate_limit(key, config, {"dedup_cache": {}, "hourly_sends": [1000 - 4000, 990, 995, 998]}, 1000)
-    if decision != {"should_send": False, "reason": "rate_limit_hourly"}:
-        bad.append(f"at the cap it should suppress hourly: {decision}")
-    if state != {"dedup_cache": {}, "hourly_sends": [990, 995, 998]}:
-        bad.append(f"hourly suppression should prune the >1h send and thread state forward: {state}")
-
-    # Dedup suppression: same key fired within the window (hourly under cap). State pinned in full.
-    decision, state = check_rate_limit(key, config, {"dedup_cache": {"ValueError|x.py|10": 990}, "hourly_sends": [990]}, 1000)
-    if decision != {"should_send": False, "reason": "rate_limit_dedup"}:
-        bad.append(f"a recent same-key send should suppress dedup: {decision}")
-    if state != {"dedup_cache": {"ValueError|x.py|10": 990}, "hourly_sends": [990]}:
-        bad.append(f"dedup suppression should thread state forward unchanged: {state}")
-
-    # Last send OUTSIDE the dedup window -> allowed (the not-suppressed dedup branch).
-    decision, _ = check_rate_limit(key, config, {"dedup_cache": {"ValueError|x.py|10": 900}, "hourly_sends": [900]}, 1000)
-    if decision["should_send"] is not True:
-        bad.append("a send older than the dedup window should be allowed")
-
-    # Allow prunes a stale dedup entry for another key, and records the new one.
-    _, state = check_rate_limit(key, config, {"dedup_cache": {"Other|y.py|1": 900}, "hourly_sends": []}, 1000)
-    if "Other|y.py|1" in state["dedup_cache"] or "ValueError|x.py|10" not in state["dedup_cache"]:
-        bad.append(f"allow should prune stale dedup entries and record the new key: {state}")
-
-    # Boundaries (< vs <= at each prune/window, and the hour constant). A send exactly one hour old is
-    # pruned, so at the cap it does not count; one second younger still counts.
-    hourly_cap = {"dedup_window_seconds": 60, "max_per_hour": 1}
-    at_hour, _ = check_rate_limit(key, hourly_cap, {"dedup_cache": {}, "hourly_sends": [10000 - 3600]}, 10000)
-    if at_hour["should_send"] is not True:
-        bad.append("a send exactly one hour old is pruned, so the cap is not reached")
-    under_hour, _ = check_rate_limit(key, hourly_cap, {"dedup_cache": {}, "hourly_sends": [10000 - 3599]}, 10000)
-    if under_hour["should_send"] is not False:
-        bad.append("a send one second under the hour still counts toward the cap")
-
-    # Dedup-window edge: a prior send exactly at the window is outside it (allowed); another key's
-    # entry exactly one window old is pruned on the allow path.
-    wide = {"dedup_window_seconds": 60, "max_per_hour": 5}
-    at_window, edge_state = check_rate_limit(key, wide, {"dedup_cache": {"ValueError|x.py|10": 9940, "Other|y.py|1": 9940}, "hourly_sends": [9940]}, 10000)
-    if at_window["should_send"] is not True:
-        bad.append("a prior send exactly at the dedup window is outside it and allowed")
-    if "Other|y.py|1" in edge_state["dedup_cache"]:
-        bad.append("a dedup entry exactly one window old is pruned on the allow path")
-    return bad
+def law_unknown_environment_is_a_fault():
+    """§4: an environment the table does not carry yields an unknown_environment Fault, never a
+    fallback list and never a raise."""
+    out = []
+    for environment in ("staging", "", "Production", "prod"):
+        result = behaviors_for(environment)
+        if isinstance(result, list):
+            out.append(f"behaviors_for({environment!r}) returned a list; expected an unknown_environment Fault")
+            continue
+        if not isinstance(result, dict) or result.get("code") != "unknown_environment":
+            out.append(f"behaviors_for({environment!r}) = {result!r}, expected a Fault with code unknown_environment")
+    return out
 
 
-def _probe_email():
-    """The email body (§6): rendered verbatim — labels, alignment, separators all pinned — plus the
-    empty-context line and the exact ten-item context truncation."""
-    bad = []
-    report = {"severity": "error", "environment": "production", "timestamp": "t", "exception_type": "E", "message": "m", "file": "f.py", "line": 3, "function": "g", "traceback": "TB", "context": {"a": 1, "b": 2}}
-    expected = (
-        "Severity:    error\n"
-        "Environment: production\n"
-        "Time:        t\n"
-        "Type:        E\n"
-        "Message:     m\n"
-        "Location:    f.py:3 in g\n"
-        "Context:     a=1, b=2\n"
-        "\n"
-        "Traceback:\n"
-        "TB"
+def law_js_missing_any_required_key_is_malformed():
+    """§3: removing any one required key of a valid JS payload yields an err malformed_payload."""
+    out = []
+    for key in _JS_PAYLOAD:
+        payload = {k: v for k, v in _JS_PAYLOAD.items() if k != key}
+        result = classify_js_payload(payload, "production", "2026-02-02T12:00:00Z")
+        if "err" not in result or result["err"].get("code") != "malformed_payload":
+            out.append(f"classify_js_payload without {key!r} = {result!r}, expected err malformed_payload")
+    return out
+
+
+def law_py_missing_any_required_key_is_malformed():
+    """§3: removing any one required key of a valid Python payload yields an err malformed_payload."""
+    out = []
+    for key in _PY_PAYLOAD:
+        payload = {k: v for k, v in _PY_PAYLOAD.items() if k != key}
+        result = classify_py_payload(payload, "production", "2026-02-02T12:00:00Z")
+        if "err" not in result or result["err"].get("code") != "malformed_payload":
+            out.append(f"classify_py_payload without {key!r} = {result!r}, expected err malformed_payload")
+    return out
+
+
+def law_classify_stamps_arguments():
+    """§3, §1.5: a valid payload stamps the supplied environment and timestamp onto the report, for
+    every environment, and the severity is always a SEVERITIES word. The Python path defaults to
+    error."""
+    out = []
+    for environment in honest_errors.ENVIRONMENTS:
+        timestamp = f"2026-04-04T00:00:00+00:00/{environment}"
+        for name, classify, payload, want_severity in (
+            ("js", classify_js_payload, _JS_PAYLOAD, None),
+            ("py", classify_py_payload, _PY_PAYLOAD, "error"),
+        ):
+            result = classify(payload, environment, timestamp)
+            if "ok" not in result:
+                out.append(f"{name} classify in {environment!r} = {result!r}, expected ok")
+                continue
+            report = result["ok"]
+            if report["environment"] != environment:
+                out.append(f"{name} report environment = {report['environment']!r}, expected {environment!r}")
+            if report["timestamp"] != timestamp:
+                out.append(f"{name} report timestamp = {report['timestamp']!r}, expected {timestamp!r}")
+            if report["severity"] not in honest_errors.SEVERITIES:
+                out.append(f"{name} report severity {report['severity']!r} outside SEVERITIES")
+            if want_severity is not None and report["severity"] != want_severity:
+                out.append(f"{name} report severity = {report['severity']!r}, expected {want_severity!r}")
+    return out
+
+
+def law_dedup_key_projects_three_fields():
+    """§5: dedup_key is the exact three-field projection of a report."""
+    key = dedup_key(_REPORT)
+    want = {"exception_type": _REPORT["exception_type"], "file": _REPORT["file"], "line": _REPORT["line"]}
+    if key == want:
+        return []
+    return [f"dedup_key(_REPORT) = {key!r}, expected {want!r}"]
+
+
+def law_check_rate_limit_does_not_mutate_state():
+    """§5: check_rate_limit returns a new state and never mutates the state it was given."""
+    key = {"exception_type": "ValueError", "file": "app.py", "line": 10}
+    config = {"dedup_window_seconds": 300, "max_per_hour": 10}
+    state = {"dedup_cache": {"x": 500}, "hourly_sends": [500, 900]}
+    before = copy.deepcopy(state)
+    check_rate_limit(key, config, state, 1000)
+    if state == before:
+        return []
+    return [f"check_rate_limit mutated its state argument: {before!r} -> {state!r}"]
+
+
+def law_rate_limit_dedup_suppresses_a_repeat():
+    """§5: a second send of the same key within dedup_window_seconds is suppressed as a duplicate;
+    the same key after the window has elapsed is allowed again."""
+    out = []
+    key = {"exception_type": "ValueError", "file": "app.py", "line": 10}
+    config = {"dedup_window_seconds": 300, "max_per_hour": 10}
+    decision1, state1 = check_rate_limit(key, config, new_state(), 1000)
+    if not decision1["should_send"]:
+        out.append(f"first send suppressed: {decision1!r}")
+    decision2, state2 = check_rate_limit(key, config, state1, 1100)
+    if decision2["should_send"] or decision2["reason"] != "rate_limit_dedup":
+        out.append(f"repeat within window = {decision2!r}, expected suppressed rate_limit_dedup")
+    decision3, _ = check_rate_limit(key, config, state1, 1400)
+    if not decision3["should_send"] or decision3["reason"] != "":
+        out.append(f"repeat after window = {decision3!r}, expected allowed with empty reason")
+    return out
+
+
+def law_rate_limit_decision_is_consistent():
+    """§5: a suppressed decision always carries a SUPPRESS_REASONS word; an allowed decision always
+    carries the empty reason."""
+    out = []
+    key = {"exception_type": "ValueError", "file": "app.py", "line": 10}
+    scenarios = (
+        ({"dedup_window_seconds": 300, "max_per_hour": 10}, {"dedup_cache": {}, "hourly_sends": []}, 1000),
+        ({"dedup_window_seconds": 300, "max_per_hour": 2}, {"dedup_cache": {}, "hourly_sends": [800, 900]}, 1000),
     )
-    body = format_email_body(report)
-    if body != expected:
-        bad.append(f"email body not rendered verbatim: {body!r}")
-
-    # Empty context renders without crashing: only the context line goes empty.
-    if format_email_body({**report, "context": {}}) != expected.replace("a=1, b=2", ""):
-        bad.append("an empty-context body should render with an empty context line")
-
-    # A context renders exactly the first ten items: the tenth is present, the eleventh is not.
-    big = format_email_body({**report, "context": {f"k{i}": i for i in range(15)}})
-    if "k9=9" not in big or "k10=10" in big:
-        bad.append("context should be truncated to exactly the first ten items")
-    return bad
+    for config, state, now in scenarios:
+        decision, _ = check_rate_limit(key, config, state, now)
+        if decision["should_send"]:
+            if decision["reason"] != "":
+                out.append(f"allowed decision carried reason {decision['reason']!r}, expected empty")
+        elif decision["reason"] not in honest_errors.SUPPRESS_REASONS:
+            out.append(f"suppressed decision reason {decision['reason']!r} outside SUPPRESS_REASONS")
+    return out
 
 
-def _probe_vocabularies():
-    """The four closed vocabularies (§2), pinned to a hand-written oracle — the contract honest-test
-    enumerates and honest-check treats as discriminant sets. The expected members are literals here,
-    not the module's own value, so a dropped, emptied, or renamed member fails."""
-    bad = []
-    expected = {
-        "SEVERITIES": (SEVERITIES, {"debug", "info", "warning", "error", "critical"}),
-        "ENVIRONMENTS": (ENVIRONMENTS, {"development", "production", "test"}),
-        "BEHAVIOR_NAMES": (BEHAVIOR_NAMES, {"log", "email", "reraise"}),
-        "SUPPRESS_REASONS": (SUPPRESS_REASONS, {"rate_limit_hourly", "rate_limit_dedup"}),
-    }
-    for name, (actual, members) in expected.items():
-        if actual != frozenset(members):
-            bad.append(f"vocabulary {name} drifted from its declared contract: {actual}")
-    return bad
-
-
-def _probe_public_surface():
-    """Every name the package promises in __all__ resolves on the package (§2). Catches a dropped
-    re-export or an emptied __all__ entry — the adopter-visible surface the behavioural probes reach
-    only through direct imports."""
-    import honest_errors
-
-    bad = []
-    for name in honest_errors.__all__:
-        if not hasattr(honest_errors, name):
-            bad.append(f"__all__ promises {name!r} but the package does not export it")
-    return bad
+_LAWS = (
+    law_bypass_iff_critical,
+    law_every_environment_has_a_valid_policy,
+    law_unknown_environment_is_a_fault,
+    law_js_missing_any_required_key_is_malformed,
+    law_py_missing_any_required_key_is_malformed,
+    law_classify_stamps_arguments,
+    law_dedup_key_projects_three_fields,
+    law_check_rate_limit_does_not_mutate_state,
+    law_rate_limit_dedup_suppresses_a_repeat,
+    law_rate_limit_decision_is_consistent,
+)
 
 
 def run():
-    probes = {
-        "normalize": _probe_normalize(),
-        "behaviors": _probe_behaviors(),
-        "ratelimit": _probe_ratelimit(),
-        "email": _probe_email(),
-        "vocabularies": _probe_vocabularies(),
-        "public_surface": _probe_public_surface(),
-    }
-    violations = [(name, messages) for name, messages in probes.items() if messages]
-    for name, messages in violations:
-        print(f"FAIL HE-probe [{name}]: {messages}")
-    passed = sum(1 for messages in probes.values() if not messages)
-    print(f"HE laws: {passed} passed, {len(violations)} failed, {len(probes)} total")
-    return 0 if not violations else 1
+    passed = 0
+    failed = 0
+    for law in _LAWS:
+        failures = law()
+        if failures:
+            failed += 1
+            for failure in failures:
+                print(f"FAIL {law.__name__}: {failure}")
+        else:
+            passed += 1
+    print(f"laws: {passed} passed, {failed} failed, {passed + failed} total")
+    return 0 if failed == 0 else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    import sys
+
+    sys.exit(run())
