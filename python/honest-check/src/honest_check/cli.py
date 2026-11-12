@@ -236,10 +236,17 @@ def main(argv):
     return result
 
 
-if __name__ == "__main__":
+def entry_point():
+    """The `honest-check` console script (pyproject.toml's [project.scripts]). Takes no
+    argument because a console script is invoked with none; reads sys.argv itself, same as
+    the __main__ shim below, so both paths run the identical door."""
     try:
         exit_code = int(main(sys.argv[1:]))
     except HonestCheckError as read_failure:
         print(str(read_failure), file=sys.stderr)
         exit_code = 2
     raise SystemExit(exit_code)
+
+
+if __name__ == "__main__":
+    entry_point()
