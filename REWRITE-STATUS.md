@@ -21,10 +21,10 @@ Last verified: 2026-11-11.
 | honest-state | ❌ not this pass | 0 | NOT rewritten (07-19); 0 errors incidentally |
 | honest-estimate | ❌ not this pass | 9 | NOT rewritten (07-27) |
 | honest-auth | ❌ not this pass | 6 | NOT rewritten (08-25) |
-| honest-rca | ❌ not this pass | 1 | NOT rewritten (07-27) |
+| honest-rca | ✅ this pass (11-11) | 0 | complete this pass (all gates green); clean-slate rebuild of the apophatic root-cause leaf |
 | honest-page | ❌ not this pass | 3 | NOT rewritten (07-22) |
 | honest-alerts | ❌ not this pass | 23 | NOT rewritten (07-xx) |
 | honest-observe | ❌ not this pass | 76 | NOT rewritten (07-xx) |
 | honest-persist | ⏭️ replace | 257 | slated for wholesale replacement; do not back-fix |
 
-Rewrite order so far (newest last): honest-type → honest-check → honest-test → (honest-parse) → honest-features → honest-gherkin → honest-errors. Update this register row-by-row as each module is finished; a module is complete only when ALL gates pass, never from one gate alone.
+Rewrite order so far (newest last): honest-type → honest-check → honest-test → (honest-parse) → honest-features → honest-gherkin → honest-errors → honest-rca. Update this register row-by-row as each module is finished; a module is complete only when ALL gates pass, never from one gate alone.

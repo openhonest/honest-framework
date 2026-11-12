@@ -1,64 +1,110 @@
-# honest-rca declared in .hd — the apophatic root-cause solver. All pure: a bounded, hashable
-# evidence set and a versioned method yield a causal graph, traced to a fixpoint, attested as the
-# negative (terminates at X; no upstream factor found), with the bound stated. No I/O — evidence is
-# assembled at the boundary and arrives as data; the solver never reads the world.
+# honest-rca declared in .hd — the debugging expression of the framework's via negativa (spec §1). It
+# finds the root cause of a failure without lying about having found it: it never claims "X is the
+# root" (a positive, unfalsifiable claim), only the honest negative — under a stated evidence set and
+# a stated method, the causal chain terminates at X, and no upstream factor was identified (spec §1,
+# §1.1). Given a precise Symptom, a bounded EvidenceSet, and a versioned Method, it builds a causal
+# graph from the evidence's recorded relations, traces the graph upstream to a fixpoint, and emits a
+# bounded-completeness Attestation naming the terminus, the evidence hash, the method version, the
+# judgment edges it relied on, and the computed Bound — what may lie outside the evidence or be
+# invisible to the method (spec §1.1, §2). The poka-yoke: a root-cause claim is representable only as
+# an Attestation, and an Attestation is well-formed only when it carries all of these; a positive,
+# unbounded claim has no representation, and validate_attestation refuses an incomplete one (spec
+# §1.2, §7).
+#
+# honest-rca is a PURE LEAF. Its decision core imports nothing at runtime; the evidence arrives as
+# data assembled at the boundary (honest-observe, honest-parse/check, and history are read at the edge
+# into EvidenceItem records), and every decision function is pure over it — it touches no file, clock,
+# network or environment (spec §1.5, §11). It has no boundary of its own, no door, reader, sink or
+# orchestrator; the world reaches its pure functions by import from a sibling, exactly like
+# honest-errors (spec §1.3, §1.5). Faults are data: validate_attestation returns a list of faults and
+# nothing raises (spec §7, §9). honest-rca depends only on honest-type, whose Fault it references by
+# name and does not redeclare (spec §7, §1.3).
+# Architecture: ../../specs/02-code-quality/honest-rca-architecture.md
 
 module honest-rca
 
-  layer tooling
+  layer correctness
 
-  set EVIDENCE_KINDS = { "code", "event", "history", "config", "deploy" }
-  set SIGNAL_KINDS = { "dataflow", "controlflow", "change_correlation", "temporal", "judgment" }
-  set DETERMINISTIC_SIGNALS = { "dataflow", "controlflow", "change_correlation", "temporal" }
-  set BOUND_KINDS = { "outside_evidence", "invisible_to_method" }
+  note "The apophatic root-cause solver: a bounded evidence set, a versioned method, deterministic causal edges, a fixpoint traversal to a terminus, and an attestation of the negative — no positive 'X is the root' claim, and no I/O (spec §1, §1.1, §1.5)."
+
+  # No boundary, so no I/O surface. The world arrives only through the import entries at the foot of
+  # the file: a sibling module or the host imports a public function (spec §1.3, §1.5, §11).
+  inputs  = { }
+  outputs = { }
+
+  # The three closed vocabularies (spec §2.1). Each is a finite set of words and must be a frozenset in
+  # the code, never a free str: honest-test enumerates them into a Cartesian product and honest-check
+  # treats them as discriminant sets (spec §2.1, §10). Each set is wrapped by a vocabulary so a record
+  # field can bind to it.
+
+  set EVIDENCE_KINDS = { "code" : "a parsed code site; carries flows_to and controls from parse/check (spec §11)",
+                         "event" : "a recorded event from honest-observe's log; carries precedes from log ordering and the request-id join (spec §11)",
+                         "history" : "a change-set / blame fact; carries changed_with from version history, assembled at the boundary (spec §11)",
+                         "config" : "a configuration key referenced in the failure",
+                         "deploy" : "a deploy-timeline entry referenced in the failure" } note "the closed set of evidence-source kinds, the five sources the methodology names (spec §2.1). EvidenceItem.kind is exactly one of these five words. The kind records where the item came from and which recorded relation it is expected to carry — code carries flows_to and controls, event carries precedes, history carries changed_with (spec §2, §11). honest-rca reads these items; it never collects them from the world, which is boundary I/O (spec §1.5, §3)."
+  vocabulary EvidenceKind = { EVIDENCE_KINDS }
+
+  set SIGNAL_KINDS = { "dataflow" : "a data dependency grounded from flows_to (the cause's value reaches the effect), read from parse (spec §5)",
+                       "controlflow" : "a control-flow gating grounded from controls (the cause's branch determines whether the effect executes), read from parse (spec §5)",
+                       "change_correlation" : "a co-change grounded from changed_with (the cause changed together with the failure), read from history (spec §5)",
+                       "temporal" : "a strict happens-before grounded from precedes (the cause precedes the effect in the event log), read from observe (spec §5)",
+                       "judgment" : "the marked, reserved-judgment edge: a link no deterministic signal can settle, supplied explicitly with marked true (spec §2, §5)" } note "the closed set of causal signal kinds (spec §2.1). CausalEdge.signal is exactly one of these five words. The first four are deterministic grounds, each read from one recorded relation field of an EvidenceItem; judgment is the one marked signal — a reserved judgment reproducible only up to the judge's version, which enters the graph only when enabled in the Method (spec §2, §5). More enabled deterministic signals means fewer marked edges means closer to a proof (spec §2, §4)."
+  vocabulary SignalKind = { SIGNAL_KINDS }
+
+  set BOUND_KINDS = { "outside_evidence" : "a cause may lie in an item the evidence references but that is absent from E (spec §7.1)",
+                      "invisible_to_method" : "a cause may hide in a referenced edge no enabled signal could ground (spec §7.1)" } note "the closed set of the two ways the bounded search can be incomplete (spec §2.1). The Bound record carries one list per kind; the vocabulary names the two failure modes so the bound is exhaustive by construction — there is no third way for the search to be incomplete under this method (spec §2, §7.1)."
+  vocabulary BoundKind = { BOUND_KINDS }
+
+  # The causal IR (spec §2). Every value is a plain record — data, no behaviour; all TypedDicts, no
+  # classes. A Symptom names what happened and never why; an EvidenceItem carries one piece of the
+  # bounded evidence and its recorded relations; the EvidenceSet is the hashed, reproducible body; a
+  # CausalEdge is one cause→effect link; the Method is the versioned signal set; the CausalGraph is the
+  # edges the method produced; the Bound is the stated limit; the Attestation is the negative claim.
 
   type Symptom = {
     id: str
     description: str
     site: str
-  }
+  } note "the observed failure, stated precisely and kept separate from any guess at its cause (spec §2). id names the symptom. description states what happened in words. site is the EvidenceItem id where the failure was observed — the node trace starts upstream from. A Symptom names what happened, never why; the why is what the trace discovers and the attestation bounds (spec §2, §6)."
 
   type EvidenceItem = {
     id: str
-    kind: str
+    kind: EvidenceKind
     ref: str
     flows_to: list<str>
     controls: list<str>
     changed_with: list<str>
     precedes: list<str>
     category: str
-  }
+  } note "one piece of the bounded evidence (spec §2). id is the item's identity, the node it contributes to the graph. kind is its evidence kind, one of the EVIDENCE_KINDS words (spec §2.1). ref is the locator string that says where the item lives in the world — a code site, an event id, a commit, a config key, or a deploy-timeline entry; it is opaque to the decision core and read only at the boundary that assembled it (spec §2, §3). The four relation fields carry the recorded relations honest-rca grounds edges on, one per deterministic signal, each a list of downstream item ids (the effects this item causes): flows_to is the data dependency from parse, controls is the control-flow gating from parse, changed_with is the co-change from history, precedes is the temporal happens-before from observe. An item carrying no relation to a given node cannot be linked to it by a deterministic signal; an absent relation produces no edge (spec §2, §5). category, when non-empty, marks the item as a design root and names the bug category it represents (a missing invariant, an unowned mutation, an unbounded input); an ordinary evidence item leaves it the empty string (spec §2, §8)."
 
   type EvidenceSet = {
     items: list<EvidenceItem>
     hash: str
-  }
+  } note "the bounded body of evidence E (spec §2, §3). items is the list of EvidenceItem values assembled at the boundary. hash is the order-independent digest derived by evidence_hash and the reproducibility key: the same set of items in any order yields the same hash, and an attestation is re-verifiable only against the E its hash names (spec §2, §3). The set is a snapshot — assembling the items from the world is boundary I/O; evidence_set receives items already read (spec §3, §1.5)."
 
   type CausalEdge = {
     cause: str
     effect: str
-    signal: str
+    signal: SignalKind
     marked: bool
-  }
+  } note "a directed cause→effect link in the causal graph (spec §2). cause is the upstream item id, effect is the downstream item id. signal is the signal kind that produced the edge, one of the SIGNAL_KINDS words (spec §2.1). marked is true exactly when signal is judgment — the 'pseudo' in a pseudo-proof, reproducible only up to the judge's version; a grounded edge (marked false) is a recorded fact, a marked edge is a reserved judgment (spec §2). signal_edges emits only grounded edges (marked false); a marked edge is supplied explicitly to causal_graph (spec §5)."
 
   type Method = {
     version: str
-    signals: list<str>
+    signals: list<SignalKind>
     traversal: str
-  }
+  } note "the versioned causal method M (spec §2, §4). version makes the method reproducible: a marked edge is reproducible only up to the judge's version, so the attestation records method_version and a re-run is compared against the same method (spec §2, §4). signals is the enabled subset of the SIGNAL_KINDS words — the grounds M will accept, the deterministic kinds plus optionally judgment; an edge whose signal is not enabled is not built (spec §2, §4, §5). traversal names the upstream-traversal rule trace follows (spec §2, §6). The more deterministic signals M enables, the more of the chain is grounded fact and the fewer edges are marked (spec §4)."
 
   type CausalGraph = {
     nodes: list<str>
     edges: list<CausalEdge>
-  }
+  } note "the causal graph over E (spec §2). nodes is the list of item ids in the graph. edges is the list of CausalEdge values M produced from E's recorded relations plus the enabled judgment edges (spec §2, §5). causal_graph scopes the graph to exactly the edges M grounds or enables, so 'no upstream cause' in trace is exactly 'no upstream cause that satisfies M' (spec §5, §6)."
 
-  type Bound = {
-    outside_evidence: list<str>
-    invisible_to_method: list<dict<str, str>>
-  }
+  type Bound = dict<BoundKind, list<str>> note "the stated limit on the search, computed from fact and never asserted (spec §2, §7.1). It maps each of the two BOUND_KINDS words to its list of identifiers, so the two incompleteness modes are a closed, enumerable key space rather than two free-standing fields. Under outside_evidence it carries the item ids the evidence's relations reference but that are not themselves items in E — a cause may lie in one of them. Under invisible_to_method it carries the referenced edges that no enabled signal grounded — a cause may hide in a signal M did not run; each such entry identifies a referenced-but-ungrounded edge (the spec names them 'edges present by reference' but does not pin their element representation, so they are rendered here as string identifiers — see GAPS). A Bound is always present, even when both lists are empty: an empty bound is a stated empty bound, not an omitted one, which is what makes the claim honest and checkable (spec §2, §7.1)."
 
   type Attestation = {
-    symptom: str
+    symptom: Symptom
     evidence_hash: str
     method_version: str
     terminus: str
@@ -67,34 +113,57 @@ module honest-rca
     bound: Bound
     category: str
     poka_yoke: str
-  }
+  } note "the output, the negative claim (spec §2, §7). symptom is the failure that was traced. evidence_hash is the hash of the EvidenceSet searched and method_version the version of the Method used — the two reproducibility keys the claim carries on its own face (spec §2, §7). terminus is the node past which the bounded search finds nothing; chain is the ordered path from the symptom to the terminus; marked_edges are the judgment edges the chain relied on, read from the graph (spec §2, §7). bound is the computed Bound. category is copied from the terminus item — empty for an ordinary terminus, the named bug category when the terminus is a design root; poka_yoke is the reference to the poka-yoke that closes that category, present exactly when category is non-empty (spec §2, §8). The record has no field that asserts 'X is the root'; its semantics are fixed as the negative — terminates at terminus; no upstream factor identified under evidence_hash and method_version (spec §2)."
 
-  type Fault = {
-    code: str
-    message: str
-    category: str
-    results: list<any>
-    detail: dict<str, any>
-  }
+  # The pure functions (spec §3-§8). Every function is pure: no file, clock, environment or network
+  # read, and no raise. The one error-returning function, validate_attestation, returns its faults as
+  # data in a list; honest-type's Fault is referenced by name and not redeclared here (spec §7, §9).
 
-  fn evidence_hash : (items: list<EvidenceItem>) -> str
+  fn evidence_hash : (items: list<EvidenceItem>) -> str note "a pure, order-independent digest of the evidence items (spec §3). items is the list of EvidenceItem values to hash. It returns a string digest such that the same set of items in any order yields the same hash, and any change to an item's id, kind, ref, or relations changes it (spec §3, §12). The hash is what makes an attestation reproducible: re-deriving E and re-running M must reproduce the attestation exactly, and the hash is the key that proves the same E was searched (spec §3). It is pure — it reads no world and raises nothing (spec §1.5)."
 
-  fn evidence_set : (items: list<EvidenceItem>) -> EvidenceSet
+  fn evidence_set : (items: list<EvidenceItem>) -> EvidenceSet invokes evidence_hash note "assembles a bounded evidence set and stamps its hash (spec §3). items is the list of EvidenceItem values already read from the world at the boundary — evidence_set does no collection itself (reading observe's log, running blame, loading config is boundary I/O and lives at the edge) (spec §3, §1.5). It returns an EvidenceSet whose items are the given items and whose hash is evidence_hash(items). It is pure and raises nothing (spec §1.5)."
 
-  fn causal_edge : (cause: str, effect: str, signal: str) -> CausalEdge
+  # signal_edges' dispatch. The signal kind selects which recorded relation field of an EvidenceItem
+  # grounds its edges. One detector parameterized by the kind, never an if/elif chain per signal (spec
+  # §5): the table drives the selection and each handler reads exactly one relation field. The table
+  # covers only the four deterministic kinds; judgment grounds no edges of its own (spec §5).
+  dispatch by_signal = { "dataflow" -> relation_flows_to, "controlflow" -> relation_controls, "change_correlation" -> relation_changed_with, "temporal" -> relation_precedes } note "maps each deterministic signal kind to the handler that reads the EvidenceItem relation field that kind grounds edges on: dataflow→flows_to, controlflow→controls, change_correlation→changed_with, temporal→precedes (spec §5). signal_edges dispatches on its kind argument through this table, so adding or changing a signal's source is editing the table, never editing control flow. judgment is absent from the table because it grounds no edges of its own (spec §5)."
 
-  fn signal_edges : (items: list<EvidenceItem>, kind: str) -> list<CausalEdge>
+  fn relation_flows_to : (item: EvidenceItem) -> list<str> note "the dataflow detector: reads the item's flows_to relation, the downstream item ids whose value depends on this item, grounded from parse's data-flow facts (spec §5). It returns the flows_to list — empty where the relation is absent, which yields no edge (spec §5). It is pure and raises nothing."
 
-  fn causal_graph : (evidence: EvidenceSet, method: Method, judgments: list<CausalEdge>) -> CausalGraph
+  fn relation_controls : (item: EvidenceItem) -> list<str> note "the controlflow detector: reads the item's controls relation, the downstream item ids whose execution this item's branch gates, grounded from parse's control-flow facts (spec §5). It returns the controls list — empty where the relation is absent, which yields no edge (spec §5). It is pure and raises nothing."
 
-  fn trace : (graph: CausalGraph, symptom: Symptom) -> list<str>
+  fn relation_changed_with : (item: EvidenceItem) -> list<str> note "the change_correlation detector: reads the item's changed_with relation, the downstream item ids that changed together with this item, grounded from history's blame/change sets (spec §5). It returns the changed_with list — empty where the relation is absent, which yields no edge (spec §5). It is pure and raises nothing."
 
-  fn terminus : (chain: list<str>) -> str
+  fn relation_precedes : (item: EvidenceItem) -> list<str> note "the temporal detector: reads the item's precedes relation, the downstream item ids this item strictly happens-before in the event log, grounded from observe's log ordering (spec §5). It returns the precedes list — empty where the relation is absent, which yields no edge (spec §5). It is pure and raises nothing."
 
-  fn bound : (evidence: EvidenceSet, graph: CausalGraph) -> Bound
+  fn signal_edges : (evidence: EvidenceSet, kind: SignalKind) -> list<CausalEdge> invokes by_signal note "builds the grounded edges for one signal kind (spec §5). evidence is the EvidenceSet to read. kind is the deterministic signal kind to ground, one of the SIGNAL_KINDS words other than judgment. It dispatches on kind through by_signal to pick the relation detector, applies that detector to each item in the evidence, and emits one CausalEdge for each downstream id the relation names — cause the item's id, effect the downstream id, signal the kind, marked false (a grounded edge is a recorded fact) (spec §2, §5). It emits only edges its signal can ground; a relation absent from an item produces no edge, so it returns an empty list where the relation is empty throughout (spec §5, §12). One detector parameterized by the kind rather than one copy per signal (spec §5). It is pure and raises nothing (spec §1.5)."
 
-  fn terminus_is_design_root : (item: EvidenceItem) -> bool
+  fn causal_graph : (evidence: EvidenceSet, method: Method, judgments: list<CausalEdge>) -> CausalGraph invokes signal_edges note "builds the causal graph by applying each enabled signal's detector to E, then adding the supplied judgments (spec §5). evidence is the EvidenceSet. method is the Method M, whose signals field names the enabled signal kinds. judgments is the list of supplied marked edges (marked true), each a link no deterministic signal can settle. For each deterministic signal kind enabled in method.signals it calls signal_edges(evidence, kind) and collects the grounded edges; it then adds the judgments only when judgment is enabled in method.signals — an edge whose signal is not enabled is not built (spec §4, §5). The returned CausalGraph's nodes are the evidence items' ids and its edges are the grounded edges plus the enabled judgments, so the graph is scoped to exactly what M grounds or enables (spec §5, §6). It is pure and raises nothing (spec §1.5)."
 
-  fn attest : (symptom: Symptom, evidence: EvidenceSet, method: Method, graph: CausalGraph, chain: list<str>, poka_yoke: str) -> Attestation
+  fn trace : (graph: CausalGraph, symptom: Symptom) -> list<str> note "follows the graph upstream from the symptom's site, cause by cause, to a fixpoint (spec §6). graph is the CausalGraph causal_graph produced. symptom is the Symptom whose site the traversal starts from. It returns the ordered chain of item ids from the symptom's site to the terminus — the node with no upstream cause, which is exactly 'no upstream cause that satisfies M' because the graph was already scoped to M's edges (spec §5, §6). The traversal is deterministic and terminating: it never revisits a node, so a cycle terminates at its entry (recorded as such) and it always reaches a fixpoint (spec §6). When the symptom's site has no upstream edge at all, the returned chain is the symptom's site alone — a bounded search that found nothing upstream is itself an honest, if shallow, result (spec §6). It is pure and raises nothing (spec §1.5)."
 
-  fn validate_attestation : (attestation: Attestation) -> list<Fault>
+  fn terminus : (chain: list<str>) -> str note "the last node of a non-empty chain, the terminus X (spec §6). chain is the ordered path trace returned, from the symptom's site to the terminus. It returns the final id — not 'the root', but the node past which this bounded search finds nothing. When the chain is the symptom's site alone, the terminus is that site (spec §6). It is pure and raises nothing (spec §1.5)."
+
+  fn bound : (evidence: EvidenceSet, graph: CausalGraph) -> Bound note "derives the stated limit from fact, never asserted (spec §7.1). evidence is the EvidenceSet searched. graph is the CausalGraph built over it. It returns a Bound whose outside_evidence is the set of item ids the evidence's relations reference but that are not themselves items in E (a cause may lie in one of them), and whose invisible_to_method is the set of referenced edges that no enabled signal grounded (a cause may hide in a signal M did not run) (spec §2, §7.1). The bound is always returned, even when both lists are empty — an empty bound is stated, not omitted — and it is what makes the claim honest and checkable, exactly the discipline a positive 'X is the root' hides (spec §7.1, §12). It is pure and raises nothing (spec §1.5)."
+
+  fn attest : (symptom: Symptom, evidence: EvidenceSet, method: Method, graph: CausalGraph, chain: list<str>, poka_yoke: str) -> Attestation invokes terminus, bound note "assembles the negative claim (spec §7). symptom is the traced failure. evidence is the EvidenceSet, whose hash it reads into evidence_hash. method is the Method, whose version it reads into method_version. graph is the CausalGraph, from which it reads the marked (judgment) edges the chain relied on. chain is the traced path trace returned. poka_yoke is the poka-yoke reference the caller supplies for a design-root terminus (the empty string for an ordinary one). It calls terminus(chain) for the terminus id and bound(evidence, graph) for the Bound, copies the terminus item's category (empty for an ordinary terminus, the named category for a design root), and copies the supplied poka_yoke; it assembles all of these into an Attestation (spec §2, §7, §8). It reads no world and raises nothing — a construction failure is caught by validate_attestation, not by a raise here (spec §1.5, §7)."
+
+  fn validate_attestation : (attestation: Attestation) -> list<Fault> note "the poka-yoke guard: the runtime check that an attestation is a well-formed bounded-completeness statement (spec §7, §9). attestation is the Attestation to check. It returns a list of honest-type Fault values, one for each missing element, and an empty list for a real RCA (spec §7). It returns a missing_evidence_hash fault when the evidence hash is empty, a missing_method_version fault when the method version is empty, a missing_terminus fault when there is no terminus, a missing_bound fault when the bound is absent (an empty bound is present and valid; an absent bound is not), and a missing_poka_yoke fault when the terminus is a design root — the attestation carries a non-empty category — but no poka_yoke is named (spec §7, §8). An attestation that omits its bound, its evidence, or its method is fake RCA and cannot pass; there is no positive-claim shape to validate, because the fake claim is simply unrepresentable as a valid Attestation (spec §7). It is pure and returns its faults as data, never raising — the completeness of a produced value is a runtime property, which is why the guard lives here and not in honest-check's static surface (spec §7, §9)."
+
+  fn terminus_is_design_root : (item: EvidenceItem) -> bool note "tells whether a terminus item is a design root rather than an instance (spec §8). item is the terminus EvidenceItem. It returns true exactly when the item carries a non-empty category — that is, when the terminus is a design decision (a missing invariant, an unowned mutation, an unbounded input, a bug category) rather than a single instance (spec §8). When it holds, the honest fix is the poka-yoke that makes the category unrepresentable, and the attestation must name both the category and the poka-yoke; validate_attestation enforces the poka_yoke half (spec §8). This is the methodology's rule made structural — a fix that cannot name the category it eliminates has not reached a design root (spec §8). It is a pure predicate: it reads no world and raises nothing (spec §1.5)."
+
+  # The world arrives here. honest-rca is a pure leaf with no boundary, so each public function is
+  # reached by a sibling module or the host importing it (spec §1.3, §1.5, §11). The four relation
+  # detectors are internal: they are reached through the by_signal dispatch table, not imported, so
+  # they carry no entry. Each entry names the import so the entry-check reads every entrance.
+  entry "import honest_rca" -> evidence_hash
+  entry "import honest_rca" -> evidence_set
+  entry "import honest_rca" -> signal_edges
+  entry "import honest_rca" -> causal_graph
+  entry "import honest_rca" -> trace
+  entry "import honest_rca" -> terminus
+  entry "import honest_rca" -> bound
+  entry "import honest_rca" -> attest
+  entry "import honest_rca" -> validate_attestation
+  entry "import honest_rca" -> terminus_is_design_root

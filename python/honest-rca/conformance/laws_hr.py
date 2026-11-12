@@ -1,366 +1,249 @@
-"""honest-rca conformance: the generative proof (the behavioural circle).
+"""honest-rca generative laws (spec sections 3-8, 12).
 
-Probes every branch of the solver. The apophatic discipline is the invariant: the output is the
-bounded-completeness statement — terminus, chain, marked edges, and a stated bound — never a positive
-"X is the root", and validate_attestation refuses any attestation missing an element of the negative
-claim, so fake RCA is unrepresentable. Each probe returns a list of failures; run() aggregates.
+The suite.json cases pin exact behaviour at representative points. These laws assert the apophatic
+invariants over whole vocabularies and over the pipeline: the hash is order-independent and
+change-sensitive, every deterministic signal detector grounds its own relation and nothing else,
+the graph honours the enabled-signal set, the trace reaches a fixpoint even on a cycle, the bound
+always states both modes, every attestation omission yields its fault, a fixed E and M reproduce an
+identical attestation, and no attestation carries a positive "X is the root" field. Each law returns
+a list of failure strings; run() prints them and returns an exit code.
 """
 
 import honest_rca
 from honest_rca import (
-    BOUND_KINDS,
-    DETERMINISTIC_SIGNALS,
-    EVIDENCE_KINDS,
-    RELATION_SIGNAL,
-    SIGNAL_KINDS,
     attest,
     bound,
-    causal_edge,
     causal_graph,
     evidence_hash,
     evidence_set,
     signal_edges,
-    terminus,
     terminus_is_design_root,
     trace,
     validate_attestation,
 )
 
+_SIGNAL_RELATION = {
+    "dataflow": "flows_to",
+    "controlflow": "controls",
+    "change_correlation": "changed_with",
+    "temporal": "precedes",
+}
 
-def _item(id, kind="code", ref="", flows_to=(), controls=(), changed_with=(), precedes=(), category=""):
+
+def _item(item_id, *, flows_to=None, controls=None, changed_with=None, precedes=None, kind="code", category=""):
     return {
-        "id": id,
+        "id": item_id,
         "kind": kind,
-        "ref": ref,
-        "flows_to": list(flows_to),
-        "controls": list(controls),
-        "changed_with": list(changed_with),
-        "precedes": list(precedes),
+        "ref": f"ref-{item_id}",
+        "flows_to": flows_to or [],
+        "controls": controls or [],
+        "changed_with": changed_with or [],
+        "precedes": precedes or [],
         "category": category,
     }
 
 
-def _method(signals, version="m1", traversal="upstream-fixpoint"):
-    return {"version": version, "signals": list(signals), "traversal": traversal}
+def _item_with_relation(item_id, relation_field, downstream):
+    return _item(item_id, **{relation_field: downstream})
 
 
-def _symptom(site):
-    return {"id": "s", "description": "boom", "site": site}
+def _well_formed_attestation():
+    return {
+        "symptom": {"id": "s", "description": "d", "site": "c"},
+        "evidence_hash": "H1",
+        "method_version": "v1",
+        "terminus": "a",
+        "chain": ["c", "a"],
+        "marked_edges": [],
+        "bound": {"outside_evidence": [], "invisible_to_method": []},
+        "category": "",
+        "poka_yoke": "",
+    }
 
 
-def _probe_evidence():
-    bad = []
-    a, b = _item("a", flows_to=["b"]), _item("b")
+def law_evidence_hash_order_independent_and_change_sensitive():
+    out = []
+    a = _item("a", flows_to=["b"])
+    b = _item("b", precedes=["a"])
     if evidence_hash([a, b]) != evidence_hash([b, a]):
-        bad.append("evidence_hash must be order-independent")
-    if evidence_hash([a, b]) == evidence_hash([_item("a", flows_to=["c"]), b]):
-        bad.append("evidence_hash must be change-sensitive")
-    e = evidence_set([a, b])
-    if e["items"] != [a, b] or e["hash"] != evidence_hash([a, b]):
-        bad.append(f"evidence_set must carry items and the hash: {e}")
-    if evidence_hash([{"id": "a", "kind": "code"}]) != evidence_hash([{"kind": "code", "id": "a"}]):
-        bad.append("evidence_hash must be independent of dict key order")
-    return bad
+        out.append("evidence_hash depends on item order")
+    changed = _item("a", flows_to=["z"])
+    if evidence_hash([a, b]) == evidence_hash([changed, b]):
+        out.append("evidence_hash did not change when an item's relation changed")
+    changed_kind = _item("a", flows_to=["b"], kind="event")
+    if evidence_hash([a, b]) == evidence_hash([changed_kind, b]):
+        out.append("evidence_hash did not change when an item's kind changed")
+    return out
 
 
-def _probe_edges():
-    bad = []
-    if causal_edge("a", "b", "dataflow") != {"cause": "a", "effect": "b", "signal": "dataflow", "marked": False}:
-        bad.append("causal_edge grounded shape wrong")
-    if causal_edge("a", "b", "judgment")["marked"] is not True:
-        bad.append("causal_edge must mark a judgment edge")
-    if signal_edges([_item("a", flows_to=["b", "c"])], "dataflow") != [
-        {"cause": "a", "effect": "b", "signal": "dataflow", "marked": False},
-        {"cause": "a", "effect": "c", "signal": "dataflow", "marked": False},
-    ]:
-        bad.append("signal_edges(dataflow) must ground one edge per flows_to")
-    if signal_edges([_item("a")], "dataflow") != []:
-        bad.append("signal_edges(dataflow) must be empty without the relation")
-    if signal_edges([_item("a", controls=["b"])], "controlflow") != [{"cause": "a", "effect": "b", "signal": "controlflow", "marked": False}]:
-        bad.append("signal_edges(controlflow) must ground one edge per controls")
-    if signal_edges([_item("a", changed_with=["b"])], "change_correlation") != [{"cause": "a", "effect": "b", "signal": "change_correlation", "marked": False}]:
-        bad.append("signal_edges(change_correlation) must ground one edge per changed_with")
-    if signal_edges([_item("a", precedes=["b"])], "temporal") != [{"cause": "a", "effect": "b", "signal": "temporal", "marked": False}]:
-        bad.append("signal_edges(temporal) must ground one edge per precedes")
-    # Every detector is exercised with and without its recorded relation (§10), not just dataflow: a
-    # detector that grounded an edge from an absent relation would invent causation.
-    for name in ("controlflow", "change_correlation", "temporal"):
-        if signal_edges([_item("a")], name) != []:
-            bad.append(f"{name}_edges must be empty without its recorded relation")
-    return bad
+def law_each_deterministic_signal_grounds_its_own_relation():
+    out = []
+    for kind, field in _SIGNAL_RELATION.items():
+        present = {"items": [_item_with_relation("a", field, ["b"])], "hash": "h"}
+        edges = signal_edges(present, kind)
+        want = {("a", "b", kind, False)}
+        got = {(e["cause"], e["effect"], e["signal"], e["marked"]) for e in edges}
+        if got != want:
+            out.append(f"signal_edges(_, {kind!r}) = {got!r}, expected {want!r}")
+        absent = {"items": [_item("a")], "hash": "h"}
+        if signal_edges(absent, kind) != []:
+            out.append(f"signal_edges(_, {kind!r}) grounded an edge from an absent relation")
+    return out
 
 
-def _probe_evidence_kinds():
-    """Every evidence kind can stand at a terminus (§10). The solver treats kind as data — nothing in the
-    traversal may quietly privilege code over an event, a config entry, or a deploy."""
-    bad = []
-    for kind in EVIDENCE_KINDS:
-        evidence = evidence_set([_item("root", kind=kind, flows_to=["a"]), _item("a")])
-        graph = causal_graph(evidence, _method(["dataflow"]), [])
-        chain = trace(graph, _symptom("a"))
-        att = attest(_symptom("a"), evidence, _method(["dataflow"]), graph, chain, "")
-        if att["terminus"] != "root":
-            bad.append(f"an evidence item of kind {kind} must be able to stand at a terminus: {att['terminus']}")
-        if validate_attestation(att) != []:
-            bad.append(f"an attestation terminating at a {kind} item must be well-formed")
-    return bad
+def law_causal_graph_honours_enabled_signals():
+    out = []
+    items = [_item("a", flows_to=["b"], controls=["b"]), _item("b")]
+    evidence = {"items": items, "hash": "h"}
+    judgment = {"cause": "x", "effect": "a", "signal": "judgment", "marked": True}
+
+    only_dataflow = causal_graph(evidence, {"version": "v", "signals": ["dataflow"], "traversal": "u"}, [judgment])
+    signals_built = {e["signal"] for e in only_dataflow["edges"]}
+    if signals_built != {"dataflow"}:
+        out.append(f"with only dataflow enabled, edge signals = {signals_built!r}, expected just dataflow (no controlflow, no judgment)")
+
+    with_judgment = causal_graph(evidence, {"version": "v", "signals": ["dataflow", "judgment"], "traversal": "u"}, [judgment])
+    if not any(e["signal"] == "judgment" and e["marked"] for e in with_judgment["edges"]):
+        out.append("judgment enabled but the supplied marked edge was not added")
+    return out
 
 
-def _probe_reproducibility():
-    """The bounded-completeness invariant (§12): a fixed evidence set and method reproduce an identical
-    attestation. This is what makes the claim verifiable by re-run rather than taken on trust — if the
-    same E and M could yield two different attestations, the attestation would attest nothing."""
-    bad = []
-    items = [_item("c", flows_to=["b"]), _item("b", flows_to=["a"], changed_with=["a"]), _item("a")]
-    method = _method(["dataflow", "change_correlation"])
-
-    def analyse():
-        evidence = evidence_set(items)
-        graph = causal_graph(evidence, method, [])
-        return attest(_symptom("a"), evidence, method, graph, trace(graph, _symptom("a")), "")
-
-    first, second = analyse(), analyse()
-    if first != second:
-        bad.append(f"a fixed E and M must reproduce an identical attestation: {first} vs {second}")
-    # Re-derived from the same items in a different order, the evidence hash — and so the attestation's
-    # reproducibility key — is unchanged.
-    if evidence_set(list(reversed(items)))["hash"] != evidence_set(items)["hash"]:
-        bad.append("the evidence hash must not depend on the order the items were assembled in")
-    return bad
-
-
-def _probe_no_positive_claim():
-    """The apophatic discipline made structural (§1.2, §12): the attestation record carries exactly the
-    fields of a bounded-completeness statement and no field that asserts X *is* the root. There is no
-    positive-claim shape to fill in, so the unfalsifiable claim cannot be expressed."""
-    bad = []
-    evidence = evidence_set([_item("b", flows_to=["a"]), _item("a")])
-    graph = causal_graph(evidence, _method(["dataflow"]), [])
-    att = attest(_symptom("a"), evidence, _method(["dataflow"]), graph, trace(graph, _symptom("a")), "")
-    expected = ["bound", "category", "chain", "evidence_hash", "marked_edges", "method_version", "poka_yoke", "symptom", "terminus"]
-    if sorted(att) != expected:
-        bad.append(f"the attestation carries exactly the bounded-completeness fields: {sorted(att)}")
-    if any(word in field for field in att for word in ("root", "cause", "because")):
-        bad.append(f"no field may assert a positive cause: {sorted(att)}")
-    # The bound is always present, so the claim always wears its limit on its face.
-    if sorted(att["bound"]) != ["invisible_to_method", "outside_evidence"]:
-        bad.append(f"the bound states both ways the search can be incomplete: {sorted(att['bound'])}")
-    return bad
-
-
-def _probe_graph():
-    bad = []
-    e = evidence_set([_item("a", flows_to=["b"], precedes=["b"]), _item("b")])
-    graph = causal_graph(e, _method(["dataflow"]), [])
-    if graph["nodes"] != ["a", "b"]:
-        bad.append(f"causal_graph nodes wrong: {graph}")
-    if graph["edges"] != [{"cause": "a", "effect": "b", "signal": "dataflow", "marked": False}]:
-        bad.append(f"causal_graph must apply only enabled signals: {graph['edges']}")
-    j = causal_edge("a", "b", "judgment")
-    if causal_graph(evidence_set([_item("a"), _item("b")]), _method(["dataflow"]), [j])["edges"] != []:
-        bad.append("causal_graph must not add judgments when judgment is disabled")
-    if causal_graph(evidence_set([_item("a"), _item("b")]), _method(["dataflow", "judgment"]), [j])["edges"] != [j]:
-        bad.append("causal_graph must add judgments when judgment is enabled")
-    full = evidence_set([_item("a", flows_to=["b"], controls=["c"], changed_with=["d"], precedes=["e"]), _item("b"), _item("c"), _item("d"), _item("e")])
-    edges = causal_graph(full, _method(["dataflow", "controlflow", "change_correlation", "temporal"]), [])["edges"]
-    if edges != [
-        {"cause": "a", "effect": "b", "signal": "dataflow", "marked": False},
-        {"cause": "a", "effect": "c", "signal": "controlflow", "marked": False},
-        {"cause": "a", "effect": "d", "signal": "change_correlation", "marked": False},
-        {"cause": "a", "effect": "e", "signal": "temporal", "marked": False},
-    ]:
-        bad.append(f"causal_graph must dispatch each enabled signal to its own detector: {edges}")
-    return bad
-
-
-def _probe_trace():
-    bad = []
-    e = evidence_set([_item("c", flows_to=["b"]), _item("b", flows_to=["a"]), _item("a")])
-    graph = causal_graph(e, _method(["dataflow"]), [])
-    if trace(graph, _symptom("a")) != ["a", "b", "c"]:
-        bad.append("trace must follow upstream to a fixpoint")
-    if trace(causal_graph(evidence_set([_item("a")]), _method(["dataflow"]), []), _symptom("a")) != ["a"]:
-        bad.append("trace must return the site alone when nothing is upstream")
-    cyclic = causal_graph(evidence_set([_item("a", flows_to=["b"]), _item("b", flows_to=["a"])]), _method(["dataflow"]), [])
-    if trace(cyclic, _symptom("a")) != ["a", "b"]:
-        bad.append("trace must terminate on a cycle")
-    if terminus(["a", "b", "c"]) != "c" or terminus([]) != "":
-        bad.append("terminus must be the last node, or empty for an empty chain")
-    multi = causal_graph(evidence_set([_item("b", flows_to=["a"]), _item("c", flows_to=["a"]), _item("a")]), _method(["dataflow"]), [])
-    if trace(multi, _symptom("a")) != ["a", "b"]:
-        bad.append("trace must take the sorted-first of several upstream causes")
-    upstream_cycle = {
+def law_trace_reaches_a_fixpoint_even_on_a_cycle():
+    out = []
+    linear = {
         "nodes": ["a", "b", "c"],
         "edges": [
-            {"cause": "b", "effect": "a", "signal": "dataflow", "marked": False},
-            {"cause": "c", "effect": "b", "signal": "dataflow", "marked": False},
+            {"cause": "a", "effect": "b", "signal": "dataflow", "marked": False},
             {"cause": "b", "effect": "c", "signal": "dataflow", "marked": False},
         ],
     }
-    if trace(upstream_cycle, _symptom("a")) != ["a", "b", "c"]:
-        bad.append("trace must terminate on an upstream cycle not through the start node")
-    return bad
+    chain = trace(linear, {"id": "s", "description": "d", "site": "c"})
+    if chain[0] != "c" or chain[-1] != "a":
+        out.append(f"linear trace = {chain!r}, expected to start at the site c and end at the fixpoint a")
+    if len(set(chain)) != len(chain):
+        out.append(f"linear trace revisited a node: {chain!r}")
 
-
-def _probe_bound():
-    bad = []
-    e = evidence_set([_item("a", flows_to=["b", "gone"]), _item("b")])
-    graph = causal_graph(e, _method(["dataflow"]), [])
-    if bound(e, graph)["outside_evidence"] != ["gone"]:
-        bad.append("bound must list referenced-but-absent items")
-    e2 = evidence_set([_item("a", flows_to=["b"], precedes=["b"]), _item("b")])
-    if bound(e2, causal_graph(e2, _method(["dataflow"]), []))["invisible_to_method"] != [{"cause": "a", "effect": "b"}]:
-        bad.append("bound must list relations no enabled signal grounded")
-    e3 = evidence_set([_item("a", flows_to=["b"]), _item("b")])
-    if bound(e3, causal_graph(e3, _method(["dataflow"]), [])) != {"outside_evidence": [], "invisible_to_method": []}:
-        bad.append("bound must be empty-but-stated when fully grounded")
-    e4 = evidence_set([_item("a", flows_to=["b"], controls=["b"], changed_with=["b"], precedes=["b"]), _item("b")])
-    if bound(e4, causal_graph(e4, _method([]), []))["invisible_to_method"] != [{"cause": "a", "effect": "b"}] * 4:
-        bad.append("bound must track every relation kind invisible to the method")
-    return bad
-
-
-def _probe_design_root():
-    bad = []
-    if terminus_is_design_root(_item("a", category="unbounded-input")) is not True:
-        bad.append("terminus_is_design_root must hold when a category is named")
-    if terminus_is_design_root(_item("a")) is not False:
-        bad.append("terminus_is_design_root must not hold without a category")
-    return bad
-
-
-def _probe_attest():
-    bad = []
-    e = evidence_set([_item("b", flows_to=["a"]), _item("a")])
-    graph = causal_graph(e, _method(["dataflow"]), [])
-    chain = trace(graph, _symptom("a"))
-    att = attest(_symptom("a"), e, _method(["dataflow"]), graph, chain, "")
-    expected = {
-        "symptom": "s",
-        "evidence_hash": e["hash"],
-        "method_version": "m1",
-        "terminus": "b",
-        "chain": ["a", "b"],
-        "marked_edges": [],
-        "bound": {"outside_evidence": [], "invisible_to_method": []},
-        "category": "",
-        "poka_yoke": "",
+    cyclic = {
+        "nodes": ["a", "b"],
+        "edges": [
+            {"cause": "a", "effect": "b", "signal": "dataflow", "marked": False},
+            {"cause": "b", "effect": "a", "signal": "dataflow", "marked": False},
+        ],
     }
-    if att != expected:
-        bad.append(f"attest must assemble the negative statement: {att}")
-    j = causal_edge("root", "a", "judgment")
-    e2 = evidence_set([_item("root", category="unowned-mutation"), _item("a")])
-    g2 = causal_graph(e2, _method(["dataflow", "judgment"]), [j])
-    att2 = attest(_symptom("a"), e2, _method(["dataflow", "judgment"]), g2, trace(g2, _symptom("a")), "poka-yoke.md")
-    if att2["terminus"] != "root" or att2["marked_edges"] != [j] or att2["category"] != "unowned-mutation" or att2["poka_yoke"] != "poka-yoke.md":
-        bad.append(f"attest must carry marked edges and the design-root category: {att2}")
-    # a symptom site that is not an evidence item -> no terminus item -> empty category
-    ghost = evidence_set([_item("a")])
-    att3 = attest(_symptom("ghost"), ghost, _method(["dataflow"]), causal_graph(ghost, _method(["dataflow"]), []), ["ghost"], "")
-    if att3["terminus"] != "ghost" or att3["category"] != "":
-        bad.append(f"attest must leave category empty when the terminus is not an evidence item: {att3}")
-    return bad
+    cyclic_chain = trace(cyclic, {"id": "s", "description": "d", "site": "a"})
+    if not cyclic_chain:
+        out.append("cyclic trace returned an empty chain")
+    if len(set(cyclic_chain)) != len(cyclic_chain):
+        out.append(f"cyclic trace revisited a node (did not terminate at the cycle entry): {cyclic_chain!r}")
+    return out
 
 
-def _good():
-    return {
-        "symptom": "s",
-        "evidence_hash": "h",
-        "method_version": "m1",
-        "terminus": "x",
-        "chain": ["a", "x"],
-        "marked_edges": [],
-        "bound": {"outside_evidence": [], "invisible_to_method": []},
-        "category": "",
-        "poka_yoke": "",
-    }
+def law_bound_always_states_both_modes():
+    out = []
+    for items, edges in (
+        ([_item("a", flows_to=["z"]), _item("b")], []),
+        ([_item("a"), _item("b")], []),
+    ):
+        evidence = {"items": items, "hash": "h"}
+        graph = {"nodes": [i["id"] for i in items], "edges": edges}
+        result = bound(evidence, graph)
+        if set(result.keys()) != {"outside_evidence", "invisible_to_method"}:
+            out.append(f"bound keys = {sorted(result.keys())}, expected both modes always stated")
+    return out
 
 
-def _probe_validate():
-    bad = []
-    if validate_attestation(_good()) != []:
-        bad.append("validate must accept a well-formed attestation")
-    cases = [
-        (_good() | {"evidence_hash": ""}, "missing_evidence_hash"),
-        (_good() | {"method_version": ""}, "missing_method_version"),
-        (_good() | {"terminus": ""}, "missing_terminus"),
-        ({k: v for k, v in _good().items() if k != "bound"}, "missing_bound"),
-        (_good() | {"category": "unbounded-input", "poka_yoke": ""}, "missing_poka_yoke"),
-    ]
-    for att, code in cases:
-        faults = validate_attestation(att)
-        if [fault["code"] for fault in faults] != [code]:
-            bad.append(f"validate must fault {code}: got {[fault['code'] for fault in faults]}")
-        elif not faults[0]["message"] or faults[0]["category"] != "server":
-            bad.append(f"validate fault {code} must carry a non-empty message and the server category")
-    if validate_attestation(_good() | {"category": "unbounded-input", "poka_yoke": "poka-yoke.md"}) != []:
-        bad.append("validate must accept a design root with a poka-yoke")
-    return bad
-
-
-def _probe_public_surface():
-    return (
-        []
-        if honest_rca.__all__ == [
-            "BOUND_KINDS",
-            "DETERMINISTIC_SIGNALS",
-            "EVIDENCE_KINDS",
-            "RELATION_SIGNAL",
-            "SIGNAL_KINDS",
-            "attest",
-            "bound",
-            "causal_edge",
-            "causal_graph",
-            "evidence_hash",
-            "evidence_set",
-            "signal_edges",
-            "terminus",
-            "terminus_is_design_root",
-            "trace",
-            "validate_attestation",
-        ]
-        else [f"__all__ drifted: {honest_rca.__all__}"]
+def law_validate_returns_the_fault_for_each_omission():
+    out = []
+    cases = (
+        (_well_formed_attestation(), []),
+        ({**_well_formed_attestation(), "evidence_hash": ""}, ["missing_evidence_hash"]),
+        ({**_well_formed_attestation(), "method_version": ""}, ["missing_method_version"]),
+        ({**_well_formed_attestation(), "terminus": ""}, ["missing_terminus"]),
+        ({**_well_formed_attestation(), "bound": None}, ["missing_bound"]),
+        ({**_well_formed_attestation(), "category": "missing_invariant"}, ["missing_poka_yoke"]),
+        ({**_well_formed_attestation(), "category": "missing_invariant", "poka_yoke": "pk"}, []),
     )
+    for attestation, want in cases:
+        codes = sorted(f["code"] for f in validate_attestation(attestation))
+        if codes != sorted(want):
+            out.append(f"validate_attestation codes = {codes}, expected {sorted(want)} for {attestation.get('category')!r}/{attestation.get('evidence_hash')!r}")
+    return out
 
 
-def _probe_vocabularies():
-    bad = []
-    if EVIDENCE_KINDS != ("code", "event", "history", "config", "deploy"):
-        bad.append("EVIDENCE_KINDS drifted")
-    if SIGNAL_KINDS != ("dataflow", "controlflow", "change_correlation", "temporal", "judgment"):
-        bad.append("SIGNAL_KINDS drifted")
-    if DETERMINISTIC_SIGNALS != ("dataflow", "controlflow", "change_correlation", "temporal"):
-        bad.append("DETERMINISTIC_SIGNALS drifted")
-    if BOUND_KINDS != ("outside_evidence", "invisible_to_method"):
-        bad.append("BOUND_KINDS drifted")
-    if RELATION_SIGNAL != {"flows_to": "dataflow", "controls": "controlflow", "changed_with": "change_correlation", "precedes": "temporal"}:
-        bad.append("RELATION_SIGNAL drifted")
-    return bad
+def law_fixed_evidence_and_method_reproduce_the_attestation():
+    """§12: the bounded-completeness invariant — a fixed E and M reproduce an identical attestation."""
+    items = [_item("a", flows_to=["b"]), _item("b", flows_to=["c"]), _item("c")]
+    method = {"version": "v1", "signals": ["dataflow"], "traversal": "u"}
+    symptom = {"id": "s", "description": "d", "site": "c"}
+
+    def produce():
+        e = evidence_set(items)
+        graph = causal_graph(e, method, [])
+        chain = trace(graph, symptom)
+        return attest(symptom, e, method, graph, chain, "")
+
+    if produce() != produce():
+        return ["a fixed E and M did not reproduce an identical attestation"]
+    return []
+
+
+def law_attestation_carries_no_positive_root_claim():
+    """§2, §12: the record has no field that asserts 'X is the root'."""
+    items = [_item("a", flows_to=["c"]), _item("c")]
+    method = {"version": "v1", "signals": ["dataflow"], "traversal": "u"}
+    symptom = {"id": "s", "description": "d", "site": "c"}
+    e = evidence_set(items)
+    graph = causal_graph(e, method, [])
+    chain = trace(graph, symptom)
+    attestation = attest(symptom, e, method, graph, chain, "")
+    expected_fields = {
+        "symptom", "evidence_hash", "method_version", "terminus", "chain",
+        "marked_edges", "bound", "category", "poka_yoke",
+    }
+    if set(attestation.keys()) != expected_fields:
+        return [f"attestation fields = {sorted(attestation.keys())}, expected exactly the nine negative-claim fields"]
+    return []
+
+
+def law_terminus_is_design_root_iff_category():
+    out = []
+    for kind in honest_rca.EVIDENCE_KINDS:
+        if terminus_is_design_root(_item("a", kind=kind, category="unbounded_input")) is not True:
+            out.append(f"terminus_is_design_root false for a {kind!r} item carrying a category")
+        if terminus_is_design_root(_item("a", kind=kind, category="")) is not False:
+            out.append(f"terminus_is_design_root true for a {kind!r} item with no category")
+    return out
+
+
+_LAWS = (
+    law_evidence_hash_order_independent_and_change_sensitive,
+    law_each_deterministic_signal_grounds_its_own_relation,
+    law_causal_graph_honours_enabled_signals,
+    law_trace_reaches_a_fixpoint_even_on_a_cycle,
+    law_bound_always_states_both_modes,
+    law_validate_returns_the_fault_for_each_omission,
+    law_fixed_evidence_and_method_reproduce_the_attestation,
+    law_attestation_carries_no_positive_root_claim,
+    law_terminus_is_design_root_iff_category,
+)
 
 
 def run():
-    probes = {
-        "evidence": _probe_evidence(),
-        "edges": _probe_edges(),
-        "graph": _probe_graph(),
-        "trace": _probe_trace(),
-        "bound": _probe_bound(),
-        "design_root": _probe_design_root(),
-        "attest": _probe_attest(),
-        "validate": _probe_validate(),
-        "evidence_kinds": _probe_evidence_kinds(),
-        "reproducibility": _probe_reproducibility(),
-        "no_positive_claim": _probe_no_positive_claim(),
-        "vocabularies": _probe_vocabularies(),
-        "public_surface": _probe_public_surface(),
-    }
-    violations = [(name, messages) for name, messages in probes.items() if messages]
-    for name, messages in violations:
-        print(f"FAIL HR-probe [{name}]: {messages}")
-    passed = sum(1 for messages in probes.values() if not messages)
-    print(f"HR laws: {passed} passed, {len(violations)} failed, {len(probes)} total")
-    return 0 if not violations else 1
+    passed = 0
+    failed = 0
+    for law in _LAWS:
+        failures = law()
+        if failures:
+            failed += 1
+            for failure in failures:
+                print(f"FAIL {law.__name__}: {failure}")
+        else:
+            passed += 1
+    print(f"laws: {passed} passed, {failed} failed, {passed + failed} total")
+    return 0 if failed == 0 else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    import sys
+
+    sys.exit(run())

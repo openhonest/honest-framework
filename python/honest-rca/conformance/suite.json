@@ -1,379 +1,308 @@
 {
-  "cases": [
-    {
-      "id": "vc-causal-edge-grounded",
-      "value_case": {
-        "function": "causal_edge",
-        "expected": {
-          "cause": "a",
-          "effect": "b",
-          "signal": "dataflow",
-          "marked": false
-        },
-        "args": [
-          "a",
-          "b",
-          "dataflow"
-        ]
-      }
-    },
-    {
-      "id": "vc-causal-edge-judgment",
-      "value_case": {
-        "function": "causal_edge",
-        "expected": {
-          "cause": "a",
-          "effect": "b",
-          "signal": "judgment",
-          "marked": true
-        },
-        "args": [
-          "a",
-          "b",
-          "judgment"
-        ]
-      }
-    },
-    {
-      "id": "vc-dataflow-edges",
-      "value_case": {
-        "function": "signal_edges",
-        "expected": [
-          {
-            "cause": "a",
-            "effect": "b",
-            "signal": "dataflow",
-            "marked": false
-          }
-        ],
-        "args": [
-          [
-            {
-              "id": "a",
-              "kind": "code",
-              "ref": "",
-              "flows_to": [
-                "b"
-              ],
-              "controls": [],
-              "changed_with": [],
-              "precedes": [],
-              "category": ""
-            }
-          ],
-          "dataflow"
-        ]
-      }
-    },
-    {
-      "id": "vc-controlflow-edges",
-      "value_case": {
-        "function": "signal_edges",
-        "expected": [
-          {
-            "cause": "a",
-            "effect": "b",
-            "signal": "controlflow",
-            "marked": false
-          }
-        ],
-        "args": [
-          [
-            {
-              "id": "a",
-              "kind": "code",
-              "ref": "",
-              "flows_to": [],
-              "controls": [
-                "b"
-              ],
-              "changed_with": [],
-              "precedes": [],
-              "category": ""
-            }
-          ],
-          "controlflow"
-        ]
-      }
-    },
-    {
-      "id": "vc-change-correlation-edges",
-      "value_case": {
-        "function": "signal_edges",
-        "expected": [
-          {
-            "cause": "a",
-            "effect": "b",
-            "signal": "change_correlation",
-            "marked": false
-          }
-        ],
-        "args": [
-          [
-            {
-              "id": "a",
-              "kind": "code",
-              "ref": "",
-              "flows_to": [],
-              "controls": [],
-              "changed_with": [
-                "b"
-              ],
-              "precedes": [],
-              "category": ""
-            }
-          ],
-          "change_correlation"
-        ]
-      }
-    },
-    {
-      "id": "vc-temporal-edges",
-      "value_case": {
-        "function": "signal_edges",
-        "expected": [
-          {
-            "cause": "a",
-            "effect": "b",
-            "signal": "temporal",
-            "marked": false
-          }
-        ],
-        "args": [
-          [
-            {
-              "id": "a",
-              "kind": "code",
-              "ref": "",
-              "flows_to": [],
-              "controls": [],
-              "changed_with": [],
-              "precedes": [
-                "b"
-              ],
-              "category": ""
-            }
-          ],
-          "temporal"
-        ]
-      }
-    },
-    {
-      "id": "vc-terminus",
-      "value_case": {
-        "function": "terminus",
-        "expected": "c",
-        "input": [
-          "a",
-          "b",
-          "c"
-        ]
-      }
-    },
-    {
-      "id": "vc-terminus-empty",
-      "value_case": {
-        "function": "terminus",
-        "expected": "",
-        "input": []
-      }
-    },
-    {
-      "id": "vc-design-root-true",
-      "value_case": {
-        "function": "terminus_is_design_root",
-        "expected": true,
-        "input": {
-          "id": "a",
-          "kind": "code",
-          "ref": "",
-          "flows_to": [],
-          "controls": [],
-          "changed_with": [],
-          "precedes": [],
-          "category": "unbounded-input"
-        }
-      }
-    },
-    {
-      "id": "vc-design-root-false",
-      "value_case": {
-        "function": "terminus_is_design_root",
-        "expected": false,
-        "input": {
-          "id": "a",
-          "kind": "code",
-          "ref": "",
-          "flows_to": [],
-          "controls": [],
-          "changed_with": [],
-          "precedes": [],
-          "category": ""
-        }
-      }
-    },
-    {
-      "id": "vc-causal-graph",
-      "value_case": {
-        "function": "causal_graph",
-        "expected": {
-          "nodes": [
-            "a",
-            "b"
-          ],
-          "edges": [
-            {
-              "cause": "a",
-              "effect": "b",
-              "signal": "dataflow",
-              "marked": false
-            }
-          ]
-        },
-        "args": [
-          {
-            "items": [
-              {
-                "id": "a",
-                "kind": "code",
-                "ref": "",
-                "flows_to": [
-                  "b"
-                ],
-                "controls": [],
-                "changed_with": [],
-                "precedes": [],
-                "category": ""
-              },
-              {
-                "id": "b",
-                "kind": "code",
-                "ref": "",
-                "flows_to": [],
-                "controls": [],
-                "changed_with": [],
-                "precedes": [],
-                "category": ""
-              }
-            ]
-          },
-          {
-            "version": "m1",
-            "signals": [
-              "dataflow"
-            ],
-            "traversal": "upstream-fixpoint"
-          },
-          []
-        ]
-      }
-    },
-    {
-      "id": "vc-trace",
-      "value_case": {
-        "function": "trace",
-        "expected": [
-          "a",
-          "b"
-        ],
-        "args": [
-          {
-            "nodes": [
-              "a",
-              "b"
-            ],
-            "edges": [
-              {
-                "cause": "b",
-                "effect": "a",
-                "signal": "dataflow",
-                "marked": false
-              }
-            ]
-          },
-          {
-            "id": "s",
-            "description": "boom",
-            "site": "a"
-          }
-        ]
-      }
-    },
-    {
-      "id": "vc-bound-empty-stated",
-      "value_case": {
-        "function": "bound",
-        "expected": {
-          "outside_evidence": [],
-          "invisible_to_method": []
-        },
-        "args": [
-          {
-            "items": [
-              {
-                "id": "a",
-                "kind": "code",
-                "ref": "",
-                "flows_to": [
-                  "b"
-                ],
-                "controls": [],
-                "changed_with": [],
-                "precedes": [],
-                "category": ""
-              },
-              {
-                "id": "b",
-                "kind": "code",
-                "ref": "",
-                "flows_to": [],
-                "controls": [],
-                "changed_with": [],
-                "precedes": [],
-                "category": ""
-              }
-            ]
-          },
-          {
-            "nodes": [
-              "a",
-              "b"
-            ],
-            "edges": [
-              {
-                "cause": "a",
-                "effect": "b",
-                "signal": "dataflow",
-                "marked": false
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "vc-validate-well-formed",
-      "value_case": {
-        "function": "validate_attestation",
-        "expected": [],
-        "input": {
-          "symptom": "s",
-          "evidence_hash": "h",
-          "method_version": "m1",
-          "terminus": "x",
-          "chain": [
-            "a",
-            "x"
-          ],
-          "marked_edges": [],
-          "bound": {
-            "outside_evidence": [],
-            "invisible_to_method": []
-          },
-          "category": "",
-          "poka_yoke": ""
-        }
-      }
-    }
-  ]
+ "version": "0.1",
+ "module": "honest-rca",
+ "cases": [
+  {
+   "id": "vocab-evidence-kinds",
+   "kind": "vocab",
+   "vocab": "EVIDENCE_KINDS",
+   "expect_members": ["code", "event", "history", "config", "deploy"]
+  },
+  {
+   "id": "vocab-signal-kinds",
+   "kind": "vocab",
+   "vocab": "SIGNAL_KINDS",
+   "expect_members": ["dataflow", "controlflow", "change_correlation", "temporal", "judgment"]
+  },
+  {
+   "id": "vocab-bound-kinds",
+   "kind": "vocab",
+   "vocab": "BOUND_KINDS",
+   "expect_members": ["outside_evidence", "invisible_to_method"]
+  },
+  {
+   "id": "exports-public-surface",
+   "kind": "exports",
+   "expect_names": [
+    "evidence_hash", "evidence_set", "signal_edges", "causal_graph", "trace",
+    "terminus", "bound", "attest", "validate_attestation", "terminus_is_design_root",
+    "EVIDENCE_KINDS", "SIGNAL_KINDS", "BOUND_KINDS"
+   ]
+  },
+  {
+   "id": "evidence-set-stamps-hash",
+   "kind": "evidence_set",
+   "items": [
+    {"id": "a", "kind": "code", "ref": "ra", "flows_to": ["b"], "controls": [], "changed_with": [], "precedes": [], "category": ""},
+    {"id": "b", "kind": "event", "ref": "rb", "flows_to": [], "controls": [], "changed_with": [], "precedes": [], "category": ""}
+   ]
+  },
+  {
+   "id": "relation-flows-to",
+   "kind": "relation",
+   "fn": "relation_flows_to",
+   "item": {"id": "a", "kind": "code", "ref": "ra", "flows_to": ["b", "c"], "controls": [], "changed_with": [], "precedes": [], "category": ""},
+   "expect": ["b", "c"]
+  },
+  {
+   "id": "relation-controls",
+   "kind": "relation",
+   "fn": "relation_controls",
+   "item": {"id": "a", "kind": "code", "ref": "ra", "flows_to": [], "controls": ["d"], "changed_with": [], "precedes": [], "category": ""},
+   "expect": ["d"]
+  },
+  {
+   "id": "relation-changed-with",
+   "kind": "relation",
+   "fn": "relation_changed_with",
+   "item": {"id": "a", "kind": "history", "ref": "ra", "flows_to": [], "controls": [], "changed_with": ["e"], "precedes": [], "category": ""},
+   "expect": ["e"]
+  },
+  {
+   "id": "relation-precedes",
+   "kind": "relation",
+   "fn": "relation_precedes",
+   "item": {"id": "a", "kind": "event", "ref": "ra", "flows_to": [], "controls": [], "changed_with": [], "precedes": ["f"], "category": ""},
+   "expect": ["f"]
+  },
+  {
+   "id": "relation-absent-is-empty",
+   "kind": "relation",
+   "fn": "relation_flows_to",
+   "item": {"id": "a", "kind": "code", "ref": "ra", "flows_to": [], "controls": ["d"], "changed_with": [], "precedes": [], "category": ""},
+   "expect": []
+  },
+  {
+   "id": "signal-edges-dataflow-grounds",
+   "kind": "signal_edges",
+   "signal_kind": "dataflow",
+   "items": [
+    {"id": "a", "kind": "code", "ref": "ra", "flows_to": ["b"], "controls": [], "changed_with": [], "precedes": [], "category": ""},
+    {"id": "b", "kind": "code", "ref": "rb", "flows_to": [], "controls": [], "changed_with": [], "precedes": [], "category": ""}
+   ],
+   "expect_edges": [{"cause": "a", "effect": "b", "signal": "dataflow", "marked": false}]
+  },
+  {
+   "id": "signal-edges-absent-relation-no-edge",
+   "kind": "signal_edges",
+   "signal_kind": "temporal",
+   "items": [
+    {"id": "a", "kind": "code", "ref": "ra", "flows_to": ["b"], "controls": [], "changed_with": [], "precedes": [], "category": ""}
+   ],
+   "expect_edges": []
+  },
+  {
+   "id": "causal-graph-grounds-enabled-signal",
+   "kind": "causal_graph",
+   "items": [
+    {"id": "a", "kind": "code", "ref": "ra", "flows_to": ["b"], "controls": ["b"], "changed_with": [], "precedes": [], "category": ""},
+    {"id": "b", "kind": "code", "ref": "rb", "flows_to": [], "controls": [], "changed_with": [], "precedes": [], "category": ""}
+   ],
+   "method": {"version": "v1", "signals": ["dataflow"], "traversal": "upstream"},
+   "judgments": [],
+   "expect_nodes": ["a", "b"],
+   "expect_edges": [["a", "b", "dataflow", false]]
+  },
+  {
+   "id": "causal-graph-judgment-only-when-enabled",
+   "kind": "causal_graph",
+   "items": [
+    {"id": "a", "kind": "code", "ref": "ra", "flows_to": ["b"], "controls": [], "changed_with": [], "precedes": [], "category": ""},
+    {"id": "b", "kind": "code", "ref": "rb", "flows_to": [], "controls": [], "changed_with": [], "precedes": [], "category": ""}
+   ],
+   "method": {"version": "v1", "signals": ["dataflow"], "traversal": "upstream"},
+   "judgments": [{"cause": "x", "effect": "a", "signal": "judgment", "marked": true}],
+   "expect_nodes": ["a", "b"],
+   "expect_edges": [["a", "b", "dataflow", false]]
+  },
+  {
+   "id": "causal-graph-judgment-enabled-included",
+   "kind": "causal_graph",
+   "items": [
+    {"id": "a", "kind": "code", "ref": "ra", "flows_to": ["b"], "controls": [], "changed_with": [], "precedes": [], "category": ""},
+    {"id": "b", "kind": "code", "ref": "rb", "flows_to": [], "controls": [], "changed_with": [], "precedes": [], "category": ""}
+   ],
+   "method": {"version": "v1", "signals": ["dataflow", "judgment"], "traversal": "upstream"},
+   "judgments": [{"cause": "a", "effect": "b", "signal": "judgment", "marked": true}],
+   "expect_nodes": ["a", "b"],
+   "expect_edges": [["a", "b", "dataflow", false], ["a", "b", "judgment", true]]
+  },
+  {
+   "id": "trace-chain-upstream",
+   "kind": "trace",
+   "graph": {
+    "nodes": ["a", "b", "c"],
+    "edges": [
+     {"cause": "a", "effect": "b", "signal": "dataflow", "marked": false},
+     {"cause": "b", "effect": "c", "signal": "dataflow", "marked": false}
+    ]
+   },
+   "symptom": {"id": "s", "description": "fails at c", "site": "c"},
+   "expect_chain": ["c", "b", "a"]
+  },
+  {
+   "id": "trace-no-upstream-is-site-alone",
+   "kind": "trace",
+   "graph": {
+    "nodes": ["a", "b"],
+    "edges": [{"cause": "a", "effect": "b", "signal": "dataflow", "marked": false}]
+   },
+   "symptom": {"id": "s", "description": "fails at a", "site": "a"},
+   "expect_chain": ["a"]
+  },
+  {
+   "id": "terminus-last-of-chain",
+   "kind": "terminus",
+   "chain": ["c", "b", "a"],
+   "expect": "a"
+  },
+  {
+   "id": "terminus-site-alone",
+   "kind": "terminus",
+   "chain": ["x"],
+   "expect": "x"
+  },
+  {
+   "id": "bound-lists-referenced-but-absent",
+   "kind": "bound",
+   "items": [
+    {"id": "a", "kind": "code", "ref": "ra", "flows_to": ["b", "z"], "controls": [], "changed_with": [], "precedes": [], "category": ""},
+    {"id": "b", "kind": "code", "ref": "rb", "flows_to": [], "controls": [], "changed_with": [], "precedes": [], "category": ""}
+   ],
+   "graph": {
+    "nodes": ["a", "b"],
+    "edges": [{"cause": "a", "effect": "b", "signal": "dataflow", "marked": false}]
+   },
+   "expect_outside": ["z"]
+  },
+  {
+   "id": "attest-ordinary-terminus",
+   "kind": "attest",
+   "symptom": {"id": "s", "description": "fails at c", "site": "c"},
+   "items": [
+    {"id": "a", "kind": "code", "ref": "ra", "flows_to": ["b"], "controls": [], "changed_with": [], "precedes": [], "category": ""},
+    {"id": "b", "kind": "code", "ref": "rb", "flows_to": ["c"], "controls": [], "changed_with": [], "precedes": [], "category": ""},
+    {"id": "c", "kind": "code", "ref": "rc", "flows_to": [], "controls": [], "changed_with": [], "precedes": [], "category": ""}
+   ],
+   "evidence_hash": "H1",
+   "method": {"version": "v1", "signals": ["dataflow"], "traversal": "upstream"},
+   "graph": {
+    "nodes": ["a", "b", "c"],
+    "edges": [
+     {"cause": "a", "effect": "b", "signal": "dataflow", "marked": false},
+     {"cause": "b", "effect": "c", "signal": "dataflow", "marked": false}
+    ]
+   },
+   "chain": ["c", "b", "a"],
+   "poka_yoke": "",
+   "expect_category": ""
+  },
+  {
+   "id": "attest-design-root-terminus",
+   "kind": "attest",
+   "symptom": {"id": "s", "description": "fails at c", "site": "c"},
+   "items": [
+    {"id": "a", "kind": "code", "ref": "ra", "flows_to": [], "controls": [], "changed_with": [], "precedes": [], "category": "missing_invariant"},
+    {"id": "c", "kind": "code", "ref": "rc", "flows_to": [], "controls": [], "changed_with": [], "precedes": [], "category": ""}
+   ],
+   "evidence_hash": "H2",
+   "method": {"version": "v2", "signals": ["dataflow"], "traversal": "upstream"},
+   "graph": {
+    "nodes": ["a", "c"],
+    "edges": [{"cause": "a", "effect": "c", "signal": "dataflow", "marked": false}]
+   },
+   "chain": ["c", "a"],
+   "poka_yoke": "poka-yoke/invariant-at-boundary",
+   "expect_category": "missing_invariant"
+  },
+  {
+   "id": "validate-well-formed-ordinary",
+   "kind": "validate",
+   "attestation": {
+    "symptom": {"id": "s", "description": "d", "site": "c"},
+    "evidence_hash": "H1", "method_version": "v1", "terminus": "a", "chain": ["c", "a"],
+    "marked_edges": [], "bound": {"outside_evidence": [], "invisible_to_method": []},
+    "category": "", "poka_yoke": ""
+   },
+   "expect_codes": []
+  },
+  {
+   "id": "validate-missing-evidence-hash",
+   "kind": "validate",
+   "attestation": {
+    "symptom": {"id": "s", "description": "d", "site": "c"},
+    "evidence_hash": "", "method_version": "v1", "terminus": "a", "chain": ["c", "a"],
+    "marked_edges": [], "bound": {"outside_evidence": [], "invisible_to_method": []},
+    "category": "", "poka_yoke": ""
+   },
+   "expect_codes": ["missing_evidence_hash"]
+  },
+  {
+   "id": "validate-missing-method-version",
+   "kind": "validate",
+   "attestation": {
+    "symptom": {"id": "s", "description": "d", "site": "c"},
+    "evidence_hash": "H1", "method_version": "", "terminus": "a", "chain": ["c", "a"],
+    "marked_edges": [], "bound": {"outside_evidence": [], "invisible_to_method": []},
+    "category": "", "poka_yoke": ""
+   },
+   "expect_codes": ["missing_method_version"]
+  },
+  {
+   "id": "validate-missing-terminus",
+   "kind": "validate",
+   "attestation": {
+    "symptom": {"id": "s", "description": "d", "site": "c"},
+    "evidence_hash": "H1", "method_version": "v1", "terminus": "", "chain": [],
+    "marked_edges": [], "bound": {"outside_evidence": [], "invisible_to_method": []},
+    "category": "", "poka_yoke": ""
+   },
+   "expect_codes": ["missing_terminus"]
+  },
+  {
+   "id": "validate-missing-bound-absent",
+   "kind": "validate",
+   "attestation": {
+    "symptom": {"id": "s", "description": "d", "site": "c"},
+    "evidence_hash": "H1", "method_version": "v1", "terminus": "a", "chain": ["c", "a"],
+    "marked_edges": [], "bound": null,
+    "category": "", "poka_yoke": ""
+   },
+   "expect_codes": ["missing_bound"]
+  },
+  {
+   "id": "validate-design-root-missing-poka-yoke",
+   "kind": "validate",
+   "attestation": {
+    "symptom": {"id": "s", "description": "d", "site": "c"},
+    "evidence_hash": "H1", "method_version": "v1", "terminus": "a", "chain": ["c", "a"],
+    "marked_edges": [], "bound": {"outside_evidence": [], "invisible_to_method": []},
+    "category": "missing_invariant", "poka_yoke": ""
+   },
+   "expect_codes": ["missing_poka_yoke"]
+  },
+  {
+   "id": "validate-design-root-with-poka-yoke",
+   "kind": "validate",
+   "attestation": {
+    "symptom": {"id": "s", "description": "d", "site": "c"},
+    "evidence_hash": "H1", "method_version": "v1", "terminus": "a", "chain": ["c", "a"],
+    "marked_edges": [], "bound": {"outside_evidence": [], "invisible_to_method": []},
+    "category": "missing_invariant", "poka_yoke": "poka-yoke/invariant-at-boundary"
+   },
+   "expect_codes": []
+  },
+  {
+   "id": "design-root-true-for-category",
+   "kind": "design_root",
+   "item": {"id": "a", "kind": "code", "ref": "ra", "flows_to": [], "controls": [], "changed_with": [], "precedes": [], "category": "unbounded_input"},
+   "expect": true
+  },
+  {
+   "id": "design-root-false-for-ordinary",
+   "kind": "design_root",
+   "item": {"id": "a", "kind": "code", "ref": "ra", "flows_to": [], "controls": [], "changed_with": [], "precedes": [], "category": ""},
+   "expect": false
+  }
+ ]
 }
