@@ -36,8 +36,8 @@ def resolve_supplied_config(table):
     resolved = {}
     for name, entry in table.items():
         resolved[name] = {
-            "valid": list(entry.get("valid", [])),
-            "invalid": list(entry.get("invalid", [])),
+            "valid": list(entry["valid"] if "valid" in entry else []),
+            "invalid": list(entry["invalid"] if "invalid" in entry else []),
             "strategy": entry["strategy"] if "strategy" in entry else "supplied_only",
         }
     return resolved
@@ -53,23 +53,23 @@ def _import_file(path, module_name):
 
 
 def _is_machine(value):
-    return hasattr(value, "get") and "states" in value and "transitions" in value and "events" in value
+    return isinstance(value, dict) and "states" in value and "transitions" in value and "events" in value
 
 
 def _is_schema(value):
-    return hasattr(value, "get") and "tables" in value
+    return isinstance(value, dict) and "tables" in value
 
 
 def _is_component(value):
-    return hasattr(value, "get") and "template" in value and "routes" in value
+    return isinstance(value, dict) and "template" in value and "routes" in value
 
 
 def _is_provider(value):
-    return hasattr(value, "get") and "resolve_actor" in value and "actor_recognizer" in value
+    return isinstance(value, dict) and "resolve_actor" in value and "actor_recognizer" in value
 
 
 def _is_gate(value):
-    return hasattr(value, "get") and "name" in value and "location" in value and "proof" in value
+    return isinstance(value, dict) and "name" in value and "location" in value and "proof" in value
 
 
 def load_under_test(src_dir):

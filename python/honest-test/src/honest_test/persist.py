@@ -17,7 +17,8 @@ _SAMPLE = {"integer": 1, "int": 1, "text": "x", "uuid": "x", "boolean": 1, "real
 
 def _sample_value(column):
     """A value for one column from its declared type."""
-    return _SAMPLE.get(column.get("type"), "x")
+    column_type = column.get("type")
+    return _SAMPLE[column_type] if column_type in _SAMPLE else "x"
 
 
 def _primary_key(table_def):
@@ -32,7 +33,8 @@ def _primary_key(table_def):
 def _omittable_required(table_def):
     """A non-nullable, non-primary-key column an insert can omit, or None when there is none."""
     for name, definition in table_def["columns"].items():
-        if definition.get("nullable", True) is False and not definition.get("primary_key"):
+        nullable = definition["nullable"] if "nullable" in definition else True
+        if nullable is False and not definition.get("primary_key"):
             return name
     return None
 
@@ -114,7 +116,8 @@ def _rows_for_compare(tree, base):
         "!=": (literal + 1, literal),
         "<>": (literal + 1, literal),
     }
-    conforming_value, violating_value = table.get(tree["op"], (literal, literal))
+    op = tree["op"]
+    conforming_value, violating_value = table[op] if op in table else (literal, literal)
     return {**base, column: conforming_value}, {**base, column: violating_value}
 
 
@@ -127,7 +130,7 @@ def enumerate_check_constraints(schema):
 
     cases = []
     for table in schema["tables"].values():
-        columns = table.get("columns", {})
+        columns = table["columns"] if "columns" in table else {}
         base = {name: _sample_value(definition) for name, definition in columns.items()}
         for expression in table_checks(table):
             compiled = parse_check(expression)

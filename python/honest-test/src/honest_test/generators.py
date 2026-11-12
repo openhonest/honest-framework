@@ -205,7 +205,7 @@ def _lower_bound(operator_name, value, minimum, maximum):
         "GtE": (minimum, value),
         "Gt": (minimum, value - 1),
     }
-    return table.get(operator_name, (minimum, maximum))
+    return table[operator_name] if operator_name in table else (minimum, maximum)
 
 
 def _upper_bound(operator_name, value, minimum, maximum):
@@ -217,7 +217,7 @@ def _upper_bound(operator_name, value, minimum, maximum):
         "GtE": (value, maximum),
         "Gt": (value + 1, maximum),
     }
-    return table.get(operator_name, (minimum, maximum))
+    return table[operator_name] if operator_name in table else (minimum, maximum)
 
 
 def enumerate_lengths(predicate_node):
@@ -284,7 +284,7 @@ def enumerate_test_cases(accepts, binding):
     way enumerate_sets does, then rekey each manifest by the binding's slot names. Reads no
     world, returns pure data."""
     return [
-        {binding.get(type_name, type_name): value for type_name, value in manifest.items()}
+        {(binding[type_name] if type_name in binding else type_name): value for type_name, value in manifest.items()}
         for manifest in enumerate_sets(accepts)
     ]
 
@@ -321,7 +321,7 @@ def unicode_confusables(value):
             results.append(value[:index] + _CONFUSABLES[character] + value[index + 1:])
     replaceable = [character for character in value if character in _CONFUSABLES]
     if len(replaceable) >= 2:
-        results.append("".join(_CONFUSABLES.get(character, character) for character in value))
+        results.append("".join((_CONFUSABLES[character] if character in _CONFUSABLES else character) for character in value))
     return [neighbor for neighbor in dict.fromkeys(results) if neighbor != value]
 
 

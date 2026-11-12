@@ -68,9 +68,11 @@ def mutate_source(source):
 
     def results(node):
         function = node.child_by_field_name("function")
-        if function is None or function.type != "identifier" or function.text.decode("utf-8") not in _RESULT_SWAP:
+        if function is None or function.type != "identifier":
             return []
         name = function.text.decode("utf-8")
+        if name not in _RESULT_SWAP:
+            return []
         original = node.text.decode("utf-8")
         return [one(node, "result_swap", original, _RESULT_SWAP[name] + original[len(name):])]
 

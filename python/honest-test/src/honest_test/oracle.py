@@ -36,7 +36,7 @@ def _resolve(value, function_map):
                 "add the named function to the suite's function map",
             )
         arguments = []
-        for argument in value.get("args", []):
+        for argument in (value["args"] if "args" in value else []):
             resolved = _resolve(argument, function_map)
             if _is_fault(resolved):
                 return resolved

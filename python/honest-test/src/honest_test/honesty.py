@@ -80,6 +80,9 @@ def verify_under_monitor(link, test_manifest, monitor, kind):
     blocks."""
     if _is_boundary(link):
         return []
+    if kind not in _MONITORED_CHECKS:
+        accepted = sorted(_MONITORED_CHECKS)
+        raise KeyError(f"monitor kind {kind!r} matched no check; accepted kinds are {accepted}")
     code, message = _MONITORED_CHECKS[kind]
     if monitor(link, test_manifest):
         return [_finding("warning", code, message)]
@@ -111,6 +114,9 @@ def compute_expected_status(token_class, fault_mapping):
     The provider's fault_mapping overrides the default per class. Reads no world, pure data."""
     if token_class in fault_mapping:
         return fault_mapping[token_class]
+    if token_class not in _TOKEN_STATUS:
+        accepted = sorted(_TOKEN_STATUS)
+        raise KeyError(f"token class {token_class!r} matched no status; accepted classes are {accepted}")
     return _TOKEN_STATUS[token_class]
 
 
@@ -118,7 +124,11 @@ def _fault_status(provider, auth_fault):
     """The HTTP status a resolve_actor fault maps to (honest-auth section 2.5): the provider's
     fault_mapping for the fault's category, else the framework default, else 500."""
     category = auth_fault["category"]
-    return provider["fault_mapping"].get(category, _CATEGORY_STATUS.get(category, 500))
+    if category in provider["fault_mapping"]:
+        return provider["fault_mapping"][category]
+    if category in _CATEGORY_STATUS:
+        return _CATEGORY_STATUS[category]
+    return 500
 
 
 def test_auth_honesty(provider):
@@ -158,10 +168,11 @@ def check_gate_honesty(gates):
         if proof is None:
             findings.append(_finding(
                 "rejection", "gate_unverified",
-                f"gate {gate.get('name')!r} has no proof-of-failure", gate.get("location", "")))
+                f"gate {gate.get('name')!r} has no proof-of-failure",
+                gate["location"] if "location" in gate else ""))
         elif not proof.get("binds_failure"):
             findings.append(_finding(
                 "rejection", "gate_proof_unbound",
                 f"the proof for {gate.get('name')!r} does not bind the failure it expects",
-                proof.get("location", "")))
+                proof["location"] if "location" in proof else ""))
     return findings

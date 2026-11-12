@@ -83,7 +83,7 @@ def run_suite(src_dir):
     generate the source-decidable cases, load the live declarations once, run the live checks,
     assemble the RunReport, drive both sinks, and return the report."""
     config_table = read_config(str(Path(src_dir) / "honest-test.toml"))
-    supplied = resolve_supplied_config(config_table.get("predicates", {}))
+    supplied = resolve_supplied_config(config_table["predicates"] if "predicates" in config_table else {})
 
     mutation_total = 0
     for path in _source_files(src_dir):
