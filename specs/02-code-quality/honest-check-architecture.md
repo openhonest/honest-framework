@@ -744,6 +744,23 @@ FUNCTION check_ref009(modules, path):
                     f"'{resource}' and neither names the other. Confirm the coupling is intended.")
 ```
 
+#### HC-REF010: a module that touches nothing and that one module calls
+
+HC-REF009 asks about two modules that meet at a resource. HC-REF010 asks about one module that meets nothing. Adam set the rule on 22 October 2026, out of honest-parse. A module that declares no side of the world, and that exactly one other module calls, carries a question on its system card: fold it into that one caller, or is a second caller coming? A module that owns a side of the world is never asked, whoever calls it, because the side is its own reason to stand apart. The rule asks and never rules, because folding two modules into one is a person's call, the same posture HC-REF009 carries.
+
+The rule reads two facts off the declarations and the packaging. A module touches no side of the world when no function of it declares a side whose target is a world kind, counting a seam that names another module and the module's own `store` as not a world side. A caller is a module that reaches one of this module's doors, by a declared seam or by an import the packaging shows, which is why honest-parse reads as three callers even before the three seams are declared. The question fires only on a count of exactly one. Zero callers is a different finding, an unreached module, and two or more is the standing honest-parse answer: a module earns its own file.
+
+```
+FUNCTION check_ref010(module, callers, path):
+    touches_world ← ANY(side.module_name IS "" AND side.target DOES NOT START "store:"
+                        FOR function IN module.functions FOR side IN function.side_effects)
+    IF touches_world THEN RETURN                      // it owns a side; never asked
+    IF count(callers) IS NOT 1 THEN RETURN            // zero is unreached; two or more stands apart
+    EMIT question(HC-REF010, path, module.location,
+        f"'{module.name}' touches no side of the world and only '{callers[0].name}' calls it. "
+        f"Fold it into '{callers[0].name}', or is a second caller coming?")
+```
+
 #### HC-REF011 — Every workspace module declares itself
 
 HC-REF005 through HC-REF009 each read a module's `.hd`. A module that carries no `.hd` gives them nothing to read, so it passes every one of them by being invisible. That is the way out of the whole declaration tier: delete the declaration, and the architecture is no longer on the record, and no check says a word. honest-page is the case that proved it. It is a workspace member with a spec, a conformance suite running green, and a reference implementation the spec names by path, and for a time it carried no declaration and the gate reported clean. A gate you can leave by deleting a file is not a gate.
@@ -1999,6 +2016,7 @@ src/pipelines/user.py:42: info
 | HC-REF007 | Error | Static | — | A seam enters `M.d` but `d` is not an entrance (`boundary_in` or `edge`) |
 | HC-REF008 | Error | Static | — | A cross-module side effect names a module but no door |
 | HC-REF009 | Question | Static | — | Two modules meet at a named resource and neither names the other |
+| HC-REF010 | Question | Static | — | A world-less module that exactly one module calls |
 | HC-ST001 | Error | Static | — | Write to persisted state outside an I/O-boundary function |
 | HC-ST002 | Error | Static | — | Shadow copy of user state outside the manifest-declared DOM |
 | HC-HF001 | Error | Static | — | `feature_state` references a flag not declared in FEATURES |
@@ -2084,7 +2102,7 @@ adoption = "Boundary"
 
 **Rules above the declared level still run, and still report, downgraded to `info`.** They never fail the run and they are never dropped — the same treatment a suppressed diagnostic gets, for the same reason. A level is a statement about what a codebase holds today, not permission to stop looking.
 
-**The denominator is 57.** The adoption levels cover 57 rules; the catalogue lists more, because some rules belong to no level. Three are the test-time rules honest-test owns (HC-P008, HC-P009, HC-P012), which no adoption level can enforce because honest-check does not verify them. One, HC-REF009, is a question that never fails a run, so it sits outside the levels by design.
+**The denominator is 57.** The adoption levels cover 57 rules; the catalogue lists more, because some rules belong to no level. Three are the test-time rules honest-test owns (HC-P008, HC-P009, HC-P012), which no adoption level can enforce because honest-check does not verify them. Two, HC-REF009 and HC-REF010, are questions that never fail a run, so they sit outside the levels by design.
 
 **Every run states its level.** Human output opens with it, and the JSON `summary` carries `adoption` and `enforced_rules`. A passing run therefore always says what it proved:
 

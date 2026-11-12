@@ -493,6 +493,18 @@
       "emitted_by_honest_check": true
     },
     {
+      "id": "HC-REF010",
+      "severity": "Info",
+      "firing_time": "Static",
+      "startup": false,
+      "lsp": false,
+      "description": "A module touches no side of the world and exactly one module calls it",
+      "prevents": "A module that stands apart while earning nothing by standing apart: it touches no world and serves one caller, so its own file may be hiding a function that belongs in that caller. A question, not a gate failure: a second caller may be coming, and folding is a person's call. A module that owns a world side is never asked.",
+      "enforced_by": "honest-check",
+      "deferred_cases": [],
+      "emitted_by_honest_check": true
+    },
+    {
       "id": "HC-SM01",
       "severity": "Error",
       "firing_time": "Construction",
