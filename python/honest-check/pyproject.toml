@@ -5,6 +5,9 @@ description = "Static checker enforcing Honest Code principles — the pre-auto-
 requires-python = ">=3.11"
 dependencies = ["honest-parse", "honest-design"]
 
+[project.scripts]
+honest-check = "honest_check.cli:entry_point"
+
 [tool.uv.sources]
 honest-parse = { workspace = true }
 honest-design = { workspace = true }
