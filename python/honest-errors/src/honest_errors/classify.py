@@ -1,67 +1,66 @@
-"""Normalization (spec section 3): the two payload shapes collapse to one canonical ExceptionReport.
+"""Normalization (architecture section 3).
 
-Each normalizer validates the raw payload against the required keys of its shape and returns a Result
-whose err arm is a malformed_payload Fault naming the missing keys, otherwise a Result whose ok arm is
-the ten-field ExceptionReport. environment and timestamp are arguments stamped onto the report, never
-read from os.getenv or a clock (spec section 1.5). A fault travels as data; nothing raises.
+Two normalizers collapse the two foreign payload shapes onto the one canonical ExceptionReport. Each
+validates its payload against the required keys and returns a malformed_payload Fault when any is
+absent, otherwise the report. environment and timestamp are arguments, never read from the environment
+or a clock here. Which normalizer runs is picked by the payload's source through the normalize_by_source
+dispatch table, not a branch.
 """
 
-from honest_type import err, fault, ok
+from honest_errors.ir import JS_REQUIRED_KEYS, PY_REQUIRED_KEYS
 
-_JS_REQUIRED = ("message", "source", "lineno", "colno", "stack", "url", "user_agent", "timestamp", "context")
 
-_PY_REQUIRED = ("exception_type", "message", "tb_file", "tb_line", "tb_function", "traceback", "context")
+def js_severity(message):
+    """Derive a JS failure's severity from its message (section 3): 'critical' when the message text
+    contains the token 'critical' matched case-insensitively, 'error' for every other message. A
+    predicate, not an if/elif ladder that grows a branch per rule."""
+    return "critical" if "critical" in message.lower() else "error"
 
 
 def classify_js_payload(payload, environment, timestamp):
-    """Normalize a raw browser-JavaScript error payload into one canonical ExceptionReport (spec
-    section 3). Severity is derived from the payload by a nested predicate: a message marked critical
-    yields critical, else error. The JS payload carries no exception type or enclosing function, so the
-    report stamps a fixed JavaScriptError type and an empty function (a spec gap, see the module
-    report)."""
-    missing = [key for key in _JS_REQUIRED if key not in payload]
+    """Normalize a raw browser JSErrorPayload into one ExceptionReport (section 3). A required key
+    absent yields a malformed_payload Fault; otherwise the browser fields map onto the report, severity
+    comes from js_severity, and the passed-in environment and timestamp are carried through. The
+    browser carries no exception type or function name, so those fold to the generic 'Error' and the
+    empty string; colno, url and user_agent, which the report has no column for, fold into context so
+    they are not lost."""
+    missing = sorted(key for key in JS_REQUIRED_KEYS if key not in payload)
     if missing:
-        return err(fault(
-            code="malformed_payload",
-            message=f"JS error payload is missing required keys {missing}; a JSErrorPayload must carry {list(_JS_REQUIRED)}",
-            category="client",
-            results=[],
-            detail={"missing": missing, "shape": "JSErrorPayload"},
-        ))
-
-    def _severity_of(message):
-        return "critical" if "critical" in message.lower() else "error"
-
-    report = {
-        "exception_type": "JavaScriptError",
+        return {
+            "code": "malformed_payload",
+            "message": f"a JS error payload is missing required key(s) {missing}; a browser payload must carry {sorted(JS_REQUIRED_KEYS)}",
+        }
+    return {
+        "exception_type": "Error",
         "message": payload["message"],
-        "severity": _severity_of(payload["message"]),
+        "severity": js_severity(payload["message"]),
         "environment": environment,
         "file": payload["source"],
         "line": payload["lineno"],
         "function": "",
         "traceback": payload["stack"],
-        "context": payload["context"],
+        "context": {
+            **payload["context"],
+            "colno": payload["colno"],
+            "url": payload["url"],
+            "user_agent": payload["user_agent"],
+        },
         "timestamp": timestamp,
     }
-    return ok(report)
 
 
 def classify_py_payload(payload, environment, timestamp):
-    """Normalize a raw server-side Python exception payload into the same ten-field ExceptionReport
-    decomposition classify_js_payload produces, at the Python path's default severity error (spec
-    section 3)."""
-    missing = [key for key in _PY_REQUIRED if key not in payload]
+    """Normalize a raw server PythonExceptionPayload into one ExceptionReport (section 3). A required
+    key absent yields a malformed_payload Fault; otherwise exception_type, message, tb_file, tb_line,
+    tb_function and traceback map onto the report, severity defaults to 'error', and the passed-in
+    environment and timestamp are carried through."""
+    missing = sorted(key for key in PY_REQUIRED_KEYS if key not in payload)
     if missing:
-        return err(fault(
-            code="malformed_payload",
-            message=f"Python exception payload is missing required keys {missing}; a PythonExceptionPayload must carry {list(_PY_REQUIRED)}",
-            category="client",
-            results=[],
-            detail={"missing": missing, "shape": "PythonExceptionPayload"},
-        ))
-
-    report = {
+        return {
+            "code": "malformed_payload",
+            "message": f"a Python exception payload is missing required key(s) {missing}; a server payload must carry {sorted(PY_REQUIRED_KEYS)}",
+        }
+    return {
         "exception_type": payload["exception_type"],
         "message": payload["message"],
         "severity": "error",
@@ -73,4 +72,18 @@ def classify_py_payload(payload, environment, timestamp):
         "context": payload["context"],
         "timestamp": timestamp,
     }
-    return ok(report)
+
+
+def should_bypass_dedup(severity):
+    """The one product rule honest-errors carries, as data not control flow (section 3.1): True if and
+    only if severity is 'critical'. A critical failure is never silenced by the throttle."""
+    return severity == "critical"
+
+
+# The normalize dispatch (section 3): which normalizer runs is picked by the payload's source, a table
+# not a branch. The orchestrator reads it under a no-match guard, so an unknown source faults rather
+# than raising a silent KeyError.
+normalize_by_source = {
+    "js": classify_js_payload,
+    "py": classify_py_payload,
+}

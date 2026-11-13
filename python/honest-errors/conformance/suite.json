@@ -1,39 +1,97 @@
 {
- "version": "0.1",
+ "version": "0.2",
  "module": "honest-errors",
  "cases": [
   {
    "id": "vocab-severities",
    "kind": "vocab",
    "vocab": "SEVERITIES",
-   "expect_members": ["debug", "info", "warning", "error", "critical"]
+   "expect_members": [
+    "debug",
+    "info",
+    "warning",
+    "error",
+    "critical"
+   ]
   },
   {
    "id": "vocab-environments",
    "kind": "vocab",
    "vocab": "ENVIRONMENTS",
-   "expect_members": ["development", "production", "test"]
+   "expect_members": [
+    "development",
+    "production",
+    "test"
+   ]
   },
   {
    "id": "vocab-behavior-names",
    "kind": "vocab",
    "vocab": "BEHAVIOR_NAMES",
-   "expect_members": ["log", "email"]
+   "expect_members": [
+    "log",
+    "email"
+   ]
   },
   {
    "id": "vocab-suppress-reasons",
    "kind": "vocab",
    "vocab": "SUPPRESS_REASONS",
-   "expect_members": ["rate_limit_hourly", "rate_limit_dedup"]
+   "expect_members": [
+    "rate_limit_hourly",
+    "rate_limit_dedup"
+   ]
   },
   {
    "id": "exports-public-surface",
    "kind": "exports",
    "expect_names": [
-    "classify_js_payload", "classify_py_payload", "should_bypass_dedup",
-    "behaviors_for", "dedup_key", "new_state", "check_rate_limit", "format_email_body",
-    "SEVERITIES", "ENVIRONMENTS", "BEHAVIOR_NAMES", "SUPPRESS_REASONS"
+    "js_severity",
+    "classify_js_payload",
+    "classify_py_payload",
+    "should_bypass_dedup",
+    "behaviors_for",
+    "dedup_key",
+    "new_state",
+    "check_rate_limit",
+    "format_email_body",
+    "handle_failure",
+    "capture",
+    "SEVERITIES",
+    "ENVIRONMENTS",
+    "BEHAVIOR_NAMES",
+    "SUPPRESS_REASONS"
    ]
+  },
+  {
+   "id": "jsseverity-prefix-critical",
+   "kind": "jsseverity",
+   "message": "Critical: boom",
+   "expect": "critical"
+  },
+  {
+   "id": "jsseverity-upper-critical",
+   "kind": "jsseverity",
+   "message": "CRITICAL",
+   "expect": "critical"
+  },
+  {
+   "id": "jsseverity-substring-critical",
+   "kind": "jsseverity",
+   "message": "it was critical here",
+   "expect": "critical"
+  },
+  {
+   "id": "jsseverity-plain-error",
+   "kind": "jsseverity",
+   "message": "boom",
+   "expect": "error"
+  },
+  {
+   "id": "jsseverity-empty-error",
+   "kind": "jsseverity",
+   "message": "",
+   "expect": "error"
   },
   {
    "id": "js-valid-error",
@@ -184,21 +242,40 @@
    "kind": "behaviors",
    "environment": "development",
    "expect": "ok",
-   "expect_list": [{"name": "log", "order": 0}]
+   "expect_list": [
+    {
+     "name": "log",
+     "order": 0
+    }
+   ]
   },
   {
    "id": "behaviors-production",
    "kind": "behaviors",
    "environment": "production",
    "expect": "ok",
-   "expect_list": [{"name": "log", "order": 0}, {"name": "email", "order": 1}]
+   "expect_list": [
+    {
+     "name": "log",
+     "order": 0
+    },
+    {
+     "name": "email",
+     "order": 1
+    }
+   ]
   },
   {
    "id": "behaviors-test",
    "kind": "behaviors",
    "environment": "test",
    "expect": "ok",
-   "expect_list": [{"name": "log", "order": 0}]
+   "expect_list": [
+    {
+     "name": "log",
+     "order": 0
+    }
+   ]
   },
   {
    "id": "behaviors-unknown",
@@ -222,7 +299,11 @@
     "context": {},
     "timestamp": "2026-01-01T00:00:00Z"
    },
-   "expect": {"exception_type": "ValueError", "file": "app.py", "line": 10}
+   "expect": {
+    "exception_type": "ValueError",
+    "file": "app.py",
+    "line": 10
+   }
   },
   {
    "id": "newstate-empty",
@@ -231,21 +312,46 @@
   {
    "id": "ratelimit-allow-empty",
    "kind": "ratelimit",
-   "key": {"exception_type": "ValueError", "file": "app.py", "line": 10},
-   "config": {"dedup_window_seconds": 300, "max_per_hour": 10},
-   "state": {"dedup_cache": {}, "hourly_sends": []},
+   "key": {
+    "exception_type": "ValueError",
+    "file": "app.py",
+    "line": 10
+   },
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 10
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": []
+   },
    "now": 1000,
    "expect_should_send": true,
-   "expect_reason": "",
-   "expect_next_hourly": [1000],
+   "expect_reason": null,
+   "expect_next_hourly": [
+    1000
+   ],
    "expect_cache_size": 1
   },
   {
    "id": "ratelimit-hourly-cap",
    "kind": "ratelimit",
-   "key": {"exception_type": "ValueError", "file": "app.py", "line": 10},
-   "config": {"dedup_window_seconds": 300, "max_per_hour": 2},
-   "state": {"dedup_cache": {}, "hourly_sends": [800, 900]},
+   "key": {
+    "exception_type": "ValueError",
+    "file": "app.py",
+    "line": 10
+   },
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 2
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": [
+     800,
+     900
+    ]
+   },
    "now": 1000,
    "expect_should_send": false,
    "expect_reason": "rate_limit_hourly"
@@ -265,7 +371,295 @@
     "context": {},
     "timestamp": "2026-01-01T00:00:00Z"
    },
-   "expect_contains": ["ValueError", "bad value", "error", "production"]
+   "expect_contains": [
+    "ValueError",
+    "bad value",
+    "error",
+    "production"
+   ]
+  },
+  {
+   "id": "hf-malformed-js",
+   "kind": "handle_failure",
+   "source": "js",
+   "payload": {
+    "source": "https://app.example/x.js",
+    "lineno": 42,
+    "colno": 7,
+    "stack": "Error",
+    "url": "https://app.example/page",
+    "user_agent": "Mozilla/5.0",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "context": {}
+   },
+   "environment": "production",
+   "timestamp": "2026-02-02T12:00:00Z",
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 10
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": []
+   },
+   "now": 1000,
+   "expect": "err",
+   "expect_code": "malformed_payload"
+  },
+  {
+   "id": "hf-unknown-environment",
+   "kind": "handle_failure",
+   "source": "py",
+   "payload": {
+    "exception_type": "ValueError",
+    "message": "bad value",
+    "tb_file": "app.py",
+    "tb_line": 10,
+    "tb_function": "handle",
+    "traceback": "tb",
+    "context": {}
+   },
+   "environment": "staging",
+   "timestamp": "2026-02-02T12:00:00Z",
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 10
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": []
+   },
+   "now": 1000,
+   "expect": "err",
+   "expect_code": "unknown_environment"
+  },
+  {
+   "id": "hf-send-production",
+   "kind": "handle_failure",
+   "source": "py",
+   "payload": {
+    "exception_type": "ValueError",
+    "message": "bad value",
+    "tb_file": "app.py",
+    "tb_line": 10,
+    "tb_function": "handle",
+    "traceback": "Traceback: ValueError",
+    "context": {}
+   },
+   "environment": "production",
+   "timestamp": "2026-02-02T12:00:00Z",
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 10
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": []
+   },
+   "now": 1000,
+   "expect": "ok",
+   "expect_should_send": true,
+   "expect_email_nonempty": true
+  },
+  {
+   "id": "hf-suppressed-empty-body",
+   "kind": "handle_failure",
+   "source": "py",
+   "payload": {
+    "exception_type": "ValueError",
+    "message": "bad value",
+    "tb_file": "app.py",
+    "tb_line": 10,
+    "tb_function": "handle",
+    "traceback": "Traceback: ValueError",
+    "context": {}
+   },
+   "environment": "production",
+   "timestamp": "2026-02-02T12:00:00Z",
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 1
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": [
+     950
+    ]
+   },
+   "now": 1000,
+   "expect": "ok",
+   "expect_should_send": false,
+   "expect_email_nonempty": false
+  },
+  {
+   "id": "hf-critical-bypass",
+   "kind": "handle_failure",
+   "source": "js",
+   "payload": {
+    "message": "Critical: boom",
+    "source": "https://app.example/x.js",
+    "lineno": 5,
+    "colno": 1,
+    "stack": "Error\n  at g (x.js:5:1)",
+    "url": "https://app.example/page",
+    "user_agent": "Mozilla/5.0",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "context": {}
+   },
+   "environment": "production",
+   "timestamp": "2026-02-02T12:00:00Z",
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 1
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": [
+     950
+    ]
+   },
+   "now": 1000,
+   "expect": "ok",
+   "expect_should_send": false,
+   "expect_email_nonempty": true
+  },
+  {
+   "id": "hf-unknown-source",
+   "kind": "handle_failure",
+   "source": "svg",
+   "payload": {
+    "exception_type": "ValueError",
+    "message": "bad value",
+    "tb_file": "app.py",
+    "tb_line": 10,
+    "tb_function": "handle",
+    "traceback": "Traceback (most recent call last):\n  ValueError: bad value",
+    "context": {}
+   },
+   "environment": "production",
+   "timestamp": "2026-02-02T12:00:00Z",
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 10
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": []
+   },
+   "now": 1000,
+   "expect": "err",
+   "expect_code": "unknown_source"
+  },
+  {
+   "id": "hf-development-send-no-email",
+   "kind": "handle_failure",
+   "source": "py",
+   "payload": {
+    "exception_type": "ValueError",
+    "message": "bad value",
+    "tb_file": "app.py",
+    "tb_line": 10,
+    "tb_function": "handle",
+    "traceback": "Traceback (most recent call last):\n  ValueError: bad value",
+    "context": {}
+   },
+   "environment": "development",
+   "timestamp": "2026-02-02T12:00:00Z",
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 10
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": []
+   },
+   "now": 1000,
+   "expect": "ok",
+   "expect_should_send": true,
+   "expect_email_nonempty": false
+  },
+  {
+   "id": "hf-critical-development-no-email",
+   "kind": "handle_failure",
+   "source": "js",
+   "payload": {
+    "message": "Critical: heap corruption detected",
+    "source": "https://app.example/x.js",
+    "lineno": 5,
+    "colno": 1,
+    "stack": "Error\n  at g (x.js:5:1)",
+    "url": "https://app.example/page",
+    "user_agent": "Mozilla/5.0",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "context": {}
+   },
+   "environment": "development",
+   "timestamp": "2026-02-02T12:00:00Z",
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 1
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": [
+     950
+    ]
+   },
+   "now": 1000,
+   "expect": "ok",
+   "expect_should_send": false,
+   "expect_email_nonempty": false
+  },
+  {
+   "id": "capture-forwards-send",
+   "kind": "capture",
+   "source": "py",
+   "payload": {
+    "exception_type": "ValueError",
+    "message": "bad value",
+    "tb_file": "app.py",
+    "tb_line": 10,
+    "tb_function": "handle",
+    "traceback": "Traceback: ValueError",
+    "context": {}
+   },
+   "environment": "production",
+   "timestamp": "2026-02-02T12:00:00Z",
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 10
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": []
+   },
+   "now": 1000
+  },
+  {
+   "id": "capture-forwards-fault",
+   "kind": "capture",
+   "source": "js",
+   "payload": {
+    "source": "https://app.example/x.js",
+    "lineno": 42,
+    "colno": 7,
+    "stack": "Error",
+    "url": "https://app.example/page",
+    "user_agent": "Mozilla/5.0",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "context": {}
+   },
+   "environment": "production",
+   "timestamp": "2026-02-02T12:00:00Z",
+   "config": {
+    "dedup_window_seconds": 300,
+    "max_per_hour": 10
+   },
+   "state": {
+    "dedup_cache": {},
+    "hourly_sends": []
+   },
+   "now": 1000
   }
  ]
 }

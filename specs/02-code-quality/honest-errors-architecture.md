@@ -8,7 +8,7 @@
 
 honest-errors is the Honest Framework's error-policy module. It normalizes a raw failure payload (a browser's JavaScript error object, or a server's Python exception) into one canonical `ExceptionReport`, decides what should *happen* to a report as a function of the environment, and throttles repeat notifications. It does not record the report and it does not send a notification: honest-observe records the report as an event, and honest-alerts delivers any notification the policy calls for.
 
-honest-errors owns the shape of a failure report and the policy that decides what happens to one: the normalization, the environment-to-behavior decision, and the throttle. honest-observe uses the normalizers; honest-alerts uses the behavior table and the rate-limiter; both read the same `ExceptionReport` type.
+honest-errors owns the shape of a failure report and the policy that decides what happens to one: the normalization, the environment-to-behavior decision, and the throttle. It also owns the boundary a failure arrives through. A browser error hook or a server error handler catches a failure and calls honest-errors' `capture` door with the raw payload; `capture` runs the whole policy and returns one `FailurePolicy` record carrying the normalized report, the behaviors for the environment, the throttle decision, the next throttle state, and the rendered email body. honest-observe records the report from that result and honest-alerts delivers from it; both read the same `ExceptionReport` type.
 
 ### 1.1 The abstract requirement
 
@@ -28,12 +28,12 @@ honest-errors turns the question "what do we do when something breaks?" into dat
 
 ### 1.3 Relationship to honest-observe and honest-alerts
 
-honest-observe and honest-alerts each use a part of honest-errors. It depends on neither.
+honest-errors owns the capture boundary and the policy composition. honest-observe and honest-alerts consume the one `FailurePolicy` that the `capture` door returns. honest-errors depends on neither.
 
-| Consumer | What it composes from honest-errors |
+| Consumer | What it takes from a `FailurePolicy` |
 |---|---|
-| **honest-observe** | The normalizers. A raw failure payload is classified into an `ExceptionReport`, which observe records as an error event in its log (observe owns `@catch_at_boundary` and the event envelope; honest-errors owns the *shape* of the report). |
-| **honest-alerts** | The behavior table and the rate-limiter. The orchestrator that handles a report reads `behaviors_for(environment)` to decide whether the report warrants a notification, and `check_rate_limit(...)` to decide whether to suppress a repeat. It hands an `email` behavior to honest-alerts as a `Message`, which the `AlertRoute` table routes. |
+| **honest-observe** | The `report`. honest-observe records the normalized `ExceptionReport` as an error event, owning the event envelope, the sequence number, and the log. honest-errors owns the shape of the report; honest-observe owns the write. |
+| **honest-alerts** | The `behaviors`, the `decision`, and the `email_body`. When the policy warrants an email (the rendered `email_body` is non-empty, which honest-errors fills only when an `email` behavior applies and the throttle says send or a critical severity bypasses it), honest-alerts' supervisor delivers a `Message` built from the `email_body`. honest-errors owns the decision and the body; honest-alerts owns the transport. |
 
 ### 1.4 What honest-errors covers
 
@@ -43,14 +43,15 @@ honest-observe and honest-alerts each use a part of honest-errors. It depends on
 - Behavior policy: the environment → behaviors dispatch table and `behaviors_for`.
 - The rate-limiter: `dedup_key`, `new_state`, `check_rate_limit` (pure, state-threaded, injected clock).
 - The email-body formatter (a pure report → text rendering, for use by an `email` behavior).
+- The capture boundary and the policy composition: the `capture` door the world enters through, the `handle_failure` orchestrator that runs normalize → behaviors → throttle → render, and the combined `FailurePolicy` it returns.
 
 ### 1.5 What honest-errors does not cover
 
 - **Recording the report.** honest-observe writes it to the event log. honest-errors never logs.
 - **Sending a notification.** honest-alerts' supervisor delivers it over a channel. honest-errors never sends.
 - **Reading the environment or the clock.** The environment, the timestamp, and `now` are passed in as arguments. honest-errors never calls `os.getenv` or reads a wall clock inside a policy function.
-- **Capturing a fault.** A fault in the tree is never caught. It comes back to the orchestrator as a returned `Fault`, and the orchestrator decides whether a boundary raises it or an output boundary logs it. honest-errors makes neither decision.
-- **Capturing the exception.** The boundary (`@catch_at_boundary`, an HTTP error handler, a browser hook) catches; honest-errors only normalizes what it is handed.
+- **Deciding raise-versus-log for a fault.** When a normalizer or the policy returns a `Fault`, `capture` returns that `Fault` to its caller; it never raises and never logs. Whether the host re-raises the fault at its own boundary or records it is the host's decision, not honest-errors'.
+- **Installing the catch.** honest-errors owns the `capture` door, not the host hook that calls it. A browser's `window.onerror`, an HTTP framework's error handler, or `@catch_at_boundary` is the host's; it catches the raw failure and calls `capture`. honest-errors receives the payload at the door and normalizes it; it never registers itself with the browser or the server.
 
 ---
 
@@ -101,17 +102,15 @@ SUPPRESS_REASONS = { rate_limit_hourly, rate_limit_dedup }     # frozenset
 ## 3. Normalization
 
 ```
-classify_js_payload(payload, environment, timestamp) -> Result[ExceptionReport]
-classify_py_payload(payload, environment, timestamp) -> Result[ExceptionReport]
+classify_js_payload(payload, environment, timestamp) -> ExceptionReport | Fault
+classify_py_payload(payload, environment, timestamp) -> ExceptionReport | Fault
 ```
 
-```
-Result[ExceptionReport] = { "ok": ExceptionReport } | { "err": Fault }
-```
+A normalizer returns the `ExceptionReport` on success or a `Fault` on failure, as a union carried by the return value, the framework's fault-by-return convention (honest-type returns `X | Fault` the same way). There is no `{ "ok" } | { "err" }` wrapper: the success type stays visible in the signature.
 
 **Normative change from the prototype.** `environment` and `timestamp` are **arguments**, not read inside the function from `os.getenv` / the system clock. The prototype's translators smuggle both in as hidden I/O; that is the single I/O-at-boundary violation the spec corrects. The boundary that catches the failure already knows the environment and the time; it passes them in.
 
-Each function validates the raw payload against the required keys for its shape and returns `{ "err": Fault(code="malformed_payload", ...) }` when a required key is absent, otherwise `{ "ok": ExceptionReport }`. Severity for the Python path defaults to `error`; for the JS path it is derived from the payload (a message marked `critical` yields `critical`, else `error`) via a small predicate — not an `if` ladder that would grow per rule.
+Each function validates the raw payload against the required keys for its shape and returns a `Fault(code="malformed_payload", ...)` when a required key is absent, otherwise the `ExceptionReport`. Severity for the Python path defaults to `error`. For the JS path a small predicate derives it from the payload: a message is marked `critical` when its text contains the token `critical`, matched case-insensitively, and such a message yields `critical` while every other message yields `error`. It is a predicate, not an `if` ladder that would grow a branch per rule.
 
 ### 3.1 `should_bypass_dedup`
 
@@ -186,13 +185,21 @@ A pure rendering of a report to plain text (severity, environment, time, type, m
 
 ## 7. Composition Contracts
 
-honest-errors is pure; the I/O lives in the consumers.
+A failure enters through honest-errors' `capture` boundary and leaves as one `FailurePolicy`. The host catches the failure and calls the door; honest-errors runs the whole policy and returns the result; the consumers read it. The normalize-decide-throttle composition is honest-errors' own, in its `handle_failure` orchestrator, not scattered across the consumers.
 
-**With honest-observe (capture):**
+**The door and its result:**
 
 ```
-report = classify_py_payload(payload, environment, timestamp)        # honest-errors
-observe.emit("he.error.captured", report)                            # honest-observe owns the write
+policy = capture(source, payload, environment, timestamp, config, state, now)   # honest-errors
+# policy: FailurePolicy { report, behaviors, decision, next_state, email_body }
+```
+
+`capture` is called by the host's error hook — a browser's `window.onerror`, or a server's error boundary such as `@catch_at_boundary`. It forwards the raw payload to `handle_failure`, which normalizes the payload for its `source`, reads `behaviors_for(environment)`, throttles with `check_rate_limit(dedup_key(report), config, state, now)`, and renders `format_email_body(report)` only when an email is warranted: the environment's policy includes an `email` behavior **and** either the throttle says send or a critical severity bypasses the throttle (`should_bypass_dedup`). An environment with no `email` behavior never carries an email body, however the throttle decides. It returns one `FailurePolicy`. A malformed payload, an unknown environment, or a `source` that matches no normalizer comes back as a `Fault` instead (codes `malformed_payload`, `unknown_environment`, `unknown_source`), never a raised exception.
+
+**With honest-observe (recording):**
+
+```
+observe.emit("he.error.captured", policy.report)      # honest-observe owns the write
 ```
 
 The `ExceptionReport` is the payload of an error event. honest-observe owns the envelope, the sequence number, and the log; honest-errors owns the report shape.
@@ -200,14 +207,11 @@ The `ExceptionReport` is the payload of an error event. honest-observe owns the 
 **With honest-alerts (delivery):**
 
 ```
-for behavior in behaviors_for(environment):                          # honest-errors
-    if behavior.name == "email":
-        decision, state = check_rate_limit(dedup_key(report), config, state, now)   # honest-errors
-        if decision.should_send or should_bypass_dedup(report.severity):
-            alerts.supervisor.deliver(Message(body=format_email_body(report), ...))  # honest-alerts owns the send
+if policy.email_body:                                  # non-empty only when the policy has an email behavior and the send is warranted
+    alerts.supervisor.deliver(Message(body=policy.email_body, ...))   # honest-alerts owns the send
 ```
 
-honest-alerts' supervisor (honest-alerts §1.1) is the general delivery mechanism; honest-errors supplies the *decision* (which behaviors, send-or-suppress) and the *body*, never the transport.
+honest-alerts' supervisor (honest-alerts §1.1) is the general delivery mechanism; honest-errors supplies the decision (which behaviors, send-or-suppress) and the body, never the transport. The throttle state threads forward through `policy.next_state`: the host passes it as `state` on the next `capture` call.
 
 ---
 
@@ -216,12 +220,14 @@ honest-alerts' supervisor (honest-alerts §1.1) is the general delivery mechanis
 A spoke's honest-errors is conformant iff:
 
 1. **One report shape.** Both normalizers produce the `ExceptionReport` of §2 with identical field decomposition.
-2. **Faults as data.** `classify_js_payload` / `classify_py_payload` **return** a `Result`; a malformed payload yields `{ "err": Fault }`, never a raised exception. `behaviors_for` returns a `Fault` for an unknown environment, never a raised exception.
+2. **Faults as data, by union.** Every function that can fail returns its success value or a `Fault` as a bare union, never a raised exception and never an `{ "ok" } | { "err" }` wrapper; a `Fault` is a record carrying a `code` and a `message`. `classify_js_payload` / `classify_py_payload` return the `ExceptionReport` or a `malformed_payload` fault; `behaviors_for` returns its list or an `unknown_environment` fault; `handle_failure` / `capture` return a `FailurePolicy` or one of those faults, or an `unknown_source` fault when `source` matches no normalizer.
 3. **No hidden I/O.** No policy function reads the environment, the clock, or any external source; `environment`, `timestamp`, and `now` are arguments.
 4. **Bounded vocabularies.** `SEVERITIES`, `ENVIRONMENTS`, `BEHAVIOR_NAMES`, `SUPPRESS_REASONS` match this spec exactly and are frozensets.
 5. **Dispatch, not ladders.** `behaviors_for` is a dict lookup that returns an `unknown_environment` fault for an environment the table does not carry, never a default; severity derivation is a predicate, not an `if/elif` discriminant chain.
-6. **Pure throttle.** `check_rate_limit` returns `(decision, new_state)`, never mutates its state argument, takes `now` as an argument, and reports suppression as data.
+6. **Pure throttle.** `check_rate_limit` returns a `RateLimitOutcome` record `{ decision, next_state }`, never mutates its state argument, takes `now` as an argument, and reports suppression as data (`reason` is `None` on send, a `SUPPRESS_REASONS` word on suppress).
 7. **No delivery, no recording.** The module never logs and never sends; those are honest-observe and honest-alerts respectively.
+8. **Capture at a boundary, one combined result.** A failure enters through a `capture` boundary, the normalize-decide-throttle composition lives in honest-errors' orchestrator, and the orchestrator returns one `FailurePolicy` (report, behaviors, decision, next state, email body). The consumers read that result; they do not re-implement the composition.
+9. **Email body only when an email is warranted.** `FailurePolicy.email_body` is non-empty if and only if the environment's policy includes an `email` behavior **and** either the throttle says send or a critical severity bypasses it. An environment whose policy is log-only never carries an email body, whatever the throttle decides.
 
 The cross-tier test-of-record lives in `specs/honest-conformance-suite.md`.
 

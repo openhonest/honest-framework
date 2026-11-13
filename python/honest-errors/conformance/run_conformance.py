@@ -1,9 +1,16 @@
-"""honest-errors conformance runner (spec sections 2-6).
+"""honest-errors conformance runner (spec sections 2-7).
 
 Each case is data: one discriminator key names its kind, and the matching `_check_*` drives the real
 function and compares against the expected value. The value cases here pin exact behaviour the spec
 fixes; the deeper properties (every severity, every environment, the rate-limiter's state threading
-and no-mutation guarantee, each required payload key) are in laws_he.py.
+and no-mutation guarantee, each required payload key, the orchestrator's decision paths) are in
+laws_he.py.
+
+The module owns a `capture` door and a `handle_failure` orchestrator, and carries faults by return as
+a bare `X | Fault` union (honest-type's convention): a normalizer answers an `ExceptionReport` or a
+`Fault`, the orchestrator answers a `FailurePolicy` or a `Fault`, and a result carrying a `"code"`
+key is the fault arm. `check_rate_limit` answers a `RateLimitOutcome` record `{decision, next_state}`,
+and a sending decision carries `reason` `None`.
 
   uv run --package honest-errors python honest-errors/conformance/run_conformance.py
 """
@@ -15,19 +22,23 @@ from pathlib import Path
 import honest_errors
 from honest_errors import (
     behaviors_for,
+    capture,
     check_rate_limit,
     classify_js_payload,
     classify_py_payload,
     dedup_key,
     format_email_body,
+    handle_failure,
+    js_severity,
     new_state,
     should_bypass_dedup,
 )
 
-# The twelve-name public surface the spec names: the eight functions (§3-§6) and the four bounded
-# vocabularies (§2.1). The exports case checks each is importable, without pinning __all__ exactly,
-# because whether the IR TypedDicts also sit in __all__ is not fixed by the spec.
+# The public surface the spec names: the ten functions (§3-§7) and the four bounded vocabularies
+# (§2.1). The exports case checks each is importable, without pinning __all__ exactly, because
+# whether the IR TypedDicts also sit in __all__ is not fixed by the spec.
 _PUBLIC = (
+    "js_severity",
     "classify_js_payload",
     "classify_py_payload",
     "should_bypass_dedup",
@@ -36,11 +47,26 @@ _PUBLIC = (
     "new_state",
     "check_rate_limit",
     "format_email_body",
+    "handle_failure",
+    "capture",
     "SEVERITIES",
     "ENVIRONMENTS",
     "BEHAVIOR_NAMES",
     "SUPPRESS_REASONS",
 )
+
+_REPORT_FIELDS = {
+    "exception_type", "message", "severity", "environment",
+    "file", "line", "function", "traceback", "context", "timestamp",
+}
+
+_POLICY_FIELDS = {"report", "behaviors", "decision", "next_state", "email_body"}
+
+
+def _is_fault(value):
+    """A fault arm is a dict carrying a `code`. Neither an ExceptionReport nor a FailurePolicy has a
+    `code` field, so the key disambiguates the union without a wrapper."""
+    return isinstance(value, dict) and "code" in value
 
 
 def _check_vocab(case):
@@ -54,35 +80,33 @@ def _check_vocab(case):
 
 
 def _check_exports(case):
-    """The public surface (§1.4, §2.1, §3-§6): every listed name resolves as a real attribute."""
+    """The public surface (§1.4, §2.1, §3-§7): every listed name resolves as a real attribute."""
     missing = [name for name in case["expect_names"] if not hasattr(honest_errors, name)]
     return not missing, f"not importable from honest_errors: {missing}"
 
 
+def _check_jsseverity(case):
+    actual = js_severity(case["message"])
+    return actual == case["expect"], f"js_severity({case['message']!r}) = {actual!r}, expected {case['expect']!r}"
+
+
 def _check_jsclassify(case):
-    result = classify_js_payload(case["payload"], case["environment"], case["timestamp"])
-    return _check_classify_result(case, result)
+    return _check_classify_result(case, classify_js_payload(case["payload"], case["environment"], case["timestamp"]))
 
 
 def _check_pyclassify(case):
-    result = classify_py_payload(case["payload"], case["environment"], case["timestamp"])
-    return _check_classify_result(case, result)
+    return _check_classify_result(case, classify_py_payload(case["payload"], case["environment"], case["timestamp"]))
 
 
 def _check_classify_result(case, result):
     if case["expect"] == "err":
-        if "err" not in result:
-            return False, f"expected err, got {result!r}"
-        code = result["err"].get("code")
-        return code == case["expect_code"], f"err code = {code!r}, expected {case['expect_code']!r}"
-    if "ok" not in result:
-        return False, f"expected ok, got {result!r}"
-    report = result["ok"]
-    fields = {
-        "exception_type", "message", "severity", "environment",
-        "file", "line", "function", "traceback", "context", "timestamp",
-    }
-    if set(report.keys()) != fields:
+        if not _is_fault(result):
+            return False, f"expected a Fault, got {result!r}"
+        return result["code"] == case["expect_code"], f"err code = {result.get('code')!r}, expected {case['expect_code']!r}"
+    if _is_fault(result) or not isinstance(result, dict):
+        return False, f"expected an ExceptionReport, got {result!r}"
+    report = result
+    if set(report.keys()) != _REPORT_FIELDS:
         return False, f"report keys = {sorted(report.keys())}, expected the ten canonical fields"
     if report["environment"] != case["environment"]:
         return False, f"environment = {report['environment']!r}, expected the supplied {case['environment']!r}"
@@ -105,7 +129,7 @@ def _check_bypass(case):
 def _check_behaviors(case):
     result = behaviors_for(case["environment"])
     if case["expect"] == "err":
-        if not isinstance(result, dict) or "code" not in result:
+        if not _is_fault(result):
             return False, f"expected a Fault, got {result!r}"
         return result["code"] == case["expect_code"], f"fault code = {result.get('code')!r}, expected {case['expect_code']!r}"
     return result == case["expect_list"], f"got {result!r}, expected {case['expect_list']!r}"
@@ -122,7 +146,9 @@ def _check_newstate(case):
 
 
 def _check_ratelimit(case):
-    decision, state = check_rate_limit(case["key"], case["config"], case["state"], case["now"])
+    outcome = check_rate_limit(case["key"], case["config"], case["state"], case["now"])
+    decision = outcome["decision"]
+    state = outcome["next_state"]
     if decision["should_send"] is not case["expect_should_send"]:
         return False, f"should_send = {decision['should_send']!r}, expected {case['expect_should_send']!r}"
     if decision["reason"] != case["expect_reason"]:
@@ -142,9 +168,47 @@ def _check_emailbody(case):
     return not missing, f"body missing substrings {missing}: {body!r}"
 
 
+def _hf_args(case):
+    return (
+        case["source"], case["payload"], case["environment"], case["timestamp"],
+        case["config"], case["state"], case["now"],
+    )
+
+
+def _check_handle_failure(case):
+    return _check_policy_result(case, handle_failure(*_hf_args(case)))
+
+
+def _check_policy_result(case, result):
+    if case["expect"] == "err":
+        if not _is_fault(result):
+            return False, f"expected a Fault, got {result!r}"
+        return result["code"] == case["expect_code"], f"err code = {result.get('code')!r}, expected {case['expect_code']!r}"
+    if _is_fault(result) or not isinstance(result, dict):
+        return False, f"expected a FailurePolicy, got {result!r}"
+    policy = result
+    if set(policy.keys()) != _POLICY_FIELDS:
+        return False, f"policy keys = {sorted(policy.keys())}, expected {sorted(_POLICY_FIELDS)}"
+    if policy["decision"]["should_send"] is not case["expect_should_send"]:
+        return False, f"should_send = {policy['decision']['should_send']!r}, expected {case['expect_should_send']!r}"
+    has_body = bool(policy["email_body"])
+    if has_body is not case["expect_email_nonempty"]:
+        return False, f"email_body non-empty = {has_body!r}, expected {case['expect_email_nonempty']!r} (body {policy['email_body']!r})"
+    return True, f"policy {policy!r}"
+
+
+def _check_capture(case):
+    """capture transforms nothing: it forwards to handle_failure and returns exactly that."""
+    args = _hf_args(case)
+    cap = capture(*args)
+    hf = handle_failure(*args)
+    return cap == hf, f"capture != handle_failure:\n  capture = {cap!r}\n  handle_failure = {hf!r}"
+
+
 _CHECKERS = {
     "vocab": _check_vocab,
     "exports": _check_exports,
+    "jsseverity": _check_jsseverity,
     "jsclassify": _check_jsclassify,
     "pyclassify": _check_pyclassify,
     "bypass": _check_bypass,
@@ -153,6 +217,8 @@ _CHECKERS = {
     "newstate": _check_newstate,
     "ratelimit": _check_ratelimit,
     "emailbody": _check_emailbody,
+    "handle_failure": _check_handle_failure,
+    "capture": _check_capture,
 }
 
 

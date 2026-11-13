@@ -1,12 +1,16 @@
-"""The rate-limiter (spec section 5). A pure, state-threaded throttle: no class, no lock, no module
-global. The caller owns the state and threads it forward; now is an argument, never a clock read.
-Suppression is returned as data (RateLimitDecision), never an exception or a silent drop.
+"""The rate-limiter (architecture section 5).
+
+A pure, state-threaded throttle: no class, no lock, no module-global state. The caller owns the state
+and threads it forward. check_rate_limit takes now as an argument, returns a RateLimitOutcome holding
+the decision and a new state, reports suppression as data, and never mutates its state argument.
 """
+
+_ONE_HOUR_SECONDS = 3600
 
 
 def dedup_key(report):
-    """Project the throttle's identity out of a report (spec section 5): the exception_type, file and
-    line that decide whether two failures are the same for deduplication."""
+    """Build the de-duplication identity of a report (section 5): a DedupKey carrying the report's
+    exception_type, file and line. Two reports with the same three values are the same failure."""
     return {
         "exception_type": report["exception_type"],
         "file": report["file"],
@@ -15,36 +19,37 @@ def dedup_key(report):
 
 
 def new_state():
-    """Build the throttle's empty starting state (spec section 5): an empty dedup cache and an empty
-    list of hourly sends, the seed the caller threads forward."""
+    """A fresh, empty throttle state (section 5): empty dedup_cache, empty hourly_sends. The host calls
+    this once to seed the state it then threads through capture."""
     return {"dedup_cache": {}, "hourly_sends": []}
 
 
 def check_rate_limit(key, config, state, now):
-    """Decide whether a send may go out and return the decision together with the next state (spec
-    section 5). Computes in order: prune hourly_sends older than one hour relative to now; if the
-    hourly count is at max_per_hour, suppress rate_limit_hourly; if this key fired within
-    dedup_window_seconds, suppress rate_limit_dedup; otherwise record the send, prune stale dedup
-    entries, and allow with the empty reason. Returns a new State and never mutates the one given."""
-
-    def _serialize(dedup):
-        return f"{dedup['exception_type']}|{dedup['file']}|{dedup['line']}"
-
-    one_hour = 3600
-    window = config["dedup_window_seconds"]
-    max_per_hour = config["max_per_hour"]
-    serial = _serialize(key)
-    pruned_hourly = [sent for sent in state["hourly_sends"] if now - sent < one_hour]
-
-    if len(pruned_hourly) >= max_per_hour:
-        next_state = {"dedup_cache": dict(state["dedup_cache"]), "hourly_sends": pruned_hourly}
-        return ({"should_send": False, "reason": "rate_limit_hourly"}, next_state)
-
-    if serial in state["dedup_cache"] and now - state["dedup_cache"][serial] < window:
-        next_state = {"dedup_cache": dict(state["dedup_cache"]), "hourly_sends": pruned_hourly}
-        return ({"should_send": False, "reason": "rate_limit_dedup"}, next_state)
-
-    fresh_cache = {seen: fired for seen, fired in state["dedup_cache"].items() if now - fired < window}
-    fresh_cache[serial] = now
-    next_state = {"dedup_cache": fresh_cache, "hourly_sends": pruned_hourly + [now]}
-    return ({"should_send": True, "reason": ""}, next_state)
+    """The pure, state-threaded throttle (section 5). It (1) prunes hourly_sends older than one hour
+    relative to now; (2) if the hourly count is at max_per_hour, suppresses with reason
+    'rate_limit_hourly'; (3) else if this key fired within dedup_window_seconds, suppresses with reason
+    'rate_limit_dedup'; (4) otherwise records the send, prunes stale dedup entries, and allows with
+    reason None. It returns a RateLimitOutcome and never mutates its state argument."""
+    serialized = "|".join([key["exception_type"], key["file"], str(key["line"])])
+    recent = [sent for sent in state["hourly_sends"] if now - sent <= _ONE_HOUR_SECONDS]
+    if len(recent) >= config["max_per_hour"]:
+        return {
+            "decision": {"should_send": False, "reason": "rate_limit_hourly"},
+            "next_state": {"dedup_cache": dict(state["dedup_cache"]), "hourly_sends": recent},
+        }
+    last_fired = state["dedup_cache"].get(serialized)
+    if last_fired is not None and now - last_fired < config["dedup_window_seconds"]:
+        return {
+            "decision": {"should_send": False, "reason": "rate_limit_dedup"},
+            "next_state": {"dedup_cache": dict(state["dedup_cache"]), "hourly_sends": recent},
+        }
+    fresh_cache = {
+        serial: fired
+        for serial, fired in state["dedup_cache"].items()
+        if now - fired < config["dedup_window_seconds"]
+    }
+    fresh_cache[serialized] = now
+    return {
+        "decision": {"should_send": True, "reason": None},
+        "next_state": {"dedup_cache": fresh_cache, "hourly_sends": recent + [now]},
+    }
