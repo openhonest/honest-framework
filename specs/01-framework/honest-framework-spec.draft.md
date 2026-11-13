@@ -121,7 +121,7 @@ You cannot demonstrate correctness directly; you can make whole categories of in
 - **The input boundary is closed.** This does not mean listing every valid input; it means there is no channel the framework cannot inspect. A catch-all recognizer is rejected, so an unbounded input cannot even be declared.
 - **User state is declared in the templates, never discovered at runtime.** The templates say which parts of the page are user state, and generation is deterministic, so it is statically knowable and checkable.
 - **Every reference resolves, or the gate stops.** A reference that points at nothing fails the build.
-- **Mutation adequacy.** honest-test makes small deliberate changes to the code, called mutations, and runs the tests against each one. If a mutation passes every test, the code it changed is not really tested, and the build stops. A test that compares a value with itself can never fail, so it gets caught the same way.
+- **Mutation adequacy.** honest-test makes small deliberate changes to the code, called mutations, and runs the tests against each one. If a mutation passes every test, the code it changed is not really tested, and the build stops. A test that compares a value with itself can never fail, so every mutation passes it, and honest-test reports it as a test that checks nothing.
 - ***Poka-yoke*** is the design expression: every capability is defined by the category of bug it makes structurally impossible (`principles/poka-yoke.md`).
 - **Root-cause analysis** is the debugging expression: not "X is the root cause" (a positive, unfalsifiable claim) but "under a stated evidence set and method, no upstream cause was found" (`methodology/root-cause-analysis.md`).
 
