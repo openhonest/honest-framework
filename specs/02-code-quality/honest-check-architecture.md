@@ -2111,3 +2111,71 @@ honest-check: adoption level Boundary — 17 of 53 rules enforced.
 ```
 
 **Ordering.** Suppression is resolved first (section 7.4), then the level is applied. A suppressed diagnostic keeps its directive alive whether or not its rule is enforced at the current level, so raising or lowering a level never makes a live directive look dead.
+
+---
+
+## 10. Declaration Provenance (Staleness)
+
+### 10.1 The question this answers, and the one it does not
+
+Sections 2 through 9 answer one question: does this code, read now, obey this declaration, read now? That question has no memory. A `.hd` edited five minutes ago and code written against the version from yesterday both look the same to `check_source` and to the crossing rules — each reads its two inputs fresh and says whether they agree. HC-REF005 says so explicitly in its own right: a declared name the code has not caught up to yet is "the allowed lag," and the gate stays quiet on it on purpose, because the build order is declaration first, code after, and a `.hd` running ahead of its code is correct, not a fault.
+
+That design is right for its question. It is the wrong instrument for a different one: was this artifact actually generated from the declaration as it now stands, or does it only look compatible with the declaration's current shape by coincidence, having in truth been generated from an earlier version that has since changed underneath it? A `.hd` revised to add a fault arm, change a return type, or rename a function can still parse, still validate clean on its own, and still cross cleanly against a feature file, a test, or an implementation that were written before the revision and never regenerated — provided nothing in the old artifact happens to touch the part that changed. Section 2 through 9's rules compare shapes; they were never built to compare history, and widening them to do so would blur the one-directional lag HC-REF005 depends on. This section specifies a second, independent gate for that second question. It does not replace the crossing rules. It runs beside them.
+
+### 10.2 What is stamped, and where
+
+Every artifact generated downstream of a `.hd` — a feature file, a test file, an implementation file — carries a provenance stamp recording the hash (10.3) of the exact `.hd` state it was generated from. The stamp is a single line, in that file's own comment syntax, placed as the first line of the file:
+
+```
+# hd-provenance: <module-path>@<hash>
+```
+
+`<module-path>` is the `.hd` file's path, exactly as named in the `--declaration` argument the generating agent read it from. `<hash>` is the hex-encoded hash from 10.3. Gherkin's `#` and Python's `#` both admit this line unchanged; a language whose comment syntax differs uses that language's own leading comment marker, same field order, same key.
+
+The stamp names one `.hd`, not a chain of predecessors. A test file's stamp names the `.hd`, not the feature file it was written from, and an implementation's stamp names the `.hd`, not the test. Every artifact is checked against the one root declaration directly — never against its immediate predecessor — so staleness in a feature file can never mask staleness in the test or the implementation beneath it, and a gap in one link of the authoring chain never widens into a blind spot for the links after it.
+
+A file carries exactly one stamp. A file regenerated in place replaces its stamp; it does not accumulate a second line.
+
+### 10.3 The hash: canonical IR, not raw bytes
+
+The hash is taken over the parsed declaration, not the `.hd` file's text. `read_declaration` (9.5, `readers.py`) already parses a `.hd` to the IR honest-design owns; this gate canonicalizes that same IR and hashes the canonical form:
+
+1. Parse the `.hd` with `read_hd`, exactly as `read_declaration` does, and take `parsed["ok"]["modules"][0]` — the same Declaration this gate's own callers already read.
+2. Render that Declaration as JSON with sorted object keys at every level, no insignificant whitespace, UTF-8 encoding, and no trailing newline. This is `json.dumps(declaration, sort_keys=True, separators=(",", ":"))` under Python's own json module, or the equivalent canonical form in another implementation — the requirement is the output, not the call, so an implementation in another language reproduces the same sorted-key, whitespace-free, UTF-8 rendering rather than this exact function.
+3. Hash the resulting bytes with SHA-256 and hex-encode the digest. SHA-256 is the existing choice elsewhere in the framework (the ledger's hash-chain); this gate uses the same primitive rather than introducing a second one.
+
+Hashing the parsed IR rather than the file's raw bytes is the one property this whole gate depends on: a comment reflowed, a note's wording tightened, or whitespace changed inside the `.hd` produces an unchanged IR and an unchanged hash, so a cosmetic edit never trips staleness. A change that alters what the IR actually says — a new fault arm, a changed return type, a renamed function, a note whose content changes a declared field — changes the IR and the hash with it. The canonicalization step exists only to make that distinction, and nothing else is asked of it.
+
+### 10.4 Verdicts
+
+Given a `.hd` and an artifact that carries a stamp naming it, the gate reads the stamp, computes the `.hd`'s current hash per 10.3, and returns exactly one of three verdicts:
+
+- **`fresh`** — the artifact's stamped hash equals the `.hd`'s current hash. The artifact was generated from the declaration as it now stands.
+- **`stale`** — the artifact carries a stamp naming this `.hd`, but the stamped hash does not equal the `.hd`'s current hash. The `.hd` has changed since this artifact was generated from it.
+- **`unstamped`** — the artifact carries no provenance line at all, or its first line does not parse as one.
+
+**`stale` and `unstamped` both fail the gate.** An artifact that has never been stamped gives no evidence it was ever generated from any version of this `.hd` — treating it as presumptively fresh would readmit exactly the hole this gate exists to close, by the easiest possible route: never stamp anything, and the check can never catch staleness because it can never establish a baseline. Fail-closed is not a conservative default chosen for safety; it is the only verdict consistent with what `unstamped` actually means, which is "unknown," not "assumed current."
+
+A `.hd` with no downstream artifact yet is not checked — the gate runs on an existing artifact's claim, and a file that does not exist makes no claim. This is a different case from `unstamped`: a feature file not yet written is simply absent from the run; a feature file that exists but was never stamped is present and fails.
+
+### 10.5 Who stamps, and when
+
+`feature-author`, `test-author`, and `honest-coder` each write the provenance line into their own output, and only into their own output — a generating agent stamps what it generates, never what another agent generates.
+
+Each stamps at the same point in its run: immediately before the file is written to disk for the last time in that run, reading the `.hd`'s hash fresh at that moment rather than reusing a hash read earlier in a long-running session. A session that reads the `.hd`, works for several minutes, and only then writes its output must re-hash at write time — the `.hd` the agent opened at the start of its run is not guaranteed to be the `.hd` that exists when the file is actually written, and the stamp's entire purpose is to record the latter, not the former.
+
+A stage that revises only some scenarios or some functions — the common case, since a `.hd` revision usually touches a handful of functions, not the whole module — restamps only the files it actually rewrites. A test file untouched by this round keeps its existing stamp, which still correctly names the `.hd` state it was actually generated from; restamping it without regenerating its content would be a false claim in the other direction, asserting freshness a file that was never re-examined hasn't earned.
+
+### 10.6 Invocation
+
+This is a separate command from `check_source` and the crossing rules, not a new numbered `HC-R` rule: it reads Gherkin feature files and test files, which `check_source`'s AST analysis does not parse, and it compares an artifact against history rather than a code body against a declaration in the present tense — a different shape of question from everything in sections 4 and 9.
+
+```
+honest-check provenance --declaration <path/to/module.hd> <artifact-path> [<artifact-path> ...]
+```
+
+Exit code 0 only if every named artifact verdicts `fresh`. Exit code 2 if any artifact verdicts `stale` or `unstamped`, with the output naming each failing artifact and its verdict. `--format json` follows the same envelope as `--format json` elsewhere in this document (section 6.2), with a `provenance` array replacing `diagnostics`, one entry per artifact, each carrying `path`, `verdict`, and — for `stale` — both the stamped hash and the `.hd`'s current hash, so a caller can show what changed without re-deriving it.
+
+### 10.7 Why this does not weaken section 1's guarantee
+
+The framework's governing claim is that the map cannot drift from the code because there is no second copy for it to drift from. A provenance stamp is a second copy — of a hash, not of the declaration's content — and admitting it is a real exception to that claim, not a cosmetic one. It is accepted on three grounds, each necessary and none sufficient alone: the stamp is narrow, carrying nothing but a hash, so it cannot itself become a second source of truth about what the declaration says; it is self-validating, since its only use is to be compared against the thing it claims to describe and found wanting, never trusted on its own; and it answers a question sections 2 through 10.6 genuinely cannot answer by design, since every existing rule reads both its inputs in the present tense and HC-REF005 depends on that being true. A mechanism that exists solely to catch its own drift, and that asserts nothing when it is absent beyond "unknown, treat as failing," is the narrowest form a second copy can take.
