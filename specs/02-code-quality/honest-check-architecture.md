@@ -12,6 +12,12 @@ honest-check is the **pre-auto-generation** verification layer of the Honest Fra
 
 If yes — the code is honest. Auto-generation proceeds; honest-test runs the generated suite. If no — the code is **dishonest**. No test suite can be generated, so no testing can occur, so no shipping can occur. The code is rejected at the pre-commit boundary.
 
+### 1.1 Closed world, fail closed
+
+honest-check assumes a closed system. Everything except a runtime value is statically knowable once the AST is built, because every reference resolves to something the source declares: a dispatch table's handlers, a vocabulary's members, a template's search roots, the closed set a boundary classifies its input into. So honest-check never skips a construct it cannot resolve at first glance. It traces the reference to where its value is decided in the code it also reads, enumerates the closed set, and resolves every member. A `{% include some_var %}` is followed through the `render` call that set `some_var` to the closed vocabulary that variable ranges over, and each template the vocabulary admits is resolved against the roots. The only thing that is not knowable is a value, and a value is never a reference: plain content interpolation such as `{{ user.name }}` printed as text is data, and nothing touches it.
+
+When a trace reaches a source that is not closed (an unbounded input, a reference whose target is a free runtime value, an indirection whose target the source does not fix), the closed-world assumption is false at that point, and honest-check raises the alarm at once instead of skipping. It reports the failure at the unclosed source, the boundary that admitted an unbounded value, not at the use site downstream. A skip certifies nothing while reading as a pass, which is the opposite of the checker's job: it proves a forbidden shape is absent, and it cannot prove absence through a construct it declined to read. There is therefore no "dynamic, so skipped" bound anywhere in honest-check; where earlier rule text called such a skip "the stated bound of the check," that bound is removed, and the construct is traced or it fails.
+
 Every HC rule is a precondition for auto-generation. Each rule, when it fires, names one reason auto-generation cannot produce a complete suite:
 
 | Rule family | What auto-generation cannot do when the rule fires |
@@ -498,7 +504,7 @@ These rules require reading and analyzing source files. They fire in CLI and LSP
 | HC010 | Warning | ✓ | Declared emission never produced |
 | HC-SM03 | Warning | ✓ | Unreachable state |
 | HC-SM04 | Warning | ✓ | Dead state (no outgoing transitions) |
-| HC-P001 | Error | ✓ | if/elif/else dispatch chain |
+| HC-P001 | Error | ✓ | any `if` (a branch not expressed as a dispatch table) |
 | HC-P002 | Error | ✓ | Exception caught in non-boundary function |
 | HC-P003 | Error | ✓ | Class declaration (inheritance or bare class) |
 | HC-P004 | Error | ✓ | I/O inside non-boundary function |
@@ -1014,20 +1020,22 @@ FUNCTION check_state_machine_reachability(machine):
                 f"State '{state}' has no outgoing transitions and is not declared terminal")
 ```
 
-#### HC-P001 — if/elif/else dispatch chain
+#### HC-P001 — any conditional branch
+
+A conditional branch written as an `if` is a violation. There is no branch-count threshold and no dispatch-only exemption: a single `if` fails the commit. The rule covers every form the keyword takes — the `if`/`elif`/`else` statement, the conditional expression `a if cond else b`, and the `if` filter inside a comprehension. Branching is expressed as data: a value computed by a pure predicate or a recognizer, used to index a dispatch table of functions or values, which honest-check can enumerate. Control flow the AST cannot read as a table is the bug category this eliminates.
 
 ```
 FUNCTION check_HC_P001(ast):
-    FOR EACH if_node IN ast.all_if_statements:
-        branches ← count_elif_else_branches(if_node)
-        IF branches >= 3:
-            IF condition_dispatches_on_value(if_node):
-                EMIT error(HC-P001, if_node.location,
-                    "if/elif/else chain dispatches on value — use dict lookup. "
-                    "See honest-code-principles.md §3.")
+    forbidden ← { if_statement, elif_clause, conditional_expression, comprehension_if }
+    FOR EACH node IN ast.all_nodes:
+        EMIT_WHEN node.type IN forbidden:
+            error(HC-P001, node.location,
+                "a branch written as `if` is not data. Compute a key with a pure "
+                "predicate or recognizer and index a dispatch table of functions or "
+                "values. See honest-code-principles.md §3.")
 ```
 
-Detection: three or more string/enum equality tests on the same variable, e.g. `if x == "a": ... elif x == "b": ... elif x == "c":`.
+Detection: the presence of any `if` node of the four kinds above. A loop (`for`, `while`) is not a branch and is not caught. `else`/`elif` belong to the `if` statement that heads them. There is no analysis of what the condition tests, because the threshold is one: the keyword itself is the violation.
 
 #### HC-P002 — Exception caught in non-boundary function
 
@@ -1742,16 +1750,16 @@ The `@link` decorator / `link()` wrapper:
 
 The rules in section 4 are language-agnostic. This section maps each rule to its natural form in each target language. Implementors must support the canonical detection described in section 4; this section provides translation guidance to ensure no rule is accidentally missed due to syntactic differences.
 
-### 5.1 HC-P001: Dispatch Chain
+### 5.1 HC-P001: Any Conditional Branch
 
 | Language | Pattern to detect |
 |---|---|
-| Python | `if x == "a": ... elif x == "b": ... elif x == "c":` |
-| JavaScript/TypeScript | `if (x === 'a') ... else if (x === 'b') ... else if (x === 'c')` |
-| Ruby | `if x == 'a' ... elsif x == 'b' ... elsif x == 'c'` |
-| Go | `if x == "a" ... else if x == "b" ... else if x == "c"` or `switch x { case "a": ... case "b": ... case "c": }` |
+| Python | any `if` / `elif` statement, the conditional expression `a if c else b`, and a comprehension `if`-filter |
+| JavaScript/TypeScript | any `if` / `else if` statement and the conditional `c ? a : b` |
+| Ruby | any `if` / `elsif` / `unless` statement and the modifier forms (`x if c`) |
+| Go | any `if` / `else if` statement |
 
-Note: Go `switch` statements are semantically dict lookups and are HC-P001 compliant. `if/else if` chains in Go are violations.
+Note: a `switch` / `case` statement over literal cases is a dict lookup written in keywords and is HC-P001 compliant; a single `if` in any language is a violation. The threshold is one: branching is expressed by computing a key and indexing a dispatch table, never by a conditional the AST cannot read as data. Loops (`for`, `while`) are not branches and are not caught.
 
 ### 5.2 HC-P002: Exception Caught in Non-Boundary Function
 
