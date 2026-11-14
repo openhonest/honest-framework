@@ -31,7 +31,62 @@ whole story while coolder carries copies.
 import pathlib
 import sys
 
-from honest_design import EdgeRoleRetired, edge_retirement, read_hd
+from honest_design import read_hd
+
+EDGE_SITES = (
+    "python/tree-sitter-honest-hd/grammar.js, the `role` choice",
+    "python/honest-design/src/honest_design/reader.py, _ROLE_COLUMN",
+    "python/honest-design/src/honest_design/validator.py, PURE_ROLES and _edge_role_withdrawn",
+    "products/architecture-explorer/build-map.py, the ROLES table and the two role_of reads",
+    "honest-check's HC-REF007, which accepts a seam onto a boundary_in or an edge",
+    "specs/02-code-quality/honest-design-architecture.md and honest-check-architecture.md",
+    "specs/rules.json and specs/features/honest-check.feature",
+)
+
+
+class EdgeRoleRetired(Exception):
+    """Raised when no declaration uses `edge` any more, so the machinery that supports it can go.
+
+    The role is withdrawn but the grammar still parses it, because deleting the word while 81
+    declarations still carry it would stop every tree parsing in the same moment. So the support
+    outlives the role on purpose, for exactly as long as a declaration needs it. It lives here
+    rather than in honest-design, which reads `.hd` files and does nothing else: this is a fact
+    about the state of a workspace, not about any declaration, and it raises where honest-design
+    returns faults as data.
+
+    A temporary allowance with nothing to end it becomes permanent, which is how `edge` lasted.
+    This is the thing that ends it: while an edge remains the check warns and names what is left,
+    and on the run where the last one goes it raises instead, naming every file still carrying
+    the word. Nobody has to remember, and the reminder cannot be satisfied by ignoring it.
+    """
+
+
+def edge_retirement(modules):
+    """Warn while any module still declares an edge; raise once none does.
+
+    `modules` is every module IR in view. Only main below calls it, and only over the trees it
+    was named, because no smaller view can tell a subset holding no edge from the last edge in
+    the workspace going. Returns the warning text while edges remain; reaching zero raises.
+    """
+    carrying = [(m["name"], f["name"]) for m in modules
+                for f in m["functions"] if f["role"] == "edge"]
+    if not carrying:
+        raise EdgeRoleRetired(
+            "No declaration uses the edge role any more, so delete the machinery that supports "
+            "it. Remove the word from: " + "; ".join(EDGE_SITES) + ". Then delete this script, "
+            "which exists only to reach this moment. It reads the modules it was handed, so "
+            "confirm it was handed every tree before acting on it"
+        )
+    by_module = {}
+    for module_name, function_name in carrying:
+        by_module.setdefault(module_name, []).append(function_name)
+    where = ", ".join(f"{name} ({len(fns)})" for name, fns in sorted(by_module.items()))
+    return (f"The edge role is withdrawn and {len(carrying)} declarations still use it: {where}. "
+            "Each one belongs to whoever calls it: a utility module of its own when many modules "
+            "import it, the importing module as a plain fn when one does, and nowhere at all "
+            "when nothing reaches it. This warning becomes an exception on the run where the "
+            "last edge goes, telling you to delete the grammar and the rest of the support")
+
 
 DEFAULT_TREES = (pathlib.Path(__file__).resolve().parent.parent,)
 SKIP = {".venv", "node_modules", ".git", "__pycache__"}

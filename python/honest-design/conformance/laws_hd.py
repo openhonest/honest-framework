@@ -671,10 +671,7 @@ def _probe_render():
 
 
 def _probe_public_surface():
-    # edge_retirement and EdgeRoleRetired joined the surface on 2026-11-14 and are the only two
-    # members with an end date: they exist to retire the edge role and are deleted with it.
-    if set(PUBLIC) != {"read_hd", "validate", "render", "reach", "ok", "err", "fault",
-                       "edge_retirement", "EdgeRoleRetired"}:
+    if set(PUBLIC) != {"read_hd", "validate", "render", "reach", "ok", "err", "fault"}:
         return [f"public surface drifted: {PUBLIC}"]
     return []
 
@@ -1039,23 +1036,6 @@ def _probe_edge():
         bad.append(f"the withdrawal fault says where the function belongs: {withdrawn[0]['message']}")
     if withdrawn and "utility module" not in withdrawn[0]["message"]:
         bad.append("the withdrawal fault names the utility-module case for a shared contract")
-    # The retirement check: a warning while an edge remains, an exception once none does. A
-    # temporary allowance with nothing to end it becomes permanent, which is how edge lasted.
-    from honest_design import edge_retirement, EdgeRoleRetired
-    still = _module('module m\n  type Node = foreign "tree-sitter"\n  edge fn e : (n: Node) -> str note "test"\n  entry "import m.g" -> e\n')
-    text = edge_retirement([still])
-    if "1 declarations still use it" not in text:
-        bad.append(f"the retirement check counts the edges still declared: {text}")
-    if "becomes an exception" not in text:
-        bad.append("the warning says it turns into an exception when the last edge goes")
-    gone = _module('module m\n  fn f : (x: str) -> str note "test"\n')
-    try:
-        edge_retirement([gone])
-        bad.append("with no edge left the retirement check raises rather than returning")
-    except EdgeRoleRetired as stop:
-        for site in ("grammar.js", "_ROLE_COLUMN", "HC-REF007", "build-map.py"):
-            if site not in str(stop):
-                bad.append(f"the retirement exception names {site} as a place to delete the word")
     # A plain fn the world reaches is untouched by this rule: moving it is a separate judgment
     # about who calls it, and this fault speaks only to the role.
     plain = _module('module m\n  fn f : (x: str) -> str note "test"\n  entry "import m.g" -> f\n')
