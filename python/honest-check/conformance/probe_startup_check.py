@@ -45,7 +45,7 @@ _SOURCE_BY_SEVERITY = {
         "        return 3\n"
         "    return 0\n"
     ),
-    "warning": "def classify(x):\n    if isinstance(x, int):\n        return 1\n    return 0\n",
+    "warning": "def classify(x):\n    return isinstance(x, int)\n",
     "error": "class Report:\n    pass\n",
 }
 _TWO_ERRORS = "class A:\n    pass\n\n\nclass B:\n    pass\n"

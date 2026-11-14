@@ -399,7 +399,7 @@ _MSG_CASES = [
         "source": 'def f(x):\n    if x == 1:\n        return 1\n    elif x == 2:\n        return 2\n    elif x == 3:\n        return 3\n',
         "rule_config": {},
         "hd": None,
-        "expected": [{'rule_id': 'HC-P001', 'severity': 'error', 'message': 'if/elif/else chain dispatches on value — use dict lookup. See honest-code-principles.md §3.', 'source_location': 'case_HC-P001.py:2:5', 'context': 'if x == 1:', 'fixable': False}],
+        "expected": [{'rule_id': 'HC-P001', 'severity': 'error', 'message': 'a branch written as `if` is not data. Compute a key with a pure predicate or recognizer and index a dispatch table. See honest-code-principles.md §3.', 'source_location': 'case_HC-P001.py:2:5', 'context': 'if x == 1:', 'fixable': False}],
     },
     {
         "id": 'HC-P007',

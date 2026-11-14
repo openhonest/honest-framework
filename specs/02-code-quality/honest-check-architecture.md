@@ -1024,18 +1024,24 @@ FUNCTION check_state_machine_reachability(machine):
 
 A conditional branch written as an `if` is a violation. There is no branch-count threshold and no dispatch-only exemption: a single `if` fails the commit. The rule covers every form the keyword takes — the `if`/`elif`/`else` statement, the conditional expression `a if cond else b`, and the `if` filter inside a comprehension. Branching is expressed as data: a value computed by a pure predicate or a recognizer, used to index a dispatch table of functions or values, which honest-check can enumerate. Control flow the AST cannot read as a table is the bug category this eliminates.
 
+The one exception is the script guard `if __name__ == "__main__":`. It is not business branching: it is Python's module-versus-script boundary, decided by the interpreter, with no value to dispatch on and no table that would express it. An `if` statement whose condition is exactly `__name__ == "__main__"` passes. The exemption is that statement alone: an `elif` on it is a separate node and still fires, as does any `if` whose condition is anything else.
+
 ```
 FUNCTION check_HC_P001(ast):
     forbidden ← { if_statement, elif_clause, conditional_expression, comprehension_if }
     FOR EACH node IN ast.all_nodes:
-        EMIT_WHEN node.type IN forbidden:
+        EMIT_WHEN node.type IN forbidden AND NOT is_main_guard(node):
             error(HC-P001, node.location,
                 "a branch written as `if` is not data. Compute a key with a pure "
                 "predicate or recognizer and index a dispatch table of functions or "
                 "values. See honest-code-principles.md §3.")
+
+FUNCTION is_main_guard(node):
+    RETURN node.type = if_statement
+       AND node.condition is the equality comparison `__name__ == "__main__"`
 ```
 
-Detection: the presence of any `if` node of the four kinds above. A loop (`for`, `while`) is not a branch and is not caught. `else`/`elif` belong to the `if` statement that heads them. There is no analysis of what the condition tests, because the threshold is one: the keyword itself is the violation.
+Detection: any `if` node of the four kinds above, except the single `if __name__ == "__main__":` statement. A loop (`for`, `while`) is not a branch and is not caught. The condition is read only to recognize the `__main__` guard; for every other `if` the keyword itself is the violation and the condition is not analyzed.
 
 #### HC-P002 — Exception caught in non-boundary function
 
@@ -1759,7 +1765,7 @@ The rules in section 4 are language-agnostic. This section maps each rule to its
 | Ruby | any `if` / `elsif` / `unless` statement and the modifier forms (`x if c`) |
 | Go | any `if` / `else if` statement |
 
-Note: a `switch` / `case` statement over literal cases is a dict lookup written in keywords and is HC-P001 compliant; a single `if` in any language is a violation. The threshold is one: branching is expressed by computing a key and indexing a dispatch table, never by a conditional the AST cannot read as data. Loops (`for`, `while`) are not branches and are not caught.
+Note: a `switch` / `case` statement over literal cases is a dict lookup written in keywords and is HC-P001 compliant; a single `if` in any language is a violation. The threshold is one: branching is expressed by computing a key and indexing a dispatch table, never by a conditional the AST cannot read as data. Loops (`for`, `while`) are not branches and are not caught. The one exemption is the script-entry guard: Python's `if __name__ == "__main__":`, and the equivalent entry-point guard in another language, is the module-versus-script boundary, not business branching, and passes.
 
 ### 5.2 HC-P002: Exception Caught in Non-Boundary Function
 

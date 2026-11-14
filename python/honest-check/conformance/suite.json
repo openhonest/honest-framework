@@ -274,7 +274,7 @@
     },
     {
       "id": "HC-P001-001",
-      "description": "Three branches dispatching on one variable's value is an if/elif chain that should be a dict lookup.",
+      "description": "An if/elif statement is a branch written as if; it fires at the if, threshold one.",
       "category": "HC-P001",
       "input": {
         "language": "python",
@@ -291,12 +291,60 @@
       }
     },
     {
-      "id": "HC-P001-clean-001",
-      "description": "A single if that does not dispatch on a value over three branches fires nothing.",
+      "id": "HC-P001-002",
+      "description": "A ternary conditional expression is a branch written as if; it fires.",
       "category": "HC-P001",
       "input": {
         "language": "python",
-        "source": "def f(x):\n    if x:\n        return 1\n    return 2\n"
+        "source": "def f(x):\n    return 1 if x else 2\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P001",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P001-003",
+      "description": "A comprehension if-filter is a branch written as if; it fires.",
+      "category": "HC-P001",
+      "input": {
+        "language": "python",
+        "source": "def f(xs):\n    return [a for a in xs if a]\n"
+      },
+      "expected": {
+        "diagnostics": [
+          {
+            "rule": "HC-P001",
+            "severity": "error",
+            "line": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "HC-P001-clean-001",
+      "description": "Branching done as a dict lookup keyed by a bool fires nothing; no if anywhere.",
+      "category": "HC-P001",
+      "input": {
+        "language": "python",
+        "source": "def f(x):\n    table = {True: 1, False: 2}\n    return table[bool(x)]\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "HC-P001-clean-main-guard",
+      "description": "The script guard if __name__ == \"__main__\" is exempt and fires nothing.",
+      "category": "HC-P001",
+      "input": {
+        "language": "python",
+        "source": "def main():\n    return 0\n\n\nif __name__ == \"__main__\":\n    main()\n"
       },
       "expected": {
         "diagnostics": []
@@ -734,7 +782,7 @@
       "category": "HC-P005",
       "input": {
         "language": "python",
-        "source": "def classify(x):\n    if isinstance(x, int):\n        return 1\n    return 0\n"
+        "source": "def classify(x):\n    return isinstance(x, int)\n"
       },
       "expected": {
         "diagnostics": [
@@ -1651,30 +1699,6 @@
             "line": 1
           }
         ]
-      }
-    },
-    {
-      "id": "HC-P001-non-equality-001",
-      "description": "An if whose condition is a comparison other than equality does not dispatch on a value, so HC-P001 does not fire.",
-      "category": "clean",
-      "input": {
-        "language": "python",
-        "source": "def f(x):\n    if x < 3:\n        return 1\n    return 2\n"
-      },
-      "expected": {
-        "diagnostics": []
-      }
-    },
-    {
-      "id": "HC-P001-non-identifier-lhs-001",
-      "description": "An equality test whose left side is a call, not a bare identifier, is not a value dispatch, so HC-P001 does not fire.",
-      "category": "clean",
-      "input": {
-        "language": "python",
-        "source": "def f(x):\n    if foo() == 1:\n        return 1\n    return 2\n"
-      },
-      "expected": {
-        "diagnostics": []
       }
     },
     {
@@ -3347,30 +3371,6 @@
       }
     },
     {
-      "id": "MUT-p001-two-equality",
-      "description": "Two equality branches on one variable are below the 3-branch threshold; shifting '>= 3' to '>= 2' would fire HC-P001 here.",
-      "category": "clean",
-      "input": {
-        "language": "python",
-        "source": "def f(x):\n    if x == 1:\n        return 1\n    elif x == 2:\n        return 2\n    return 0\n"
-      },
-      "expected": {
-        "diagnostics": []
-      }
-    },
-    {
-      "id": "MUT-p001-ordering-not-dispatch",
-      "description": "Three '<' comparisons are ordering tests, not value dispatch; a swap of '== ==' detection to '!=' would misread them as dispatch and fire HC-P001.",
-      "category": "clean",
-      "input": {
-        "language": "python",
-        "source": "def f(x):\n    if x < 1:\n        return 1\n    elif x < 2:\n        return 2\n    elif x < 3:\n        return 3\n    return 0\n"
-      },
-      "expected": {
-        "diagnostics": []
-      }
-    },
-    {
       "id": "MUT-p016-assign-no-nonlocal",
       "description": "An inner function that assigns a local with no nonlocal is clean; inverting the nonlocal_statement test fires HC-P016.",
       "category": "clean",
@@ -3906,18 +3906,6 @@
             "line": 1
           }
         ]
-      }
-    },
-    {
-      "id": "MUT-dispatch-chained",
-      "description": "A chained comparison is not single-variable dispatch; neutering the two-operand guard would count it toward HC-P001.",
-      "category": "clean",
-      "input": {
-        "language": "python",
-        "source": "def f(x):\n    if x == 1 == 1:\n        return 1\n    elif x == 2:\n        return 2\n    elif x == 3:\n        return 3\n    return 0\n"
-      },
-      "expected": {
-        "diagnostics": []
       }
     },
     {
@@ -4676,7 +4664,7 @@
       "category": "clean",
       "input": {
         "language": "python",
-        "source": "TABLE = {\"a\": 1}\ndef f(k):\n    if k not in TABLE:\n        return None\n    return TABLE[k]\n"
+        "source": "TABLE = {\"a\": 1}\ndef f(k):\n    return TABLE.get(k)\n"
       },
       "expected": {
         "diagnostics": []
