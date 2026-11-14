@@ -671,7 +671,10 @@ def _probe_render():
 
 
 def _probe_public_surface():
-    if set(PUBLIC) != {"read_hd", "validate", "render", "reach", "ok", "err", "fault"}:
+    # edge_retirement and EdgeRoleRetired joined the surface on 2026-11-14 and are the only two
+    # members with an end date: they exist to retire the edge role and are deleted with it.
+    if set(PUBLIC) != {"read_hd", "validate", "render", "reach", "ok", "err", "fault",
+                       "edge_retirement", "EdgeRoleRetired"}:
         return [f"public surface drifted: {PUBLIC}"]
     return []
 
@@ -1022,24 +1025,42 @@ def _probe_edge():
     module's entrances, keeps the pure discipline (a side effect on it is impure, a handle in its
     signature is read), and validates clean when the world reaches it by an import entry."""
     bad = []
+    # The edge role is withdrawn (Adam, 2026-11-14). A pure function the world reaches that
+    # nothing inside the module calls belongs to whoever calls it, so the validator refuses the
+    # role outright rather than describing the exception it used to name.
     src = ('module m\n  type Node = foreign "tree-sitter"\n'
            '  edge fn resolve : (root: Node) -> str note "test"\n'
            '  entry "import m.g" -> resolve\n')
     m = _module(src)
-    fn = {f["name"]: f for f in m["functions"]}["resolve"]
-    if (fn["role"], fn["column"]) != ("edge", 1):
-        bad.append(f"an edge should fold to role 'edge' in column 1: {(fn['role'], fn['column'])}")
-    if validate(m) != []:
-        bad.append(f"an edge reached by an import entry validates clean: {validate(m)}")
-    col1 = {c["index"]: c for c in render(m)["columns"]}[1]
-    if "resolve" not in {n["name"] for n in col1["nodes"]}:
-        bad.append(f"an edge renders in the input-boundary column: {col1['nodes']}")
-    impure = validate(_module('module m\n  edge fn e : (x: str) -> str side_effect reads "clock" note "test"\n  entry "import m.g" -> e\n'))
-    if impure != [{"code": "impure_pure_function", "message": "Pure function 'e' declares a side effect", "category": "server", "detail": {"function": "e"}}]:
-        bad.append(f"an edge declaring a side effect is impure: {impure}")
-    handle = validate(_module('module m\n  type Conn = handle\n  edge fn e : (c: Conn) -> str note "test"\n  entry "import m.g" -> e\n'))
-    if not any(f["code"] == "handle_read" for f in handle):
-        bad.append(f"an edge naming a handle in its signature is a handle_read: {handle}")
+    withdrawn = [f for f in validate(m) if f["code"] == "edge_role_withdrawn"]
+    if len(withdrawn) != 1:
+        bad.append(f"an edge is refused outright now that the role is withdrawn: {validate(m)}")
+    if withdrawn and "belongs to whoever calls it" not in withdrawn[0]["message"]:
+        bad.append(f"the withdrawal fault says where the function belongs: {withdrawn[0]['message']}")
+    if withdrawn and "utility module" not in withdrawn[0]["message"]:
+        bad.append("the withdrawal fault names the utility-module case for a shared contract")
+    # The retirement check: a warning while an edge remains, an exception once none does. A
+    # temporary allowance with nothing to end it becomes permanent, which is how edge lasted.
+    from honest_design import edge_retirement, EdgeRoleRetired
+    still = _module('module m\n  type Node = foreign "tree-sitter"\n  edge fn e : (n: Node) -> str note "test"\n  entry "import m.g" -> e\n')
+    text = edge_retirement([still])
+    if "1 declarations still use it" not in text:
+        bad.append(f"the retirement check counts the edges still declared: {text}")
+    if "becomes an exception" not in text:
+        bad.append("the warning says it turns into an exception when the last edge goes")
+    gone = _module('module m\n  fn f : (x: str) -> str note "test"\n')
+    try:
+        edge_retirement([gone])
+        bad.append("with no edge left the retirement check raises rather than returning")
+    except EdgeRoleRetired as stop:
+        for site in ("grammar.js", "_ROLE_COLUMN", "HC-REF007", "build-map.py"):
+            if site not in str(stop):
+                bad.append(f"the retirement exception names {site} as a place to delete the word")
+    # A plain fn the world reaches is untouched by this rule: moving it is a separate judgment
+    # about who calls it, and this fault speaks only to the role.
+    plain = _module('module m\n  fn f : (x: str) -> str note "test"\n  entry "import m.g" -> f\n')
+    if any(f["code"] == "edge_role_withdrawn" for f in validate(plain)):
+        bad.append("the withdrawal fault fires on the edge role alone, never on a plain fn")
     return bad
 
 

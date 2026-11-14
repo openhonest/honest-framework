@@ -551,6 +551,61 @@ def _impure_pure_functions(module):
     ]
 
 
+# The format's own scalars and generics (§3.2 of the honest-design spec), the words that are not
+# a contract. Every other atom in a signature is a named type, whether this module declares it or
+# a sibling does: a type that turns up in many modules is a contract, which is what a type is for,
+# so nothing here reads a shared name as a weaker name than a local one (Adam, 2026-11-14).
+PRIMITIVES = frozenset({
+    "str", "int", "bool", "float", "bytes", "void", "any", "handle", "NOTHING",
+    "list", "dict", "set", "tuple", "Callable",
+})
+
+
+def _edge_role_withdrawn(module):
+    """The `edge` role is withdrawn. A pure function the world reaches with nothing inside the
+    module calling it does not belong to this module, and no role should have let it sit here.
+
+    Adam withdrew it on 2026-11-14, after a measurement of his own rule that a declared function
+    justifies its place three ways and no others: a boundary the world requires, an orchestrator
+    joining at least one boundary and one pure function, or a pure function at least one
+    orchestrator or pure function calls. An edge satisfies none of them by construction, because
+    "nothing inside the module invokes it" was written into its definition. The role named the
+    exception rather than fixing it, and once named it became the hiding place: a rule set or a
+    decision table written into an edge is reached by whatever imports it, and no other check
+    objects, because every other check asks what the module calls or what the module touches.
+
+    What to write instead, which depends on who reaches the function and is decided from the
+    declarations, never by taste.
+
+    Many modules import it: it is a shared contract and belongs in a utility module of its own,
+    where its purpose is plain. Sitting inside a module that merely happens to host it misleads
+    every reader about what that module is. honest-type's 21 world-reached functions have eleven
+    importers and are this case.
+
+    One module imports it: it belongs in that module, as a plain `fn` its own orchestrator or
+    pure functions call. honest-gherkin's 4 are this case; honest-test is the only importer.
+
+    Nothing imports it and nothing inside calls it: it is reached by nothing, so no input ever
+    arrives at it, finite testability is undefined for it, and the declaration asserts work that
+    answers to nobody. Either it is dead and goes, or something reaches it by a path the
+    declaration does not admit, which makes the declaration false. 44 functions in the framework
+    are in this state today.
+    """
+    return [
+        fault(
+            "edge_role_withdrawn",
+            f"'{f['name']}' is declared an edge, and the edge role is withdrawn. A pure function "
+            "the world reaches that nothing in this module calls belongs to whoever calls it: to "
+            "a utility module of its own when many modules import it, so its purpose is plain "
+            "rather than hidden inside a module that merely hosts it; to the importing module as "
+            "a plain fn when one module imports it; and nowhere at all when nothing reaches it, "
+            "because a function no path arrives at cannot be tested and answers to nobody",
+            "server", {"function": f["name"]})
+        for f in module["functions"]
+        if f["role"] == "edge"
+    ]
+
+
 def _callers_of(module, dispatch_name):
     """The functions that invoke a dispatch table. Their input is what the table projects from."""
     return [f for f in module["functions"] if dispatch_name in f["invokes"]]
@@ -619,6 +674,7 @@ _CHECKS = (
     _unknown_side_kind,
     _duplicate_names,
     _impure_pure_functions,
+    _edge_role_withdrawn,
     _held_not_read,
     _fault_swallowed,
     _fault_shape,
@@ -648,3 +704,61 @@ def validate(module):
     if "modules" in module:
         return [fault("not_a_module", "validate takes one module's IR; this is a document. Pass each of its 'modules' in turn.", "client", {})]
     return [f for check in _CHECKS for f in check(module)]
+
+
+# --- the edge role's retirement -----------------------------------------------------------
+
+# Every place the word `edge` is still wired in, so the exception below can name them rather than
+# send a reader hunting. Checked against the trees on 2026-11-14.
+EDGE_SITES = (
+    "python/tree-sitter-honest-hd/grammar.js, the `role` choice",
+    "python/honest-design/src/honest_design/reader.py, _ROLE_COLUMN",
+    "python/honest-design/src/honest_design/validator.py, PURE_ROLES, "
+    "_edge_role_withdrawn and EDGE_SITES itself",
+    "products/architecture-explorer/build-map.py, the ROLES table and the two role_of reads",
+    "honest-check's HC-REF007, which accepts a seam onto a boundary_in or an edge",
+    "specs/02-code-quality/honest-design-architecture.md and honest-check-architecture.md",
+    "specs/rules.json and specs/features/honest-check.feature",
+)
+
+
+class EdgeRoleRetired(Exception):
+    """Raised when no declaration uses `edge` any more, so the machinery that supports it can go.
+
+    The role is withdrawn but the grammar still parses it, because deleting the word while 81
+    declarations still carry it would stop every tree parsing in the same moment. So the support
+    outlives the role on purpose, for exactly as long as a declaration needs it.
+
+    A temporary allowance with nothing to end it becomes permanent, which is how `edge` lasted.
+    This is the thing that ends it: while an edge remains the check warns and names what is left,
+    and on the run where the last one goes it raises instead, naming every file still carrying
+    the word. Nobody has to remember, and the reminder cannot be satisfied by ignoring it.
+    """
+
+
+def edge_retirement(modules):
+    """Warn while any module still declares an edge; raise once none does.
+
+    `modules` is every module IR in view, so the caller is whatever reads a whole tree: the
+    explorer's run over a set of declarations, or a workspace gate. Returns the warning text
+    while edges remain, and the empty string is never returned, because reaching zero raises.
+    """
+    carrying = [(m["name"], f["name"]) for m in modules
+                for f in m["functions"] if f["role"] == "edge"]
+    if not carrying:
+        raise EdgeRoleRetired(
+            "No declaration uses the edge role any more, so delete the machinery that supports "
+            "it. Remove the word from: " + "; ".join(EDGE_SITES) + ". Then delete "
+            "EdgeRoleRetired, edge_retirement, EDGE_SITES and _edge_role_withdrawn, which exist "
+            "only to reach this moment. This check reads the modules it was handed, so confirm "
+            "it was handed every tree before acting on it"
+        )
+    by_module = {}
+    for module_name, function_name in carrying:
+        by_module.setdefault(module_name, []).append(function_name)
+    where = ", ".join(f"{name} ({len(fns)})" for name, fns in sorted(by_module.items()))
+    return (f"The edge role is withdrawn and {len(carrying)} declarations still use it: {where}. "
+            "Each one belongs to whoever calls it: a utility module of its own when many modules "
+            "import it, the importing module as a plain fn when one does, and nowhere at all "
+            "when nothing reaches it. This warning becomes an exception on the run where the "
+            "last edge goes, telling you to delete the grammar and the rest of the support")

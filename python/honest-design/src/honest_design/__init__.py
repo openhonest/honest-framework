@@ -9,7 +9,7 @@ and honest-check's conformance tier, consume — none of them touches the tree-s
 from honest_design.reach import reach
 from honest_design.reader import read_hd
 from honest_design.renderer import render
-from honest_design.validator import validate
+from honest_design.validator import EdgeRoleRetired, edge_retirement, validate
 from honest_design.result import err, fault, ok
 
 __all__ = [
@@ -19,5 +19,7 @@ __all__ = [
     "reach",
     "read_hd",
     "render",
+    "EdgeRoleRetired",
+    "edge_retirement",
     "validate",
 ]
