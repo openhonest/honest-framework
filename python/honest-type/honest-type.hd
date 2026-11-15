@@ -108,12 +108,12 @@ module honest-type
   fn _match_set : (token: str, recognizer: Recognizer) -> bool note "membership test for a Set recognizer: the token is one of the recognizer's members"
   fn _match_insensitive : (token: str, recognizer: Recognizer) -> bool note "membership test for a case-insensitive Set recognizer: the lowercased token is one of the members"
   fn _match_predicate : (token: str, recognizer: Recognizer) -> bool note "runs the recognizer's String to Boolean callable; a throw becomes a predicate_error fault at classify, not here"
-  edge fn vocabulary : (base_declarations: dict<str, any>, composed_types: list<ComposedType>) -> Vocabulary | Fault invokes _check_overlap, _check_catch_all, _check_composed, _check_capture_ambiguity, _check_reserved note "builds a validated vocabulary, returning a fault on a reserved word, an overlap, a catch-all predicate, or an unknown composed base"
+  fn vocabulary : (base_declarations: dict<str, any>, composed_types: list<ComposedType>) -> Vocabulary | Fault invokes _check_overlap, _check_catch_all, _check_composed, _check_capture_ambiguity, _check_reserved note "builds a validated vocabulary, returning a fault on a reserved word, an overlap, a catch-all predicate, or an unknown composed base"
   fn merge : (vocab_a: Vocabulary, vocab_b: Vocabulary) -> Vocabulary | Fault invokes _check_overlap, _check_composed, _check_capture_ambiguity note "combines two vocabularies into one, returning a fault on a name or value collision"
   fn composed : (name: str, requires: dict<str, str>, captures: str) -> ComposedType note "a multi-token recognizer: it matches when its required base types are present and claims one base type's value"
-  edge fn binding : (table: dict<str, str>) -> Binding note "a binding table mapping type names to slot names"
+  fn binding : (table: dict<str, str>) -> Binding note "a binding table mapping type names to slot names"
   fn auto_binding : (vocab: Vocabulary) -> Binding note "the identity binding: every type name, base and composed, is its own slot"
-  edge fn maybe : (slot: str) -> Maybe note "marks a binding slot optional: an absent token becomes Nothing, not a rejection"
+  fn maybe : (slot: str) -> Maybe note "marks a binding slot optional: an absent token becomes Nothing, not a rejection"
 
   # The vocabulary construction checks. Each returns the fault it found, or nothing.
   fn _check_reserved : (base_types: dict<str, Recognizer>) -> list<Fault> invokes is_reserved, fault note "the construction check that no Set member is a reserved word"
@@ -123,17 +123,17 @@ module honest-type
   fn _check_capture_ambiguity : (composed_list: list<ComposedType>) -> list<Fault> invokes fault note "the construction check that no two composed types would capture the same token"
 
   # classify and its two passes.
-  edge fn classify : (tokens: list<str>, vocab: Vocabulary, bind: Binding) -> Manifest | Fault invokes _classify_token, _resolve_bindings, auto_binding, rejection, fault note "classifies tokens against a vocabulary into a manifest, in two passes so token order never changes the result"
+  fn classify : (tokens: list<str>, vocab: Vocabulary, bind: Binding) -> Manifest | Fault invokes _classify_token, _resolve_bindings, auto_binding, rejection, fault note "classifies tokens against a vocabulary into a manifest, in two passes so token order never changes the result"
   fn _classify_token : (token: str, vocab: Vocabulary) -> Ticket | Rejection | Fault invokes ticket, rejection, fault, is_reserved, recognize note "pass one: one token becomes a ticket, a rejection, or a fault when a predicate throws"
   fn _resolve_bindings : (tickets: list<Ticket>, rejections: list<Rejection>, vocab: Vocabulary, bind: Binding) -> Manifest invokes rejection note "pass two: resolve composed types, bind the remaining slots, fill Maybe slots with Nothing, and record missing required slots"
 
   # Links and chains. A composer returns a composed link the host later runs; an executor runs links.
-  edge fn link : (accepts: Vocabulary, binds: Binding, boundary: bool, authorizes: bool, emits: list<str>) -> Callable note "declares a link by attaching its vocabulary and role to a function for the checker; it never changes the function's behaviour"
+  fn link : (accepts: Vocabulary, binds: Binding, boundary: bool, authorizes: bool, emits: list<str>) -> Callable note "declares a link by attaching its vocabulary and role to a function for the checker; it never changes the function's behaviour"
   fn is_link : (fn: Callable) -> bool note "true when a function was declared with link"
-  edge fn link_meta : (fn: Callable) -> Link note "the metadata a declared link carries: its name, accepts, binds, boundary, authorizes and emits"
+  fn link_meta : (fn: Callable) -> Link note "the metadata a declared link carries: its name, accepts, binds, boundary, authorizes and emits"
   fn chain : (links: list<Callable>) -> Callable note "composes links into one short-circuiting link the host later runs, manifest to Result"
   fn validate_all : (links: list<Callable>) -> Callable note "composes links into one accumulating link the host later runs: every link runs against the same manifest and any error makes the whole a validation_failed carrying every result"
-  edge fn execute_chain : (links: list<Callable>, initial_manifest: Manifest) -> Manifest | Fault invokes ok, err, fault note "runs links in sequence, short-circuiting on the first error"
+  fn execute_chain : (links: list<Callable>, initial_manifest: Manifest) -> Manifest | Fault invokes ok, err, fault note "runs links in sequence, short-circuiting on the first error"
   fn execute_chain_async : (links: list<Callable>, initial_manifest: Manifest) -> Manifest | Fault awaited invokes ok, err, fault note "runs links in sequence, awaiting each, short-circuiting on the first error"
   fn _run_validate_all : (links: list<Callable>, manifest: Manifest) -> Manifest | Fault invokes ok, err, fault note "runs every link against the same manifest, accumulating every result"
   fn _run_validate_all_async : (links: list<Callable>, manifest: Manifest) -> Manifest | Fault awaited invokes ok, err, fault note "runs every link against the same manifest, awaiting each, accumulating every result"
@@ -143,8 +143,8 @@ module honest-type
   fn check_rejections : (manifest: Manifest, policy: dict<str, str>) -> Manifest | Fault invokes ok, err, fault note "turns a manifest's rejections into a Result before the chain runs, deciding by a policy table"
 
   # State machines.
-  edge fn state_machine : (states: Vocabulary, events: Vocabulary, transitions: dict<str, str>, initial: str, terminal: list<str>) -> StateMachine | Fault invokes fault note "builds an immutable state machine, returning a fault on an unknown state, event, or transition target"
-  edge fn transition : (machine: StateMachine, current_state: str, event: str) -> StateChange | Fault invokes ok, err, fault note "applies one event to a state and returns the next state or a fault; the machine stays stateless and the caller stores the result"
+  fn state_machine : (states: Vocabulary, events: Vocabulary, transitions: dict<str, str>, initial: str, terminal: list<str>) -> StateMachine | Fault invokes fault note "builds an immutable state machine, returning a fault on an unknown state, event, or transition target"
+  fn transition : (machine: StateMachine, current_state: str, event: str) -> StateChange | Fault invokes ok, err, fault note "applies one event to a state and returns the next state or a fault; the machine stays stateless and the caller stores the result"
 
   # The reserved-word test and the data constructors.
   fn is_reserved : (token: str) -> bool note "true when a token is a framework, cross-language, or language reserved word"
