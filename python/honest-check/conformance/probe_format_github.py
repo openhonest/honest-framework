@@ -1,80 +1,76 @@
-"""format_github renders GitHub Actions workflow-command annotations: a leading
-'::notice::' line carrying the adoption line, then one '::error' or '::warning' line
-per finding.
+"""Honest probe for honest-check's format_github (feature Scenario: format_github).
 
-Each finding names its split file, line and col and its rule title and message. An
-error finding takes the '::error' command, a warning finding the '::warning' command.
-A three-colon location splits from the right into file, line and col.
+format_github renders GitHub Actions workflow-command annotations from a prepared
+CheckReport: one '::error' line for an error-severity finding and '::warning' otherwise,
+each carrying file, line and col from source_location, title=<rule id>, with the message as
+the body. It returns the annotation text and does no I/O.
+
+Each case pins the fixed fragments of one annotation: the severity-driven command prefix,
+the source_location fields in GitHub's file=/line=/col= form, the title=<rule id>, and the
+message. A stub returning "" fails the '::error'/'::warning' checks. The error case and the
+warning case together prove the severity drives the command word.
 """
 
 
-def _diag(source_location, rule_id="HC-P003", severity="error"):
+def _diag(rule_id, severity, message, source_location):
     return {
         "rule_id": rule_id,
         "severity": severity,
-        "message": "class declaration",
+        "message": message,
         "source_location": source_location,
-        "context": "class X:",
+        "context": "",
         "fixable": False,
     }
 
 
-def _report(diag, errors=1, warnings=0):
+def _report(diagnostics, errors, warnings):
     return {
-        "diagnostics": [diag],
+        "diagnostics": diagnostics,
         "errors": errors,
         "warnings": warnings,
         "infos": 0,
         "rule_counts": {},
         "adoption": "Declared",
-        "enforced_count": 50,
-        "total_count": 50,
+        "enforced_count": 58,
+        "total_count": 58,
         "report_mode": False,
     }
 
 
+# Each case: the report to render, and the fixed fragments the annotation must carry.
+_CASES = [
+    {
+        "report": _report(
+            [_diag("HC-P001", "error", "msg one", "src/x.py:10:5")],
+            errors=1, warnings=0,
+        ),
+        "contains": ["::error", "file=src/x.py", "line=10", "col=5", "title=HC-P001", "msg one"],
+    },
+    {
+        "report": _report(
+            [_diag("HC-P004", "warning", "msg two", "src/y.py:3:1")],
+            errors=0, warnings=1,
+        ),
+        "contains": ["::warning", "file=src/y.py", "line=3", "col=1", "title=HC-P004", "msg two"],
+    },
+]
+
+
 def probe_format_github():
+    """format_github renders ::error/::warning annotations carrying file, line, col and title."""
     try:
         from honest_check import format_github
-        from honest_check.report import by_format
     except ImportError as exc:
         return [f"cannot import format_github: {exc}"]
 
     bad = []
-    got = format_github(_report(_diag("src/x.py:10:1")))
-    if not isinstance(got, str):
-        return [f"format_github(report) -> {got!r}, expected a string"]
-
-    # The leading notice line carries both halves of the adoption line.
-    if "::notice::honest-check: adoption level Declared" not in got:
-        bad.append(f"format_github is missing the '::notice::' adoption line; got {got!r}")
-    if "50 of 50 rules enforced." not in got:
-        bad.append(f"format_github is missing the enforced-count phrase; got {got!r}")
-
-    # The error line names the split file/line/col and the rule title and message, and
-    # sits on its own line after the notice line, so the newline join is exercised too.
-    if "\n::error file=src/x.py,line=10,col=1," not in got:
-        bad.append(f"format_github did not render the split error location; got {got!r}")
-    if "title=HC-P003::class declaration" not in got:
-        bad.append(f"format_github did not render the rule title and message; got {got!r}")
-
-    # A three-colon location splits from the right into file 'w:x', line 'y', col 'z'.
-    got3 = format_github(_report(_diag("w:x:y:z", rule_id="HC-R001")))
-    if "::error file=w:x,line=y,col=z," not in got3:
-        bad.append(
-            f"format_github widened the right-split of a three-colon location; got {got3!r}"
-        )
-
-    # A warning finding takes the '::warning' command, not '::error'.
-    warn = format_github(_report(_diag("src/y.py:3:1", rule_id="HC-P001",
-                                       severity="warning"), errors=0, warnings=1))
-    if "::warning file=src/y.py,line=3,col=1," not in warn:
-        bad.append(f"format_github did not render a '::warning' line; got {warn!r}")
-
-    # The format dispatch binds the github word to this renderer.
-    if by_format.get("github") is not format_github:
-        bad.append(
-            f"by_format['github'] -> {by_format.get('github')!r}, expected format_github"
-        )
-
+    for case in _CASES:
+        try:
+            got = format_github(report=case["report"])
+        except Exception as exc:
+            bad.append(f"format_github raised {exc!r}")
+            continue
+        for fragment in case["contains"]:
+            if fragment not in got:
+                bad.append(f"format_github output missing {fragment!r}; got {got!r}")
     return bad

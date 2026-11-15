@@ -5,17 +5,34 @@ the content of a declaration. Reading only the Python tree is how four JavaScrip
 stayed invisible to it: the declaration language is independent of the language a module is
 written in, so the membership check has to be too.
 
-Run from python/ by check-all.sh. The directory walk is the I/O; the decision is
-honest_check.declared.undeclared_members, which is pure and takes two sets.
+Run from python/ by check-all.sh. The directory walk is the I/O; the decision is the pure
+undeclared_members below, which takes two sets. It lives here, with its only caller, rather
+than in honest-check: honest-check's own rules never call it, so it earned no place there.
 """
 
 import pathlib
 import sys
 
-from honest_check.declared import undeclared_members
-
 # A module is a directory carrying its language's package manifest.
 MANIFESTS = ("pyproject.toml", "package.json")
+
+# A member is exempt only by name, with the reason it is not yet declared; the list only
+# shrinks (HC-REF011). A module absent from this table owes a declaration.
+EXEMPT_FROM_DECLARATION = {
+    "tree-sitter-honest-hd": "a tree-sitter grammar package: generated C and a grammar.js, no honest functions to declare",
+    "tree-sitter-honest-jinja": "a tree-sitter grammar package: generated C and a grammar.js, no honest functions to declare",
+    "honest-boot": "declaration owed: 14 exports, each needing a role a person assigns. Inferring boundary from a watch-list would infer what the framework says must be declared. Tracked as honest-framework-jb7",
+    "honest-dom": "declaration owed: 27 exports, same reason as honest-boot. Tracked as honest-framework-jb7",
+    "honest-components": "declaration owed and blocked: it already declares its behaviour vocabulary in manifest.json, which honest-check reads for HC-REF004, so a .hd added now would be a second copy. Blocked on whether the manifest becomes generated or disappears. Tracked as honest-framework-jb7",
+    "honest-format": "declaration owed and blocked: same manifest.json conflict as honest-components. Tracked as honest-framework-jb7",
+}
+
+
+def undeclared_members(members, with_declaration):
+    """Workspace members that carry no .hd and no exemption, sorted. Pure: the directory walk
+    is the boundary in main(); this is the decision. An exempt member is subtracted by name,
+    never by noticing its file is missing."""
+    return sorted(set(members) - set(with_declaration) - set(EXEMPT_FROM_DECLARATION))
 
 
 def modules(roots):

@@ -1,125 +1,121 @@
-"""prepare_report applies the adoption downgrade, the severity threshold and the
-rule filters, then counts the survivors.
+"""Honest probe for honest-check's prepare_report (feature Scenario: prepare_report).
 
-One enforced error-diagnostic at adoption Declared survives as an error: errors == 1,
-total_count == 59. A diagnostic whose rule is above the declared level (HC-OR001 at
-adoption Structural) is downgraded to info, so errors == 0.
+prepare_report turns the raw per-file findings into the CheckReport the formatters
+render. It applies, in order: the adoption downgrade (a diagnostic whose rule is not
+enforced at the declared level becomes info), the --severity threshold (findings below
+it are dropped), and the --rule/--no-rule filters; then it counts the survivors into
+errors/warnings/infos, fills rule_counts only under --report, and records adoption,
+enforced_count and total_count (58).
+
+Each case states a diagnostic list, the CliArgs, and the adoption level, and pins the
+CheckReport fields the scenario fixes. The counts move with the downgrade, the threshold
+and the filters, so a stub returning an empty report (every count 0, rule_counts {}) fails
+every non-absence case. The membership the downgrade reads (HC-P004 unenforced at
+Structural, HC-P001 enforced) and the enforced_count numbers (58 at Declared, 11 at
+Structural) are the .hd's declared adoption-level sets, not recomputed here.
 """
+
+
+def _args(severity="info", include=None, exclude=None, report_mode=False):
+    return {
+        "paths": [],
+        "format": "human",
+        "severity": severity,
+        "include_rules": include or [],
+        "exclude_rules": exclude or [],
+        "config_path": "",
+        "report_mode": report_mode,
+        "declaration": "",
+        "exports": "",
+    }
 
 
 def _diag(rule_id, severity):
     return {
         "rule_id": rule_id,
         "severity": severity,
-        "message": "finding under test",
-        "source_location": "src/x.py:10:1",
-        "context": "class X:",
+        "message": "m",
+        "source_location": "a.py:1:1",
+        "context": "",
         "fixable": False,
     }
 
 
-def _args(threshold, include_rules=None, exclude_rules=None, report_mode=False):
-    return {
-        "paths": ["src/"],
-        "format": "human",
-        "severity": threshold,
-        "include_rules": include_rules or [],
-        "exclude_rules": exclude_rules or [],
-        "config_path": "",
-        "report_mode": report_mode,
-    }
+_D_ERR = _diag("HC-P001", "error")
+_D_WARN = _diag("HC-P004", "warning")
+_D_INFO = _diag("HC003", "info")
+_D_P004_ERR = _diag("HC-P004", "error")
 
-
-# HC-P003 is enforced at every level, so at Declared the error survives (errors 1).
-# HC-OR001 is a Declared-only rule, so at Structural it is downgraded to info
-# (errors 0).
+# Each case: the inputs prepare_report takes, and the CheckReport fields the scenario fixes.
 _CASES = [
+    # Keep every finding (threshold 'info'), Declared enforces all 58 so nothing downgrades.
     {
-        "diagnostics": [_diag("HC-P003", "error")],
-        "args": _args("error"),
+        "diagnostics": [_D_ERR, _D_WARN, _D_INFO],
+        "args": _args(severity="info"),
         "adoption": "Declared",
-        "expect": {"errors": 1, "total_count": 59},
+        "expect": {
+            "errors": 1,
+            "warnings": 1,
+            "infos": 1,
+            "rule_counts": {},
+            "adoption": "Declared",
+            "enforced_count": 58,
+            "total_count": 58,
+            "report_mode": False,
+        },
     },
+    # Adoption downgrade: Structural enforces HC-P001 but not HC-P004, so the HC-P004
+    # error is downgraded to info while the HC-P001 error stands. Threshold 'info' keeps both.
     {
-        "diagnostics": [_diag("HC-OR001", "error")],
-        "args": _args("info"),
+        "diagnostics": [_D_P004_ERR, _diag("HC-P001", "error")],
+        "args": _args(severity="info"),
         "adoption": "Structural",
-        "expect": {"errors": 0},
+        "expect": {
+            "errors": 1,
+            "warnings": 0,
+            "infos": 1,
+            "adoption": "Structural",
+            "enforced_count": 11,
+            "total_count": 58,
+        },
     },
-    # A warning below an --severity error threshold is dropped: the sole finding
-    # does not survive, so every survivor count is 0.
+    # Severity threshold 'error' drops the warning and the info, keeping only the error.
     {
-        "diagnostics": [_diag("HC-P001", "warning")],
-        "args": _args("error"),
+        "diagnostics": [_D_ERR, _D_WARN, _D_INFO],
+        "args": _args(severity="error"),
         "adoption": "Declared",
-        "expect": {"errors": 0, "warnings": 0, "infos": 0},
+        "expect": {"errors": 1, "warnings": 0, "infos": 0},
     },
-    # --rule HC-P003 keeps only HC-P003: the HC-P001 finding is filtered out, so the
-    # survivor is the one error and warnings stays 0.
+    # --rule include filter keeps only HC-P001; the HC-P004 error is filtered out.
     {
-        "diagnostics": [_diag("HC-P003", "error"), _diag("HC-P001", "warning")],
-        "args": _args("info", include_rules=["HC-P003"]),
+        "diagnostics": [_D_ERR, _D_P004_ERR],
+        "args": _args(severity="info", include=["HC-P001"]),
         "adoption": "Declared",
-        "expect": {"errors": 1, "warnings": 0},
+        "expect": {"errors": 1, "warnings": 0, "infos": 0},
     },
-    # --no-rule HC-P003 drops HC-P003: only the HC-P001 warning survives.
+    # --no-rule exclude filter drops HC-P004, keeping HC-P001.
     {
-        "diagnostics": [_diag("HC-P003", "error"), _diag("HC-P001", "warning")],
-        "args": _args("info", exclude_rules=["HC-P003"]),
+        "diagnostics": [_D_ERR, _D_P004_ERR],
+        "args": _args(severity="info", exclude=["HC-P004"]),
         "adoption": "Declared",
-        "expect": {"errors": 0, "warnings": 1},
+        "expect": {"errors": 1, "warnings": 0, "infos": 0},
     },
-    # --report mode tallies survivors per rule into rule_counts and carries the flag.
+    # --report fills rule_counts with each rule's finding count; empty otherwise.
     {
-        "diagnostics": [_diag("HC-P003", "error"), _diag("HC-P003", "error")],
-        "args": _args("info", report_mode=True),
+        "diagnostics": [_D_ERR, _D_ERR, _D_P004_ERR],
+        "args": _args(severity="info", report_mode=True),
         "adoption": "Declared",
-        "expect": {"rule_counts": {"HC-P003": 2}, "report_mode": True},
-    },
-    # The three survivor counts are read from separate severity tallies, so a report
-    # holding one error, one warning and three infos (all rules enforced at Declared,
-    # threshold 'info' keeping every finding) pins each count to its own number. The
-    # info count differs from the error-plus-warning total, so counting the complement
-    # of info rather than info produces a different number.
-    {
-        "diagnostics": [
-            _diag("HC-P003", "error"),
-            _diag("HC-P001", "warning"),
-            _diag("HC-P007", "info"),
-            _diag("HC-P011", "info"),
-            _diag("HC-P016", "info"),
-        ],
-        "args": _args("info"),
-        "adoption": "Declared",
-        "expect": {"errors": 1, "warnings": 1, "infos": 3},
-    },
-    # A lone info-severity finding, enforced at Declared, sits below the 'warning'
-    # threshold: info ranks under warning, so the finding is dropped and every count is
-    # zero. This pins the exact info and warning severity ranks; raising info to
-    # warning's rank or lowering warning to info's rank would keep the finding.
-    {
-        "diagnostics": [_diag("HC-P007", "info")],
-        "args": _args("warning"),
-        "adoption": "Declared",
-        "expect": {"errors": 0, "warnings": 0, "infos": 0},
-    },
-    # --report mode over two distinct rules tallies each rule under its own id. The
-    # error rule appears twice and the warning rule once, so the per-rule tally keeps
-    # them apart rather than piling every survivor onto one id.
-    {
-        "diagnostics": [
-            _diag("HC-P003", "error"),
-            _diag("HC-P003", "error"),
-            _diag("HC-P001", "warning"),
-        ],
-        "args": _args("info", report_mode=True),
-        "adoption": "Declared",
-        "expect": {"rule_counts": {"HC-P003": 2, "HC-P001": 1}, "report_mode": True},
+        "expect": {
+            "errors": 3,
+            "rule_counts": {"HC-P001": 2, "HC-P004": 1},
+            "report_mode": True,
+        },
     },
 ]
 
 
 def probe_prepare_report():
+    """prepare_report applies the downgrade, threshold and filters, then counts the survivors."""
     try:
         from honest_check import prepare_report
     except ImportError as exc:
@@ -127,12 +123,20 @@ def probe_prepare_report():
 
     bad = []
     for case in _CASES:
-        got = prepare_report(case["diagnostics"], case["args"], case["adoption"])
+        try:
+            got = prepare_report(
+                diagnostics=case["diagnostics"],
+                args=case["args"],
+                adoption=case["adoption"],
+            )
+        except Exception as exc:
+            bad.append(f"prepare_report({case['adoption']}) raised {exc!r}")
+            continue
         for field, want in case["expect"].items():
-            have = got.get(field) if isinstance(got, dict) else None
+            have = got.get(field) if hasattr(got, "get") else None
             if have != want:
                 bad.append(
-                    f"prepare_report(rule={case['diagnostics'][0]['rule_id']}, "
-                    f"adoption={case['adoption']!r})[{field!r}] -> {have!r}, expected {want!r}"
+                    f"prepare_report({case['adoption']}, {case['args']['severity']}) "
+                    f".{field} -> {have!r}, expected {want!r}"
                 )
     return bad

@@ -1,95 +1,105 @@
-"""format_human renders the human-readable default: the adoption line, one block per
-diagnostic, and a 'Found N errors, M warnings.' tally.
+"""Honest probe for honest-check's format_human (feature Scenario: format_human).
 
-The adoption line names the level and the enforced-of-total count. Each finding renders
-its split source location as 'file:line:col', its message on an indented line, its
-context on a '  | ' line only when the context is non-empty, and a blank line after the
-block. The whole is joined with newlines. A location with three colons is split from the
-right into exactly file, line and col, so the split keeps the leading path intact rather
-than falling back to the whole string.
+format_human renders the human-readable CLI default from a prepared CheckReport: the
+adoption line, then one block per diagnostic (a 'file:line:col: severity rule_id' header
+split from source_location, the message, the quoted context), closing with the
+'Found N errors, M warnings.' tally; under report_mode it renders the per-rule table from
+rule_counts instead. It returns the finished text and does no I/O.
+
+Each case pins the literal text the scenario and the .hd note fix: the adoption-line
+phrases, the exact header line for a given diagnostic, the message, and the tally line
+with the report's error and warning counts plugged in. A stub returning "" fails the tally
+and header checks. The whitespace between blocks is not fixed, so the probe asserts
+containment of the fixed fragments, not an exact whole-string match.
 """
 
 
-def _diag(source_location, rule_id="HC-P003", severity="error", context="class X:"):
+def _diag(rule_id, severity, message, source_location, context="", fixable=False):
     return {
         "rule_id": rule_id,
         "severity": severity,
-        "message": "class declaration",
+        "message": message,
         "source_location": source_location,
         "context": context,
-        "fixable": False,
+        "fixable": fixable,
     }
 
 
-def _report(diag, errors=1, warnings=0):
+def _report(diagnostics, errors, warnings, infos, adoption, enforced_count,
+            total_count, rule_counts=None, report_mode=False):
     return {
-        "diagnostics": [diag],
+        "diagnostics": diagnostics,
         "errors": errors,
         "warnings": warnings,
-        "infos": 0,
-        "rule_counts": {},
-        "adoption": "Declared",
-        "enforced_count": 50,
-        "total_count": 50,
-        "report_mode": False,
+        "infos": infos,
+        "rule_counts": rule_counts or {},
+        "adoption": adoption,
+        "enforced_count": enforced_count,
+        "total_count": total_count,
+        "report_mode": report_mode,
     }
+
+
+# Each case: the CheckReport to render, and the fixed text fragments the output must carry.
+_CASES = [
+    # One error finding: adoption line, the header split from source_location, the message,
+    # and the 'Found 1 errors, 0 warnings.' tally.
+    {
+        "report": _report(
+            [_diag("HC-P001", "error", "msg one", "src/x.py:10:5", "if a:")],
+            errors=1, warnings=0, infos=0,
+            adoption="Declared", enforced_count=58, total_count=58,
+        ),
+        "contains": [
+            "adoption level Declared",
+            "58 of 58 rules enforced.",
+            "src/x.py:10:5: error HC-P001",
+            "msg one",
+            "Found 1 errors, 0 warnings.",
+        ],
+    },
+    # The tally reads the report's own counts, not the diagnostic list length.
+    {
+        "report": _report(
+            [
+                _diag("HC-P001", "error", "a", "src/x.py:1:1"),
+                _diag("HC-P004", "warning", "b", "src/y.py:2:1"),
+            ],
+            errors=2, warnings=1, infos=0,
+            adoption="Declared", enforced_count=58, total_count=58,
+        ),
+        "contains": ["Found 2 errors, 1 warnings."],
+    },
+    # Under report_mode the per-rule table from rule_counts is rendered: the rule and its count.
+    {
+        "report": _report(
+            [],
+            errors=3, warnings=0, infos=0,
+            adoption="Declared", enforced_count=58, total_count=58,
+            rule_counts={"HC-P001": 3}, report_mode=True,
+        ),
+        "contains": ["HC-P001", "3"],
+    },
+]
 
 
 def probe_format_human():
+    """format_human renders the adoption line, the per-finding blocks and the tally."""
     try:
         from honest_check import format_human
     except ImportError as exc:
         return [f"cannot import format_human: {exc}"]
 
     bad = []
-
-    got = format_human(_report(_diag("src/x.py:10:1")))
-    if not isinstance(got, str):
-        return [f"format_human(report) -> {got!r}, expected a string"]
-
-    # The adoption line carries both halves: the level phrase and the count phrase.
-    if "honest-check: adoption level Declared" not in got:
-        bad.append(f"format_human is missing the adoption level phrase; got {got!r}")
-    if "50 of 50 rules enforced." not in got:
-        bad.append(f"format_human is missing the enforced-count phrase; got {got!r}")
-
-    # The split location renders file:line:col, not the whole location padded with
-    # empty line and col. A right-split from a two-colon location gives this exact line.
-    if "src/x.py:10:1: error HC-P003" not in got:
-        bad.append(f"format_human did not render the split location line; got {got!r}")
-
-    # The message renders on its own indented line.
-    if "\n  class declaration\n" not in got:
-        bad.append(f"format_human did not render the message line; got {got!r}")
-
-    # A non-empty context renders on a '  | ' line.
-    if "\n  | class X:\n" not in got:
-        bad.append(f"format_human did not render the context line; got {got!r}")
-
-    # The per-diagnostic blank line and the newline join put a blank line before the
-    # tally, and the tally reports the exact error and warning counts.
-    if "\n\nFound 1 errors, 0 warnings." not in got:
-        bad.append(
-            f"format_human did not render a blank line before the tally; got {got!r}"
-        )
-
-    # A three-colon location splits from the right into file 'w:x', line 'y', col 'z',
-    # keeping the leading colon in the path rather than widening the split.
-    got3 = format_human(_report(_diag("w:x:y:z", rule_id="HC-R001")))
-    if "w:x:y:z: error HC-R001" not in got3:
-        bad.append(
-            f"format_human widened the right-split of a three-colon location; got {got3!r}"
-        )
-
-    # An empty context renders no '  | ' line at all, and the finding still appears.
-    no_context = format_human(_report(_diag("src/y.py:3:1", rule_id="HC-P001",
-                                            severity="warning", context=""),
-                                      errors=0, warnings=1))
-    if "  | " in no_context:
-        bad.append(
-            f"format_human rendered a context line for an empty context; got {no_context!r}"
-        )
-    if "HC-P001" not in no_context:
-        bad.append(f"format_human(no-context report) is missing 'HC-P001'; got {no_context!r}")
-
+    for case in _CASES:
+        try:
+            got = format_human(report=case["report"])
+        except Exception as exc:
+            bad.append(f"format_human raised {exc!r}")
+            continue
+        for fragment in case["contains"]:
+            if fragment not in got:
+                bad.append(
+                    f"format_human output missing {fragment!r}; got {got!r}"
+                )
     return bad

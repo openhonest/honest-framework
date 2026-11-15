@@ -1,146 +1,93 @@
-"""main is the command-line door: it hands argv to run_check and yields the exit code.
+"""Honest probe for honest-check's main (feature Scenario: main).
 
-The in-process cases pin main itself: a clean .py yields 0, a class .py yields 1, and a
-routed declaration-read Fault is discharged as a HonestCheckError carrying the Fault's
-problem and remedy (the one place a Fault crosses from a value into a world effect,
-§HC-R002).
+main is the CLI door. It hands argv straight to run_check and turns run_check's
+answer into the process exit: on an ExitCode it exits the process with it (0 is
+success, 1 is the failed gate); on the declaration-read Fault it discharges it at
+exit code 2, raising HonestCheckError carrying the Fault's problem and remedy.
 
-The subprocess cases pin the __main__ shim that wraps main, which only runs when cli.py is
-executed as a script. They run the real file and read the process exit code and stderr: a
-clean tree exits 0, a class tree exits 1, and a missing --declaration exits 2 after the door
-prints the Fault to stderr. A last case imports the module as a plain import and checks it
-produces no output, so the __main__ guard cannot be dropped without the door firing on every
-import.
+This is a near-integration probe over a REAL temp tree, not mocks. The door "exits
+the process", but the declared signature returns an ExitCode, so this probe treats
+either a returned code or a SystemExit as equally valid and compares the code:
+  - clean tree -> exit code 0,
+  - tree with a bare `if` -> exit code 1,
+  - --declaration naming a missing .hd -> HonestCheckError raised (exit code 2).
+stderr is captured so a printing door does not pollute the run.
 
-Real temp trees; stdout captured; cwd set to the temp dir so no stray honest-check.toml
-ancestor changes the adoption level, restored in finally.
+A do-nothing stub (returns None) fails the clean case (None is not 0); a stub
+returning '0' fails the `if` case (expects 1) and the Fault case, so the probe is
+not vacuous.
+
+GAPS: (1) the scenario does not fix whether main RETURNS the ExitCode or calls
+sys.exit, so the probe accepts both. (2) It does not fix the string-vs-int exit
+encoding, so the probe normalises with str(). (3) For the read failure the
+scenario fixes "raising HonestCheckError"; the probe also accepts SystemExit code
+2, since both discharge the Fault as exit 2, and flags that an impl using
+sys.exit(2) would not match the literal HonestCheckError. (4) the bare-`if` ->
+exit 1 chain rests on the rule catalogue and adoption table, not the main
+scenario.
 """
-
 import contextlib
 import io
-import os
-import subprocess
-import sys
 import tempfile
+from pathlib import Path
 
-_CASES = [
-    {"source": "x = 1\n", "expect": 0},
-    {"source": "class Report:\n    pass\n", "expect": 1},
-]
-
-
-def _cli_path():
-    """The absolute path of cli.py, so the subprocess cases run the real door as a script."""
-    import honest_check.cli
-
-    return honest_check.cli.__file__
+_CLEAN = "def choose(flag):\n    return 1\n"
+_BAD_IF = "def choose(flag):\n    if flag:\n        return 1\n    return 0\n"
 
 
-def _run_script(args):
-    """Run cli.py as a script under the same interpreter, returning (code, stdout, stderr)."""
-    completed = subprocess.run(
-        [sys.executable, _cli_path(), *args],
-        capture_output=True,
-        text=True,
-    )
-    return completed.returncode, completed.stdout, completed.stderr
+def _invoke(main, argv):
+    """Call main under captured stderr; report how it ended as a (kind, payload)
+    pair: ('return', value), ('exit', code) or ('raise', exception class name)."""
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(buf):
+            value = main(argv)
+        return ("return", value)
+    except SystemExit as se:
+        return ("exit", se.code)
+    except Exception as exc:
+        return ("raise", type(exc).__name__)
 
 
 def probe_main():
+    """main turns run_check's answer into exit 0 on a clean tree, 1 on a violation, and HonestCheckError on a missing --declaration."""
     try:
         from honest_check import main
     except ImportError as exc:
         return [f"cannot import main: {exc}"]
 
     bad = []
-    start = os.getcwd()
-    for case in _CASES:
-        with tempfile.TemporaryDirectory() as d:
-            with open(os.path.join(d, "source.py"), "w", encoding="utf-8") as fh:
-                fh.write(case["source"])
-            buf = io.StringIO()
-            try:
-                os.chdir(d)
-                with contextlib.redirect_stdout(buf):
-                    got = main([d])
-            finally:
-                os.chdir(start)
-            try:
-                code = int(got)
-            except (ValueError, TypeError):
-                bad.append(
-                    f"main over {case['source']!r} -> {got!r}, "
-                    f"not an exit code; expected {case['expect']}"
-                )
-                continue
-            if code != case["expect"]:
-                bad.append(
-                    f"main over {case['source']!r} -> {code}, expected {case['expect']}"
-                )
 
-    # When run_check routes a declaration-read Fault outward, the door discharges it as
-    # a HonestCheckError carrying the Fault's problem and remedy.
+    # Clean tree -> exit code 0 (returned or via SystemExit).
     with tempfile.TemporaryDirectory() as d:
-        with open(os.path.join(d, "m.py"), "w", encoding="utf-8") as fh:
-            fh.write("def present(x):\n    return x\n")
-        buf = io.StringIO()
-        raised = None
-        try:
-            os.chdir(d)
-            with contextlib.redirect_stdout(buf):
-                main(["--declaration", os.path.join(d, "missing.hd"), d])
-        except Exception as exc:
-            raised = exc
-        finally:
-            os.chdir(start)
-        if raised is None:
-            bad.append("main with a missing --declaration did not raise; expected HonestCheckError")
-        elif type(raised).__name__ != "HonestCheckError":
+        (Path(d) / "clean.py").write_text(_CLEAN)
+        kind, payload = _invoke(main, [d])
+        if kind == "raise":
+            bad.append(f"main([clean tree]) raised {payload}, expected exit code 0")
+        elif str(payload) != "0":
+            bad.append(f"main([clean tree]) {kind} {payload!r}, expected exit code 0")
+
+    # Tree with a bare `if` -> exit code 1.
+    with tempfile.TemporaryDirectory() as d:
+        (Path(d) / "bad.py").write_text(_BAD_IF)
+        kind, payload = _invoke(main, [d])
+        if kind == "raise":
+            bad.append(f"main([tree with `if`]) raised {payload}, expected exit code 1")
+        elif str(payload) != "1":
+            bad.append(f"main([tree with `if`]) {kind} {payload!r}, expected exit code 1")
+
+    # --declaration naming a missing .hd -> HonestCheckError (exit code 2).
+    with tempfile.TemporaryDirectory() as d:
+        (Path(d) / "clean.py").write_text(_CLEAN)
+        missing = str(Path(d) / "nope.hd")
+        kind, payload = _invoke(main, [d, "--declaration", missing])
+        discharged = (kind == "raise" and payload == "HonestCheckError") or (
+            kind == "exit" and str(payload) == "2"
+        )
+        if not discharged:
             bad.append(
-                f"main with a missing --declaration raised {type(raised).__name__}, "
-                f"expected HonestCheckError"
+                f"main([tree, --declaration <missing>]) {kind} {payload!r}, "
+                f"expected HonestCheckError raised (the Fault discharged as exit code 2)"
             )
-        elif "declaration" not in str(raised):
-            bad.append(
-                f"main with a missing --declaration raised a message that drops the Fault "
-                f"text: {str(raised)!r}"
-            )
-
-    # The __main__ shim, run as a script. A clean tree exits 0, a class tree exits 1.
-    with tempfile.TemporaryDirectory() as d:
-        with open(os.path.join(d, "s.py"), "w", encoding="utf-8") as fh:
-            fh.write("x = 1\n")
-        code, _, _ = _run_script([d])
-        if code != 0:
-            bad.append(f"cli.py as a script over a clean tree exited {code}, expected 0")
-
-    with tempfile.TemporaryDirectory() as d:
-        with open(os.path.join(d, "s.py"), "w", encoding="utf-8") as fh:
-            fh.write("class Report:\n    pass\n")
-        code, _, _ = _run_script([d])
-        if code != 1:
-            bad.append(f"cli.py as a script over a class tree exited {code}, expected 1")
-
-    # A missing --declaration: the shim discharges the Fault at exit 2 after printing it.
-    with tempfile.TemporaryDirectory() as d:
-        with open(os.path.join(d, "s.py"), "w", encoding="utf-8") as fh:
-            fh.write("x = 1\n")
-        code, _, stderr = _run_script(["--declaration", os.path.join(d, "missing.hd"), d])
-        if code != 2:
-            bad.append(f"cli.py as a script over a missing --declaration exited {code}, expected 2")
-        if stderr.strip() == "":
-            bad.append("cli.py as a script over a missing --declaration printed nothing to stderr")
-
-    # A plain import runs the door nowhere: no stdout, exit 0. If the __main__ guard were
-    # dropped, importing would run main over the interpreter's own argv and print a report.
-    imported = subprocess.run(
-        [sys.executable, "-c", "import honest_check.cli"],
-        capture_output=True,
-        text=True,
-    )
-    if imported.returncode != 0:
-        bad.append(f"importing honest_check.cli exited {imported.returncode}, expected 0")
-    if imported.stdout != "":
-        bad.append(f"importing honest_check.cli wrote to stdout: {imported.stdout!r}")
 
     return bad

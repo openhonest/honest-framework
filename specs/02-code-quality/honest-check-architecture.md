@@ -330,47 +330,13 @@ The rule groups keep their existing work. `check_construction` runs the construc
 
 This arrangement spreads the checking engine across modules instead of packing it into one oversized file, which slop-audit L1.17 forbids. It also keeps the roles apart. The thin input and output functions talk only to an orchestrator, the orchestrator routes and delegates, and `build_context`, `check_source`, the rule groups, and the shared helpers do every piece of processing as pure functions.
 
-### 3.5 Shared Extraction API
+### 3.5 Recognizing the framework's constructs
 
-honest-check recognizes chains, state machines, import aliases, template class references, and watchlist membership to run its own rules. honest-test needs the same constructs: it discovers the chains and state machines a source file declares so it can enumerate them exhaustively (honest-test §3, §7), resolves the same import aliases first so an aliased `@link` or state machine is still recognized, reads a component template's static class references to prove two components do not share a CSS namespace (honest-test §7.1), and checks its own non-determinism watchlist against honest-check's so the two tools trap exactly the same calls (honest-test §4.5).
+honest-check recognizes the framework's constructs — chains, state machines, template class references, watchlisted calls — inside the rule that checks each one. The declaration graph `build_context` assembles (§3.4) is honest-check's record of the chains and state machines a file declares, resolved against the import-alias map `resolve_aliases` builds (§3.3), and the rules read it. `resolve_aliases` is honest-check's own internal function: `build_context` calls it from inside the core to seed each `CheckContext`'s alias map, and nothing outside honest-check imports it.
 
-Two tools deriving "what is a chain" independently would drift: a chain honest-check checks and a chain honest-test enumerates could diverge silently. So the recognition is written once, in honest-check, and exposed as five pure functions honest-test consumes. This is the one source of truth for the declaration graph of §3.4 and the alias resolution of §3.3; honest-test never re-parses the framework's construction grammar.
+honest-test recognizes the same constructs by a different mechanism, and the two tools share no recognizer. honest-test loads each module under test and reads its live chains, state machines, components and vocabularies off honest-type's metadata (honest-test §11), rather than extracting them statically from a parse tree. Because it reads the running declarations, it needs no static chain or state-machine recognizer, and no alias resolver of its own.
 
-The five functions are public but are not part of the CLI/startup surface (`__all__`): like the cross-module seam functions, they are reached by importing the submodule that holds them (`honest_check.declgraph`, `honest_check.templates`, `honest_check.watchlists`). They take a parsed node from honest-parse and the file's source bytes — honest-test parses the file once and hands both in — and return their results as data, never raising.
-
-```
-FUNCTION resolve_aliases(root, source) -> { local_name -> canonical_name }
-    // §3.3, exposed. The alias map an extractor consults so an aliased
-    // import (from honest_type import vocabulary as v) is still recognized.
-
-FUNCTION extract_chains(root, source, aliases) -> [ ChainDecl, ... ]
-    // one ChainDecl { name, links } per chain the file declares: the chain's
-    // declared name and the ordered names of its link functions. Recognition
-    // is the declaration-graph chain of §3.4, the same construct HC-R002 and
-    // HC002 cross against adjacent-link vocabularies.
-
-FUNCTION extract_state_machines(root, source, aliases) -> [ MachineDecl, ... ]
-    // one MachineDecl { name } per state machine the file declares: the name
-    // bound to the machine. Recognition is the state_machines of §3.4, the
-    // same construct the HC-SM rules check.
-
-FUNCTION template_class_references(template) -> [ ClassRef, ... ]
-    // one ClassRef { class } per static CSS class a template references.
-    // Interpolated class values are dynamic and skipped, exactly as HC-REF003
-    // skips them (§4.2). template is the template's bytes — the form parse
-    // takes and honest-test holds a component template in.
-
-FUNCTION matches_watchlist(name, watchlist) -> bool
-    // whether a dotted call name matches a watchlist entry — an exact entry
-    // matches by equality, an entry carrying `*` matches as a glob — the same
-    // membership test HC008 runs against its I/O and non-determinism lists.
-```
-
-`ChainDecl`, `MachineDecl`, and `ClassRef` are records (a name, and for a chain its ordered link names). The functions open no file and execute none of the code they read; a construct that cannot be recognized is absent from the returned list, never an exception. honest-test's runner calls `resolve_aliases` once per file, then `extract_chains` and `extract_state_machines` with that alias map, binds each returned name to a live object through the imported module, and enumerates it.
-
-**honest-check publishes this surface, so the world reaches these functions by import, not through a door.** honest-check is a hybrid. It has real boundaries (`startup_check`, `main`, the readers), and it also publishes this pure surface, which honest-test reaches directly by `import`. A pure function the world imports still needs a declared arrival, or the declaration gate reads the world landing on a pure function as the core reached past its boundaries. An `entry` declares that arrival and names the imported function, and the map draws it on the input side under an "imported (pure)" heading, so every way into the module stays a named seam.
-
-Whether an imported function is an `edge` or a plain core function follows from one fact, and the `.hd` records that classification rather than this spec. A pure function the world reaches only by import, and that nothing inside honest-check calls, is an `edge`: no I/O, every pure discipline enforced, named by an `entry`. It is not a `boundary_in`, because no I/O happens at it, and the no-boundary library exemption does not apply, because honest-check has doors. A pure function the core also calls cannot be an `edge`, because the core reaches it; it stays a plain core function that an `entry` still exports. `resolve_aliases` is the second kind, because `build_context` calls it from inside the core (§3.4). honest-test imports the other four only, and nothing inside honest-check calls them, so each of those is an `edge`. The role keywords are defined in honest-design's architecture.
+An earlier design put four static construct recognizers in honest-check — `extract_chains`, `extract_state_machines`, `template_class_references`, `matches_watchlist` — and exposed them for honest-test to import, on the argument that one shared recognizer keeps the two tools from drifting. honest-test never imported them: it loads modules live and reads their real constructs, so static extraction had no consumer. honest-check never called them either, because its rules recognize each construct inline. The four were dead on both sides and have been removed.
 
 ---
 
@@ -592,7 +558,7 @@ FUNCTION check_HC_REF002(template_roots, scanned_templates):
                 "Add the template, or fix the path.")
 ```
 
-The **search path is the union of the roots the application registers with its template engine** — the configured templates directory and, by the honest-components convention, its sibling `atoms/` and `molecules/` directories when they exist. A target resolves if it matches a template file relative to any root, exactly as the loader searches: `{% include "button/button.html" %}` resolves under `atoms/`, `{% include "molecules/card/card.html" %}` under the templates root. A **dynamic** target — a variable or expression with no string literal (`{% include some_var %}`) — is unresolvable and is skipped, exactly as HC-REF001 skips an interpolated route path. honest-parse's Jinja grammar (which the HTML grammar cannot supply, reading `{% %}` as opaque text) surfaces a literal target as a `string` child of the include/extends statement and a dynamic one as none.
+The **search path is the union of the roots the application registers with its template engine** — the configured templates directory and, by the honest-components convention, its sibling `atoms/` and `molecules/` directories when they exist. A target resolves if it matches a template file relative to any root, exactly as the loader searches: `{% include "button/button.html" %}` resolves under `atoms/`, `{% include "molecules/card/card.html" %}` under the templates root. A **dynamic** target — a variable or expression with no string literal (`{% include some_var %}`) — is not skipped: honest-check traces it to the closed source that sets the variable (the render call that supplied it, and the closed vocabulary that variable ranges over) and resolves every template the vocabulary admits against the roots; a source that is not closed fails there, at the boundary that admitted an unbounded value (§1.1). honest-parse's Jinja grammar (which the HTML grammar cannot supply, reading `{% %}` as opaque text) surfaces a literal target as a `string` child of the include/extends statement and a dynamic one as none.
 
 #### HC-REF003 — Template class reference resolves to a defined rule
 
@@ -606,7 +572,7 @@ FUNCTION check_HC_REF003(defined_classes, scanned_templates):
                 "Class '{ref.class}' is defined by no stylesheet. Add the rule, or fix the class.")
 ```
 
-`defined_classes` is the union of the class selectors every discovered component stylesheet defines, read through honest-parse's CSS grammar (a `class_name` under a `class_selector`, so a pseudo-class like `:hover` is not mistaken for a class); a class defined for any component resolves, because the BEM namespace *ownership* is enforced separately, at mount time (honest-components §6.2). A class **value** that carries interpolation (`class="card {{ variant }}"`) is dynamic and skipped whole — only fully-static values are resolved — exactly as HC-REF001 skips an interpolated route path and HC-REF002 a variable include target; this is the stated bound of the check, not an oversight. Classes a client `h*-` module adds at runtime are equally statically knowable from the module source: honest-check reads the `.js` modules under the search roots and resolves the string-literal arguments to a `classList` method (`add`/`remove`/`toggle`/`replace`/`contains`) and the tokens of a `className` assignment against the same defined-class set — a class a module *can* add that no stylesheet defines is a dead reference too, caught before the module ever runs. A non-literal argument (a variable or expression) is dynamic and skipped, the same bound as an interpolated template class. (Which `.js` honest-check reads is the search roots for now; a broader client-JS location is a configuration extension.)
+`defined_classes` is the union of the class selectors every discovered component stylesheet defines, read through honest-parse's CSS grammar (a `class_name` under a `class_selector`, so a pseudo-class like `:hover` is not mistaken for a class); a class defined for any component resolves, because the BEM namespace *ownership* is enforced separately, at mount time (honest-components §6.2). A class **value** that carries interpolation (`class="card {{ variant }}"`) is traced to its closed source: the interpolated part is followed to where its value is set and to the closed vocabulary it ranges over, and every class name that vocabulary admits is resolved against the defined classes; a source that is not closed fails there (§1.1). Classes a client `h*-` module adds at runtime are equally statically knowable from the module source: honest-check reads the `.js` modules under the search roots and resolves the string-literal arguments to a `classList` method (`add`/`remove`/`toggle`/`replace`/`contains`) and the tokens of a `className` assignment against the same defined-class set — a class a module *can* add that no stylesheet defines is a dead reference too, caught before the module ever runs. A non-literal argument (a variable or expression) is traced the same way, to the closed source of its value (§1.1). (Which `.js` honest-check reads is the search roots for now; a broader client-JS location is a configuration extension.)
 
 #### HC-REF004 — Behavioural attribute value resolves to a declared vocabulary member
 
@@ -622,7 +588,7 @@ FUNCTION check_HC_REF004(vocabulary, scanned_templates):
                 "declared vocabulary. Fix the value, or extend the vocabulary.")
 ```
 
-`vocabulary` maps each checked attribute — `hf-format` to the format names, `hf-type` to the input-type names, and each `hf-*-format` option to its enumerated set — to its allowed values, read from the **manifest honest-format emits** (`manifest.json`), never inferred by scraping the runtime's dispatch tables (declared, never inferred). An attribute carrying a free value — `hf-decimals`, `hf-currency`, a raw prefix — names no enumerated vocabulary, is absent from the map, and is not judged; only the closed-vocabulary attributes are resolved. A value carrying interpolation (`hf-format="{{ kind }}"`) is dynamic and skipped whole, exactly as HC-REF001 skips an interpolated route path. The manifest is read only where a `format_manifest` path is configured, so HC-REF004 runs only where an application declares which honest-format vocabulary its templates target — exactly as HC002/HC-REF001 run only where templates are configured.
+`vocabulary` maps each checked attribute — `hf-format` to the format names, `hf-type` to the input-type names, and each `hf-*-format` option to its enumerated set — to its allowed values, read from the **manifest honest-format emits** (`manifest.json`), never inferred by scraping the runtime's dispatch tables (declared, never inferred). An attribute carrying a free value — `hf-decimals`, `hf-currency`, a raw prefix — names no enumerated vocabulary, is absent from the map, and is not judged; only the closed-vocabulary attributes are resolved. A value carrying interpolation (`hf-format="{{ kind }}"`) is traced to the closed source that sets it and resolved against the manifest vocabulary; a source that is not closed fails there (§1.1). The manifest is read only where a `format_manifest` path is configured, so HC-REF004 runs only where an application declares which honest-format vocabulary its templates target — exactly as HC002/HC-REF001 run only where templates are configured.
 
 #### HC-REF005 — Declaration and implementation resolve to each other
 
@@ -791,6 +757,33 @@ FUNCTION check_HC_REF011(workspace_roots, exempt):
 **A member is exempt only by name, with a reason, and the list only shrinks.** The rule subtracts the modules named on an exemption list, each carrying the reason it is not yet declared, the same adoption posture HC-REF005 takes toward a module it has not yet crossed. A module absent from the list owes a declaration. A module on the list is on the record as ungated, with its reason beside it, where a person can read why. Asserting that the rest will follow, without naming them on that list, is how a rule comes to exist in a catalogue and nowhere else. The list does not grow on its own: a new module is written with its declaration, not added to the exemptions.
 
 **Absence is a finding, never permission, and the two absences are kept apart.** A reader that returns the same empty answer for "a module that declares nothing" and "a module whose `.hd` will not parse" hides the second case inside the first, and the module passes on an error the gate should have raised. The decision keeps them apart: a member with no `.hd` is this rule's finding, and a member whose `.hd` is present but unreadable is a syntax finding (HC-SYN), not silent agreement. Collapsing the two into one empty value is the exact defect this tier exists to remove, so the reader reports which of the two it found.
+
+#### HC-REF012: an import is a declared seam
+
+A module's packaging manifest names the other modules it depends on: `pyproject.toml` lists them, `package.json` lists them, and a dependency on another workspace module is a real coupling, because the code imports and calls across it. HC-REF006, HC-REF007 and HC-REF008 each act on a seam the declaration already wrote, so an import the declaration names no seam onto gives them nothing: the coupling lives in the packaging alone and the `.hd` is silent about it. Eleven modules import honest-type and one declares a seam onto it. The other ten couple to it invisibly, and the seam rules see none of them. A dependency nobody declared is a reach into another module that answers to no rule, the same hiding place the withdrawal of the `edge` role closed for a function no declaration reached.
+
+HC-REF012 requires the seam. For each workspace module a module's manifest depends on, the module's declaration must name at least one cross-module seam onto it: a side effect whose target, before the dot, is that module. A manifest dependency on a workspace module that the declaration names no seam onto is the fault. A dependency on a package outside the workspace is untouched, the way HC-REF008 leaves a world target alone: it names no module in view, so there is no seam to hold it to.
+
+The manifest is a second input the rule reads beside the declarations. honest-check already reads the manifest to decide workspace membership (HC-REF011) and reads it again here for the dependency list; the set of workspace module names is the same set HC-REF006 through HC-REF009 resolve against.
+
+```
+FUNCTION check_ref012(module, workspace_module_names, path):
+    declared_seams ← { side.module_name
+                       FOR function IN module.functions
+                       FOR side IN function.side_effects
+                       IF side.module_name IS NOT "" }
+    FOR EACH dependency IN module.manifest_dependencies:
+        IF dependency NOT IN workspace_module_names THEN CONTINUE   // an external package, no seam to hold it to
+        IF dependency NOT IN declared_seams:
+            EMIT error(HC-REF012, path, module.location,
+                f"'{module.name}' depends on '{dependency}' in its package manifest and declares no seam "
+                f"onto it, so the coupling lives only in the import. Name the function it enters, as a side "
+                f"effect '{dependency}.<door>'.")
+```
+
+It fails the build, where HC-REF009 only asks. A manifest dependency is a definite coupling, not a resource two modules might share by chance, so an undeclared seam onto it is a fault the gate refuses rather than a question the reader answers.
+
+HC-REF012 is the rule the other seam rules stand on. It reads the import and insists the declaration name it; HC-REF008 then insists that seam name the door it enters; HC-REF007 adjudicates where that door may land. The chain runs import, seam, door, landing, and HC-REF012 is its first link: without it the later three rule only on the seams someone happened to write down, one in eleven for honest-type. It is also what keeps HC-REF007 honest once a seam may land on any pure function of a boundary-less library. That permissive landing is safe only because HC-REF012 has already forced the call onto the record, so a landing the gate allows is never one the record missed; drop HC-REF012 and the permissive landing becomes the next hiding place.
 
 #### HC004 — Dead vocabulary type
 
@@ -2031,6 +2024,7 @@ src/pipelines/user.py:42: info
 | HC-REF008 | Error | Static | — | A cross-module side effect names a module but no door |
 | HC-REF009 | Question | Static | — | Two modules meet at a named resource and neither names the other |
 | HC-REF010 | Question | Static | — | A world-less module that exactly one module calls |
+| HC-REF012 | Error | Static | — | A module imports a workspace module in its manifest but declares no seam onto it |
 | HC-ST001 | Error | Static | — | Write to persisted state outside an I/O-boundary function |
 | HC-ST002 | Error | Static | — | Shadow copy of user state outside the manifest-declared DOM |
 | HC-HF001 | Error | Static | — | `feature_state` references a flag not declared in FEATURES |
@@ -2101,7 +2095,7 @@ An adoption level is a named, closed set of rules. A codebase declares one; the 
 | **Structural** | The shape of the code: no classes, no dispatch chains, no hidden state in closures or constructors, no lifecycle hooks, no implicit defaults, no unclosed lookups | HC-P001, HC-P003, HC-P007, HC-P011, HC-P016, HC-P015, HC-P019, HC-P020 |
 | **Boundary** | I/O, faults, persistence, and identity cross only at declared boundaries; the interior is pure | HC-P002, HC-P004, HC-P005, HC-P006, HC-P010, HC-P013, HC-ST001, HC-A001, HC-A002 |
 | **Typed** | The vocabulary, chain, and state-machine type system holds | HC001–HC011, HC-SM01–HC-SM05, HC-P014, HC-P017, HC-P018 |
-| **Declared** | Everything is declared rather than inferred: roles, orchestration, static references, and user state | HC-R001, HC-R002, HC-R003, HC-R004, HC-R005, HC-OR001, HC-OR003, HC-REF001–HC-REF008, HC-ST002, HC-HF001, HC-HF002 |
+| **Declared** | Everything is declared rather than inferred: roles, orchestration, static references, and user state | HC-R001, HC-R002, HC-R003, HC-R004, HC-R005, HC-OR001, HC-OR003, HC-REF001–HC-REF008, HC-REF012, HC-ST002, HC-HF001, HC-HF002 |
 
 **Three rules hold at every level: HC-SYN, HC-SUP001, and HC-SUP002.** A codebase that does not parse has no level, and the suppression guarantee of section 7.4 cannot be level-dependent — if it were, a low level would silently buy the right to hide things, which is the dial problem again.
 
@@ -2116,7 +2110,7 @@ adoption = "Boundary"
 
 **Rules above the declared level still run, and still report, downgraded to `info`.** They never fail the run and they are never dropped — the same treatment a suppressed diagnostic gets, for the same reason. A level is a statement about what a codebase holds today, not permission to stop looking.
 
-**The denominator is 57.** The adoption levels cover 57 rules; the catalogue lists more, because some rules belong to no level. Three are the test-time rules honest-test owns (HC-P008, HC-P009, HC-P012), which no adoption level can enforce because honest-check does not verify them. Two, HC-REF009 and HC-REF010, are questions that never fail a run, so they sit outside the levels by design.
+**The denominator is 58.** The adoption levels cover 58 rules (HC-REF012 is enforced at Declared); the catalogue lists more, because some rules belong to no level. Three are the test-time rules honest-test owns (HC-P008, HC-P009, HC-P012), which no adoption level can enforce because honest-check does not verify them. Two, HC-REF009 and HC-REF010, are questions that never fail a run, so they sit outside the levels by design.
 
 **Every run states its level.** Human output opens with it, and the JSON `summary` carries `adoption` and `enforced_rules`. A passing run therefore always says what it proved:
 

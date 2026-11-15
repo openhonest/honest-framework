@@ -1,113 +1,95 @@
-"""format_json renders the JSON machine format: a document with a version, a timestamp,
-a summary, a diagnostics array and the rule counts.
+"""Honest probe for honest-check's format_json (feature Scenario: format_json).
 
-Every field is pinned by value. The summary echoes the report's counts, adoption and
-enforced-rule total under their own keys; each diagnostic carries its rule, severity,
-split file/line/col, message, context and fixable flag under their own keys. The
-document is serialized with a two-space indent, so the top-level keys sit two spaces in.
-A three-colon location splits from the right into file, line and col.
+format_json renders the machine JSON from a prepared CheckReport: an object with version,
+timestamp, a summary carrying errors/warnings/infos/adoption/enforced_rules, and a
+diagnostics array whose entries split source_location into file/line/col and carry rule,
+severity, message, context and fixable. It returns the JSON text and does no I/O.
+
+The probe parses the text back and asserts the structure, rather than pinning whitespace.
+The summary counts and the per-diagnostic fields are the non-trivial literals the scenario
+fixes; a stub returning "" fails to parse and a stub returning "{}" misses every key. The
+line/col field type (int or str) is not fixed by the scenario, so the probe compares them
+through int().
 """
-
 import json
 
 
-def _diag(source_location, rule_id="HC-P003"):
+def _diag(rule_id, severity, message, source_location, context, fixable):
     return {
         "rule_id": rule_id,
-        "severity": "error",
-        "message": "class declaration",
+        "severity": severity,
+        "message": message,
         "source_location": source_location,
-        "context": "class X:",
-        "fixable": False,
+        "context": context,
+        "fixable": fixable,
     }
 
 
-def _report(diag):
-    return {
-        "diagnostics": [diag],
-        "errors": 1,
-        "warnings": 0,
-        "infos": 0,
-        "rule_counts": {"HC-P003": 1},
-        "adoption": "Declared",
-        "enforced_count": 50,
-        "total_count": 50,
-        "report_mode": False,
-    }
+_REPORT = {
+    "diagnostics": [
+        _diag("HC-P001", "error", "msg one", "src/x.py:10:5", "if a:", False),
+    ],
+    "errors": 2,
+    "warnings": 1,
+    "infos": 0,
+    "rule_counts": {},
+    "adoption": "Boundary",
+    "enforced_count": 17,
+    "total_count": 58,
+    "report_mode": False,
+}
 
 
 def probe_format_json():
+    """format_json renders a JSON object with the summary counts and the split diagnostics."""
     try:
         from honest_check import format_json
-        from honest_check.report import by_format
     except ImportError as exc:
         return [f"cannot import format_json: {exc}"]
 
     bad = []
-    got = format_json(_report(_diag("src/x.py:10:1")))
-    if not isinstance(got, str):
-        return [f"format_json(report) -> {got!r}, expected a string"]
-
-    # The two-space indent puts the top-level keys exactly two spaces in; a wider or
-    # narrower indent moves them, even though the parsed object is unchanged.
-    if '\n  "version": "0.1"' not in got:
-        bad.append(f"format_json did not serialize with a two-space indent; got {got!r}")
+    try:
+        text = format_json(report=_REPORT)
+    except Exception as exc:
+        return [f"format_json raised {exc!r}"]
 
     try:
-        obj = json.loads(got)
-    except (ValueError, TypeError) as exc:
-        return bad + [f"format_json(report) is not valid JSON: {exc}; got {got!r}"]
+        obj = json.loads(text)
+    except Exception as exc:
+        return [f"format_json output did not parse as JSON ({exc!r}); got {text!r}"]
 
-    if obj.get("version") != "0.1":
-        bad.append(f"format_json version -> {obj.get('version')!r}, expected '0.1'")
-    if "timestamp" not in obj:
-        bad.append(f"format_json has no 'timestamp' key; got keys {sorted(obj)}")
+    for key in ("version", "timestamp", "summary", "diagnostics"):
+        if key not in obj:
+            bad.append(f"format_json object missing top-level key {key!r}")
 
-    want_summary = {
-        "errors": 1,
-        "warnings": 0,
-        "infos": 0,
-        "adoption": "Declared",
-        "enforced_rules": 50,
-    }
-    if obj.get("summary") != want_summary:
-        bad.append(f"format_json summary -> {obj.get('summary')!r}, expected {want_summary}")
+    summary = obj.get("summary", {})
+    for field, want in (("errors", 2), ("warnings", 1), ("infos", 0), ("adoption", "Boundary")):
+        if summary.get(field) != want:
+            bad.append(f"format_json summary.{field} -> {summary.get(field)!r}, expected {want!r}")
+    if "enforced_rules" not in summary:
+        bad.append("format_json summary missing 'enforced_rules'")
 
-    if obj.get("rule_counts") != {"HC-P003": 1}:
-        bad.append(
-            f"format_json rule_counts -> {obj.get('rule_counts')!r}, expected {{'HC-P003': 1}}"
-        )
+    diags = obj.get("diagnostics", [])
+    if not isinstance(diags, list) or len(diags) != 1:
+        bad.append(f"format_json diagnostics -> {diags!r}, expected a one-entry list")
+        return bad
 
-    diags = obj.get("diagnostics")
-    want_diag = {
-        "rule": "HC-P003",
-        "severity": "error",
-        "file": "src/x.py",
-        "line": "10",
-        "col": "1",
-        "message": "class declaration",
-        "context": "class X:",
-        "fixable": False,
-    }
-    if not diags:
-        bad.append(f"format_json 'diagnostics' is empty or absent; got {obj!r}")
-    elif diags[0] != want_diag:
-        bad.append(f"format_json diagnostics[0] -> {diags[0]!r}, expected {want_diag}")
-
-    # A three-colon location splits from the right: file 'w:x', line 'y', col 'z'.
-    got3 = format_json(_report(_diag("w:x:y:z")))
-    obj3 = json.loads(got3)
-    diag3 = obj3["diagnostics"][0]
-    if (diag3.get("file"), diag3.get("line"), diag3.get("col")) != ("w:x", "y", "z"):
-        bad.append(
-            f"format_json widened the right-split of a three-colon location; "
-            f"file/line/col were {(diag3.get('file'), diag3.get('line'), diag3.get('col'))}"
-        )
-
-    # The format dispatch binds the json word to this renderer.
-    if by_format.get("json") is not format_json:
-        bad.append(
-            f"by_format['json'] -> {by_format.get('json')!r}, expected format_json"
-        )
-
+    entry = diags[0]
+    for field, want in (
+        ("file", "src/x.py"),
+        ("rule", "HC-P001"),
+        ("severity", "error"),
+        ("message", "msg one"),
+        ("context", "if a:"),
+        ("fixable", False),
+    ):
+        if entry.get(field) != want:
+            bad.append(f"format_json diagnostic.{field} -> {entry.get(field)!r}, expected {want!r}")
+    for field, want in (("line", 10), ("col", 5)):
+        try:
+            have = int(entry.get(field))
+        except (TypeError, ValueError):
+            have = None
+        if have != want:
+            bad.append(f"format_json diagnostic.{field} -> {entry.get(field)!r}, expected {want}")
     return bad

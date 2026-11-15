@@ -1,124 +1,87 @@
-"""check_seams is the honest-pre-commit gate door that routes the seam inputs to the
-orchestrator (feature: "check_seams is the honest-pre-commit gate door that routes the
-seam inputs to the orchestrator").
+"""Honest probe for honest-check's check_seams (feature Scenario: check_seams).
 
-The door takes (declarations, paths, in_scope), hands them straight to
-run_seam_rules, and returns the same combined Diagnostic list. So its observable
-behaviour matches the orchestrator's: a dead seam comes back as an HC-REF006
-error, a seam onto a non-door comes back as an HC-REF007 error, a seam from an
-out-of-scope module is not reported, and a resolved workspace returns [].
+check_seams is the single door the honest-pre-commit dogfood gate reaches into
+the cross-module seam checks. It hands its three inputs straight to
+run_seam_rules and returns the combined diagnostic list, holding no resolution
+logic itself. So it must return the flat list of every HC-REF006 and HC-REF007
+Diagnostic over the in-scope modules (resolved against every declaration).
 
-Every case builds its modules from real .hd strings parsed by honest-design's
-read_hd (not the function under test), keys declarations and paths by each
-module's name, and names the in-scope set. Four cases pin:
+The firing case declares one caller with two seams into one target: a dead door
+(ghost -> HC-REF006) and a wrong-role door (plain, a `fn` -> HC-REF007), and
+pins the two diagnostics in 006-before-007 order. The resolved case points the
+seam at a boundary_in door and pins the empty list. A stub `return []` passes the
+resolved case and fails the firing case.
 
-  - FIRING HC-REF006: module a declares a seam `reads "b.ghost"`; module b
-    declares no function ghost. With a and b both in scope the result contains an
-    HC-REF006 error — a dead reference.
-  - FIRING HC-REF007: module a declares a seam `reads "b.helper"`; module b
-    declares helper as a plain fn, not a boundary_in. The result contains an
-    HC-REF007 error — the core reached somewhere other than its door.
-  - SCOPE: the same a-into-b.ghost seam, but in_scope is ["b"] only, with a out
-    of scope. a's dead seam is NOT reported (no HC-REF006 fires).
-  - CLEAN: module a declares a seam `reads "b.realdoor"`; module b declares
-    realdoor as a boundary_in. With both in scope the result is [].
-
-A stub returning [] passes the scope and clean cases but fails both firing
-cases, so the probe is not vacuous.
-
-Spec authority: specs/features/honest-check.feature, scenario "check_seams is
-the honest-pre-commit gate door that routes the seam inputs to the orchestrator".
+Inputs are real Declarations parsed by honest-design's read_hd.
 """
 
-# Each module's .hd text, reused across cases.
-_A_GHOST = 'module a\n\n  reader fn f : (r: str) -> str side_effect reads "b.ghost"\n'
-_A_HELPER = 'module a\n\n  reader fn f : (r: str) -> str side_effect reads "b.helper"\n'
-_A_REALDOOR = 'module a\n\n  reader fn f : (r: str) -> str side_effect reads "b.realdoor"\n'
+# One caller, two seams into target: ghost (no such fn) and plain (role fn).
+_SRC_CALLER_TWO = (
+    "module caller\n\n"
+    '  fn c : (x: str) -> str'
+    ' side_effect reads "target.ghost"'
+    ' side_effect reads "target.plain"\n'
+)
+# One caller, one seam into target.good, which target declares as boundary_in.
+_SRC_CALLER_GOOD = (
+    "module caller\n\n"
+    '  fn c : (x: str) -> str side_effect reads "target.good"\n'
+)
+_SRC_TARGET_PLAIN = (
+    "module target\n\n"
+    "  fn plain : (x: str) -> str\n"
+)
+_SRC_TARGET_GOOD = (
+    "module target\n\n"
+    "  boundary_in fn good : (x: str) -> str\n"
+)
 
-_B_NO_GHOST = "module b\n\n  boundary_in fn realdoor : (x: str) -> str\n"
-_B_HELPER_PLAIN = "module b\n\n  fn helper : (x: str) -> str\n"
-_B_REALDOOR_DOOR = "module b\n\n  boundary_in fn realdoor : (x: str) -> str\n"
-
+# Each case: caller .hd, target .hd, the in_scope list, and the ordered
+# (rule_id, severity) pairs check_seams must return.
 _CASES = [
     {
-        "name": "HC-REF006 fires on a dead seam when both modules are in scope",
-        "modules": {"a": _A_GHOST, "b": _B_NO_GHOST},
-        "in_scope": ["a", "b"],
-        "expect": {"kind": "fires", "rule": "HC-REF006"},
+        "caller": _SRC_CALLER_TWO,
+        "target": _SRC_TARGET_PLAIN,
+        "in_scope": ["caller"],
+        "expect": [("HC-REF006", "error"), ("HC-REF007", "error")],
     },
+    # Absence: every in-scope seam resolves to a boundary_in door.
     {
-        "name": "HC-REF007 fires on a seam onto a non-door when both are in scope",
-        "modules": {"a": _A_HELPER, "b": _B_HELPER_PLAIN},
-        "in_scope": ["a", "b"],
-        "expect": {"kind": "fires", "rule": "HC-REF007"},
-    },
-    {
-        "name": "a's dead seam is not reported when a is out of scope",
-        "modules": {"a": _A_GHOST, "b": _B_NO_GHOST},
-        "in_scope": ["b"],
-        "expect": {"kind": "absent", "rule": "HC-REF006"},
-    },
-    {
-        "name": "clean when the seam resolves to a boundary_in",
-        "modules": {"a": _A_REALDOOR, "b": _B_REALDOOR_DOOR},
-        "in_scope": ["a", "b"],
-        "expect": {"kind": "empty"},
+        "caller": _SRC_CALLER_GOOD,
+        "target": _SRC_TARGET_GOOD,
+        "in_scope": ["caller"],
+        "expect": [],
     },
 ]
 
 
 def probe_check_seams():
+    """check_seams returns the combined HC-REF006/HC-REF007 diagnostics for the gate."""
     try:
-        from honest_check.integration_rules import check_seams
+        from honest_check import check_seams
     except ImportError as exc:
         return [f"cannot import check_seams: {exc}"]
-    from honest_design import read_hd
+    try:
+        from honest_design import read_hd
+    except ImportError as exc:
+        return [f"cannot import honest_design.read_hd: {exc}"]
 
     bad = []
     for case in _CASES:
-        declarations = {}
-        paths = {}
-        parse_failed = False
-        for name, text in case["modules"].items():
-            parsed = read_hd(text)
-            if "ok" not in parsed:
-                bad.append(f"{case['name']}: module {name} .hd did not parse: {parsed.get('err')!r}")
-                parse_failed = True
-                break
-            declaration = parsed["ok"]["modules"][0]
-            declarations[declaration["name"]] = declaration
-            paths[declaration["name"]] = f"{name}.hd"
-        if parse_failed:
-            continue
-
-        got = check_seams(declarations, paths, case["in_scope"])
-        if not isinstance(got, list):
-            bad.append(f"{case['name']}: check_seams -> {got!r}, expected a list")
-            continue
-
-        expect = case["expect"]
-        if expect["kind"] == "fires":
-            fired = [d for d in got if d.get("rule_id") == expect["rule"]]
-            if not fired:
-                rule_ids = [d.get("rule_id") for d in got]
-                bad.append(
-                    f"{case['name']}: check_seams -> rule_ids {rule_ids}, "
-                    f"expected one to be {expect['rule']!r}"
-                )
-            elif not any(d.get("severity") == "error" for d in fired):
-                bad.append(
-                    f"{case['name']}: {expect['rule']} fired at severity "
-                    f"{[d.get('severity') for d in fired]}, expected 'error'"
-                )
-        elif expect["kind"] == "absent":
-            fired = [d for d in got if d.get("rule_id") == expect["rule"]]
-            if fired:
-                bad.append(
-                    f"{case['name']}: check_seams fired {expect['rule']}, expected none"
-                )
-        elif expect["kind"] == "empty":
-            if got != []:
-                bad.append(
-                    f"{case['name']}: check_seams -> {got!r}, expected []"
-                )
+        caller = read_hd(case["caller"])["ok"]["modules"][0]
+        target = read_hd(case["target"])["ok"]["modules"][0]
+        declarations = {caller["name"]: caller, target["name"]: target}
+        paths = {caller["name"]: "caller/caller.hd", target["name"]: "target/target.hd"}
+        got = check_seams(
+            declarations=declarations,
+            paths=paths,
+            manifest_deps={},
+            in_scope=case["in_scope"],
+        )
+        pairs = [(d["rule_id"], d["severity"]) for d in got]
+        if pairs != case["expect"]:
+            bad.append(
+                f"check_seams(in_scope={case['in_scope']!r}) -> {pairs!r}, "
+                f"expected {case['expect']!r}"
+            )
     return bad

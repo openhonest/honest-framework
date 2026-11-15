@@ -1,114 +1,82 @@
-"""enforced_rules_of returns the cumulative rules a level enforces (section 9.4).
+"""Conformance probe for enforced_rules_of (honest-check).
 
-always_rules hold at every level; each level adds its own set on top of the levels
-below it. HC-P001 is enforced at Structural; HC-SYN holds everywhere; HC001 is not
-enforced at Structural but is at Typed. The four levels enforce 11, 20, 39 and 59
-rules, so every rule name and the cumulative slice are pinned by one membership
-case and one count case apiece.
+Scenario (specs/features/honest-check.feature, Scenario: enforced_rules_of):
+enforced_rules_of returns every HC rule enforced at the given adoption level
+under the cumulative section 9.4 membership: always_rules at every level, plus
+structural_rules at Structural, plus boundary_rules at Boundary, plus
+typed_rules at Typed, plus declared_rules at Declared (the whole 58-rule
+AdoptionRule set). Its length is the enforced_count the adoption line prints.
+
+The four cumulative level sets and the always-on three are declared as data in
+honest-check.hd (sets structural_rules, boundary_rules, typed_rules,
+declared_rules, always_rules). Each case below pins the exact membership the
+scenario fixes for one level, built up cumulatively from those sets.
+
+The return type is list<AdoptionRule>, but neither the scenario nor the .hd note
+fixes an order, so the probe compares membership (as a set) and checks the length
+to catch duplicates. Ordering is a gap owned by the feature/hd.
 """
 
-# present True: the rule must be enforced at that level. present False: it must not.
-# One present-True entry per rule names the exact level that first enforces it, so an
-# emptied rule name in any adoption set drops that rule out of the returned list and
-# flips present to False.
-_MEMBERSHIP = [
-    # always_rules, enforced at every level (checked at the lowest).
-    {"level": "Structural", "rule": "HC-SYN", "present": True},
-    {"level": "Structural", "rule": "HC-SUP001", "present": True},
-    {"level": "Structural", "rule": "HC-SUP002", "present": True},
-    {"level": "Boundary", "rule": "HC-SYN", "present": True},
-    {"level": "Typed", "rule": "HC-SYN", "present": True},
-    {"level": "Declared", "rule": "HC-SYN", "present": True},
-    # Structural set.
-    {"level": "Structural", "rule": "HC-P001", "present": True},
-    {"level": "Structural", "rule": "HC-P003", "present": True},
-    {"level": "Structural", "rule": "HC-P007", "present": True},
-    {"level": "Structural", "rule": "HC-P011", "present": True},
-    {"level": "Structural", "rule": "HC-P016", "present": True},
-    # Boundary set: not yet enforced at Structural, enforced at Boundary.
-    {"level": "Structural", "rule": "HC-P002", "present": False},
-    {"level": "Boundary", "rule": "HC-P002", "present": True},
-    {"level": "Boundary", "rule": "HC-P004", "present": True},
-    {"level": "Boundary", "rule": "HC-P005", "present": True},
-    {"level": "Boundary", "rule": "HC-P006", "present": True},
-    {"level": "Boundary", "rule": "HC-P010", "present": True},
-    {"level": "Boundary", "rule": "HC-P013", "present": True},
-    {"level": "Boundary", "rule": "HC-ST001", "present": True},
-    {"level": "Boundary", "rule": "HC-A001", "present": True},
-    {"level": "Boundary", "rule": "HC-A002", "present": True},
-    # Typed set: not yet enforced at Structural, enforced at Typed.
-    {"level": "Structural", "rule": "HC001", "present": False},
-    {"level": "Typed", "rule": "HC001", "present": True},
-    {"level": "Typed", "rule": "HC002", "present": True},
-    {"level": "Typed", "rule": "HC003", "present": True},
-    {"level": "Typed", "rule": "HC004", "present": True},
-    {"level": "Typed", "rule": "HC005", "present": True},
-    {"level": "Typed", "rule": "HC006", "present": True},
-    {"level": "Typed", "rule": "HC007", "present": True},
-    {"level": "Typed", "rule": "HC008", "present": True},
-    {"level": "Typed", "rule": "HC009", "present": True},
-    {"level": "Typed", "rule": "HC010", "present": True},
-    {"level": "Typed", "rule": "HC011", "present": True},
-    {"level": "Typed", "rule": "HC-SM01", "present": True},
-    {"level": "Typed", "rule": "HC-SM02", "present": True},
-    {"level": "Typed", "rule": "HC-SM03", "present": True},
-    {"level": "Typed", "rule": "HC-SM04", "present": True},
-    {"level": "Typed", "rule": "HC-SM05", "present": True},
-    {"level": "Typed", "rule": "HC-P014", "present": True},
-    {"level": "Typed", "rule": "HC-P017", "present": True},
-    # Declared set: enforced only at the strictest level.
-    {"level": "Declared", "rule": "HC-R001", "present": True},
-    {"level": "Declared", "rule": "HC-R002", "present": True},
-    {"level": "Declared", "rule": "HC-R003", "present": True},
-    {"level": "Declared", "rule": "HC-R004", "present": True},
-    {"level": "Declared", "rule": "HC-R005", "present": True},
-    {"level": "Declared", "rule": "HC-OR001", "present": True},
-    {"level": "Declared", "rule": "HC-OR003", "present": True},
-    {"level": "Declared", "rule": "HC-REF001", "present": True},
-    {"level": "Declared", "rule": "HC-REF002", "present": True},
-    {"level": "Declared", "rule": "HC-REF003", "present": True},
-    {"level": "Declared", "rule": "HC-REF004", "present": True},
-    {"level": "Declared", "rule": "HC-REF005", "present": True},
-    {"level": "Declared", "rule": "HC-REF006", "present": True},
-    {"level": "Declared", "rule": "HC-REF007", "present": True},
-    {"level": "Declared", "rule": "HC-REF008", "present": True},
-    {"level": "Declared", "rule": "HC-ST002", "present": True},
-    {"level": "Declared", "rule": "HC-HF001", "present": True},
-    {"level": "Declared", "rule": "HC-HF002", "present": True},
-]
 
-# The cumulative size of each level's enforced set: always_rules (3) plus the sets the
-# level and the levels below it add. The exact count pins the slice that accumulates the
-# levels, so widening it by one level is caught here even though the member names do not
-# change.
-_COUNTS = [
-    {"level": "Structural", "count": 11},
-    {"level": "Boundary", "count": 20},
-    {"level": "Typed", "count": 39},
-    {"level": "Declared", "count": 59},
+# The five section-9.4 sets, transcribed from honest-check.hd (lines 189-193).
+_ALWAYS = {"HC-SYN", "HC-SUP001", "HC-SUP002"}
+_STRUCTURAL = {"HC-P001", "HC-P003", "HC-P007", "HC-P011", "HC-P016", "HC-P015", "HC-P019", "HC-P020"}
+_BOUNDARY = {
+    "HC-P002", "HC-P004", "HC-P005", "HC-P006", "HC-P010",
+    "HC-P013", "HC-ST001", "HC-A001", "HC-A002",
+}
+_TYPED = {
+    "HC001", "HC002", "HC003", "HC004", "HC005", "HC006", "HC007",
+    "HC008", "HC009", "HC010", "HC011", "HC-SM01", "HC-SM02",
+    "HC-SM03", "HC-SM04", "HC-SM05", "HC-P014", "HC-P017", "HC-P018",
+}
+_DECLARED = {
+    "HC-R001", "HC-R002", "HC-R003", "HC-R004", "HC-R005", "HC-OR001",
+    "HC-OR003", "HC-REF001", "HC-REF002", "HC-REF003", "HC-REF004",
+    "HC-REF005", "HC-REF006", "HC-REF007", "HC-REF008", "HC-REF012", "HC-ST002",
+    "HC-HF001", "HC-HF002",
+}
+
+# Cumulative membership per level, written out as literals the scenario fixes.
+_STRUCTURAL_MEMBERS = _ALWAYS | _STRUCTURAL                       # 11
+_BOUNDARY_MEMBERS = _STRUCTURAL_MEMBERS | _BOUNDARY               # 20
+_TYPED_MEMBERS = _BOUNDARY_MEMBERS | _TYPED                       # 39
+_DECLARED_MEMBERS = _TYPED_MEMBERS | _DECLARED                    # 58
+
+_CASES = [
+    # Structural: always_rules plus the five structural rules.
+    {"level": "Structural", "expect": _STRUCTURAL_MEMBERS},
+    # Boundary: Structural plus the nine boundary rules.
+    {"level": "Boundary", "expect": _BOUNDARY_MEMBERS},
+    # Typed: Boundary plus the eighteen typed rules.
+    {"level": "Typed", "expect": _TYPED_MEMBERS},
+    # Declared: the whole 58-rule set; a codebase that declares nothing is held here.
+    {"level": "Declared", "expect": _DECLARED_MEMBERS},
 ]
 
 
 def probe_enforced_rules_of():
+    """enforced_rules_of returns the cumulative section 9.4 rule set for each adoption level."""
     try:
         from honest_check import enforced_rules_of
     except ImportError as exc:
         return [f"cannot import enforced_rules_of: {exc}"]
 
     bad = []
-    for case in _MEMBERSHIP:
-        got = enforced_rules_of(case["level"])
-        present = case["rule"] in got
-        if present != case["present"]:
+    for case in _CASES:
+        got = enforced_rules_of(level=case["level"])
+        expect = case["expect"]
+        got_set = set(got)
+        if got_set != expect:
+            missing = sorted(expect - got_set)
+            extra = sorted(got_set - expect)
             bad.append(
-                f"enforced_rules_of({case['level']!r}): {case['rule']!r} present={present}, "
-                f"expected present={case['present']}"
+                f"enforced_rules_of(level={case['level']!r}) membership wrong: "
+                f"missing {missing}, unexpected {extra}"
             )
-    for case in _COUNTS:
-        got = enforced_rules_of(case["level"])
-        if len(got) != case["count"]:
+        elif len(got) != len(expect):
             bad.append(
-                f"len(enforced_rules_of({case['level']!r})) -> {len(got)}, "
-                f"expected {case['count']}"
+                f"enforced_rules_of(level={case['level']!r}) returned {len(got)} items "
+                f"for {len(expect)} distinct rules — duplicates present"
             )
     return bad

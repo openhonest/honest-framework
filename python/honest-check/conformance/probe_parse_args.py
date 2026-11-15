@@ -1,96 +1,58 @@
-"""parse_args turns the raw argv into a resolved CliArgs, resolving absence to an
-explicit bounded value at the boundary.
+"""Honest probe for honest-check's parse_args (feature Scenario: parse_args).
 
---format json --rule HC007 src/ gives format 'json', include_rules carrying 'HC007',
-paths ['src/']. A bare src/ defaults format 'human', severity 'warning', report_mode
-False, and resolves the omitted --config and --exports to the empty string. Each value
-flag drives its own field, each boolean flag advances past exactly its own token, and
-each positional path advances by exactly one, so two bare paths both survive. An
-unrecognized or absent --format resolves to 'human'; a recognized one is kept, so the
-github and junit words are not quietly rewritten to human.
+parse_args turns the raw argv vector into the resolved CliArgs record, resolving
+absence at the boundary to explicit bounded values: an omitted --format becomes
+'human', an omitted --severity becomes 'warning', an omitted --declaration and
+--exports become the empty string, --config the empty string, --report false, and
+--rule/--no-rule collect into include_rules/exclude_rules. Each case feeds a real
+argv list and demands the exact CliArgs back. The defaults case pins every absence
+value; the populated case pins the flags being read. A stub that returned a fixed
+record, or echoed no defaults, fails at least one case.
 """
 
-# equals: fields that must hold an exact value. contains: a member the named list
-# field must carry.
+# Each case: a real argv list, and the exact CliArgs record parse_args must return.
 _CASES = [
-    {
-        "argv": ["--format", "json", "--rule", "HC007", "src/"],
-        "equals": {"format": "json", "paths": ["src/"]},
-        "contains": {"include_rules": "HC007"},
-    },
-    # A bare path defaults every field, including the two absence-resolved strings:
-    # config_path and exports both become the empty string run_check reads for base
-    # mode, never an absent key.
+    # Defaults: one positional path, every flag absent, resolved to its bounded value.
     {
         "argv": ["src/"],
-        "equals": {
+        "expect": {
+            "paths": ["src/"],
             "format": "human",
             "severity": "warning",
-            "report_mode": False,
+            "include_rules": [],
+            "exclude_rules": [],
             "config_path": "",
+            "report_mode": False,
+            "declaration": "",
             "exports": "",
-            "paths": ["src/"],
         },
-        "contains": {},
     },
-    # --report sets report_mode and advances past exactly its own token, so the
-    # following bare path still lands in paths rather than being skipped.
+    # Flags set: --format, --severity, --rule and --declaration all read through.
     {
-        "argv": ["--report", "src/"],
-        "equals": {"report_mode": True, "paths": ["src/"]},
-        "contains": {},
-    },
-    # Two bare paths each advance by one, so both survive; an over-advance would drop
-    # the second.
-    {
-        "argv": ["a.py", "b.py"],
-        "equals": {"paths": ["a.py", "b.py"]},
-        "contains": {},
-    },
-    # --config drives config_path by its own key and value; losing either sends the
-    # token to paths or to a stray field and leaves config_path at its default.
-    {
-        "argv": ["--config", "hc.toml", "src/"],
-        "equals": {"config_path": "hc.toml", "paths": ["src/"]},
-        "contains": {},
-    },
-    # --severity drives severity the same way; the default is 'warning', so a kept
-    # 'error' proves the flag reached the field.
-    {
-        "argv": ["--severity", "error", "src/"],
-        "equals": {"severity": "error", "paths": ["src/"]},
-        "contains": {},
-    },
-    # --no-rule appends to exclude_rules; losing its key sends the token to paths and
-    # leaves exclude_rules empty.
-    {
-        "argv": ["--no-rule", "HC007", "src/"],
-        "equals": {"paths": ["src/"]},
-        "contains": {"exclude_rules": "HC007"},
-    },
-    # A recognized --format word is kept as-is: github and junit are members of the
-    # format vocabulary, so neither is reset to the human fallback.
-    {
-        "argv": ["--format", "github", "src/"],
-        "equals": {"format": "github", "paths": ["src/"]},
-        "contains": {},
-    },
-    {
-        "argv": ["--format", "junit", "src/"],
-        "equals": {"format": "junit", "paths": ["src/"]},
-        "contains": {},
-    },
-    # An unrecognized --format word is resolved back to 'human' at the boundary
-    # (section 2.1): absence and a bad value both become the explicit default.
-    {
-        "argv": ["--format", "xml", "src/"],
-        "equals": {"format": "human", "paths": ["src/"]},
-        "contains": {},
+        "argv": [
+            "src/",
+            "--format", "json",
+            "--severity", "error",
+            "--rule", "HC-P001",
+            "--declaration", "mod.hd",
+        ],
+        "expect": {
+            "paths": ["src/"],
+            "format": "json",
+            "severity": "error",
+            "include_rules": ["HC-P001"],
+            "exclude_rules": [],
+            "config_path": "",
+            "report_mode": False,
+            "declaration": "mod.hd",
+            "exports": "",
+        },
     },
 ]
 
 
 def probe_parse_args():
+    """parse_args resolves a raw argv into the bounded CliArgs, defaults and all."""
     try:
         from honest_check import parse_args
     except ImportError as exc:
@@ -98,22 +60,10 @@ def probe_parse_args():
 
     bad = []
     for case in _CASES:
-        try:
-            got = parse_args(case["argv"])
-        except Exception as exc:  # a mis-wired flag table reaches a missing field
-            bad.append(f"parse_args({case['argv']}) raised {exc!r}")
-            continue
-        for field, want in case["equals"].items():
-            have = got.get(field) if isinstance(got, dict) else None
-            if have != want:
-                bad.append(
-                    f"parse_args({case['argv']})[{field!r}] -> {have!r}, expected {want!r}"
-                )
-        for field, member in case["contains"].items():
-            have = got.get(field, []) if isinstance(got, dict) else []
-            if member not in have:
-                bad.append(
-                    f"parse_args({case['argv']})[{field!r}] -> {have!r}, "
-                    f"expected to contain {member!r}"
-                )
+        got = parse_args(argv=case["argv"])
+        if got != case["expect"]:
+            bad.append(
+                f"parse_args({case['argv']!r}) -> {got!r}, "
+                f"expected {case['expect']!r}"
+            )
     return bad

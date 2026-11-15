@@ -26,7 +26,7 @@ import json
 import sys
 from pathlib import Path
 
-from honest_check import check_source
+from honest_check import build_context, check_source
 
 # The extension carries the grammar: honest-parse detects the language from the
 # path's suffix, so a case names its language and the runner hands check_source a
@@ -85,7 +85,8 @@ def _check_case(case):
     path = _path_for(case)
     if path is None:
         return False, f"suite names unknown language {case['input']['language']!r}"
-    got = check_source(case["input"]["source"], path, {}, None)
+    context = build_context(case["input"]["source"].encode("utf-8"), path, {})
+    got = check_source(context, None)
     got_triples = _triples_got(got)
     want_triples = _triples_expected(case)
     if got_triples == want_triples:

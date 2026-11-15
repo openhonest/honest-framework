@@ -1,8 +1,13 @@
-"""resolve_exit_code decides the process exit code from the prepared report.
+"""Conformance probe for resolve_exit_code (honest-check).
 
-errors > 0 with report_mode False is 1; no error is 0; report_mode True with errors
-is 0, because --report reports and does not judge. The code is compared through int()
-because ExitCode is the '0'/'1'/'2' vocabulary.
+Scenario (specs/features/honest-check.feature, Scenario: resolve_exit_code):
+resolve_exit_code returns ExitCode '0' always when report.report_mode is true
+(--report reports, it does not judge), otherwise '1' when report.errors is
+greater than zero and '0' when no error survived; it never returns '2'.
+
+A CheckReport is a record (honest-check.hd, type CheckReport) with the fields
+below. resolve_exit_code reads report_mode and errors; every case states the
+whole record so the input is explicit.
 """
 
 
@@ -14,20 +19,26 @@ def _report(errors, report_mode):
         "infos": 0,
         "rule_counts": {},
         "adoption": "Declared",
-        "enforced_count": 50,
-        "total_count": 50,
+        "enforced_count": 58,
+        "total_count": 58,
         "report_mode": report_mode,
     }
 
 
 _CASES = [
-    {"report": _report(1, False), "expect": 1},
-    {"report": _report(0, False), "expect": 0},
-    {"report": _report(2, True), "expect": 0},
+    # Not a --report run, errors survived the downgrade: the gate fails with '1'.
+    {"given": _report(errors=3, report_mode=False), "expect": "1"},
+    # Not a --report run, no error survived: '0' (warnings and infos never block).
+    {"given": _report(errors=0, report_mode=False), "expect": "0"},
+    # A --report run overrides errors: '0' always, even with errors present.
+    {"given": _report(errors=5, report_mode=True), "expect": "0"},
+    # A --report run with no errors: still '0'.
+    {"given": _report(errors=0, report_mode=True), "expect": "0"},
 ]
 
 
 def probe_resolve_exit_code():
+    """resolve_exit_code forces '0' under --report, else '1' on surviving errors and '0' otherwise."""
     try:
         from honest_check import resolve_exit_code
     except ImportError as exc:
@@ -35,20 +46,11 @@ def probe_resolve_exit_code():
 
     bad = []
     for case in _CASES:
-        got = resolve_exit_code(case["report"])
-        try:
-            code = int(got)
-        except (ValueError, TypeError):
+        got = resolve_exit_code(report=case["given"])
+        if got != case["expect"]:
             bad.append(
-                f"resolve_exit_code(errors={case['report']['errors']}, "
-                f"report_mode={case['report']['report_mode']}) -> {got!r}, "
-                f"not an exit code; expected {case['expect']}"
-            )
-            continue
-        if code != case["expect"]:
-            bad.append(
-                f"resolve_exit_code(errors={case['report']['errors']}, "
-                f"report_mode={case['report']['report_mode']}) -> {code}, "
-                f"expected {case['expect']}"
+                f"resolve_exit_code(errors={case['given']['errors']}, "
+                f"report_mode={case['given']['report_mode']}) -> {got!r}, "
+                f"expected {case['expect']!r}"
             )
     return bad

@@ -1,74 +1,71 @@
-"""declared_seams collects every cross-module seam one module declares into a
-list of Seam records, the one derivation HC-REF006 and HC-REF007 share.
+"""Honest probe for honest-check's declared_seams (feature Scenario: declared_seams).
 
-Pins two cases. Each gives a tiny valid .hd (parsed through honest-design's
-read_hd, which is not the function under test) for one module, and the exact
-list of Seam records declared_seams must return. The firing case names a
-`callee.door` side effect and expects one Seam carrying that caller, module,
-door and direction; the absence case names only the world (reads "clock") and
-expects []. A stub returning [] fails the firing case.
+declared_seams reads one parsed .hd module and collects its cross-module seams.
+For each function and each side effect it declares, a side effect whose module
+half is the empty string names the world (writes "DOM", reads "env:POOL_SIZE")
+and is skipped; a side effect whose module half is non-empty becomes one Seam
+carrying the function name as caller, the named module, the door (the dotted
+target's door half, the empty string when the target named only a module), and
+the direction. The seams-bearing case pins two concrete Seam records; the
+world-only case is the explicit absence (no module named, so no seam). A stub
+`return []` passes only the world-only case and fails the seams case.
 
-Spec authority: §HC-REF006/HC-REF007 declaration (honest-check.hd, declared_seams).
+The module inputs are real Declarations: honest-design's read_hd parses the .hd
+text into the foreign shape honest-check reads but never constructs.
 """
 
-# Each case: the caller module's .hd and the exact seam list it must yield.
+# A module whose one function declares three side effects: a dotted cross-module
+# reach (honest-parse.parse_source), a world write (DOM, skipped), and a bare
+# cross-module reach (honest-persist, kept with an empty door).
+_SRC_SEAMS = (
+    "module demo\n\n"
+    '  fn caller : (x: str) -> str'
+    ' side_effect reads "honest-parse.parse_source"'
+    ' side_effect writes "DOM"'
+    ' side_effect reads "honest-persist"\n'
+)
+
+# A module whose only side effects name the world: nothing to resolve, no seams.
+_SRC_WORLD_ONLY = (
+    "module demo\n\n"
+    '  fn caller : (x: str) -> str'
+    ' side_effect writes "DOM"'
+    ' side_effect reads "env:POOL_SIZE"\n'
+)
+
+# Each case: the .hd text to parse into a Declaration, and the exact seam list
+# declared_seams must return off it.
 _CASES = [
-    # A seam into another module's door yields one Seam carrying the caller
-    # function name, the named module, the door, and the direction verbatim.
     {
-        "name": "one seam into callee.door",
-        "hd": 'module caller\n\n  reader fn f : (r: str) -> str side_effect reads "callee.door"\n',
+        "src": _SRC_SEAMS,
         "expect": [
-            {"caller": "f", "module": "callee", "door": "door", "direction": "reads"}
+            {"caller": "caller", "module": "honest-parse", "door": "parse_source", "direction": "reads"},
+            {"caller": "caller", "module": "honest-persist", "door": "", "direction": "reads"},
         ],
     },
-    # A side effect that names the world carries no module to resolve, so the
-    # module declares no seam: the explicit absence case.
-    {
-        "name": "only a world side effect",
-        "hd": 'module caller\n\n  fn w : (x: str) -> str side_effect reads "clock"\n',
-        "expect": [],
-    },
+    # Absence: a module declaring only world-named side effects yields no seams.
+    {"src": _SRC_WORLD_ONLY, "expect": []},
 ]
 
 
 def probe_declared_seams():
+    """declared_seams collects one module's cross-module side effects into Seams."""
     try:
-        from honest_check.integration_rules import declared_seams
+        from honest_check import declared_seams
     except ImportError as exc:
         return [f"cannot import declared_seams: {exc}"]
-    from honest_design import read_hd
+    try:
+        from honest_design import read_hd
+    except ImportError as exc:
+        return [f"cannot import honest_design.read_hd: {exc}"]
 
     bad = []
     for case in _CASES:
-        parsed = read_hd(case["hd"])
-        if "ok" not in parsed:
-            bad.append(f"{case['name']}: fixture .hd did not parse: {parsed.get('err')!r}")
-            continue
-        module = parsed["ok"]["modules"][0]
-
-        got = declared_seams(module)
-        if not isinstance(got, list):
-            bad.append(f"{case['name']}: declared_seams -> {got!r}, expected a list")
-            continue
-
-        # Compare the fields the Seam record pins, order-independent, so an
-        # extra key on the record does not fail the behavioural claim.
-        got_rows = sorted(
-            (
-                s.get("caller"),
-                s.get("module"),
-                s.get("door"),
-                s.get("direction"),
-            )
-            for s in got
-        )
-        want_rows = sorted(
-            (s["caller"], s["module"], s["door"], s["direction"])
-            for s in case["expect"]
-        )
-        if got_rows != want_rows:
+        module = read_hd(case["src"])["ok"]["modules"][0]
+        got = declared_seams(module=module)
+        if got != case["expect"]:
             bad.append(
-                f"{case['name']}: declared_seams -> {got_rows}, expected {want_rows}"
+                f"declared_seams({case['src']!r}) -> {got!r}, "
+                f"expected {case['expect']!r}"
             )
     return bad
