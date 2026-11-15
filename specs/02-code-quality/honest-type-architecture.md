@@ -1080,28 +1080,15 @@ The result is a manifest with `Nothing` for every maybe slot and `_rejections` l
 
 ## 12. Chain Execution Model
 
-### 12.1 The Result Type
+### 12.1 The Link Return and the Fault Recognizer
 
-Every link returns exactly one of two things:
+Every link returns its value on success, or a `Fault` on failure — a bare union, with the success value's type visible in the signature:
 
 ```
-ok(manifest)          → { "ok": manifest }
-fault(code, message)  → { "err": fault_data }
+link(manifest) -> manifest | Fault
 ```
 
-These are the only two valid return values from a link. There is no third option. The chain executor checks for `"ok"` or `"err"` — if neither key is present, that is a fault (`non_result_return`).
-
-`ok()` and `fault()` are constructor functions, not classes. They produce plain dicts stamped with their key.
-
-**Language mappings:**
-
-| Language | ok | err |
-|---|---|---|
-| Python | `{"ok": manifest}` | `{"err": fault_data}` |
-| JavaScript | `{ok: manifest}` | `{err: faultData}` |
-| Ruby | `{ok: manifest}` | `{err: fault_data}` |
-| Go | `Result{Ok: manifest}` | `Result{Err: faultData}` |
-| Elixir | `{:ok, manifest}` | `{:error, fault_data}` |
+A `Fault` is the error branch of the link's decision table: a record carrying at least a `code` and a `message`, returned as an ordinary value, never raised and never wrapped in an envelope. The chain executor tells the value from the fault with the **Fault recognizer**, `is_fault` — a pure predicate over the declared `Fault` shape. The outcome it recognizes is a closed two-member set (the value, or a `Fault`), so the executor dispatches on it rather than branching ad hoc. There is no `{"ok"}/{"err"}` wrapper and no `ok()`/`fault()` constructor: the function's own already-informative return is recognized, not repackaged.
 
 ### 12.2 The Manifest as Data Dictionary
 
@@ -1120,7 +1107,7 @@ If a nested sub-function needs a slot, the parent link should declare that slot 
 
 ### 12.3 Chain Execution: Short-Circuit (Default)
 
-The default chain executor runs links in sequence and short-circuits on the first fault.
+The default chain executor runs links in sequence and short-circuits on the first fault, recognizing it by the Fault recognizer rather than by an envelope key.
 
 ```
 FUNCTION execute_chain(links, initial_manifest):
@@ -1128,24 +1115,13 @@ FUNCTION execute_chain(links, initial_manifest):
 
     FOR EACH link IN links:
         result ← link(current)
+        WHEN is_fault(result): RETURN result     // short-circuit, propagate the Fault as-is
+        current ← result                          // carry the value forward
 
-        IF "err" IN result:
-            RETURN result           // short-circuit, propagate fault
-
-        IF "ok" NOT IN result:
-            RETURN fault(
-                code     = "non_result_return",
-                message  = link.name + " returned neither ok nor err; it was given " + describe(current),
-                category = "server",
-                detail   = {"link": link.name},
-            )
-
-        current ← result["ok"]
-
-    RETURN ok(current)
+    RETURN current
 ```
 
-The chain itself returns a Result — `ok(final_manifest)` or the first `err` that occurred. The chain is a link. It composes.
+The chain itself returns a value or a `Fault` — the final manifest, or the first fault that occurred, returned as-is with its own `code`, `message` and `detail`. The chain is a link, with the same `value | Fault` return. It composes.
 
 ### 12.4 validate_all() — Accumulating Combinator
 
@@ -1154,28 +1130,23 @@ For cases where all links must run regardless of individual failures (form valid
 ```
 FUNCTION validate_all(links, manifest):
     results ← []
-    any_err ← false
-
     FOR EACH link IN links:
-        result ← link(manifest)     // same manifest every time — no chained transforms
-        APPEND result TO results
-        IF "err" IN result:
-            any_err ← true
+        APPEND link(manifest) TO results    // same manifest every time — no chained transforms
 
-    IF any_err:
+    faults ← [ r FOR r IN results WHERE is_fault(r) ]
+    WHEN faults non-empty:
         RETURN fault(
-            code     = "validation_failed",
-            message  = "one or more validation checks failed",
-            category = "client",
-            results  = results,       // EVERY result, ok and err both
+            code    = "validation_failed",
+            message = "one or more validation checks failed",
+            detail  = { "results": results },   // EVERY result, values and faults both
         )
 
-    RETURN ok(manifest)
+    RETURN manifest
 ```
 
-**The `results` list contains every link's result — both `ok` and `err`.** The caller sees the complete picture: what passed, what failed, and in what order. No information is discarded.
+**The `results` list contains every link's result — each a value or a `Fault`.** The caller sees the complete picture: what passed, what failed, and in what order. No information is discarded.
 
-`validate_all()` has the same signature as a link — it returns `ok` or `err`. It composes cleanly into a larger chain:
+`validate_all()` has the same signature as a link — it returns its value or a `Fault`. It composes cleanly into a larger chain:
 
 ```
 pipeline = chain(
@@ -1185,7 +1156,7 @@ pipeline = chain(
 )
 ```
 
-The outer chain does not know or care that the first link is a `validate_all`. It just sees `ok` or `err`.
+The outer chain does not know or care that the first link is a `validate_all`. It just sees a value or a `Fault`.
 
 ### 12.5 Link Declaration
 
@@ -1195,18 +1166,18 @@ A link declares its vocabulary for static verification by honest-check. The decl
 // Python
 @link(accepts=user_vocab, binds=user_binding)
 def validate_email(manifest):
-    if "@" not in manifest["email"]:
-        return fault("invalid_email", f"Bad email: {manifest['email']}")
-    return ok(manifest)
+    return dispatch(has_at_sign(manifest["email"]), {
+        True:  manifest,
+        False: Fault(code="invalid_email", message=f"Bad email: {manifest['email']}", category="client"),
+    })
 
 // JavaScript
 const validateEmail = link(
     { accepts: userVocab, binds: userBinding },
-    (manifest) => {
-        if (!manifest.email.includes('@'))
-            return fault('invalid_email', `Bad email: ${manifest.email}`)
-        return ok(manifest)
-    }
+    (manifest) => dispatch(hasAtSign(manifest.email), {
+        true:  manifest,
+        false: Fault({ code: 'invalid_email', message: `Bad email: ${manifest.email}`, category: 'client' }),
+    })
 )
 ```
 
@@ -1262,7 +1233,7 @@ The framework uses three distinct error types. They must never be conflated — 
 | Type | What it means | Who is responsible | Where it lives |
 |---|---|---|---|
 | **rejection** | A token could not be classified or bound | Client — bad input | In `manifest._rejections` |
-| **fault** | Server logic is broken or client data failed validation | Server or Client — see 11.3 | Returned as `{"err": fault_data}` from a link |
+| **fault** | Server logic is broken or client data failed validation | Server or Client — see 11.3 | Returned as a `Fault` value from a link |
 | **exception** | Unhandled runtime error | Server | Caught only at `@catch_at_boundary` |
 
 ### 13.2 Updated Fault Schema
@@ -1274,16 +1245,16 @@ fault = {
     code:     String      — machine-readable identifier
     message:  String      — human-readable description. For a chain fault or a dispatch fault, the message names the link or table that failed, the value that reached it, and the values that were expected.
     category: String      — "client" or "server"
-    results:  [Result]    — every link's result; filled by validate_all(), an empty list otherwise
+    results:  [value | Fault]  — every link's result (its value or its Fault); filled by validate_all(), an empty list otherwise
     detail:   dict        — the fault's enumerable facts as structured data a test or caller reads without parsing the message: the failing link of a chain fault, the accepted keys and arriving value of a dispatch fault, the rejected token of a non_string_token fault, the state and event of a state-machine fault, the word and layer of a reserved-word fault; an empty dict when there is none
 }
 ```
 
-Every field is always present. `results` and `detail` are empty, never absent, when they do not apply, so a caller never tests for a missing key and `fault()` never carries an optional parameter.
+Every field is always present. `results` and `detail` are empty, never absent, when they do not apply, so a caller never tests for a missing key and a `Fault` never carries an optional field.
 
-Earlier drafts split the chain context into separate `link` and `input` top-level fields. The Fault no longer carries them at the top level. Instead the context travels two ways at once: the `message` states it in a sentence a person reads, and `detail` carries the same facts as structured data a test or caller reads without parsing prose. A short-circuit fault reads `check_duplicate returned neither ok nor err` in its `message` and carries `{"link": "check_duplicate"}` in `detail`. An enumerable fact never lives in prose alone; that is the same defect as a vocabulary sitting in a plain string, one level up. `validate_all()`'s every-result list stays in `results`, and each accumulated fault carries its own failing link in its own `detail`, so a caller holding `results` tells the faults apart without reading English.
+The Fault does not carry the failing link and the input as top-level fields. Instead the context travels two ways at once: the `message` states it in a sentence a person reads, and `detail` carries the same facts as structured data a test or caller reads without parsing prose. A chain fault reads `check_duplicate rejected the manifest` in its `message` and carries `{"link": "check_duplicate"}` in `detail`. An enumerable fact never lives in prose alone; that is the same defect as a vocabulary sitting in a plain string, one level up. `validate_all()`'s every-result list stays in `results`, and each accumulated fault carries its own failing link in its own `detail`, so a caller holding `results` tells the faults apart without reading English.
 
-`fault()` always requires `category`. It is not optional. A fault without a category is itself a server error.
+A `Fault` always carries `category`. It is not optional. A fault without a category is itself a server error.
 
 ### 13.3 Fault Code Registry
 
@@ -1299,7 +1270,6 @@ All framework-defined fault codes, their category, and their HTTP mapping:
 | `duplicate_slot` | client | 400 | Two tokens bound to the same slot |
 | `predicate_error` | server | 500 | Predicate threw during classification |
 | `non_string_token` | server | 500 | Non-string token reached classify() |
-| `non_result_return` | server | 500 | Link returned neither ok nor err |
 | `unbound_type` | server | 500 | Token classified but no binding exists for its type |
 | `reserved_word` | server | 500 | Predicate matched a reserved word at runtime |
 | `vocabulary_overlap` | server | 500 | Token matched two recognizers at classification (a predicate overlap not caught at construction) |
@@ -1317,7 +1287,7 @@ The boundary is wherever your application meets the outside world. It is the onl
 | CLI | `@catch_at_cli` | stderr message + exit 1 | stderr traceback + exit 2 |
 | Message queue | `@catch_at_consumer` | Dead letter queue + reason | Dead letter queue + stack |
 | ETL pipeline | `@catch_at_reader` | Skip row + log warning | Halt pipeline + log error |
-| Library | Caller receives Result | Caller inspects `err` | Caller inspects `err` |
+| Library | Caller receives the value or a `Fault` | Caller recognizes the `Fault` | Caller recognizes the `Fault` |
 
 **The pattern is identical in every context:**
 
@@ -1327,14 +1297,13 @@ FUNCTION catch_at_boundary(handler, fault_to_output):
         TRY:
             result ← handler(input)
 
-            IF "err" IN result:
-                fault ← result["err"]
-                output ← fault_to_output.get(fault.code,
-                    server_default IF fault.category = "server"
+            WHEN is_fault(result):
+                output ← fault_to_output.get(result.code,
+                    server_default IF result.category = "server"
                     ELSE client_default)
-                RETURN output(fault)
+                RETURN output(result)
 
-            RETURN success_output(result["ok"])
+            RETURN success_output(result)
 
         CATCH exception:
             RETURN server_default(fault(
@@ -1361,7 +1330,6 @@ fault_to_http = {
     // Server faults — 5xx
     "predicate_error":    500,
     "non_string_token":   500,
-    "non_result_return":  500,
     "unbound_type":       500,
     "reserved_word":      500,
 }
@@ -1389,21 +1357,19 @@ Inside the chain, there are no rejections — only the clean manifest or a fault
 
 ### 13.6 validate_all() Fault Structure
 
-The `validation_failed` fault carries the complete picture — every result, both `ok` and `err`:
+The `validation_failed` fault carries the complete picture — every result, each a value or a `Fault`:
 
 ```
-{
-    "err": {
-        code:     "validation_failed",
-        message:  "One or more validation checks failed",
-        category: "client",
-        results: [
-            {"ok": {"email": "valid@example.com"}},
-            {"err": {code: "invalid_phone", category: "client", message: "..."}},
-            {"ok": {"name": "Adam"}},
-            {"err": {code: "missing_role", category: "client", message: "..."}},
-        ]
-    }
+Fault {
+    code:     "validation_failed",
+    message:  "One or more validation checks failed",
+    category: "client",
+    results: [
+        {"email": "valid@example.com"},
+        Fault {code: "invalid_phone", category: "client", message: "..."},
+        {"name": "Adam"},
+        Fault {code: "missing_role", category: "client", message: "..."},
+    ]
 }
 ```
 
@@ -1507,9 +1473,9 @@ Exactly one of `manifest`, `fault`, or `rejected_tokens` appears in `expected` �
 | `binding-explicit` | Explicit binding renames slots correctly |
 | `binding-merge` | Vocabulary merge: valid merges and overlap failures |
 | `reserved-words` | Layer 1, 2 rejection at construction time |
-| `chain-basic` | Short-circuit on fault, ok propagation |
-| `chain-validate-all` | All results present, both ok and err |
-| `chain-result` | ok() and fault() constructors, non_result_return fault |
+| `chain-basic` | Short-circuit on a recognized fault, value propagation |
+| `chain-validate-all` | All results present, each a value or a fault |
+| `chain-recognize-fault` | A link's returned Fault is recognized by is_fault and short-circuits; a value is carried forward |
 | `state-machine` | Valid transitions, invalid transitions, adversarial states/events |
 
 ### 16.5 Example Test Cases

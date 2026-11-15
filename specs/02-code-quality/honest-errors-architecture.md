@@ -1,57 +1,61 @@
 # honest-errors: Architecture Specification
 
-**Version:** 0.1 (Draft) **Date:** June 2026 **Status:** Active **Author:** Adam Zachary Wasserman
+**Version:** 0.2 **Status:** Active **Author:** Adam Zachary Wasserman
 
 ---
 
 ## 1. Purpose and Scope
 
-honest-errors is the Honest Framework's error-policy module. It normalizes a raw failure payload (a browser's JavaScript error object, or a server's Python exception) into one canonical `ExceptionReport`, decides what should *happen* to a report as a function of the environment, and throttles repeat notifications. It does not record the report and it does not send a notification: honest-observe records the report as an event, and honest-alerts delivers any notification the policy calls for.
+honest-errors is the Honest Framework's error-cadence module. It normalizes a raw failure payload (a browser's JavaScript error object, or a server's Python exception) into one canonical `ExceptionReport`, and it carries out the cadence the caller declares for that failure: whether the failure needs a response, whether the response goes back to the caller or is a bare acknowledgement, whether the failure is displayed once or for a period, and whether it displays now or on a schedule. It does not record the report and it does not send a notification: honest-observe records the report as an event, and honest-alerts delivers any notification the cadence calls for.
 
-honest-errors owns the shape of a failure report and the policy that decides what happens to one: the normalization, the environment-to-behavior decision, and the throttle. It also owns the boundary a failure arrives through. A browser error hook or a server error handler catches a failure and calls honest-errors' `capture` door with the raw payload; `capture` runs the whole policy and returns one `FailurePolicy` record carrying the normalized report, the behaviors for the environment, the throttle decision, the next throttle state, and the rendered email body. honest-observe records the report from that result and honest-alerts delivers from it; both read the same `ExceptionReport` type.
+honest-errors owns three things: the shape of a failure report, the cadence declaration the caller writes, and the cadence state that declaration becomes once it is inside the module. A host error hook catches a failure and calls honest-errors' `capture` door with the raw payload and a cadence declaration; `capture` normalizes the payload, enacts the cadence against the module's own state, and returns one `CaptureResult` carrying the normalized report, the response for the caller, and the display actions due now. honest-observe records the report from that result and honest-alerts delivers from it.
 
 ### 1.1 The abstract requirement
 
-> *A failure becomes one canonical report; what happens to that report is a pure function of the environment and the report's own content; and repeat notifications are suppressed by a deterministic throttle.*
+> *A failure becomes one canonical report. The caller declares, as data, how that failure is handled. honest-errors holds the resulting cadence as its own state, mutated in one place and persisted so a held or scheduled display survives a restart.*
 
-honest-errors turns the question "what do we do when something breaks?" into data: a normalized report, a list of named behaviors, and a throttle decision. The acts of logging and sending are left to the modules that own those boundaries.
+honest-errors turns the question "what do we do when something breaks?" into two data artifacts: a normalized report, and a cadence the caller declares and the module keeps. The acts of recording and sending are left to the modules that own those boundaries.
 
-### 1.2 Which bug categories this eliminates (poka-yoke)
+### 1.2 The declarative surface
+
+The caller does not call step functions and does not thread the module's state back in. It hands honest-errors a failure and a declaration of what to do with it, written as data. The declaration is a **chain of typed action parameters**: each action the module offers is its own named, typed parameter, present with a typed value or explicitly absent. A reader sees every action honest-errors offers by reading the `Cadence` type, because the set of actions is closed and finite. This is the difference from a list of actions, which is open and untyped and tells a reader nothing about which actions exist.
+
+The declaration answers four questions about the failure:
+
+1. Does this failure need a response, or is normalizing and recording it enough?
+2. If it needs a response, does the response go back to the caller, or does the module return a bare acknowledgement?
+3. Is the failure displayed once, or held for a set period?
+4. Does it display immediately, or on a schedule?
+
+Questions 1 and 2 are the **response**. Questions 3 and 4 are the **display**: its duration and its timing.
+
+### 1.3 Which bug categories this eliminates (poka-yoke)
 
 | Decision | Bug category made impossible |
 |---|---|
 | One `ExceptionReport`, two normalizers | Divergent error shapes between the JS and server paths; downstream code branching on source |
-| Environment → behaviors as a dispatch table | `if env == "production"` ladders drifting out of sync; an environment silently getting no policy |
-| Throttle decision is data (`RateLimitDecision`), never an exception | Notification storms, or a throttle that swallows errors as a side effect instead of reporting suppression |
-| Finite vocabularies (severity, environment, behavior, reason) as frozensets | Free-string states that cannot be listed, and so cannot be tested in full or checked ahead of time |
-| Environment, time, and `now` are arguments to the policy functions | Hidden environment reads, clock reads, or sends buried inside "pure" policy functions, which is what makes error handling untestable |
+| The caller declares the cadence as typed action parameters | A handling policy that drifts inside the module out of the caller's sight; an environment silently getting no policy |
+| Each action parameter carries an explicit `Absent` | An omitted action read as a forgotten one; an untested input region manufactured by an implicit default |
+| The cadence is state honest-errors owns, with one declared mutator | A second writer of the same display state; a display that two code paths both change and neither owns |
+| The cadence state persists | A held or scheduled display lost on restart, so an error silently stops displaying or never fires |
+| Finite vocabularies (severity, environment, response mode) as closed sets, duration and timing as bounded unions | Free-string states that cannot be listed, and so cannot be tested in full or checked ahead of time |
+| Environment, time, and `now` are arguments | Hidden environment reads, clock reads, or sends buried inside a policy function, which is what makes error handling untestable |
 
-### 1.3 Relationship to honest-observe and honest-alerts
+### 1.4 Relationship to honest-observe and honest-alerts
 
-honest-errors owns the capture boundary and the policy composition. honest-observe and honest-alerts consume the one `FailurePolicy` that the `capture` door returns. honest-errors depends on neither.
+honest-errors owns the capture boundary, the cadence declaration, and the cadence state. honest-observe and honest-alerts consume the one `CaptureResult` that `capture` returns. honest-errors depends on neither.
 
-| Consumer | What it takes from a `FailurePolicy` |
+| Consumer | What it takes from a `CaptureResult` |
 |---|---|
 | **honest-observe** | The `report`. honest-observe records the normalized `ExceptionReport` as an error event, owning the event envelope, the sequence number, and the log. honest-errors owns the shape of the report; honest-observe owns the write. |
-| **honest-alerts** | The `behaviors`, the `decision`, and the `email_body`. When the policy warrants an email (the rendered `email_body` is non-empty, which honest-errors fills only when an `email` behavior applies and the throttle says send or a critical severity bypasses it), honest-alerts' supervisor delivers a `Message` built from the `email_body`. honest-errors owns the decision and the body; honest-alerts owns the transport. |
-
-### 1.4 What honest-errors covers
-
-- The payload IR: `JSErrorPayload`, `PythonExceptionPayload`, and the canonical `ExceptionReport` (all TypedDicts).
-- The bounded vocabularies: severities, environments, behavior names, suppression reasons.
-- Normalization: `classify_js_payload`, `classify_py_payload` → `Result[ExceptionReport]`.
-- Behavior policy: the environment → behaviors dispatch table and `behaviors_for`.
-- The rate-limiter: `dedup_key`, `new_state`, `check_rate_limit` (pure, state-threaded, injected clock).
-- The email-body formatter (a pure report → text rendering, for use by an `email` behavior).
-- The capture boundary and the policy composition: the `capture` door the world enters through, the `handle_failure` orchestrator that runs normalize → behaviors → throttle → render, and the combined `FailurePolicy` it returns.
+| **honest-alerts** | The `actions`. Each is a display or send that the cadence makes due now (an immediate display, or a scheduled one whose time has arrived). honest-alerts delivers each over its channel. honest-errors owns the decision of what is due; honest-alerts owns the transport. |
 
 ### 1.5 What honest-errors does not cover
 
 - **Recording the report.** honest-observe writes it to the event log. honest-errors never logs.
 - **Sending a notification.** honest-alerts' supervisor delivers it over a channel. honest-errors never sends.
 - **Reading the environment or the clock.** The environment, the timestamp, and `now` are passed in as arguments. honest-errors never calls `os.getenv` or reads a wall clock inside a policy function.
-- **Deciding raise-versus-log for a fault.** When a normalizer or the policy returns a `Fault`, `capture` returns that `Fault` to its caller; it never raises and never logs. Whether the host re-raises the fault at its own boundary or records it is the host's decision, not honest-errors'.
-- **Installing the catch.** honest-errors owns the `capture` door, not the host hook that calls it. A browser's `window.onerror`, an HTTP framework's error handler, or `@catch_at_boundary` is the host's; it catches the raw failure and calls `capture`. honest-errors receives the payload at the door and normalizes it; it never registers itself with the browser or the server.
+- **Installing the catch.** honest-errors owns the `capture` door, not the host hook that calls it. A browser's `window.onerror`, an HTTP framework's error handler, or `@catch_at_boundary` is the host's; it catches the raw failure and calls `capture`.
 
 ---
 
@@ -84,18 +88,17 @@ ExceptionReport = {
 }
 ```
 
-The two payload shapes collapse to one report so that every downstream consumer — the observe event, the alerts notification, the email body — is source-agnostic.
+The two payload shapes collapse to one report so that every downstream consumer — the observe event, the alerts notification — is source-agnostic.
 
 ### 2.1 Bounded vocabularies
 
 ```
-SEVERITIES       = { debug, info, warning, error, critical }   # frozenset
-ENVIRONMENTS     = { development, production, test }           # frozenset
-BEHAVIOR_NAMES   = { log, email }                              # frozenset
-SUPPRESS_REASONS = { rate_limit_hourly, rate_limit_dedup }     # frozenset
+SEVERITIES     = { debug, info, warning, error, critical }   # closed set
+ENVIRONMENTS   = { development, production, test }            # closed set
+RESPONSE_MODES = { returned, acknowledged }                  # closed set
 ```
 
-**Normative change from the prototype.** These are closed sets and must be declared as frozensets, not free `str` (the prototype documents them in comments but enforces `str`). honest-test enumerates them; honest-check treats them as discriminant sets.
+These are closed sets, declared as frozensets, never free `str`. honest-test enumerates them; honest-check treats them as discriminant sets.
 
 ---
 
@@ -106,142 +109,120 @@ classify_js_payload(payload, environment, timestamp) -> ExceptionReport | Fault
 classify_py_payload(payload, environment, timestamp) -> ExceptionReport | Fault
 ```
 
-A normalizer returns the `ExceptionReport` on success or a `Fault` on failure, as a union carried by the return value, the framework's fault-by-return convention (honest-type returns `X | Fault` the same way). There is no `{ "ok" } | { "err" }` wrapper: the success type stays visible in the signature.
+A normalizer returns the `ExceptionReport` on success or a `Fault` on failure, as a union carried by the return value — the framework's fault-by-return convention. The `Fault` is the error branch of the function's decision table, returned as an ordinary value and recognized by its own shape, never raised and never wrapped in an envelope. The success type stays visible in the signature. A `Fault` is a record carrying at least a `code` and a `message`.
 
-**Normative change from the prototype.** `environment` and `timestamp` are **arguments**, not read inside the function from `os.getenv` / the system clock. The prototype's translators smuggle both in as hidden I/O; that is the single I/O-at-boundary violation the spec corrects. The boundary that catches the failure already knows the environment and the time; it passes them in.
+`environment` and `timestamp` are **arguments**, not read inside the function from `os.getenv` or the system clock. The boundary that catches the failure already knows the environment and the time; it passes them in.
 
-Each function validates the raw payload against the required keys for its shape and returns a `Fault(code="malformed_payload", ...)` when a required key is absent, otherwise the `ExceptionReport`. Severity for the Python path defaults to `error`. For the JS path a small predicate derives it from the payload: a message is marked `critical` when its text contains the token `critical`, matched case-insensitively, and such a message yields `critical` while every other message yields `error`. It is a predicate, not an `if` ladder that would grow a branch per rule.
-
-### 3.1 `should_bypass_dedup`
-
-```
-should_bypass_dedup(severity) -> Bool      # True iff severity == critical
-```
-
-A pure predicate. Critical failures are never silenced by the throttle (§5). This is the one product rule honest-errors carries, expressed as data, not control flow.
+Each function validates the raw payload against the required keys for its shape and returns a `Fault(code="malformed_payload", ...)` when a required key is absent, otherwise the `ExceptionReport`. Severity for the Python path is `error`. For the JS path a small predicate derives it from the payload: a message whose text contains the token `critical`, matched case-insensitively, yields `critical`; every other message yields `error`. It is a predicate, not an `if` ladder that would grow a branch per rule.
 
 ---
 
-## 4. Behavior Policy
+## 4. The Cadence Declaration
 
-What should happen to a report is a list of named behaviors, looked up by environment.
+The caller's declaration is the `Cadence`, a chain of typed action parameters. Each parameter is present with a typed value or explicitly `Absent`.
 
 ```
-HandlerBehavior = { name: String, order: Integer }   # name in BEHAVIOR_NAMES
+ResponseSpec = { mode: ResponseMode }           # ResponseMode in RESPONSE_MODES
+Duration     = Once | Period                     # bounded union
+Period       = { seconds: Integer }
+Timing       = Immediate | Scheduled             # bounded union
+Scheduled    = { at: String }                    # ISO-8601
+DisplaySpec  = { duration: Duration, timing: Timing }
 
-BEHAVIORS_BY_ENV = {
-    development: [ {log, 0} ],
-    production:  [ {log, 0}, {email, 1} ],
-    test:        [ {log, 0} ],
+Cadence = {
+    respond: ResponseSpec | Absent,              # Q1 present/absent, Q2 the mode
+    display: DisplaySpec | Absent,               # Q3 the duration, Q4 the timing
+}
+```
+
+- **`respond`** answers the first two questions. `Absent` means the failure needs no response: normalizing and recording it is enough. Present means it needs one, and `mode` says whether the caller gets the normalized report back (`returned`) or a bare acknowledgement that the failure was captured (`acknowledged`).
+- **`display`** answers the last two questions. `Absent` means the failure is not displayed. Present means it is, `duration` says whether it shows once or for a `Period` of seconds, and `timing` says whether it displays `Immediate`-ly or `Scheduled` for a later time.
+
+Each parameter carries an explicit `Absent` rather than a default, so "the caller did not ask for a display" is a bounded case a test exercises, not a silent omission.
+
+### 4.1 Presets and the naming sugar
+
+A caller that wants a common handling does not write the full `Cadence`. honest-errors offers named presets, and the caller names one.
+
+```
+PRESET_NAMES = { silent, acknowledge, report_back, notify }   # closed set
+
+PRESETS = {
+    silent:      { respond: Absent,         display: Absent },
+    acknowledge: { respond: {acknowledged}, display: Absent },
+    report_back: { respond: {returned},     display: Absent },
+    notify:      { respond: {acknowledged}, display: {Once, Immediate} },
 }
 
-behaviors_for(environment) -> list[HandlerBehavior] | Fault
+resolve_cadence(arg: Cadence | PresetName) -> Cadence | Fault
 ```
 
-`behaviors_for` is a pure dict lookup. Adding an environment or changing a policy is editing the table, never editing control flow. An environment the table does not carry has no policy, so `behaviors_for` returns `Fault(code="unknown_environment", ...)`, whose message names the environment it was given and the environments it accepts. It does not fall back to another environment's policy: a fallback files an environment nobody wrote a rule for under a rule written for a different one. The list is *data*: the composing orchestrator interprets each behavior, handing `log` to the output boundary that writes honest-observe's log and `email` to honest-alerts. honest-errors does not execute behaviors; it declares them.
-
-Whether a failure is raised is not a behavior and not a function of the environment. The orchestrator decides whether to raise or log, and only a boundary that declares `raises` may throw.
-
-**Normative change from the prototype.** The `select_behaviors = behaviors_for` alias is removed; there is exactly one name. The `reraise` behavior and the development default are removed as well (§9).
+A preset is a named `Cadence`, and each preset falls into the actions §4 lists. `PRESETS` is a dispatch table from a preset name to its `Cadence`, so adding or changing a preset is editing the table, never control flow, and `PRESET_NAMES` is the closed set of names the sugar accepts. `resolve_cadence` takes what the caller passed: a full `Cadence` passes through unchanged, and a `PresetName` resolves to its `Cadence` by table lookup. A name the table does not carry returns a `Fault(code="unknown_preset", ...)`, whose message names the presets it accepts. The discrimination between a record and a name is a recognizer on the argument, not an `if`. The caller chooses the preset; honest-errors does not pick one from the environment or any other hidden input.
 
 ---
 
-## 5. The Rate-Limiter
+## 5. The Cadence State and Its Single Mutator
 
-A pure, state-threaded throttle. No class, no lock, no module-global state. The caller owns the state dict and threads it forward; concurrency control (if any) is the caller's boundary concern.
+A display held for a period, or scheduled for later, is state. honest-errors owns it. It is not threaded by the caller and not read from any global; it lives in the module and is persisted so that a held or scheduled display survives a restart.
 
 ```
-DedupKey         = { exception_type, file, line }
-RateLimitConfig  = { dedup_window_seconds, max_per_hour }
-RateLimitDecision = { should_send: Bool, reason: String }   # reason in SUPPRESS_REASONS or ""
-
-dedup_key(report) -> DedupKey
-new_state() -> State                                         # { dedup_cache: {}, hourly_sends: [] }
-check_rate_limit(key, config, state, now) -> (RateLimitDecision, State')
+DisplayStatus = Showing | Pending                # bounded union: showing now, or scheduled and not yet due
+LiveDisplay   = { key: DedupKey, status: DisplayStatus, until: String | Absent, due: String | Absent }
+DedupKey      = { exception_type, file, line }
+CadenceState  = { live: list<LiveDisplay> }
 ```
 
-`check_rate_limit` is a pure function of the prior state:
+`DedupKey` is the display identity of a report: two failures with the same type, file, and line are the same display. A `display` declared `Once` adds the key at most one live entry, so the same failure does not re-display while its entry is live.
 
-1. Prune `hourly_sends` older than one hour (relative to `now`).
-2. If the hourly count is at `max_per_hour`, return `should_send=False, reason=rate_limit_hourly`.
-3. If this key fired within `dedup_window_seconds`, return `should_send=False, reason=rate_limit_dedup`.
-4. Otherwise record the send, prune stale dedup entries, return `should_send=True, reason=""`.
+**The orchestrator is the single mutator of `CadenceState`.** The pure functions compute; they do not mutate. From the current state, the new report, the cadence, and `now`, they return the next state and the actions due now:
 
-It returns a new state; it never mutates its argument. Suppression is **returned data** (`RateLimitDecision`), never an exception or a silent drop — the property that lets honest-test enumerate every suppression path.
+```
+advance_cadence(state, report, cadence, now) -> (CadenceState', list<DisplayAction>)
+```
 
-**`now` is an argument**, not a clock read. The prototype already does this correctly; the spec makes it normative so the throttle is testable without mocking time (honest-test drives `now` directly).
+`advance_cadence` and the pure functions it composes return a new state and never mutate the argument. They expire the entries whose `until` has passed, release the `Pending` entries whose `due` has arrived, and add the new report's entry per the declaration. The orchestrator takes their returned `CadenceState'`, writes it as the module's one owned, persisted state, and returns the `DisplayAction` list for honest-alerts. One function applies the change, so a reader sees the single place the cadence state moves (the single-mutator law, read from the orchestrator's side: `honest-state-architecture.md` §1.2).
+
+```
+DisplayAction = { key: DedupKey, report: ExceptionReport, kind: ActionKind }
+ActionKind    = show | hide | send              # closed set
+```
+
+A `DisplayAction` is a decision, not a delivery: honest-errors says what is due, honest-alerts does it.
 
 ---
 
-## 6. The Email-Body Formatter
+## 6. The Capture Boundary and Its Result
+
+A failure enters through honest-errors' `capture` boundary and leaves as one `CaptureResult`. The host catches the failure and calls the door; honest-errors runs the whole cadence and returns the result; the consumers read it.
 
 ```
-format_email_body(report: ExceptionReport) -> String
+capture(source, payload, environment, timestamp, cadence, now) -> CaptureResult | Fault
+# CaptureResult { report, response, actions }
 ```
 
-A pure rendering of a report to plain text (severity, environment, time, type, message, location, truncated context, traceback). It performs no sending; an `email` behavior in honest-alerts uses it to build a `Message` body. It is here, not in alerts, because the rendering is a pure function of the `ExceptionReport` shape that honest-errors owns.
+`capture` forwards the raw payload to the `handle_failure` orchestrator. `handle_failure` resolves the preset (`resolve_cadence`), then composes the steps — normalize the payload for its `source`, build the caller's `response` from the `respond` spec, and `advance_cadence` to move the owned cadence state and collect the `actions` due now — as a chain the honest-type §12 executor runs. The executor recognizes a link's returned `Fault` (the error branch of its decision table) and short-circuits on it, so `handle_failure` writes no guard clause: a malformed payload (`malformed_payload`), a `source` that matches no normalizer (`unknown_source`), or an unknown preset (`unknown_preset`) stops the chain and is returned as the `Fault`. On success the chain returns the `CaptureResult`. honest-errors never raises; the host decides what to do with a returned `Fault`.
+
+```
+response: the normalized report when respond.mode is returned,
+          a bare acknowledgement when it is acknowledged,
+          Absent when respond is Absent.
+```
+
+The caller reads `response` synchronously. honest-observe reads `result.report`. honest-alerts reads `result.actions` and delivers each. The cadence state does not appear in the result and is not threaded by the caller: honest-errors owns it and persists it between calls.
 
 ---
 
-## 7. Composition Contracts
-
-A failure enters through honest-errors' `capture` boundary and leaves as one `FailurePolicy`. The host catches the failure and calls the door; honest-errors runs the whole policy and returns the result; the consumers read it. The normalize-decide-throttle composition is honest-errors' own, in its `handle_failure` orchestrator, not scattered across the consumers.
-
-**The door and its result:**
-
-```
-policy = capture(source, payload, environment, timestamp, config, state, now)   # honest-errors
-# policy: FailurePolicy { report, behaviors, decision, next_state, email_body }
-```
-
-`capture` is called by the host's error hook — a browser's `window.onerror`, or a server's error boundary such as `@catch_at_boundary`. It forwards the raw payload to `handle_failure`, which normalizes the payload for its `source`, reads `behaviors_for(environment)`, throttles with `check_rate_limit(dedup_key(report), config, state, now)`, and renders `format_email_body(report)` only when an email is warranted: the environment's policy includes an `email` behavior **and** either the throttle says send or a critical severity bypasses the throttle (`should_bypass_dedup`). An environment with no `email` behavior never carries an email body, however the throttle decides. It returns one `FailurePolicy`. A malformed payload, an unknown environment, or a `source` that matches no normalizer comes back as a `Fault` instead (codes `malformed_payload`, `unknown_environment`, `unknown_source`), never a raised exception.
-
-**With honest-observe (recording):**
-
-```
-observe.emit("he.error.captured", policy.report)      # honest-observe owns the write
-```
-
-The `ExceptionReport` is the payload of an error event. honest-observe owns the envelope, the sequence number, and the log; honest-errors owns the report shape.
-
-**With honest-alerts (delivery):**
-
-```
-if policy.email_body:                                  # non-empty only when the policy has an email behavior and the send is warranted
-    alerts.supervisor.deliver(Message(body=policy.email_body, ...))   # honest-alerts owns the send
-```
-
-honest-alerts' supervisor (honest-alerts §1.1) is the general delivery mechanism; honest-errors supplies the decision (which behaviors, send-or-suppress) and the body, never the transport. The throttle state threads forward through `policy.next_state`: the host passes it as `state` on the next `capture` call.
-
----
-
-## 8. Conformance Requirements
+## 7. Conformance Requirements
 
 A spoke's honest-errors is conformant iff:
 
 1. **One report shape.** Both normalizers produce the `ExceptionReport` of §2 with identical field decomposition.
-2. **Faults as data, by union.** Every function that can fail returns its success value or a `Fault` as a bare union, never a raised exception and never an `{ "ok" } | { "err" }` wrapper; a `Fault` is a record carrying a `code` and a `message`. `classify_js_payload` / `classify_py_payload` return the `ExceptionReport` or a `malformed_payload` fault; `behaviors_for` returns its list or an `unknown_environment` fault; `handle_failure` / `capture` return a `FailurePolicy` or one of those faults, or an `unknown_source` fault when `source` matches no normalizer.
+2. **Faults as data, by return.** Every function that can fail returns its success value or a `Fault` as a union carried by the return value, never a raised exception and never wrapped in an envelope; the `Fault` is the error branch of the function's decision table, recognized by its own shape, and a `Fault` is a record carrying at least a `code` and a `message`. `classify_js_payload` / `classify_py_payload` return `ExceptionReport | Fault` (a `malformed_payload` fault); `resolve_cadence` returns `Cadence | Fault` (an `unknown_preset` fault); `capture` / `handle_failure` return `CaptureResult | Fault` (a `malformed_payload`, `unknown_source`, or `unknown_preset` fault).
 3. **No hidden I/O.** No policy function reads the environment, the clock, or any external source; `environment`, `timestamp`, and `now` are arguments.
-4. **Bounded vocabularies.** `SEVERITIES`, `ENVIRONMENTS`, `BEHAVIOR_NAMES`, `SUPPRESS_REASONS` match this spec exactly and are frozensets.
-5. **Dispatch, not ladders.** `behaviors_for` is a dict lookup that returns an `unknown_environment` fault for an environment the table does not carry, never a default; severity derivation is a predicate, not an `if/elif` discriminant chain.
-6. **Pure throttle.** `check_rate_limit` returns a `RateLimitOutcome` record `{ decision, next_state }`, never mutates its state argument, takes `now` as an argument, and reports suppression as data (`reason` is `None` on send, a `SUPPRESS_REASONS` word on suppress).
+4. **The caller declares the cadence.** The handling of a failure is the `Cadence` the caller passes, a chain of typed action parameters, each present with a typed value or explicitly `Absent`. honest-errors does not derive it from hidden state.
+5. **Bounded vocabularies and bounded unions.** `SEVERITIES`, `ENVIRONMENTS`, `RESPONSE_MODES` are closed frozensets matching this spec; `Duration`, `Timing`, `DisplayStatus`, and `ActionKind` are bounded unions.
+6. **One owned, persisted cadence state with one mutator.** `CadenceState` is honest-errors' own state, written by exactly one mutator — the orchestrator, applying the returns of the pure `advance_cadence` composition — and persisted so a held or scheduled display survives a restart. No pure function mutates it, and no caller threads it.
 7. **No delivery, no recording.** The module never logs and never sends; those are honest-observe and honest-alerts respectively.
-8. **Capture at a boundary, one combined result.** A failure enters through a `capture` boundary, the normalize-decide-throttle composition lives in honest-errors' orchestrator, and the orchestrator returns one `FailurePolicy` (report, behaviors, decision, next state, email body). The consumers read that result; they do not re-implement the composition.
-9. **Email body only when an email is warranted.** `FailurePolicy.email_body` is non-empty if and only if the environment's policy includes an `email` behavior **and** either the throttle says send or a critical severity bypasses it. An environment whose policy is log-only never carries an email body, whatever the throttle decides.
+8. **Capture at a boundary, one combined result, composed as a chain.** A failure enters through a `capture` boundary; `handle_failure` composes the normalize-respond-advance steps as a chain the honest-type §12 executor runs, which recognizes a link's returned `Fault` and short-circuits on it with no guard clause; and it returns one `CaptureResult | Fault` (report, response, actions). The consumers read that result; they do not re-implement the composition.
 
 The cross-tier test-of-record lives in `specs/honest-conformance-suite.md`.
-
----
-
-## 9. Relationship to the prototype
-
-The Python reference at `python/honest-errors/` predates this spec (distilled from a production exception handler) and already embodies the good ideas it ratifies: two-payload normalization to one report, environment-keyed behavior dispatch as a table, and a pure state-threaded rate-limiter with an injected clock and faults-as-data decisions. The spec is normative; where the prototype diverges, the prototype is the bug:
-
-- The translators read `os.getenv("ENV")` and the system clock internally; §3 requires `environment` and `timestamp` as arguments.
-- The translators raise nothing but also cannot signal a malformed payload; §3 requires a `Result` return.
-- The closed sets (severity, environment, behavior name, reason) are free `str`; §2.1 requires frozensets.
-- The `select_behaviors = behaviors_for` alias is removed (§4).
-- The prototype's development policy carries a `reraise` behavior, and an unknown environment falls back to that policy; §4 removes `reraise` and returns an `unknown_environment` fault instead.
-- The bespoke `RateLimitDecision` reason is bounded to `SUPPRESS_REASONS` (§5).
-
-These are the corrections the spec-first rebuild applies. Everything else in the prototype stands.
