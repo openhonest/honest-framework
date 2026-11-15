@@ -44,8 +44,11 @@ Every piece of state belongs to exactly one kind, and every kind names exactly o
 | Static config | process memory, frozen at startup | startup (then read-only) |
 | Dynamic config (flags, A/B) | an external flag store | the flag service (app only reads) |
 | Contended writes (db write / mutex / flag) | on the other side of a queue | the queue's single consumer |
+| A conceptual value built across several pure functions | held by the orchestrator in memory, persisted when it must survive a restart | the orchestrator (it applies each pure function's return) |
 
 The acceptance test for a row: **can you name exactly one mutator?** If a candidate kind seems to need two, it is really two kinds — or one is a derived view, not state. (That test is how static and dynamic config separated, and how the non-declared DOM resolved to a side effect rather than state.)
+
+**When several pure functions contribute to one value, the orchestrator is that value's single mutator.** A pure function cannot mutate: it computes and returns. So a value built up across several pure functions has exactly one place it changes, the orchestrator that invokes them and applies each return. This is the single-mutator law read from the orchestrator's side, and `honest-design-architecture.md` states it as part of the orchestrator's declared responsibility. When that value is state the module encapsulates and must keep across a restart, it persists in the module's home store rather than living only in memory.
 
 ### 1.3 The DOM, fully decomposed
 
