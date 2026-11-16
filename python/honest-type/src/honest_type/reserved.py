@@ -41,7 +41,6 @@ def is_reserved(token: str) -> bool:
 
 def reservation_layer(token: str):
     """The name of the layer that reserves `token`, or None if it is not reserved."""
-    for layer_name, words in _LAYERS.items():
-        if token in words:
-            return layer_name
+    for layer_name, words in filter(lambda item: token in item[1], _LAYERS.items()):
+        return layer_name
     return None

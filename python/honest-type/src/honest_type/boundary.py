@@ -1,14 +1,13 @@
 """Fault and rejection semantics at the boundary (section 11).
 
-This module IS the boundary (section 11.4): the one place that catches exceptions and
-turns faults into output. Catching belongs at the boundary (Typed Exceptions at the
-Boundary), so HC-P002 is disabled file-wide here — the same declaration the cli boundary
-makes. Everything it routes with is a table lookup, never a branch: `fault_to_output`
+This module IS the boundary (section 11.4): the one place that catches the host handler's
+exception and turns faults into output. Catching belongs at the boundary (Typed Exceptions
+at the Boundary), so the one catch carries an inline `# honest: ignore HC-P002` on its try,
+naming why. Everything it routes with is a table lookup, never a branch: `fault_to_output`
 maps fault codes to output functions, and category picks the default.
 """
 
-# honest: disable HC-P002: the boundary turns a rejected input into a fault value, which is what a boundary is for
-
+from honest_type._util import _choose, _pick, _read_or
 from honest_type.types import err, fault, ok
 
 # Rejection policy (section 11.5): the single point where "proceed with a manifest that
@@ -38,17 +37,19 @@ def catch_at_boundary(handler, fault_to_output, success_output, server_default, 
     routing is a lookup."""
 
     def wrapped(value):
-        try:
+        try:  # honest: ignore HC-P002: the boundary catches the host handler's throw and renders it as a server default (section 11.4)
             result = handler(value)
         except Exception as exc:
             return server_default(fault("unhandled_exception", str(exc), "server", [], {}))
-        if "err" in result:
-            failure = result["err"]
-            category_default = {"server": server_default, "client": client_default}.get(
-                failure["category"], server_default
-            )
-            return fault_to_output.get(failure["code"], category_default)(failure)
-        return success_output(result["ok"])
+        return _pick(
+            "err" in result,
+            lambda: _read_or(
+                fault_to_output,
+                result["err"]["code"],
+                _read_or({"server": server_default, "client": client_default}, result["err"]["category"], server_default),
+            )(result["err"]),
+            lambda: success_output(result["ok"]),
+        )
 
     return wrapped
 
@@ -58,19 +59,20 @@ def check_rejections(manifest, policy=None) -> dict:
     rejection the policy marks "fault" (or does not list) blocks, yielding a client fault;
     otherwise the manifest is returned clean, with `_rejections` stripped — inside the chain
     there are no rejections."""
-    rules = policy if policy is not None else DEFAULT_REJECTION_POLICY
-    rejections = manifest.get("_rejections", [])
-    blocking = [r for r in rejections if rules.get(r["reason"], "fault") == "fault"]
-    clean = {slot: value for slot, value in manifest.items() if slot != "_rejections"}
-    if blocking:
-        reason = blocking[0]["reason"]
-        return err(
+    rules = _choose(policy is not None, policy, DEFAULT_REJECTION_POLICY)
+    rejections = _read_or(manifest, "_rejections", [])
+    blocking = list(filter(lambda r: _read_or(rules, r["reason"], "fault") == "fault", rejections))
+    clean = dict(filter(lambda slot_value: slot_value[0] != "_rejections", manifest.items()))
+    return _pick(
+        bool(blocking),
+        lambda: err(
             fault(
-                reason,
+                blocking[0]["reason"],
                 "Input rejected at the boundary",
-                _REJECTION_CATEGORY.get(reason, "client"),
+                _read_or(_REJECTION_CATEGORY, blocking[0]["reason"], "client"),
                 [],
                 {"rejections": blocking},
             )
-        )
-    return ok(clean)
+        ),
+        lambda: ok(clean),
+    )
