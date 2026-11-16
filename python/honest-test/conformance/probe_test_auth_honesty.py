@@ -23,7 +23,7 @@ Its own fragment file so the other scenarios' fragments never collide with it.
 run_conformance.py / laws_htest.py are untouched.
 """
 
-from honest_type import err, fault, ok
+from honest_type import fault
 
 from honest_test import test_auth_honesty
 
@@ -52,10 +52,11 @@ def _honest_recognizer(token):
 
 
 def _honest_resolve(token):
-    """A valid token resolves to ok(actor); every other class faults unauthenticated (401)."""
+    """A valid token resolves to a bare actor; every other class returns a bare unauthenticated
+    (401) Fault (no ok/err envelope, honest-type 12.1)."""
     if token == "VALID":
-        return ok({"id": "alice", "attributes": {}})
-    return err(fault("unauthenticated", "not authenticated", "unauthenticated", [], {}))
+        return {"id": "alice", "attributes": {}}
+    return fault("unauthenticated", "not authenticated", "unauthenticated", [], {})
 
 
 _HONEST_PROVIDER = {
@@ -79,12 +80,13 @@ def _dishonest_recognizer(token):
 
 
 def _dishonest_resolve(token):
-    """Rejects the valid token, mis-categorises the expired token, resolves the rest correctly."""
+    """Rejects the valid token, mis-categorises the expired token, resolves the rest correctly.
+    Returns bare Faults (no ok/err envelope)."""
     if token == "VALID":
-        return err(fault("unauthenticated", "wrongly rejected a valid token", "unauthenticated", [], {}))
+        return fault("unauthenticated", "wrongly rejected a valid token", "unauthenticated", [], {})
     if token == "EXPIRED":
-        return err(fault("forbidden", "wrong category for expired", "forbidden", [], {}))
-    return err(fault("unauthenticated", "not authenticated", "unauthenticated", [], {}))
+        return fault("forbidden", "wrong category for expired", "forbidden", [], {})
+    return fault("unauthenticated", "not authenticated", "unauthenticated", [], {})
 
 
 _DISHONEST_PROVIDER = {

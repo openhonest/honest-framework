@@ -83,8 +83,9 @@ def _mutating_link(manifest):
 
 def _wrong_transition(_machine, _state, _event):
     """A broken transition that always lands on 'locked', so test_valid_transitions has
-    something real to catch (proving the valid-transition law is not a tautology)."""
-    return {"ok": {"state": "locked"}}
+    something real to catch (proving the valid-transition law is not a tautology). Returns a
+    bare {state} manifest, no ok/err envelope (honest-type 12.1)."""
+    return {"state": "locked"}
 
 
 # --------------------------------------------------------------------- generator laws

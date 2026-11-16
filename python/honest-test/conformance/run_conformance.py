@@ -32,7 +32,6 @@ from pathlib import Path
 # constructors). Every fixture is a real callable, never a stand-in that fakes a result.
 import honest_test as _ht
 from honest_type import binding as _binding
-from honest_type import ok as _ok
 from honest_type import state_machine as _state_machine
 from honest_type import transition as _transition
 from honest_type import vocabulary as _vocabulary
@@ -84,11 +83,11 @@ def _make_vocabulary(declarations):
 
 
 def _emit_format(manifest):
-    return _ok(manifest)
+    return manifest
 
 
 def _always_ok(manifest):
-    return _ok(manifest)
+    return manifest
 
 
 _VALUE_FUNCTIONS = {

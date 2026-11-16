@@ -9,7 +9,7 @@ injected functions).
 import asyncio
 import inspect
 
-from honest_type import err, fault, ok
+from honest_type import fault
 
 from honest_test.support import _fault, _is_fault
 
@@ -64,9 +64,10 @@ def evaluate_case(case, function_map):
     """Run one portable value-oracle case and judge the function's output against the known-good
     value (spec section 8.6), the leg that earns a function proved. Evaluate the input expression
     to the argument, run the function under test to completion, evaluate the expected expression,
-    and compare: return honest-type's ok Result carrying the output when it equals the expected
-    value, honest-type's err Result carrying an expected-vs-got fault when it differs, and a
-    honest-test Fault when a named function or expression is unknown. Performs no I/O of its own;
+    and compare: return the output bare when it equals the expected value (a non-fault by is_fault),
+    a bare honest-type Fault carrying an expected-vs-got detail when it differs, and a honest-test
+    Fault when a named function or expression is unknown. The result is a bare union, no ok/err
+    envelope (honest-type sections 12.1, 12.3). Performs no I/O of its own;
     the functions under test are injected through the map."""
     name = case["function"]
     if name not in function_map:
@@ -111,14 +112,14 @@ def evaluate_case(case, function_map):
     if _is_fault(expected):
         return expected
     if output == expected:
-        return ok(output)
-    return err(fault(
+        return output
+    return fault(
         "value_mismatch",
         f"{name} returned {output!r}, expected {expected!r}",
         "server",
         [],
         {"expected": expected, "got": output},
-    ))
+    )
 
 
 def generate_scaffolding(chain_name, links):

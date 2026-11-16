@@ -8,6 +8,7 @@ I/O of its own.
 
 import copy
 
+from honest_type import is_fault
 from honest_type.chains import link_meta
 
 from honest_test.generators import enumerate_test_cases
@@ -99,10 +100,10 @@ def test_chain_contracts(links, vocab, binding):
         upstream, downstream = links[index], links[index + 1]
         for manifest in cases:
             upstream_result = upstream(manifest)
-            if "ok" not in upstream_result:
+            if is_fault(upstream_result):
                 continue
-            downstream_result = downstream(upstream_result["ok"])
-            if "err" in downstream_result and downstream_result["err"].get("category") == "server":
+            downstream_result = downstream(upstream_result)
+            if is_fault(downstream_result) and downstream_result.get("category") == "server":
                 findings.append(_finding(
                     "failure", "chain_contract",
                     "downstream link rejected a valid upstream output with a server fault"))
@@ -134,8 +135,9 @@ def _fault_status(provider, auth_fault):
 def test_auth_honesty(provider):
     """Probe each of the six token classes and report auth_honesty on wrong behaviour (spec
     section 4.7): a malformed token must be rejected at the recognizer, a valid token must
-    resolve to ok(actor), every other class must fault with the expected HTTP status. No I/O of
-    its own; the provider's resolve_actor is the injected boundary."""
+    resolve to a bare actor (a non-fault by is_fault), every other class must fault with the
+    expected HTTP status. resolve_actor returns a bare actor or a bare Fault, no ok/err envelope
+    (honest-type 12.1). No I/O of its own; the provider's resolve_actor is the injected boundary."""
     findings = []
     for token_class in _TOKEN_CLASSES:
         token = provider["test_token_generator"](token_class, {})
@@ -146,12 +148,12 @@ def test_auth_honesty(provider):
             continue
         result = provider["resolve_actor"](token)
         if token_class == "valid":
-            if "ok" not in result:
+            if is_fault(result):
                 findings.append(_finding("failure", "auth_honesty",
                                          "provider rejected a valid token"))
             continue
         expected = compute_expected_status(token_class, provider["fault_mapping"])
-        if "err" not in result or _fault_status(provider, result["err"]) != expected:
+        if not is_fault(result) or _fault_status(provider, result) != expected:
             findings.append(_finding("failure", "auth_honesty",
                                      f"provider did not fault correctly for token class {token_class!r}"))
     return findings

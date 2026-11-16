@@ -26,7 +26,7 @@ This is its own fragment file so the other scenarios' fragments never collide wi
 it. run_conformance.py / laws_htest.py are untouched.
 """
 
-from honest_type import binding, err, fault, ok, vocabulary
+from honest_type import binding, fault, vocabulary
 
 from honest_test import test_chain_contracts
 
@@ -37,20 +37,21 @@ _BINDING = binding({"color": "color"})
 
 
 def _accept(manifest):
-    """A link that accepts its input and passes the manifest on as an ok Result."""
-    return ok(manifest)
+    """A link that accepts its input and passes the manifest on bare (no ok/err envelope)."""
+    return manifest
 
 
 def _server_reject(manifest):
     """A downstream link that rejects a valid upstream output with a SERVER fault:
-    a broken join, every valid output of one link must be accepted by the next."""
-    return err(fault("broken_join", "rejected valid upstream output", "server", [], {}))
+    a broken join, every valid output of one link must be accepted by the next. Returns the
+    Fault bare (honest-type 12.1)."""
+    return fault("broken_join", "rejected valid upstream output", "server", [], {})
 
 
 def _client_reject(manifest):
     """A downstream link that rejects with a CLIENT fault: not a broken join, the
-    server-vs-client carve-out the scenario pins."""
-    return err(fault("bad_input", "rejected as client error", "client", [], {}))
+    server-vs-client carve-out the scenario pins. Returns the Fault bare."""
+    return fault("bad_input", "rejected as client error", "client", [], {})
 
 
 _CASES = [

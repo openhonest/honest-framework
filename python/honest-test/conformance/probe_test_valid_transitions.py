@@ -19,7 +19,7 @@ This is its own fragment file so the other scenarios' fragments never collide wi
 it. run_conformance.py / laws_htest.py are untouched.
 """
 
-from honest_type import ok, state_machine, transition
+from honest_type import state_machine, transition
 
 from honest_test import test_valid_transitions
 
@@ -46,7 +46,7 @@ def _always_locked(machine, current_state, event):
     (locked, coin) and (unlocked, coin) - come back wrong; the two expecting
     "locked" come back right. So exactly two transition_incorrect failures.
     """
-    return ok({"state": "locked"})
+    return {"state": "locked"}
 
 
 def probe_test_valid_transitions():

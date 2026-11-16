@@ -17,7 +17,7 @@ pair, so the probe can catch a wrong answer, not only an absent one.
 This is its own fragment file so the other scenarios' fragments never collide with it.
 """
 
-from honest_type import ok, state_machine, transition
+from honest_type import is_fault, state_machine, transition
 
 from honest_test import test_invalid_transitions
 
@@ -35,9 +35,9 @@ _TRANSITIONS = {
 
 def _accepting_transition(machine, current_state, event):
     """A plain injected run_transition that wrongly ACCEPTS every pair handed to it, returning
-    ok instead of the no_transition fault honest-type's real transition returns on an undeclared
-    pair. It is a real function, not a mock; the check only ever calls it on undeclared pairs."""
-    return ok({"state": current_state})
+    a bare {state} manifest instead of the no_transition fault honest-type's real transition returns
+    on an undeclared pair. It is a real function, not a mock; the check only ever calls it on undeclared pairs."""
+    return {"state": current_state}
 
 
 _CASES = [
@@ -62,7 +62,7 @@ def probe_test_invalid_transitions():
     """test_invalid_transitions returns an invalid_transition_accepted failure for each undeclared (state, event) pair a run_transition accepts, and an empty list when every undeclared pair faults no_transition."""
     bad = []
     machine = state_machine(_STATES, _EVENTS, _TRANSITIONS, initial="a")
-    if "err" in machine or ("states" not in machine):
+    if is_fault(machine) or ("states" not in machine):
         return [f"state_machine built a fault instead of a machine: {machine}"]
     for case in _CASES:
         findings = test_invalid_transitions(machine, case["run_transition"])

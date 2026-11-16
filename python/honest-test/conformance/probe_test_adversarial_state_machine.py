@@ -19,7 +19,6 @@ adversarial_neighbors it invokes is never touched here.
 Standalone fragment; run_conformance.py / laws_htest.py are untouched.
 """
 
-from honest_type import ok
 from honest_type.state_machine import state_machine, transition
 
 from honest_test import test_adversarial_state_machine
@@ -40,7 +39,7 @@ def _accept_state_neighbors(machine, current_state, event):
     neighbor), while deferring every valid-state call to the real transition. It never accepts an
     adversarial event neighbor, so only invalid_state failures are produced."""
     if current_state not in machine["states"]:
-        return ok({"state": machine["initial"]})
+        return {"state": machine["initial"]}
     return transition(machine, current_state, event)
 
 
@@ -49,7 +48,7 @@ def _accept_event_neighbors(machine, current_state, event):
     neighbor), while deferring every valid-event call to the real transition. It never accepts an
     adversarial state neighbor, so only invalid_event failures are produced."""
     if event not in machine["events"]:
-        return ok({"state": machine["initial"]})
+        return {"state": machine["initial"]}
     return transition(machine, current_state, event)
 
 

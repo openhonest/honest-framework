@@ -20,6 +20,8 @@ This is its own fragment file so the other scenarios' fragments never collide
 with it. run_conformance.py / laws_htest.py are untouched.
 """
 
+from honest_type import is_fault
+
 from honest_test import evaluate_case
 
 
@@ -84,19 +86,17 @@ _CASES = [
 ]
 
 
-def _is_fault(got):
-    """A honest-test Fault is a dict carrying problem and remedy, not a Result."""
+def _is_test_fault(got):
+    """A honest-test Fault is a dict carrying problem and remedy, not a honest-type Fault or value."""
     return (
         isinstance(got, dict)
         and "problem" in got
         and "remedy" in got
-        and "ok" not in got
-        and "err" not in got
     )
 
 
 def probe_evaluate_case():
-    """evaluate_case builds the call from the portable case, invokes the function, and judges its output against the expected value: ok on a match, err carrying expected-vs-got on a mismatch, a Fault when a named function is absent."""
+    """evaluate_case builds the call from the portable case, invokes the function, and judges its output against the expected value: the bare output on a match, a bare Fault carrying expected-vs-got on a mismatch, a honest-test Fault when a named function is absent."""
     bad = []
     for entry in _CASES:
         case = entry["case"]
@@ -104,20 +104,20 @@ def probe_evaluate_case():
         got = evaluate_case(case, function_map)
         label = case["function"]
         if entry["verdict"] == _MATCH:
-            if got != {"ok": entry["output"]}:
-                bad.append(f"evaluate_case({label}, match) -> {got}, expected {{'ok': {entry['output']!r}}}")
+            if got != entry["output"]:
+                bad.append(f"evaluate_case({label}, match) -> {got}, expected the bare output {entry['output']!r}")
         elif entry["verdict"] == _MISMATCH:
-            if not (isinstance(got, dict) and "err" in got and "ok" not in got):
-                bad.append(f"evaluate_case({label}, mismatch) -> {got}, expected an err Result")
+            if not is_fault(got):
+                bad.append(f"evaluate_case({label}, mismatch) -> {got}, expected a bare Fault")
                 continue
-            detail = got["err"].get("detail", {})
+            detail = got.get("detail", {})
             if detail.get("expected") != entry["expected_value"] or detail.get("got") != entry["got_value"]:
                 bad.append(
                     f"evaluate_case({label}, mismatch) err detail {detail}, "
                     f"expected expected={entry['expected_value']!r} got={entry['got_value']!r}"
                 )
         else:  # _FAULT
-            if not _is_fault(got):
+            if not _is_test_fault(got):
                 bad.append(f"evaluate_case({label}, unknown) -> {got}, expected a Fault with problem and remedy")
     return bad
 
