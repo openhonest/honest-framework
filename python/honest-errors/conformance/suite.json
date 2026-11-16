@@ -1,665 +1,87 @@
 {
- "version": "0.2",
- "module": "honest-errors",
- "cases": [
-  {
-   "id": "vocab-severities",
-   "kind": "vocab",
-   "vocab": "SEVERITIES",
-   "expect_members": [
-    "debug",
-    "info",
-    "warning",
-    "error",
-    "critical"
-   ]
-  },
-  {
-   "id": "vocab-environments",
-   "kind": "vocab",
-   "vocab": "ENVIRONMENTS",
-   "expect_members": [
-    "development",
-    "production",
-    "test"
-   ]
-  },
-  {
-   "id": "vocab-behavior-names",
-   "kind": "vocab",
-   "vocab": "BEHAVIOR_NAMES",
-   "expect_members": [
-    "log",
-    "email"
-   ]
-  },
-  {
-   "id": "vocab-suppress-reasons",
-   "kind": "vocab",
-   "vocab": "SUPPRESS_REASONS",
-   "expect_members": [
-    "rate_limit_hourly",
-    "rate_limit_dedup"
-   ]
-  },
-  {
-   "id": "exports-public-surface",
-   "kind": "exports",
-   "expect_names": [
-    "js_severity",
-    "classify_js_payload",
-    "classify_py_payload",
-    "should_bypass_dedup",
-    "behaviors_for",
-    "dedup_key",
-    "new_state",
-    "check_rate_limit",
-    "format_email_body",
-    "handle_failure",
-    "capture",
-    "SEVERITIES",
-    "ENVIRONMENTS",
-    "BEHAVIOR_NAMES",
-    "SUPPRESS_REASONS"
-   ]
-  },
-  {
-   "id": "jsseverity-prefix-critical",
-   "kind": "jsseverity",
-   "message": "Critical: boom",
-   "expect": "critical"
-  },
-  {
-   "id": "jsseverity-upper-critical",
-   "kind": "jsseverity",
-   "message": "CRITICAL",
-   "expect": "critical"
-  },
-  {
-   "id": "jsseverity-substring-critical",
-   "kind": "jsseverity",
-   "message": "it was critical here",
-   "expect": "critical"
-  },
-  {
-   "id": "jsseverity-plain-error",
-   "kind": "jsseverity",
-   "message": "boom",
-   "expect": "error"
-  },
-  {
-   "id": "jsseverity-empty-error",
-   "kind": "jsseverity",
-   "message": "",
-   "expect": "error"
-  },
-  {
-   "id": "js-valid-error",
-   "kind": "jsclassify",
-   "payload": {
-    "message": "undefined is not a function",
-    "source": "https://app.example/x.js",
-    "lineno": 42,
-    "colno": 7,
-    "stack": "Error\n  at f (x.js:42:7)",
-    "url": "https://app.example/page",
-    "user_agent": "Mozilla/5.0",
-    "timestamp": "2026-01-01T00:00:00Z",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "expect": "ok",
-   "expect_severity": "error",
-   "expect_message": "undefined is not a function"
-  },
-  {
-   "id": "js-valid-critical",
-   "kind": "jsclassify",
-   "payload": {
-    "message": "Critical: heap corruption detected",
-    "source": "https://app.example/x.js",
-    "lineno": 5,
-    "colno": 1,
-    "stack": "Error\n  at g (x.js:5:1)",
-    "url": "https://app.example/page",
-    "user_agent": "Mozilla/5.0",
-    "timestamp": "2026-01-01T00:00:00Z",
-    "context": {}
-   },
-   "environment": "development",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "expect": "ok",
-   "expect_severity": "critical"
-  },
-  {
-   "id": "js-missing-message",
-   "kind": "jsclassify",
-   "payload": {
-    "source": "https://app.example/x.js",
-    "lineno": 42,
-    "colno": 7,
-    "stack": "Error",
-    "url": "https://app.example/page",
-    "user_agent": "Mozilla/5.0",
-    "timestamp": "2026-01-01T00:00:00Z",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "expect": "err",
-   "expect_code": "malformed_payload"
-  },
-  {
-   "id": "js-missing-stack",
-   "kind": "jsclassify",
-   "payload": {
-    "message": "x",
-    "source": "https://app.example/x.js",
-    "lineno": 42,
-    "colno": 7,
-    "url": "https://app.example/page",
-    "user_agent": "Mozilla/5.0",
-    "timestamp": "2026-01-01T00:00:00Z",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "expect": "err",
-   "expect_code": "malformed_payload"
-  },
-  {
-   "id": "py-valid-error",
-   "kind": "pyclassify",
-   "payload": {
-    "exception_type": "ValueError",
-    "message": "bad value",
-    "tb_file": "app.py",
-    "tb_line": 10,
-    "tb_function": "handle",
-    "traceback": "Traceback (most recent call last):\n  ValueError: bad value",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "expect": "ok",
-   "expect_severity": "error",
-   "expect_message": "bad value",
-   "expect_exception_type": "ValueError"
-  },
-  {
-   "id": "py-missing-exception-type",
-   "kind": "pyclassify",
-   "payload": {
-    "message": "bad value",
-    "tb_file": "app.py",
-    "tb_line": 10,
-    "tb_function": "handle",
-    "traceback": "tb",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "expect": "err",
-   "expect_code": "malformed_payload"
-  },
-  {
-   "id": "py-missing-traceback",
-   "kind": "pyclassify",
-   "payload": {
-    "exception_type": "ValueError",
-    "message": "bad value",
-    "tb_file": "app.py",
-    "tb_line": 10,
-    "tb_function": "handle",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "expect": "err",
-   "expect_code": "malformed_payload"
-  },
-  {
-   "id": "bypass-critical-true",
-   "kind": "bypass",
-   "severity": "critical",
-   "expect": true
-  },
-  {
-   "id": "bypass-error-false",
-   "kind": "bypass",
-   "severity": "error",
-   "expect": false
-  },
-  {
-   "id": "bypass-warning-false",
-   "kind": "bypass",
-   "severity": "warning",
-   "expect": false
-  },
-  {
-   "id": "behaviors-development",
-   "kind": "behaviors",
-   "environment": "development",
-   "expect": "ok",
-   "expect_list": [
-    {
-     "name": "log",
-     "order": 0
-    }
-   ]
-  },
-  {
-   "id": "behaviors-production",
-   "kind": "behaviors",
-   "environment": "production",
-   "expect": "ok",
-   "expect_list": [
-    {
-     "name": "log",
-     "order": 0
-    },
-    {
-     "name": "email",
-     "order": 1
-    }
-   ]
-  },
-  {
-   "id": "behaviors-test",
-   "kind": "behaviors",
-   "environment": "test",
-   "expect": "ok",
-   "expect_list": [
-    {
-     "name": "log",
-     "order": 0
-    }
-   ]
-  },
-  {
-   "id": "behaviors-unknown",
-   "kind": "behaviors",
-   "environment": "staging",
-   "expect": "err",
-   "expect_code": "unknown_environment"
-  },
-  {
-   "id": "dedupkey-projects",
-   "kind": "dedupkey",
-   "report": {
-    "exception_type": "ValueError",
-    "message": "bad value",
-    "severity": "error",
-    "environment": "production",
-    "file": "app.py",
-    "line": 10,
-    "function": "handle",
-    "traceback": "tb",
-    "context": {},
-    "timestamp": "2026-01-01T00:00:00Z"
-   },
-   "expect": {
-    "exception_type": "ValueError",
-    "file": "app.py",
-    "line": 10
-   }
-  },
-  {
-   "id": "newstate-empty",
-   "kind": "newstate"
-  },
-  {
-   "id": "ratelimit-allow-empty",
-   "kind": "ratelimit",
-   "key": {
-    "exception_type": "ValueError",
-    "file": "app.py",
-    "line": 10
-   },
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 10
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": []
-   },
-   "now": 1000,
-   "expect_should_send": true,
-   "expect_reason": null,
-   "expect_next_hourly": [
-    1000
-   ],
-   "expect_cache_size": 1
-  },
-  {
-   "id": "ratelimit-hourly-cap",
-   "kind": "ratelimit",
-   "key": {
-    "exception_type": "ValueError",
-    "file": "app.py",
-    "line": 10
-   },
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 2
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": [
-     800,
-     900
-    ]
-   },
-   "now": 1000,
-   "expect_should_send": false,
-   "expect_reason": "rate_limit_hourly"
-  },
-  {
-   "id": "emailbody-contains",
-   "kind": "emailbody",
-   "report": {
-    "exception_type": "ValueError",
-    "message": "bad value",
-    "severity": "error",
-    "environment": "production",
-    "file": "app.py",
-    "line": 10,
-    "function": "handle",
-    "traceback": "Traceback: ValueError",
-    "context": {},
-    "timestamp": "2026-01-01T00:00:00Z"
-   },
-   "expect_contains": [
-    "ValueError",
-    "bad value",
-    "error",
-    "production"
-   ]
-  },
-  {
-   "id": "hf-malformed-js",
-   "kind": "handle_failure",
-   "source": "js",
-   "payload": {
-    "source": "https://app.example/x.js",
-    "lineno": 42,
-    "colno": 7,
-    "stack": "Error",
-    "url": "https://app.example/page",
-    "user_agent": "Mozilla/5.0",
-    "timestamp": "2026-01-01T00:00:00Z",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 10
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": []
-   },
-   "now": 1000,
-   "expect": "err",
-   "expect_code": "malformed_payload"
-  },
-  {
-   "id": "hf-unknown-environment",
-   "kind": "handle_failure",
-   "source": "py",
-   "payload": {
-    "exception_type": "ValueError",
-    "message": "bad value",
-    "tb_file": "app.py",
-    "tb_line": 10,
-    "tb_function": "handle",
-    "traceback": "tb",
-    "context": {}
-   },
-   "environment": "staging",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 10
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": []
-   },
-   "now": 1000,
-   "expect": "err",
-   "expect_code": "unknown_environment"
-  },
-  {
-   "id": "hf-send-production",
-   "kind": "handle_failure",
-   "source": "py",
-   "payload": {
-    "exception_type": "ValueError",
-    "message": "bad value",
-    "tb_file": "app.py",
-    "tb_line": 10,
-    "tb_function": "handle",
-    "traceback": "Traceback: ValueError",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 10
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": []
-   },
-   "now": 1000,
-   "expect": "ok",
-   "expect_should_send": true,
-   "expect_email_nonempty": true
-  },
-  {
-   "id": "hf-suppressed-empty-body",
-   "kind": "handle_failure",
-   "source": "py",
-   "payload": {
-    "exception_type": "ValueError",
-    "message": "bad value",
-    "tb_file": "app.py",
-    "tb_line": 10,
-    "tb_function": "handle",
-    "traceback": "Traceback: ValueError",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 1
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": [
-     950
-    ]
-   },
-   "now": 1000,
-   "expect": "ok",
-   "expect_should_send": false,
-   "expect_email_nonempty": false
-  },
-  {
-   "id": "hf-critical-bypass",
-   "kind": "handle_failure",
-   "source": "js",
-   "payload": {
-    "message": "Critical: boom",
-    "source": "https://app.example/x.js",
-    "lineno": 5,
-    "colno": 1,
-    "stack": "Error\n  at g (x.js:5:1)",
-    "url": "https://app.example/page",
-    "user_agent": "Mozilla/5.0",
-    "timestamp": "2026-01-01T00:00:00Z",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 1
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": [
-     950
-    ]
-   },
-   "now": 1000,
-   "expect": "ok",
-   "expect_should_send": false,
-   "expect_email_nonempty": true
-  },
-  {
-   "id": "hf-unknown-source",
-   "kind": "handle_failure",
-   "source": "svg",
-   "payload": {
-    "exception_type": "ValueError",
-    "message": "bad value",
-    "tb_file": "app.py",
-    "tb_line": 10,
-    "tb_function": "handle",
-    "traceback": "Traceback (most recent call last):\n  ValueError: bad value",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 10
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": []
-   },
-   "now": 1000,
-   "expect": "err",
-   "expect_code": "unknown_source"
-  },
-  {
-   "id": "hf-development-send-no-email",
-   "kind": "handle_failure",
-   "source": "py",
-   "payload": {
-    "exception_type": "ValueError",
-    "message": "bad value",
-    "tb_file": "app.py",
-    "tb_line": 10,
-    "tb_function": "handle",
-    "traceback": "Traceback (most recent call last):\n  ValueError: bad value",
-    "context": {}
-   },
-   "environment": "development",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 10
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": []
-   },
-   "now": 1000,
-   "expect": "ok",
-   "expect_should_send": true,
-   "expect_email_nonempty": false
-  },
-  {
-   "id": "hf-critical-development-no-email",
-   "kind": "handle_failure",
-   "source": "js",
-   "payload": {
-    "message": "Critical: heap corruption detected",
-    "source": "https://app.example/x.js",
-    "lineno": 5,
-    "colno": 1,
-    "stack": "Error\n  at g (x.js:5:1)",
-    "url": "https://app.example/page",
-    "user_agent": "Mozilla/5.0",
-    "timestamp": "2026-01-01T00:00:00Z",
-    "context": {}
-   },
-   "environment": "development",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 1
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": [
-     950
-    ]
-   },
-   "now": 1000,
-   "expect": "ok",
-   "expect_should_send": false,
-   "expect_email_nonempty": false
-  },
-  {
-   "id": "capture-forwards-send",
-   "kind": "capture",
-   "source": "py",
-   "payload": {
-    "exception_type": "ValueError",
-    "message": "bad value",
-    "tb_file": "app.py",
-    "tb_line": 10,
-    "tb_function": "handle",
-    "traceback": "Traceback: ValueError",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 10
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": []
-   },
-   "now": 1000
-  },
-  {
-   "id": "capture-forwards-fault",
-   "kind": "capture",
-   "source": "js",
-   "payload": {
-    "source": "https://app.example/x.js",
-    "lineno": 42,
-    "colno": 7,
-    "stack": "Error",
-    "url": "https://app.example/page",
-    "user_agent": "Mozilla/5.0",
-    "timestamp": "2026-01-01T00:00:00Z",
-    "context": {}
-   },
-   "environment": "production",
-   "timestamp": "2026-02-02T12:00:00Z",
-   "config": {
-    "dedup_window_seconds": 300,
-    "max_per_hour": 10
-   },
-   "state": {
-    "dedup_cache": {},
-    "hourly_sends": []
-   },
-   "now": 1000
-  }
- ]
+  "version": "0.3",
+  "module": "honest-errors",
+  "note": "The error-cadence pure core (spec v0.2, sections 2-5). Representation-dependent behaviour (presets, resolve pass-through, build_response, cadence-state transitions) is asserted in laws_he.py. The orchestrator, door, and persistence functions are parked until persistence is wired.",
+  "cases": [
+    { "id": "vocab-severities", "kind": "vocab", "vocab": "SEVERITIES",
+      "expect_members": ["debug", "info", "warning", "error", "critical"] },
+    { "id": "vocab-environments", "kind": "vocab", "vocab": "ENVIRONMENTS",
+      "expect_members": ["development", "production", "test"] },
+    { "id": "vocab-response-modes", "kind": "vocab", "vocab": "RESPONSE_MODES",
+      "expect_members": ["returned", "acknowledged"] },
+    { "id": "vocab-payload-sources", "kind": "vocab", "vocab": "PAYLOAD_SOURCES",
+      "expect_members": ["js", "py"] },
+    { "id": "vocab-preset-names", "kind": "vocab", "vocab": "PRESET_NAMES",
+      "expect_members": ["silent", "acknowledge", "report_back", "notify"] },
+    { "id": "vocab-action-kinds", "kind": "vocab", "vocab": "ACTION_KINDS",
+      "expect_members": ["show", "hide", "send"] },
+    { "id": "vocab-display-statuses", "kind": "vocab", "vocab": "DISPLAY_STATUSES",
+      "expect_members": ["showing", "pending"] },
+    { "id": "vocab-duration-kinds", "kind": "vocab", "vocab": "DURATION_KINDS",
+      "expect_members": ["once", "period"] },
+    { "id": "vocab-timing-kinds", "kind": "vocab", "vocab": "TIMING_KINDS",
+      "expect_members": ["immediate", "scheduled"] },
+    { "id": "vocab-fault-codes", "kind": "vocab", "vocab": "FAULT_CODES",
+      "expect_members": ["malformed_payload", "unknown_source", "unknown_preset"] },
+
+    { "id": "exports-pure-surface", "kind": "exports",
+      "expect_names": ["js_severity", "classify_js_payload", "classify_py_payload", "normalize",
+        "preset_silent", "preset_acknowledge", "preset_report_back", "preset_notify",
+        "resolve_cadence", "build_response", "dedup_key",
+        "expire_elapsed", "release_due", "add_display", "advance_cadence",
+        "SEVERITIES", "ENVIRONMENTS", "RESPONSE_MODES", "PAYLOAD_SOURCES", "PRESET_NAMES",
+        "ACTION_KINDS", "DISPLAY_STATUSES", "DURATION_KINDS", "TIMING_KINDS", "FAULT_CODES"] },
+
+    { "id": "jsseverity-critical-token", "kind": "jsseverity", "message": "the widget went critical", "expect": "critical" },
+    { "id": "jsseverity-critical-mixed-case", "kind": "jsseverity", "message": "CRITICAL meltdown", "expect": "critical" },
+    { "id": "jsseverity-plain-error", "kind": "jsseverity", "message": "undefined is not a function", "expect": "error" },
+    { "id": "jsseverity-empty", "kind": "jsseverity", "message": "", "expect": "error" },
+
+    { "id": "jsclassify-ok-critical", "kind": "jsclassify",
+      "payload": { "message": "render went critical", "source": "app.js", "lineno": 42, "colno": 7,
+        "stack": "at render (app.js:42:7)", "url": "https://example.test/app", "user_agent": "UA/1.0",
+        "timestamp": "2026-11-15T11:59:00Z", "context": { "widget": "chart" } },
+      "environment": "production", "timestamp": "2026-11-15T12:00:00Z",
+      "expect_severity": "critical", "expect_message": "render went critical" },
+    { "id": "jsclassify-malformed-missing-message", "kind": "jsclassify",
+      "payload": { "source": "app.js", "lineno": 42, "colno": 7, "stack": "", "url": "https://example.test/app",
+        "user_agent": "UA/1.0", "timestamp": "2026-11-15T11:59:00Z", "context": {} },
+      "environment": "production", "timestamp": "2026-11-15T12:00:00Z",
+      "expect": "err", "expect_code": "malformed_payload" },
+
+    { "id": "pyclassify-ok", "kind": "pyclassify",
+      "payload": { "exception_type": "ValueError", "message": "bad literal", "tb_file": "svc.py",
+        "tb_line": 88, "tb_function": "parse", "traceback": "Traceback ...", "context": { "input": "x" } },
+      "environment": "development", "timestamp": "2026-11-15T12:00:00Z",
+      "expect_severity": "error", "expect_exception_type": "ValueError", "expect_message": "bad literal" },
+    { "id": "pyclassify-malformed-missing-exception-type", "kind": "pyclassify",
+      "payload": { "message": "bad literal", "tb_file": "svc.py", "tb_line": 88, "tb_function": "parse",
+        "traceback": "Traceback ...", "context": {} },
+      "environment": "development", "timestamp": "2026-11-15T12:00:00Z",
+      "expect": "err", "expect_code": "malformed_payload" },
+
+    { "id": "normalize-js", "kind": "normalize", "source": "js",
+      "payload": { "message": "render went critical", "source": "app.js", "lineno": 42, "colno": 7,
+        "stack": "at render (app.js:42:7)", "url": "https://example.test/app", "user_agent": "UA/1.0",
+        "timestamp": "2026-11-15T11:59:00Z", "context": {} },
+      "environment": "production", "timestamp": "2026-11-15T12:00:00Z",
+      "expect_severity": "critical", "expect_message": "render went critical" },
+    { "id": "normalize-py", "kind": "normalize", "source": "py",
+      "payload": { "exception_type": "ValueError", "message": "bad literal", "tb_file": "svc.py",
+        "tb_line": 88, "tb_function": "parse", "traceback": "Traceback ...", "context": {} },
+      "environment": "development", "timestamp": "2026-11-15T12:00:00Z",
+      "expect_severity": "error", "expect_exception_type": "ValueError", "expect_message": "bad literal" },
+    { "id": "normalize-unknown-source", "kind": "normalize", "source": "ruby",
+      "payload": { "message": "x" }, "environment": "production", "timestamp": "2026-11-15T12:00:00Z",
+      "expect": "err", "expect_code": "unknown_source" },
+
+    { "id": "dedupkey-identity", "kind": "dedupkey",
+      "report": { "exception_type": "ValueError", "message": "bad literal", "severity": "error",
+        "environment": "development", "file": "svc.py", "line": 88, "function": "parse",
+        "traceback": "Traceback ...", "context": {}, "timestamp": "2026-11-15T12:00:00Z" },
+      "expect": { "exception_type": "ValueError", "file": "svc.py", "line": 88 } },
+
+    { "id": "resolve-unknown-preset", "kind": "resolve_fault", "arg": "stampede",
+      "expect_code": "unknown_preset" }
+  ]
 }

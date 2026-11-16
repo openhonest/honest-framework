@@ -93,10 +93,13 @@ The two payload shapes collapse to one report so that every downstream consumer 
 ### 2.1 Bounded vocabularies
 
 ```
-SEVERITIES     = { debug, info, warning, error, critical }   # closed set
-ENVIRONMENTS   = { development, production, test }            # closed set
-RESPONSE_MODES = { returned, acknowledged }                  # closed set
+SEVERITIES      = { debug, info, warning, error, critical }   # closed set
+ENVIRONMENTS    = { development, production, test }            # closed set
+RESPONSE_MODES  = { returned, acknowledged }                  # closed set
+PAYLOAD_SOURCES = { js, py }                                  # closed set — which normalizer `capture` selects
 ```
+
+`PAYLOAD_SOURCES` is the `source` word the host passes to `capture`: `js` selects `classify_js_payload`, `py` selects `classify_py_payload`. A `source` outside this set is the `unknown_source` fault (§6).
 
 These are closed sets, declared as frozensets, never free `str`. honest-test enumerates them; honest-check treats them as discriminant sets.
 
@@ -182,12 +185,14 @@ advance_cadence(state, report, cadence, now) -> (CadenceState', list<DisplayActi
 
 `advance_cadence` and the pure functions it composes return a new state and never mutate the argument. They expire the entries whose `until` has passed, release the `Pending` entries whose `due` has arrived, and add the new report's entry per the declaration. The orchestrator takes their returned `CadenceState'`, writes it as the module's one owned, persisted state, and returns the `DisplayAction` list for honest-alerts. One function applies the change, so a reader sees the single place the cadence state moves (the single-mutator law, read from the orchestrator's side: `honest-state-architecture.md` §1.2).
 
+The current state is loaded at the start of a capture. On first use, when nothing is persisted yet, the load yields an empty state (`{ live: [] }`) rather than a fault, so the first failure is handled against a clean slate.
+
 ```
 DisplayAction = { key: DedupKey, report: ExceptionReport, kind: ActionKind }
 ActionKind    = show | hide | send              # closed set
 ```
 
-A `DisplayAction` is a decision, not a delivery: honest-errors says what is due, honest-alerts does it.
+A `DisplayAction` is a decision, not a delivery: honest-errors says what is due, honest-alerts does it. Each advance step emits its own kind: expiring a held display emits `hide`, releasing a scheduled display emits `show` (and `send` when its cadence also notifies over a channel), and adding a new immediate display emits `show`.
 
 ---
 
@@ -204,7 +209,7 @@ capture(source, payload, environment, timestamp, cadence, now) -> CaptureResult 
 
 ```
 response: the normalized report when respond.mode is returned,
-          a bare acknowledgement when it is acknowledged,
+          an Acknowledgement { captured: bool } (captured = true) when it is acknowledged,
           Absent when respond is Absent.
 ```
 
