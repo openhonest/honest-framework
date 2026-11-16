@@ -4,9 +4,9 @@ fault/rejection contract (section 11).
 Unit 2: base classification + flat (required) binding. Composed types and Maybe follow.
 
 Returns a manifest (flat dict slot->value, plus `_rejections` for client/server
-rejections) — or, on a server-bug fault (non-string token, throwing predicate), the
-Result error shape `{"err": fault}`. Rejections are data in the manifest; faults are a
-distinct return because the manifest would be a lie.
+rejections) — or, on a server-bug fault (non-string token, throwing predicate), the bare
+Fault value (section 12.1). Rejections are data in the manifest; a Fault is a distinct
+return, recognized by `is_fault`, because the manifest would be a lie.
 """
 
 from functools import reduce
@@ -218,7 +218,7 @@ def _scan_classified(state, result):
     recorded; anything else is a ticket. Returns the next scan state."""
     return _pick(
         "code" in result,
-        lambda: {"err": result},
+        lambda: {"stopped": result},
         lambda: _pick(
             "reason" in result,
             lambda: _append_rejection(state, result),
@@ -235,7 +235,7 @@ def _scan_token(state, token, vocab):
         lambda: _append_rejection(state, rejection(None, "null_token")),
         lambda: _pick(
             not isinstance(token, str),  # honest: ignore HC-P005: primitive input-contract guard, not domain dispatch
-            lambda: {"err": _non_string_fault(token)},
+            lambda: {"stopped": _non_string_fault(token)},
             lambda: _pick(
                 token == "",
                 lambda: _append_rejection(state, rejection("", "empty_token")),
@@ -249,14 +249,14 @@ def _scan_step(state, token, vocab):
     """One fold step over the tokens: pass a stopped scan (a server fault) through untouched, else
     classify this token."""
     return _pick(
-        "err" in state,
+        "stopped" in state,
         lambda: state,
         lambda: _scan_token(state, token, vocab),
     )
 
 
 def classify(tokens, vocab, bind=None):
-    """Classify tokens against a vocabulary into a manifest (or {'err': fault})."""
+    """Classify tokens against a vocabulary into a manifest, or a bare Fault on a server bug."""
     binding = _pick(bind is not None, lambda: bind, lambda: auto_binding(vocab))
     final = reduce(
         lambda state, token: _scan_step(state, token, vocab),
@@ -264,7 +264,7 @@ def classify(tokens, vocab, bind=None):
         {"tickets": [], "rejections": []},
     )
     return _pick(
-        "err" in final,
-        lambda: {"err": final["err"]},
+        "stopped" in final,
+        lambda: final["stopped"],
         lambda: _resolve_bindings(final["tickets"], final["rejections"], vocab, binding),
     )

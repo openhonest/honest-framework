@@ -824,21 +824,6 @@
       "expect_code": "boom"
     },
     {
-      "id": "chain-non-result-return",
-      "combinator": "chain",
-      "links": [
-        "bad"
-      ],
-      "initial": {},
-      "expect": "err",
-      "expect_code": "non_result_return",
-      "expect_detail": {
-        "link": "_link_bad"
-      },
-      "expect_message_contains": "returned neither ok nor err",
-      "expect_category": "server"
-    },
-    {
       "id": "validate-all-ok",
       "combinator": "validate_all",
       "links": [
@@ -1113,21 +1098,6 @@
       "expect_code": "async_boom"
     },
     {
-      "id": "chain-async-bad",
-      "combinator": "chain",
-      "links": [
-        "async_bad"
-      ],
-      "initial": {},
-      "expect": "err",
-      "expect_code": "non_result_return",
-      "expect_detail": {
-        "link": "_link_async_bad"
-      },
-      "expect_message_contains": "returned neither ok nor err",
-      "expect_category": "server"
-    },
-    {
       "id": "validate-all-async-ok",
       "combinator": "validate_all",
       "links": [
@@ -1338,19 +1308,31 @@
       }
     },
     {
-      "id": "value-ok",
+      "id": "value-is-fault-true-on-fault",
       "value_case": {
-        "function": "ok",
+        "function": "is_fault",
+        "args": [
+          {
+            "code": "boom",
+            "message": "boom",
+            "category": "server",
+            "results": [],
+            "detail": {}
+          }
+        ],
+        "expected": true
+      }
+    },
+    {
+      "id": "value-is-fault-false-on-manifest",
+      "value_case": {
+        "function": "is_fault",
         "args": [
           {
             "x": "1"
           }
         ],
-        "expected": {
-          "ok": {
-            "x": "1"
-          }
-        }
+        "expected": false
       }
     },
     {
@@ -1370,6 +1352,22 @@
           "category": "server",
           "results": [],
           "detail": {}
+        }
+      }
+    },
+    {
+      "id": "value-ok",
+      "value_case": {
+        "function": "ok",
+        "args": [
+          {
+            "x": "1"
+          }
+        ],
+        "expected": {
+          "ok": {
+            "x": "1"
+          }
         }
       }
     },
@@ -1487,9 +1485,7 @@
           {}
         ],
         "expected": {
-          "ok": {
-            "x": "1"
-          }
+          "x": "1"
         }
       }
     },
@@ -1621,9 +1617,7 @@
           "go"
         ],
         "expected": {
-          "ok": {
-            "state": "b"
-          }
+          "state": "b"
         }
       }
     },
@@ -1673,10 +1667,8 @@
           }
         ],
         "expected": {
-          "ok": {
-            "x": "1",
-            "seen": true
-          }
+          "x": "1",
+          "seen": true
         }
       }
     }

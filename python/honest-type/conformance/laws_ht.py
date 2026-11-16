@@ -25,6 +25,7 @@ from honest_type import (
     classify,
     composed,
     insensitive,
+    is_fault,
     maybe,
     predicate,
     vocabulary,
@@ -82,7 +83,7 @@ def _ht1_membership(subject):
     bad = []
     for token in _generated_tokens(subject):
         result = classify([token], vocab)
-        if "err" in result:
+        if is_fault(result):
             continue
         for key in result:
             if key != "_rejections" and key not in declared:
@@ -181,8 +182,8 @@ def _classify_contract(subject):
     result = classify(subject["tokens"], vocab, bind)
     bad = []
     if "fault" in subject:
-        failure = result.get("err", {})
-        if "err" not in result or failure.get("code") != subject["fault"]:
+        failure = result if is_fault(result) else {}
+        if not is_fault(result) or failure.get("code") != subject["fault"]:
             bad.append(f"expected fault {subject['fault']!r}, got {result}")
         for field in ("message", "category", "detail"):
             key = f"expect_{field}"
@@ -364,7 +365,7 @@ def _sm_from_vocabulary(subject):
         "idle",
     )
     result = transition(machine, "idle", "start")
-    if result.get("ok", {}).get("state") != "running":
+    if is_fault(result) or result.get("state") != "running":
         return [f"vocabulary-built machine did not transition idle->running: {result}"]
     return []
 
@@ -459,7 +460,7 @@ def _non_string_token_names_the_type():
     messages = []
     for token, expected in ((42, "int"), (4.5, "float"), (True, "bool"), ({"a": 1}, "dict")):
         result = classify([token], vocabulary({"a": {"x"}}))
-        fault = result.get("err", {})
+        fault = result if is_fault(result) else {}
         detail = fault.get("detail", {})
         if detail.get("received_type") != expected:
             messages.append(f"detail.received_type for {token!r} must be {expected!r}: {detail}")

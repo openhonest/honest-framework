@@ -193,6 +193,11 @@ Feature: honest-type — vocabulary, classification, chains, and the boundary
     When is_link inspects it
     Then it answers yes only when the function carries link metadata
 
+  Scenario: is_fault reports whether a value is a fault
+    Given a value that is either a manifest or a fault
+    When is_fault inspects it
+    Then it answers yes when the value carries a code, the shape a fault has and a manifest does not
+
   Scenario: link_meta returns a declared link's metadata
     Given a function
     When link_meta reads it

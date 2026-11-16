@@ -8,7 +8,7 @@ mutation - the caller stores the state, the machine only computes the next one.
 from types import MappingProxyType
 
 from honest_type._util import _choose, _pick, _read_or
-from honest_type.types import err, fault, ok
+from honest_type.types import fault
 
 
 def _names(declaration):
@@ -97,11 +97,12 @@ def _transition_fault(machine, current_state, event):
 
 
 def transition(machine, current_state, event):
-    """Apply one event (section 7c). Returns ok({"state": next}) or err(fault). Pure: the
-    machine is stateless; the caller stores the result."""
+    """Apply one event (section 7c). Returns a bare {"state": next} on success or a bare Fault on
+    failure (section 12.1) — no envelope. Pure: the machine is stateless; the caller stores the
+    result. The faulting rows are the terminal entries of this (state, event) dispatch (section 13.7)."""
     found = _transition_fault(machine, current_state, event)
     return _pick(
         found is not None,
-        lambda: err(found),
-        lambda: ok({"state": machine["transitions"][(current_state, event)]}),
+        lambda: found,
+        lambda: {"state": machine["transitions"][(current_state, event)]},
     )

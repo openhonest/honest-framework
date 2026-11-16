@@ -22,7 +22,7 @@ from honest_type.classify import classify
 from honest_type.recognizers import insensitive, predicate, recognize
 from honest_type.reserved import RESERVED_WORDS, is_reserved
 from honest_type.state_machine import state_machine, transition
-from honest_type.types import Fault, Rejection, Ticket, err, fault, ok, rejection, ticket
+from honest_type.types import Fault, Rejection, Ticket, err, fault, is_fault, ok, rejection, ticket
 from honest_type.vocabulary import (
     auto_binding,
     binding,
@@ -44,6 +44,7 @@ __all__ = [
     "catch_at_boundary",
     "check_rejections",
     "DEFAULT_REJECTION_POLICY",
+    "is_fault",
     "ok",
     "err",
     "vocabulary",

@@ -26,14 +26,13 @@ from honest_type import (
     check_rejections,
     classify,
     composed,
-    err,
     fault,
+    is_fault,
     is_link,
     link,
     link_meta,
     maybe,
     merge,
-    ok,
     state_machine,
     transition,
     validate_all,
@@ -53,32 +52,29 @@ def _vocab(declarations):
     return vocabulary({name: set(members) for name, members in declarations.items()})
 
 
-# Link fixtures for the chain cases (section 10). Links are functions, so they cannot be
-# JSON; the cases name them and the runner supplies the implementations.
+# Link fixtures for the chain cases (section 12). Links are functions, so they cannot be
+# JSON; the cases name them and the runner supplies the implementations. A link returns its
+# value (a bare manifest) on success or a bare Fault on failure — no envelope (section 12.1).
 def _link_pass(manifest):
-    return ok(manifest)
+    return manifest
 
 
 def _link_set_role(manifest):
-    return ok({**manifest, "role": "admin"})
+    return {**manifest, "role": "admin"}
 
 
 def _link_fault(manifest):
-    return err(fault("boom", "boom", "server", [], {}))
-
-
-def _link_bad(manifest):
-    return {"weird": 1}  # neither ok nor err -> non_result_return
+    return fault("boom", "boom", "server", [], {})
 
 
 def _link_unrecognized(manifest):
-    return err(fault("unrecognized", "no", "client", [], {}))
+    return fault("unrecognized", "no", "client", [], {})
 
 
 def _link_client_fault(manifest):
     # A client-category fault whose code is NOT in _FAULT_TO_OUTPUT, so the boundary routes it by
     # category default (client) — exercising the "client" arm of the category table.
-    return err(fault("denied", "no", "client", [], {}))
+    return fault("denied", "no", "client", [], {})
 
 
 def _link_raise(manifest):
@@ -87,42 +83,36 @@ def _link_raise(manifest):
 
 @link(boundary=True, accepts="user_vocab")
 def _declared_link(manifest):
-    return ok({**manifest, "role": "admin"})
+    return {**manifest, "role": "admin"}
 
 
 @link(accepts="v", binds={"slot": "field"}, authorizes=True, emits="evt")
 def _rich_link(manifest):
     # Every metadata field set (boundary left default False), so a linkmeta case can pin each one.
-    return ok(manifest)
+    return manifest
 
 
 @link()
 def _plain_link(manifest):
     # All defaults — pins boundary/authorizes False and binds/emits None.
-    return ok(manifest)
+    return manifest
 
 
-# Async links (section 10.6): a chain or validate_all containing any of these is itself async.
+# Async links (section 12.6): a chain or validate_all containing any of these is itself async.
 async def _link_async(manifest):
-    return ok({**manifest, "async_ran": "yes"})
+    return {**manifest, "async_ran": "yes"}
 
 
 async def _link_async_fault(manifest):
-    return err(fault("async_boom", "async link failed", "client", [], {}))
-
-
-async def _link_async_bad(manifest):
-    return {"weird": 1}  # neither ok nor err -> non_result_return, after await
+    return fault("async_boom", "async link failed", "client", [], {})
 
 
 _LINKS = {
     "async": _link_async,
     "async_fault": _link_async_fault,
-    "async_bad": _link_async_bad,
     "pass": _link_pass,
     "set_role": _link_set_role,
     "fault": _link_fault,
-    "bad": _link_bad,
     "unrecognized": _link_unrecognized,
     "client_fault": _link_client_fault,
     "raise": _link_raise,
@@ -189,13 +179,14 @@ def _check_classify(case):
     )
     bind = binding({k: _slot(v) for k, v in case["binding"].items()}) if "binding" in case else None
     result = classify(case["tokens"], vocab, bind)
+    # classify returns a bare manifest or a bare Fault (section 12.1); is_fault tells them apart.
     if "expect_fault" in case:
         spec = case["expect_fault"]
-        failure = result.get("err", {})
+        failure = result if is_fault(result) else {}
         if isinstance(spec, dict):  # honest: ignore HC-P005  (str vs dict is a case-format shape, not a domain discriminant)
-            ok = "err" in result and all(failure.get(field) == value for field, value in spec.items())
+            ok = is_fault(result) and all(failure.get(field) == value for field, value in spec.items())
         else:
-            ok = "err" in result and failure.get("code") == spec
+            ok = is_fault(result) and failure.get("code") == spec
         return ok, f"got {result}"
     reasons = [r["reason"] for r in result.get("_rejections", [])]
     # `slot in result` distinguishes Nothing (present, null) from an absent slot.
@@ -232,21 +223,20 @@ def _check_chainrun(case):
     result = _COMBINATORS[case["combinator"]](*links)(case["initial"])
     if asyncio.iscoroutine(result):
         result = asyncio.run(result)
+    # The chain returns a bare manifest or a bare Fault (section 12.3); is_fault tells them apart.
     if case["expect"] == "err":
-        failure = result.get("err", {})
-        matched = "err" in result and failure.get("code") == case["expect_code"]
-        if case.get("expect_fault_results") and "results" not in failure:
+        matched = is_fault(result) and result.get("code") == case["expect_code"]
+        if case.get("expect_fault_results") and "results" not in result:
             matched = False
         for field in ("detail", "message", "category"):
             key = f"expect_{field}"
             if key in case:
-                matched = matched and failure.get(field) == case[key]
+                matched = matched and result.get(field) == case[key]
         if "expect_message_contains" in case:
-            matched = matched and case["expect_message_contains"] in failure.get("message", "")
+            matched = matched and case["expect_message_contains"] in result.get("message", "")
         return matched, f"got {result}"
-    manifest = result.get("ok", {})
-    matched = "ok" in result and all(
-        manifest.get(slot) == value for slot, value in case.get("expect_manifest", {}).items()
+    matched = not is_fault(result) and all(
+        result.get(slot) == value for slot, value in case.get("expect_manifest", {}).items()
     )
     return matched, f"got {result}"
 
@@ -264,15 +254,15 @@ def _check_boundary(case):
 
 def _check_rejections(case):
     result = check_rejections(case["rejection_manifest"], case.get("policy", DEFAULT_REJECTION_POLICY))
+    # check_rejections returns a bare manifest or a bare Fault (section 13.5).
     if case["expect"] == "err":
-        failure = result.get("err", {})
-        matched = "err" in result and failure.get("code") == case["expect_code"]
+        matched = is_fault(result) and result.get("code") == case["expect_code"]
         for field in ("category", "message", "detail"):
             key = f"expect_{field}"
             if key in case:
-                matched = matched and failure.get(field) == case[key]
+                matched = matched and result.get(field) == case[key]
         return matched, f"got {result}"
-    matched = "ok" in result and "_rejections" not in result["ok"]
+    matched = not is_fault(result) and "_rejections" not in result
     return matched, f"got {result}"
 
 
@@ -292,14 +282,14 @@ def _check_statemachine(case):
         machine = _build_sm(case)
         state, event = case["apply"]
         result = transition(machine, state, event)
+        # transition returns a bare {"state": next} or a bare Fault (section 12.1).
         if "expect_state" in case:
-            return "ok" in result and result["ok"]["state"] == case["expect_state"], f"got {result}"
-        failure = result.get("err", {})
-        matched = "err" in result and failure.get("code") == case["expect_code"]
+            return not is_fault(result) and result["state"] == case["expect_state"], f"got {result}"
+        matched = is_fault(result) and result.get("code") == case["expect_code"]
         for field in ("message", "category", "detail"):
             key = f"expect_{field}"
             if key in case:
-                matched = matched and failure.get(field) == case[key]
+                matched = matched and result.get(field) == case[key]
         return matched, f"got {result}"
     built = _build_sm(case)
     failure = built if "code" in built else None  # an invalid machine comes back as a fault value
@@ -363,7 +353,7 @@ import honest_type as _ht
 
 @_ht.link()
 def value_link(manifest):
-    return _ht.ok({**manifest, "seen": True})
+    return {**manifest, "seen": True}
 
 
 def _make_machine(states, events, transitions, initial):

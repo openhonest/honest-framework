@@ -133,18 +133,19 @@ module honest-type
   fn link_meta : (fn: Callable) -> Link note "the metadata a declared link carries: its name, accepts, binds, boundary, authorizes and emits"
   fn chain : (links: list<Callable>) -> Callable note "composes links into one short-circuiting link the host later runs, manifest to Result"
   fn validate_all : (links: list<Callable>) -> Callable note "composes links into one accumulating link the host later runs: every link runs against the same manifest and any error makes the whole a validation_failed carrying every result"
-  fn execute_chain : (links: list<Callable>, initial_manifest: Manifest) -> Manifest | Fault invokes ok, err, fault note "runs links in sequence, short-circuiting on the first error"
-  fn execute_chain_async : (links: list<Callable>, initial_manifest: Manifest) -> Manifest | Fault awaited invokes ok, err, fault note "runs links in sequence, awaiting each, short-circuiting on the first error"
-  fn _run_validate_all : (links: list<Callable>, manifest: Manifest) -> Manifest | Fault invokes ok, err, fault note "runs every link against the same manifest, accumulating every result"
-  fn _run_validate_all_async : (links: list<Callable>, manifest: Manifest) -> Manifest | Fault awaited invokes ok, err, fault note "runs every link against the same manifest, awaiting each, accumulating every result"
+  fn is_fault : (value: any) -> bool note "true when a value is a Fault, recognized by its shape (it carries a code); a manifest never does. The chain executor and validate_all short-circuit on it and catch_at_boundary routes it, in place of the old ok/err envelope (section 12.1)"
+  fn execute_chain : (links: list<Callable>, initial_manifest: Manifest) -> Manifest | Fault invokes is_fault note "runs links in sequence, short-circuiting on the first fault, recognized by is_fault"
+  fn execute_chain_async : (links: list<Callable>, initial_manifest: Manifest) -> Manifest | Fault awaited invokes is_fault note "runs links in sequence, awaiting each, short-circuiting on the first fault"
+  fn _run_validate_all : (links: list<Callable>, manifest: Manifest) -> Manifest | Fault invokes is_fault, fault note "runs every link against the same manifest, accumulating every result"
+  fn _run_validate_all_async : (links: list<Callable>, manifest: Manifest) -> Manifest | Fault awaited invokes is_fault, fault note "runs every link against the same manifest, awaiting each, accumulating every result"
 
   # The boundary helper and the rejection screen.
   fn catch_at_boundary : (handler: Callable, fault_to_output: dict<str, any>, success_output: Callable, server_default: Callable, client_default: Callable) -> Callable note "wraps a handler the host later runs so a fault renders through the output table and an uncaught exception becomes a server default"
-  fn check_rejections : (manifest: Manifest, policy: dict<str, str>) -> Manifest | Fault invokes ok, err, fault note "turns a manifest's rejections into a Result before the chain runs, deciding by a policy table"
+  fn check_rejections : (manifest: Manifest, policy: dict<str, str>) -> Manifest | Fault invokes is_fault, fault note "turns a manifest's rejections into a fault-or-manifest before the chain runs, deciding by a policy table"
 
   # State machines.
   fn state_machine : (states: Vocabulary, events: Vocabulary, transitions: dict<str, str>, initial: str, terminal: list<str>) -> StateMachine | Fault invokes fault note "builds an immutable state machine, returning a fault on an unknown state, event, or transition target"
-  fn transition : (machine: StateMachine, current_state: str, event: str) -> StateChange | Fault invokes ok, err, fault note "applies one event to a state and returns the next state or a fault; the machine stays stateless and the caller stores the result"
+  fn transition : (machine: StateMachine, current_state: str, event: str) -> StateChange | Fault invokes fault note "applies one event to a state and returns the next state or a fault; the machine stays stateless and the caller stores the result"
 
   # The reserved-word test and the data constructors.
   fn is_reserved : (token: str) -> bool note "true when a token is a framework, cross-language, or language reserved word"
@@ -164,6 +165,9 @@ module honest-type
   entry "import honest_type" -> link
   entry "import honest_type" -> link_meta
   entry "import honest_type" -> execute_chain
+  entry "import honest_type" -> is_fault
+  entry "import honest_type" -> ok
+  entry "import honest_type" -> err
   entry "import honest_type" -> state_machine
   entry "import honest_type" -> transition
   entry "call:application" -> predicate

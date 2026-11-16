@@ -54,11 +54,25 @@ def fault(code: str, message: str, category: str, results: list, detail: dict) -
     return {"code": code, "message": message, "category": category, "results": results, "detail": detail}
 
 
+def is_fault(value) -> bool:
+    """The Fault recognizer (section 12.1): true for a Fault-shaped value, false for a manifest.
+
+    A link returns its value on success or a Fault on failure — a bare union, no envelope (sections
+    12.1, 12.3). The chain executor tells the two apart by this predicate: a Fault carries a `code`,
+    a manifest never does. It trusts the contract that both members of the union are dicts, so it reads
+    the key directly without re-testing the type in the interior."""
+    return "code" in value
+
+
 def ok(manifest) -> dict:
-    """A successful link Result (section 10.1): {"ok": manifest}."""
+    """A success-wrapping Result (section 10.1): {"ok": manifest}. honest-type's own chain model no
+    longer wraps — a link returns its value bare and the executor recognizes a Fault with is_fault
+    (section 12.1). ok() and err() stay as general-purpose Result constructors for modules that build
+    their own pass/fail Result (honest-test's value oracle and state-machine checks among them)."""
     return {"ok": manifest}
 
 
 def err(fault_data: Fault) -> dict:
-    """A failed link Result (section 10.1): {"err": fault_data}."""
+    """A failure-wrapping Result (section 10.1): {"err": fault_data}. See ok() — retained for the
+    same reason; honest-type's chain model returns a bare Fault instead."""
     return {"err": fault_data}
