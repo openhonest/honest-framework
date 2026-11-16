@@ -5,10 +5,12 @@ declarations and drives the two sinks; run_body_check is the pure orchestrator b
 collection door and the test-body verdict; check_test_body is the pytest collection hook.
 """
 
+from functools import reduce
 from pathlib import Path
 
 from honest_type.chains import link_meta
 
+from honest_test._util import _pick, _read_or
 from honest_test.bodies import test_body_violations
 from honest_test.coverage import build_coverage_report, build_run_report, render_report
 from honest_test.generators import (
@@ -55,9 +57,8 @@ _GENERATORS = {
 def _generate_for(predicate_class, predicate):
     """Run the generator for a predicate class (spec section 3); the no-match row generates
     nothing, so an unforeseen class never silently selects a wrong generator."""
-    if predicate_class not in _GENERATORS:
-        return []
-    return _GENERATORS[predicate_class](predicate)
+    generator = _read_or(_GENERATORS, predicate_class, lambda predicate: [])
+    return generator(predicate)
 
 
 def _source_files(src_dir):
@@ -70,32 +71,43 @@ def _honesty_failures(live):
     failures = 0
     for link in live["links"]:
         accepts = link_meta(link).get("accepts")
-        manifests = enumerate_sets(accepts) if accepts is not None else [{}]
-        sample = manifests[0] if manifests else {}
+        manifests = _pick(accepts is not None, lambda: enumerate_sets(accepts), lambda: [{}])
+        sample = _pick(bool(manifests), lambda: manifests[0], lambda: {})
         failures += len(verify_purity(link, dict(sample)))
         failures += len(detect_mutation(link, dict(sample)))
     return failures
 
 
-def run_suite(src_dir):
-    """Drive the whole run (spec section 11): resolve the config once, read and parse each source
-    file (returning the Fault mutate_source answers on unparseable source before any import),
-    generate the source-decidable cases, load the live declarations once, run the live checks,
-    assemble the RunReport, drive both sinks, and return the report."""
-    config_table = read_config(str(Path(src_dir) / "honest-test.toml"))
-    supplied = resolve_supplied_config(config_table["predicates"] if "predicates" in config_table else {})
+def _scan_generate(state, text, mutants):
+    """Tally one parsed file's mutants and run its source-decidable generators (spec section 11),
+    the running arm of the fold; the generated cases are exercised and discarded."""
+    tree = parse_source(text)
+    for predicate in extract_predicates(tree):
+        _generate_for(classify_predicate(predicate), predicate)
+    return {"running": state["running"] + len(mutants)}
 
-    mutation_total = 0
-    for path in _source_files(src_dir):
-        text = read_source(str(path))
-        mutants = mutate_source(text)
-        if _is_fault(mutants):
-            return mutants
-        mutation_total += len(mutants)
-        tree = parse_source(text)
-        for predicate in extract_predicates(tree):
-            _generate_for(classify_predicate(predicate), predicate)
 
+def _scan_running(state, path):
+    """Read and mutate one file (spec section 11): stop the fold on the Fault mutate_source answers
+    for unparseable source, else carry the running tally forward through _scan_generate."""
+    text = read_source(str(path))
+    mutants = mutate_source(text)
+    return _pick(
+        _is_fault(mutants),
+        lambda: {"stopped": mutants},
+        lambda: _scan_generate(state, text, mutants),
+    )
+
+
+def _scan_file(state, path):
+    """One fold step over the source files (spec section 11): a stopped state (the first Fault)
+    passes through untouched and reads no further file, mirroring the original short-circuit."""
+    return _pick("stopped" in state, lambda: state, lambda: _scan_running(state, path))
+
+
+def _finish_suite(src_dir, mutation_total):
+    """Load the live declarations, run the live checks, assemble and emit the RunReport (spec
+    section 11) — the path taken when no source file faulted."""
     live = load_under_test(src_dir)
     permutations = sum(len(enumerate_sets(vocab)) for vocab in live["vocabularies"])
     failures = _honesty_failures(live)
@@ -117,6 +129,22 @@ def run_suite(src_dir):
     return report
 
 
+def run_suite(src_dir):
+    """Drive the whole run (spec section 11): resolve the config once, read and parse each source
+    file (returning the Fault mutate_source answers on unparseable source before any import),
+    generate the source-decidable cases, load the live declarations once, run the live checks,
+    assemble the RunReport, drive both sinks, and return the report."""
+    config_table = read_config(str(Path(src_dir) / "honest-test.toml"))
+    supplied = resolve_supplied_config(_read_or(config_table, "predicates", {}))
+
+    scan = reduce(_scan_file, _source_files(src_dir), {"running": 0})
+    return _pick(
+        "stopped" in scan,
+        lambda: scan["stopped"],
+        lambda: _finish_suite(src_dir, scan["running"]),
+    )
+
+
 def run_cli(src_dir):
     """The CLI door (spec section 11): hand src_dir to run_suite and return its answer — the
     RunReport on a completed run, or the Fault run_suite passed outward. Raises nothing."""
@@ -129,12 +157,16 @@ def run_body_check(source):
     return test_body_violations(source)
 
 
+def _raise_collection(findings):
+    """Raise the one typed exception honest-test throws at the collection boundary (spec section
+    4.8) so a dishonest test body does not run."""
+    raise CollectionFailure(findings)
+
+
 def check_test_body(collector):
     """The pytest collection hook (spec section 4.8): read the collected module's source through
     the injected collector, run the verdict, and raise collection_failure when it is non-empty so
     a dishonest test body does not run; otherwise return the empty list."""
     source = collector.path.read_text()
     findings = run_body_check(source)
-    if findings:
-        raise CollectionFailure(findings)
-    return findings
+    return _pick(bool(findings), lambda: _raise_collection(findings), lambda: findings)

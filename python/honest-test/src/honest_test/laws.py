@@ -4,6 +4,8 @@ law states one property as data; verify_laws runs every law against every subjec
 the run record. Both pure: verify_laws calls only the pure predicates the caller supplied.
 """
 
+from honest_test._util import _pick
+
 
 def law(identifier, statement, check):
     """State one property as data (spec section 4.10): a Law record of the identifier, the
@@ -16,20 +18,21 @@ def verify_laws(laws, subjects):
     counts the law-and-subject pairs that held, total the pairs checked, and one Violation per
     failed pair carries the law identifier, statement, subject name and the check's messages.
     Reads no world; each check is a pure predicate the caller supplied."""
-    passed = 0
     total = 0
     violations = []
     for one_law in laws:
         for subject in subjects:
             total += 1
             messages = one_law["check"](subject["params"])
-            if messages:
-                violations.append({
+            _pick(
+                bool(messages),
+                lambda: violations.append({
                     "law": one_law["identifier"],
                     "statement": one_law["statement"],
                     "subject": subject["name"],
                     "messages": messages,
-                })
-            else:
-                passed += 1
+                }),
+                lambda: None,
+            )
+    passed = total - len(violations)
     return {"passed": passed, "total": total, "violations": violations}

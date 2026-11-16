@@ -5,6 +5,8 @@ build_run_report assemble the records; render_report lays the finished report ou
 pure: they read their arguments as data and touch no world.
 """
 
+from honest_test._util import _pick
+
 _COVERAGE_VERSION = "1.0"
 
 
@@ -12,7 +14,7 @@ def coverage_ratio(exercised, total):
     """Compute one coverage dimension's numbers (spec sections 9.1-9.4): exercised, total, and
     their floored whole-number percentage, which never over-reports. total of zero has nothing to
     cover and reports 100 (vacuously complete). Reads no world, returns pure data."""
-    pct = 100 if total == 0 else (exercised * 100) // total
+    pct = _pick(total == 0, lambda: 100, lambda: (exercised * 100) // total)
     return {"total": total, "exercised": exercised, "pct": pct}
 
 

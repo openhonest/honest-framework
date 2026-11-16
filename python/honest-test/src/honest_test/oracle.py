@@ -8,10 +8,87 @@ injected functions).
 
 import asyncio
 import inspect
+from functools import reduce
 
 from honest_type import fault
 
+from honest_test._util import _pick, _read_or
 from honest_test.support import _fault, _is_fault
+
+
+def _run_to_completion(result):
+    """Run an awaitable result to completion so async functions are checkable (spec 8.6)."""
+    return _pick(inspect.isawaitable(result), lambda: asyncio.run(result), lambda: result)
+
+
+def _resolve_literal(value, function_map):
+    """A value that is neither a $ref, a $call nor a list resolves to itself (spec section 8.6)."""
+    return value
+
+
+def _resolve_ref(value, function_map):
+    """A `$ref` names a callable resolved from the function map (spec section 8.6), or a Fault for
+    an unknown name."""
+    name = value["$ref"]
+    return _pick(
+        name in function_map,
+        lambda: function_map[name],
+        lambda: _fault(
+            f"value-oracle $ref named unknown function {name!r}",
+            "add the named function to the suite's function map",
+        ),
+    )
+
+
+def _resolve_call_known(value, function_map, name):
+    """Apply a known `$call` function to its resolved arguments (spec section 8.6); a faulting
+    argument short-circuits to that Fault."""
+    resolved = _resolve_each(_read_or(value, "args", []), function_map)
+    return _pick(
+        _is_fault(resolved),
+        lambda: resolved,
+        lambda: _run_to_completion(function_map[name](*resolved)),
+    )
+
+
+def _resolve_call(value, function_map):
+    """A `$call` applies a named function to its resolved arguments (spec section 8.6), or a Fault
+    for an unknown name."""
+    name = value["$call"]
+    return _pick(
+        name in function_map,
+        lambda: _resolve_call_known(value, function_map, name),
+        lambda: _fault(
+            f"value-oracle $call named unknown function {name!r}",
+            "add the named function to the suite's function map",
+        ),
+    )
+
+
+def _resolve_list(value, function_map):
+    """A list resolves each element (spec section 8.6); a faulting element short-circuits to that
+    Fault."""
+    return _resolve_each(value, function_map)
+
+
+def _classify_value(value):
+    """Name the portable-value shape (spec section 8.6): ref, call, list, or literal, in that
+    priority order."""
+    checks = (
+        (lambda v: isinstance(v, dict) and "$ref" in v, "ref"),
+        (lambda v: isinstance(v, dict) and "$call" in v, "call"),
+        (lambda v: isinstance(v, list), "list"),
+    )
+    matched = next(filter(lambda ck: ck[0](value), checks), None)
+    return _pick(matched is None, lambda: "literal", lambda: matched[1])
+
+
+_RESOLVERS = {
+    "ref": _resolve_ref,
+    "call": _resolve_call,
+    "list": _resolve_list,
+    "literal": _resolve_literal,
+}
 
 
 def _resolve(value, function_map):
@@ -20,44 +97,148 @@ def _resolve(value, function_map):
     and any other value is a literal (itself). Returns a Fault for an unknown name. This keeps
     suite.json pure data while letting a case reach a function-taking function by naming it, with no
     callable embedded in the data."""
-    if isinstance(value, dict) and "$ref" in value:
-        name = value["$ref"]
-        if name not in function_map:
-            return _fault(
-                f"value-oracle $ref named unknown function {name!r}",
-                "add the named function to the suite's function map",
-            )
-        return function_map[name]
-    if isinstance(value, dict) and "$call" in value:
-        name = value["$call"]
-        if name not in function_map:
-            return _fault(
-                f"value-oracle $call named unknown function {name!r}",
-                "add the named function to the suite's function map",
-            )
-        arguments = []
-        for argument in (value["args"] if "args" in value else []):
-            resolved = _resolve(argument, function_map)
-            if _is_fault(resolved):
-                return resolved
-            arguments.append(resolved)
-        return _run_to_completion(function_map[name](*arguments))
-    if isinstance(value, list):
-        resolved = []
-        for element in value:
-            element_value = _resolve(element, function_map)
-            if _is_fault(element_value):
-                return element_value
-            resolved.append(element_value)
-        return resolved
-    return value
+    handler = _read_or(_RESOLVERS, _classify_value(value), _resolve_literal)
+    return handler(value, function_map)
 
 
-def _run_to_completion(result):
-    """Run an awaitable result to completion so async functions are checkable (spec 8.6)."""
-    if inspect.isawaitable(result):
-        return asyncio.run(result)
-    return result
+def _resolve_each(items, function_map):
+    """Resolve each element of a sequence, short-circuiting on the first Fault (spec section 8.6);
+    returns the resolved list or that Fault."""
+    def add(state, item):
+        value = _resolve(item, function_map)
+        return _pick(
+            _is_fault(value),
+            lambda: {"fault": value},
+            lambda: {"items": state["items"] + [value]},
+        )
+
+    def step(state, item):
+        return _pick("fault" in state, lambda: state, lambda: add(state, item))
+
+    final = reduce(step, items, {"items": []})
+    return _pick("fault" in final, lambda: final["fault"], lambda: final["items"])
+
+
+def _resolve_each_kv(kwargs, function_map):
+    """Resolve each keyword argument, short-circuiting on the first Fault (spec section 8.6);
+    returns the resolved map or that Fault."""
+    def add(state, kv):
+        key, argument = kv
+        value = _resolve(argument, function_map)
+        return _pick(
+            _is_fault(value),
+            lambda: {"fault": value},
+            lambda: {"items": {**state["items"], key: value}},
+        )
+
+    def step(state, kv):
+        return _pick("fault" in state, lambda: state, lambda: add(state, kv))
+
+    final = reduce(step, kwargs.items(), {"items": {}})
+    return _pick("fault" in final, lambda: final["fault"], lambda: final["items"])
+
+
+def _invoke_args(case, function_map, name):
+    """Run the function with positional args resolved from the case (spec section 8.6); a halt
+    carries a resolution Fault, an output carries the function's return."""
+    resolved = _resolve_each(case["args"], function_map)
+    return _pick(
+        _is_fault(resolved),
+        lambda: {"halt": resolved},
+        lambda: {"output": _run_to_completion(function_map[name](*resolved))},
+    )
+
+
+def _invoke_kwargs(case, function_map, name):
+    """Run the function with keyword args resolved from the case (spec section 8.6); a halt carries
+    a resolution Fault, an output carries the function's return."""
+    resolved = _resolve_each_kv(case["kwargs"], function_map)
+    return _pick(
+        _is_fault(resolved),
+        lambda: {"halt": resolved},
+        lambda: {"output": _run_to_completion(function_map[name](**resolved))},
+    )
+
+
+def _invoke_input(case, function_map, name):
+    """Run the function with the single resolved input from the case (spec section 8.6); a halt
+    carries a resolution Fault, an output carries the function's return."""
+    argument = _resolve(case.get("input"), function_map)
+    return _pick(
+        _is_fault(argument),
+        lambda: {"halt": argument},
+        lambda: {"output": _run_to_completion(function_map[name](argument))},
+    )
+
+
+_CASE_INVOKERS = {
+    "args": _invoke_args,
+    "kwargs": _invoke_kwargs,
+    "input": _invoke_input,
+}
+
+
+def _case_kind(case):
+    """Name which call shape the portable case carries (spec section 8.6): args, kwargs, or the
+    single input."""
+    return _pick(
+        "args" in case,
+        lambda: "args",
+        lambda: _pick("kwargs" in case, lambda: "kwargs", lambda: "input"),
+    )
+
+
+def _invoke_case(case, function_map, name):
+    """Build and run the call from the portable case (spec section 8.6): positional args, keyword
+    kwargs, or a single input, each entry a literal, a $ref to a callable, or a $call applying one."""
+    invoker = _read_or(_CASE_INVOKERS, _case_kind(case), _invoke_input)
+    return invoker(case, function_map, name)
+
+
+def _run_case(case, function_map, name):
+    """Run the case's call to an outcome (spec section 8.6): the function under test is injected
+    arbitrary code, so a case it cannot accept or that throws becomes a halt Fault, never a pass."""
+    try:  # honest: ignore HC-P002: the function under test is injected arbitrary code, so a case it cannot accept (wrong arity) or that throws is returned as a Fault so one stale case does not crash the whole value gate, never swallowed as a pass
+        return _invoke_case(case, function_map, name)
+    except Exception as exc:
+        return {"halt": _fault(
+            f"value-oracle case for {name!r} could not run: {exc}",
+            "fix the case's arguments or the function's signature so it can be invoked",
+        )}
+
+
+def _compare(name, output, expected):
+    """Judge the function's output against the known-good value (spec section 8.6): the output bare
+    when they are equal, a bare honest-type value_mismatch Fault when they differ."""
+    return _pick(
+        output == expected,
+        lambda: output,
+        lambda: fault(
+            "value_mismatch",
+            f"{name} returned {output!r}, expected {expected!r}",
+            "server",
+            [],
+            {"expected": expected, "got": output},
+        ),
+    )
+
+
+def _judge(case, function_map, name, output):
+    """Resolve the expected expression and compare it to the output (spec section 8.6); a faulting
+    expected expression short-circuits to that Fault."""
+    expected = _resolve(case["expected"], function_map)
+    return _pick(_is_fault(expected), lambda: expected, lambda: _compare(name, output, expected))
+
+
+def _evaluate_known(case, function_map, name):
+    """Run and judge a case whose function the map knows (spec section 8.6): a halt Fault from the
+    run short-circuits, else the output is judged against the expected value."""
+    outcome = _run_case(case, function_map, name)
+    return _pick(
+        "halt" in outcome,
+        lambda: outcome["halt"],
+        lambda: _judge(case, function_map, name, outcome["output"]),
+    )
 
 
 def evaluate_case(case, function_map):
@@ -70,55 +251,13 @@ def evaluate_case(case, function_map):
     envelope (honest-type sections 12.1, 12.3). Performs no I/O of its own;
     the functions under test are injected through the map."""
     name = case["function"]
-    if name not in function_map:
-        return _fault(
+    return _pick(
+        name not in function_map,
+        lambda: _fault(
             f"value-oracle case named unknown function {name!r}",
             "add the named function to the suite's function map",
-        )
-    # Build the call from the portable case: a single `input`, positional `args`, or keyword
-    # `kwargs`, each entry a literal, a $ref to a callable, or a $call applying one.
-    # honest: disable HC-P002: the function under test is injected arbitrary code, so a case it
-    # cannot accept (wrong arity) or that throws is a case that could not run, returned as a Fault
-    # so one stale case does not crash the whole value gate, never swallowed as a pass.
-    try:
-        if "args" in case:
-            resolved = []
-            for argument in case["args"]:
-                value = _resolve(argument, function_map)
-                if _is_fault(value):
-                    return value
-                resolved.append(value)
-            output = _run_to_completion(function_map[name](*resolved))
-        elif "kwargs" in case:
-            resolved = {}
-            for key, argument in case["kwargs"].items():
-                value = _resolve(argument, function_map)
-                if _is_fault(value):
-                    return value
-                resolved[key] = value
-            output = _run_to_completion(function_map[name](**resolved))
-        else:
-            argument = _resolve(case.get("input"), function_map)
-            if _is_fault(argument):
-                return argument
-            output = _run_to_completion(function_map[name](argument))
-    except Exception as exc:
-        return _fault(
-            f"value-oracle case for {name!r} could not run: {exc}",
-            "fix the case's arguments or the function's signature so it can be invoked",
-        )
-    # honest: enable HC-P002
-    expected = _resolve(case["expected"], function_map)
-    if _is_fault(expected):
-        return expected
-    if output == expected:
-        return output
-    return fault(
-        "value_mismatch",
-        f"{name} returned {output!r}, expected {expected!r}",
-        "server",
-        [],
-        {"expected": expected, "got": output},
+        ),
+        lambda: _evaluate_known(case, function_map, name),
     )
 
 

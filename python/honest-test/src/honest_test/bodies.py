@@ -9,6 +9,7 @@ are not rebinds and never appear.
 
 import ast
 
+from honest_test._util import _pick, _read_or
 from honest_test.support import _finding
 
 _MONKEYPATCH_METHODS = frozenset({"setattr", "setitem", "delattr", "setenv"})
@@ -30,40 +31,50 @@ def _is_monkeypatch_call(call):
     )
 
 
+_PATCH_PREDICATES = {
+    ast.Name: lambda func: func.id == "patch",
+    ast.Attribute: lambda func: func.attr in _PATCH_ATTRS,
+}
+
+
 def _is_patch_call(call):
     """True for patch(...), mock.patch(...) and patch.object(...)."""
     func = call.func
-    if isinstance(func, ast.Name):
-        return func.id == "patch"
-    if isinstance(func, ast.Attribute):
-        return func.attr in _PATCH_ATTRS
-    return False
+    predicate = _read_or(_PATCH_PREDICATES, type(func), lambda func: False)
+    return predicate(func)
+
+
+_REBIND_PREDICATES = {
+    ast.Assign: lambda node: any(isinstance(target, ast.Attribute) for target in node.targets),
+    ast.AugAssign: lambda node: isinstance(node.target, ast.Attribute),
+    ast.AnnAssign: lambda node: isinstance(node.target, ast.Attribute),
+}
 
 
 def _rebinds_by_assignment(node):
     """True when a statement assigns to an attribute target (imported.attr = replacement)."""
-    if isinstance(node, ast.Assign):
-        return any(isinstance(target, ast.Attribute) for target in node.targets)
-    if isinstance(node, (ast.AugAssign, ast.AnnAssign)):
-        return isinstance(node.target, ast.Attribute)
-    return False
+    predicate = _read_or(_REBIND_PREDICATES, type(node), lambda node: False)
+    return predicate(node)
 
 
-# honest: disable HC-P002: decoding the source is the verdict's one read of untrusted input; a test
-# module that does not parse carries no rebinding statement, so the parse failure resolves to "no
-# violation" here rather than propagating, keeping the .hd's "raises nothing" contract.
 def test_body_violations(source):
     """Return one rejection Finding per statement that rebinds a call target at runtime (spec
     section 4.8). Reads nothing and raises nothing; an empty list means the body is honest."""
-    try:
+    try:  # honest: ignore HC-P002: decoding untrusted source is this verdict's one boundary read; a test module that does not parse carries no rebinding statement, so the parse failure resolves to "no violation"
         tree = ast.parse(source)
     except SyntaxError:
         return []
     findings = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and (_is_monkeypatch_call(node) or _is_patch_call(node)):
-            findings.append(_finding("rejection", "test_body_dishonest", _FIX, f"line {node.lineno}"))
-        elif _rebinds_by_assignment(node):
-            findings.append(_finding("rejection", "test_body_dishonest", _FIX, f"line {node.lineno}"))
+        rebinds = (
+            (isinstance(node, ast.Call)
+             and (_is_monkeypatch_call(node) or _is_patch_call(node)))
+            or _rebinds_by_assignment(node)
+        )
+        _pick(
+            rebinds,
+            lambda: findings.append(
+                _finding("rejection", "test_body_dishonest", _FIX, f"line {node.lineno}")),
+            lambda: None,
+        )
     return findings
-# honest: enable HC-P002

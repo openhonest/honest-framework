@@ -54,7 +54,8 @@ def reuse_session(previous: dict, request: dict) -> dict:
     8.4), the transform behind `When the session from the previous response is reused`. Reads only
     the cookie named "session" off previous and returns a new Request carrying session -> value into
     its cookies, every other previous cookie and every other field left out, both inputs untouched."""
-    session = {"session": cookie["value"] for cookie in previous["cookies"] if cookie["name"] == "session"}
+    sessions = filter(lambda cookie: cookie["name"] == "session", previous["cookies"])
+    session = {"session": cookie["value"] for cookie in sessions}
     cookies = {**request["cookies"], **session}
     return {**request, "cookies": cookies}
 

@@ -11,6 +11,8 @@ from pathlib import Path
 
 from honest_type.chains import is_link, link_meta
 
+from honest_test._util import _pick, _read_or
+
 
 def read_source(path):
     """Pull one source file's complete text from disk and return it as a string (spec section
@@ -23,10 +25,11 @@ def read_config(path):
     """Read honest-test.toml and decode it to the plain parsed table (spec sections 3.6, 10). The
     table is empty when no file exists; the standard-format decode is the door's one carve-out
     (HC-R006). Its one side effect is reading the filesystem."""
-    if not Path(path).exists():
-        return {}
-    with open(path, "rb") as handle:
-        return tomllib.load(handle)
+    return _pick(
+        Path(path).exists(),
+        lambda: tomllib.loads(Path(path).read_text(encoding="utf-8")),
+        lambda: {},
+    )
 
 
 def resolve_supplied_config(table):
@@ -36,9 +39,9 @@ def resolve_supplied_config(table):
     resolved = {}
     for name, entry in table.items():
         resolved[name] = {
-            "valid": list(entry["valid"] if "valid" in entry else []),
-            "invalid": list(entry["invalid"] if "invalid" in entry else []),
-            "strategy": entry["strategy"] if "strategy" in entry else "supplied_only",
+            "valid": list(_read_or(entry, "valid", [])),
+            "invalid": list(_read_or(entry, "invalid", [])),
+            "strategy": _read_or(entry, "strategy", "supplied_only"),
         }
     return resolved
 
@@ -72,6 +75,49 @@ def _is_gate(value):
     return isinstance(value, dict) and "name" in value and "location" in value and "proof" in value
 
 
+# The non-link recognizers, in the priority order the classifier scans them (spec section 11):
+# the first whose recognizer matches a not-yet-collected value owns it.
+_KINDS = (
+    (_is_machine, "machines"),
+    (_is_schema, "schemas"),
+    (_is_component, "components"),
+    (_is_provider, "providers"),
+    (_is_gate, "gates"),
+)
+
+
+def _handle_link(value, live):
+    """Collect one link and the vocabulary and binding its declaration carries (spec section 11)."""
+    live["links"].append(value)
+    meta = link_meta(value)
+    accepts = meta.get("accepts")
+    _pick(
+        accepts is not None and accepts not in live["vocabularies"],
+        lambda: live["vocabularies"].append(accepts),
+        lambda: None,
+    )
+    binds = meta.get("binds")
+    _pick(
+        binds is not None and binds not in live["bindings"],
+        lambda: live["bindings"].append(binds),
+        lambda: None,
+    )
+
+
+def _collect_other(value, live):
+    """Collect one non-link value under the first recognizer that matches it and has not already
+    collected it (spec section 11); a value no recognizer matches is collected nowhere."""
+    matched = filter(lambda rk: rk[0](value) and value not in live[rk[1]], _KINDS)
+    pair = next(matched, None)
+    _pick(pair is None, lambda: None, lambda: live[pair[1]].append(value))
+
+
+def _collect_value(value, live):
+    """Route one module-level value to the link handler or the non-link classifier (spec section
+    11); a link is recognized first, then the other kinds in _KINDS order."""
+    _pick(is_link(value), lambda: _handle_link(value, live), lambda: _collect_other(value, live))
+
+
 def load_under_test(src_dir):
     """Import each module under src_dir to obtain its live declarations (spec section 11): the
     links honest-type recognizes, the vocabularies read off their declared accepts, and the state
@@ -85,23 +131,5 @@ def load_under_test(src_dir):
     for index, path in enumerate(sorted(Path(src_dir).rglob("*.py"))):
         module = _import_file(str(path), f"_hf_under_test_{index}_{path.stem}")
         for value in vars(module).values():
-            if is_link(value):
-                live["links"].append(value)
-                meta = link_meta(value)
-                accepts = meta.get("accepts")
-                if accepts is not None and accepts not in live["vocabularies"]:
-                    live["vocabularies"].append(accepts)
-                binds = meta.get("binds")
-                if binds is not None and binds not in live["bindings"]:
-                    live["bindings"].append(binds)
-            elif _is_machine(value) and value not in live["machines"]:
-                live["machines"].append(value)
-            elif _is_schema(value) and value not in live["schemas"]:
-                live["schemas"].append(value)
-            elif _is_component(value) and value not in live["components"]:
-                live["components"].append(value)
-            elif _is_provider(value) and value not in live["providers"]:
-                live["providers"].append(value)
-            elif _is_gate(value) and value not in live["gates"]:
-                live["gates"].append(value)
+            _collect_value(value, live)
     return live

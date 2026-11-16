@@ -7,6 +7,7 @@ records.
 
 from honest_type import is_fault
 
+from honest_test._util import _pick, _read_or
 from honest_test.generators import adversarial_neighbors
 from honest_test.support import _finding
 
@@ -18,10 +19,13 @@ def test_valid_transitions(machine, run_transition):
     findings = []
     for (state, event), next_state in machine["transitions"].items():
         result = run_transition(machine, state, event)
-        if result != {"state": next_state}:
-            findings.append(_finding(
+        _pick(
+            result != {"state": next_state},
+            lambda: findings.append(_finding(
                 "failure", "transition_incorrect",
-                f"({state}, {event}) expected next state {next_state!r}, got {result!r}"))
+                f"({state}, {event}) expected next state {next_state!r}, got {result!r}")),
+            lambda: None,
+        )
     return findings
 
 
@@ -29,15 +33,19 @@ def test_invalid_transitions(machine, run_transition):
     """Exhaustively test every (state, event) pair the table does not declare (spec section 5.2):
     an undeclared pair must fault no_transition, or it is invalid_transition_accepted."""
     findings = []
-    for state in sorted(machine["states"]):
-        for event in sorted(machine["events"]):
-            if (state, event) in machine["transitions"]:
-                continue
-            result = run_transition(machine, state, event)
-            if not is_fault(result) or result.get("code") != "no_transition":
-                findings.append(_finding(
-                    "failure", "invalid_transition_accepted",
-                    f"undeclared pair ({state}, {event}) was accepted instead of faulting no_transition"))
+    pairs = ((state, event)
+             for state in sorted(machine["states"])
+             for event in sorted(machine["events"]))
+    undeclared = filter(lambda pe: pe not in machine["transitions"], pairs)
+    for (state, event) in undeclared:
+        result = run_transition(machine, state, event)
+        _pick(
+            is_fault(result) and _read_or(result, "code", None) == "no_transition",
+            lambda: None,
+            lambda: findings.append(_finding(
+                "failure", "invalid_transition_accepted",
+                f"undeclared pair ({state}, {event}) was accepted instead of faulting no_transition")),
+        )
     return findings
 
 
@@ -50,14 +58,20 @@ def test_adversarial_state_machine(machine, run_transition):
     first_state = sorted(machine["states"])[0]
     for state in sorted(machine["states"]):
         for neighbor in adversarial_neighbors(state):
-            if not is_fault(run_transition(machine, neighbor, first_event)):
-                findings.append(_finding(
+            _pick(
+                is_fault(run_transition(machine, neighbor, first_event)),
+                lambda: None,
+                lambda: findings.append(_finding(
                     "failure", "invalid_state",
-                    f"adversarial state neighbor {neighbor!r} was accepted"))
+                    f"adversarial state neighbor {neighbor!r} was accepted")),
+            )
     for event in sorted(machine["events"]):
         for neighbor in adversarial_neighbors(event):
-            if not is_fault(run_transition(machine, first_state, neighbor)):
-                findings.append(_finding(
+            _pick(
+                is_fault(run_transition(machine, first_state, neighbor)),
+                lambda: None,
+                lambda: findings.append(_finding(
                     "failure", "invalid_event",
-                    f"adversarial event neighbor {neighbor!r} was accepted"))
+                    f"adversarial event neighbor {neighbor!r} was accepted")),
+            )
     return findings

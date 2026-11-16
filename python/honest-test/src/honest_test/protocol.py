@@ -10,6 +10,7 @@ run against any app (spec section 8.4).
 import json
 from html.parser import HTMLParser
 
+from honest_test._util import _choose, _pick, _read_or
 from honest_test.support import _finding
 
 
@@ -27,11 +28,10 @@ def _failure(code, message):
 def assert_status(response, status):
     """Empty list when the response status equals status, else one status_mismatch failure."""
     actual = response["status"]
-    if actual == status:
-        return []
-    return _failure(
-        "status_mismatch",
-        f"response status: expected {status}, got {actual}",
+    return _pick(
+        actual == status,
+        lambda: [],
+        lambda: _failure("status_mismatch", f"response status: expected {status}, got {actual}"),
     )
 
 
@@ -41,11 +41,12 @@ def assert_status_class(response, status_class):
     itself and compared, so no open-input lookup is read."""
     actual = response["status"]
     actual_class = f"{actual // 100}xx"
-    if actual_class == status_class:
-        return []
-    return _failure(
-        "status_class_mismatch",
-        f"response status class: expected {status_class}, got {actual} ({actual_class})",
+    return _pick(
+        actual_class == status_class,
+        lambda: [],
+        lambda: _failure(
+            "status_class_mismatch",
+            f"response status class: expected {status_class}, got {actual} ({actual_class})"),
     )
 
 
@@ -55,22 +56,22 @@ def assert_content_type(response, mime_type):
     """Empty list when the response Content-Type equals mime_type, else one
     content_type_mismatch failure. An absent header resolves to None and fails the comparison."""
     actual = response["headers"].get("Content-Type")
-    if actual == mime_type:
-        return []
-    return _failure(
-        "content_type_mismatch",
-        f"response Content-Type: expected {mime_type!r}, got {actual!r}",
+    return _pick(
+        actual == mime_type,
+        lambda: [],
+        lambda: _failure(
+            "content_type_mismatch",
+            f"response Content-Type: expected {mime_type!r}, got {actual!r}"),
     )
 
 
 def assert_charset(response, charset):
     """Empty list when the response charset equals charset, else one charset_mismatch failure."""
     actual = response["charset"]
-    if actual == charset:
-        return []
-    return _failure(
-        "charset_mismatch",
-        f"response charset: expected {charset!r}, got {actual!r}",
+    return _pick(
+        actual == charset,
+        lambda: [],
+        lambda: _failure("charset_mismatch", f"response charset: expected {charset!r}, got {actual!r}"),
     )
 
 
@@ -78,22 +79,22 @@ def assert_header(response, name, value):
     """Empty list when header name is present and equals value, else one header_mismatch
     failure. An absent header resolves to None and fails the comparison."""
     actual = response["headers"].get(name)
-    if actual == value:
-        return []
-    return _failure(
-        "header_mismatch",
-        f"response header {name!r}: expected {value!r}, got {actual!r}",
+    return _pick(
+        actual == value,
+        lambda: [],
+        lambda: _failure("header_mismatch", f"response header {name!r}: expected {value!r}, got {actual!r}"),
     )
 
 
 def assert_no_header(response, name):
     """Empty list when header name is absent, else one header_present failure naming its value."""
     headers = response["headers"]
-    if name not in headers:
-        return []
-    return _failure(
-        "header_present",
-        f"response header {name!r}: expected absent, present with value {headers[name]!r}",
+    return _pick(
+        name not in headers,
+        lambda: [],
+        lambda: _failure(
+            "header_present",
+            f"response header {name!r}: expected absent, present with value {headers[name]!r}"),
     )
 
 
@@ -103,11 +104,10 @@ def assert_body_bytes(response, literal):
     """Empty list when the response body equals literal exactly, else one body_bytes_mismatch
     failure."""
     actual = response["body"]
-    if actual == literal:
-        return []
-    return _failure(
-        "body_bytes_mismatch",
-        f"response body bytes: expected {literal!r}, got {actual!r}",
+    return _pick(
+        actual == literal,
+        lambda: [],
+        lambda: _failure("body_bytes_mismatch", f"response body bytes: expected {literal!r}, got {actual!r}"),
     )
 
 
@@ -124,43 +124,78 @@ _JSON_TYPE_CHECKS = {
 }
 
 
+def _type_mismatch(value, expected_type, check):
+    """A type-mismatch message when the value fails the known type's predicate (spec section 8.4)."""
+    return _pick(check(value), lambda: [], lambda: [f"expected type {expected_type!r}, got {value!r}"])
+
+
+def _known_or_unknown_type(value, expected_type):
+    """A violation message for a declared type (spec section 8.4): unknown type when the schema
+    names one outside the closed vocabulary, else a mismatch when the value fails its predicate."""
+    check = _read_or(_JSON_TYPE_CHECKS, expected_type, None)
+    return _pick(
+        check is None,
+        lambda: [f"schema names unknown type {expected_type!r}; accepted types are {sorted(_JSON_TYPE_CHECKS)}"],
+        lambda: _type_mismatch(value, expected_type, check),
+    )
+
+
+def _type_violations(value, expected_type):
+    """The type-constraint violations for a value (spec section 8.4); the empty list when the schema
+    declares no type."""
+    return _pick(expected_type is None, lambda: [], lambda: _known_or_unknown_type(value, expected_type))
+
+
+def _required_violations(value, schema):
+    """A missing-key message per declared required key the object lacks (spec section 8.4)."""
+    missing = filter(lambda key: key not in value, _read_or(schema, "required", []))
+    return [f"missing required key {key!r}" for key in missing]
+
+
+def _property_violations(value, schema):
+    """The violations for each declared property present on the object, recursing into its subschema
+    (spec section 8.4)."""
+    present = filter(lambda kv: kv[0] in value, _read_or(schema, "properties", {}).items())
+    result = []
+    for key, subschema in present:
+        result.extend(_schema_violations(value[key], subschema))
+    return result
+
+
+def _object_violations(value, schema):
+    """The required-key and property violations when the value is an object (spec section 8.4); the
+    empty list otherwise."""
+    return _pick(
+        _JSON_TYPE_CHECKS["object"](value),
+        lambda: _required_violations(value, schema) + _property_violations(value, schema),
+        lambda: [],
+    )
+
+
 def _schema_violations(value, schema):
     """Violation messages for value against a JSON Schema subset (type, required, properties),
     recursing into properties. Empty list means the value conforms. Pure, raises nothing."""
-    violations = []
-    expected_type = schema.get("type")
-    if expected_type is not None:
-        if expected_type not in _JSON_TYPE_CHECKS:
-            accepted = sorted(_JSON_TYPE_CHECKS)
-            violations.append(
-                f"schema names unknown type {expected_type!r}; accepted types are {accepted}"
-            )
-        elif not _JSON_TYPE_CHECKS[expected_type](value):
-            violations.append(f"expected type {expected_type!r}, got {value!r}")
-    if _JSON_TYPE_CHECKS["object"](value):
-        if "required" in schema:
-            for key in schema["required"]:
-                if key not in value:
-                    violations.append(f"missing required key {key!r}")
-        if "properties" in schema:
-            for key, subschema in schema["properties"].items():
-                if key in value:
-                    violations.extend(_schema_violations(value[key], subschema))
-    return violations
+    return _type_violations(value, schema.get("type")) + _object_violations(value, schema)
 
 
-# honest: disable HC-P002: json.loads is the one boundary where an unparseable body becomes data;
-# the except turns the library's decode error into the body_schema_violation Finding the spec
-# requires rather than letting it propagate, keeping this pure function's "returns a Finding"
-# contract. The parse is isolated here so the interior validator never touches an exception.
 def _parse_json_body(body):
     """Return {"ok": True, "value": v} for parseable JSON, else {"ok": False, "reason": msg}.
     The absence of a parse is an explicit bounded case, resolved here and read by the caller."""
-    try:
+    try:  # honest: ignore HC-P002: json.loads is the one boundary where an unparseable body becomes data; the except turns the decode error into the bounded {"ok": False} case the schema check reads, keeping this function's "returns a Finding" contract so the interior validator never touches an exception
         return {"ok": True, "value": json.loads(body)}
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         return {"ok": False, "reason": f"body is not valid JSON ({exc})"}
-# honest: enable HC-P002
+
+
+def _schema_result(parsed, schema):
+    """The body_schema_violation Finding for a parseable body (spec section 8.4): the first
+    nonconformance, or the empty list when the value conforms."""
+    violations = _schema_violations(parsed["value"], schema)
+    return _pick(
+        bool(violations),
+        lambda: _failure("body_schema_violation", f"response body: {violations[0]}"),
+        lambda: [],
+    )
 
 
 def assert_body_json_schema(response, schema):
@@ -168,12 +203,11 @@ def assert_body_json_schema(response, schema):
     body_schema_violation failure naming the first nonconformance (unparseable body, wrong type,
     or missing required key)."""
     parsed = _parse_json_body(response["body"])
-    if not parsed["ok"]:
-        return _failure("body_schema_violation", f"response body: {parsed['reason']}")
-    violations = _schema_violations(parsed["value"], schema)
-    if not violations:
-        return []
-    return _failure("body_schema_violation", f"response body: {violations[0]}")
+    return _pick(
+        not parsed["ok"],
+        lambda: _failure("body_schema_violation", f"response body: {parsed['reason']}"),
+        lambda: _schema_result(parsed, schema),
+    )
 
 
 # The CSS selector forms §8.4 supports map to a (tag, class, id) triple the element must match.
@@ -183,30 +217,37 @@ _SELECTOR_PREFIXES = {
 }
 
 
+def _split_tag_class(selector):
+    """Parse a `tag.class` selector into its (tag, class, id) triple (spec section 8.4)."""
+    tag, class_name = selector.split(".", 1)
+    return (tag, class_name, None)
+
+
+def _parse_tagged(selector):
+    """Parse a selector with no recognised prefix (spec section 8.4): `tag.class`, else a bare tag."""
+    return _pick("." in selector, lambda: _split_tag_class(selector), lambda: (selector, None, None))
+
+
 def _parse_selector(selector):
     """Parse a supported selector into (tag, class, id): `div`, `.item`, `#main`, `li.item`."""
     head = selector[:1]
-    if head in _SELECTOR_PREFIXES:
-        return _SELECTOR_PREFIXES[head](selector[1:])
-    if "." in selector:
-        tag, class_name = selector.split(".", 1)
-        return (tag, class_name, None)
-    return (selector, None, None)
+    prefix = _read_or(_SELECTOR_PREFIXES, head, None)
+    return _pick(prefix is not None, lambda: prefix(selector[1:]), lambda: _parse_tagged(selector))
+
+
+def _classes_of(attrs):
+    """The CSS class names on a start tag's attributes, empty when it carries no class (section 8.4)."""
+    return _read_or(attrs, "class", "").split()
 
 
 def _element_matches(element, parsed):
     """True when a parsed start tag (tag, attrs dict) satisfies the (tag, class, id) triple."""
     want_tag, want_class, want_id = parsed
     tag, attrs = element
-    if want_tag is not None and tag != want_tag:
-        return False
-    if want_id is not None and attrs.get("id") != want_id:
-        return False
-    if want_class is not None:
-        classes = attrs["class"].split() if "class" in attrs else []
-        if want_class not in classes:
-            return False
-    return True
+    tag_ok = want_tag is None or tag == want_tag
+    id_ok = want_id is None or attrs.get("id") == want_id
+    class_ok = want_class is None or want_class in _classes_of(attrs)
+    return tag_ok and id_ok and class_ok
 
 
 def _collect_start_tags(body):
@@ -215,7 +256,7 @@ def _collect_start_tags(body):
     elements = []
     parser = HTMLParser(convert_charrefs=True)
     parser.handle_starttag = lambda tag, attrs: elements.append(
-        (tag, {name: ("" if value is None else value) for name, value in attrs})
+        (tag, {name: _choose(value is None, "", value) for name, value in attrs})
     )
     parser.feed(body.decode("utf-8", "replace"))
     parser.close()
@@ -228,11 +269,10 @@ def assert_body_html_selector(response, selector):
     class."""
     parsed = _parse_selector(selector)
     elements = _collect_start_tags(response["body"])
-    if any(_element_matches(element, parsed) for element in elements):
-        return []
-    return _failure(
-        "body_selector_absent",
-        f"response body: no element matches selector {selector!r}",
+    return _pick(
+        any(_element_matches(element, parsed) for element in elements),
+        lambda: [],
+        lambda: _failure("body_selector_absent", f"response body: no element matches selector {selector!r}"),
     )
 
 
@@ -240,42 +280,84 @@ def assert_body_html_selector(response, selector):
 
 def _find_cookie(cookies, name):
     """The first cookie named name, or None when none is present."""
-    for cookie in cookies:
-        if cookie["name"] == name:
-            return cookie
+    matching = filter(lambda cookie: cookie["name"] == name, cookies)
+    for cookie in matching:
+        return cookie
     return None
+
+
+def _cookie_value_result(cookie, name, value):
+    """The cookie_value_mismatch Finding for a present cookie (spec section 8.4): empty when its
+    value matches, else a mismatch naming both values."""
+    return _pick(
+        cookie["value"] == value,
+        lambda: [],
+        lambda: _failure(
+            "cookie_value_mismatch",
+            f"response cookie {name!r}: expected value {value!r}, got {cookie['value']!r}"),
+    )
 
 
 def assert_cookie_value(response, name, value):
     """Empty list when a cookie named name is set to value, else one cookie_value_mismatch
     failure naming the expected value and the actual value or the cookie's absence."""
     cookie = _find_cookie(response["cookies"], name)
-    if cookie is None:
-        return _failure(
+    return _pick(
+        cookie is None,
+        lambda: _failure(
             "cookie_value_mismatch",
-            f"response cookie {name!r}: expected value {value!r}, cookie absent",
-        )
-    if cookie["value"] == value:
-        return []
-    return _failure(
-        "cookie_value_mismatch",
-        f"response cookie {name!r}: expected value {value!r}, got {cookie['value']!r}",
+            f"response cookie {name!r}: expected value {value!r}, cookie absent"),
+        lambda: _cookie_value_result(cookie, name, value),
+    )
+
+
+def _cookie_attribute_result(cookie, name, attribute):
+    """The cookie_attribute_absent Finding for a present cookie (spec section 8.4): empty when it
+    carries the attribute, else an absent failure."""
+    return _pick(
+        attribute in cookie["attributes"],
+        lambda: [],
+        lambda: _failure(
+            "cookie_attribute_absent",
+            f"response cookie {name!r}: expected attribute {attribute!r}, not present"),
     )
 
 
 def assert_cookie_attribute(response, name, attribute):
     """Empty list when cookie name carries attribute, else one cookie_attribute_absent failure."""
     cookie = _find_cookie(response["cookies"], name)
-    if cookie is None:
-        return _failure(
+    return _pick(
+        cookie is None,
+        lambda: _failure(
             "cookie_attribute_absent",
-            f"response cookie {name!r}: expected attribute {attribute!r}, cookie absent",
-        )
-    if attribute in cookie["attributes"]:
-        return []
-    return _failure(
-        "cookie_attribute_absent",
-        f"response cookie {name!r}: expected attribute {attribute!r}, not present",
+            f"response cookie {name!r}: expected attribute {attribute!r}, cookie absent"),
+        lambda: _cookie_attribute_result(cookie, name, attribute),
+    )
+
+
+def _max_age_compare(attributes, name, max_age):
+    """The cookie_max_age_mismatch Finding for a cookie carrying Max-Age (spec section 8.4): empty
+    when it equals max_age, else a mismatch naming both."""
+    actual = int(attributes["Max-Age"])
+    return _pick(
+        actual == max_age,
+        lambda: [],
+        lambda: _failure(
+            "cookie_max_age_mismatch",
+            f"response cookie {name!r}: expected Max-Age {max_age}, got {actual}"),
+    )
+
+
+def _max_age_present(cookie, name, max_age):
+    """The cookie_max_age check for a present cookie (spec section 8.4): a no-Max-Age failure when it
+    carries none, else the value comparison."""
+    attributes = cookie["attributes"]
+    return _pick(
+        "Max-Age" not in attributes,
+        lambda: _failure(
+            "cookie_max_age_mismatch",
+            f"response cookie {name!r}: expected Max-Age {max_age}, no Max-Age set"),
+        lambda: _max_age_compare(attributes, name, max_age),
     )
 
 
@@ -283,23 +365,12 @@ def assert_cookie_max_age(response, name, max_age):
     """Empty list when cookie name's Max-Age equals max_age seconds, else one
     cookie_max_age_mismatch failure naming the expected and actual Max-Age or the absence."""
     cookie = _find_cookie(response["cookies"], name)
-    if cookie is None:
-        return _failure(
+    return _pick(
+        cookie is None,
+        lambda: _failure(
             "cookie_max_age_mismatch",
-            f"response cookie {name!r}: expected Max-Age {max_age}, cookie absent",
-        )
-    attributes = cookie["attributes"]
-    if "Max-Age" not in attributes:
-        return _failure(
-            "cookie_max_age_mismatch",
-            f"response cookie {name!r}: expected Max-Age {max_age}, no Max-Age set",
-        )
-    actual = int(attributes["Max-Age"])
-    if actual == max_age:
-        return []
-    return _failure(
-        "cookie_max_age_mismatch",
-        f"response cookie {name!r}: expected Max-Age {max_age}, got {actual}",
+            f"response cookie {name!r}: expected Max-Age {max_age}, cookie absent"),
+        lambda: _max_age_present(cookie, name, max_age),
     )
 
 
@@ -308,11 +379,23 @@ def assert_cookie_max_age(response, name, max_age):
 def assert_location(response, url):
     """Empty list when the response Location equals url, else one location_mismatch failure."""
     actual = response["location"]
-    if actual == url:
-        return []
-    return _failure(
-        "location_mismatch",
-        f"response location: expected {url!r}, got {actual!r}",
+    return _pick(
+        actual == url,
+        lambda: [],
+        lambda: _failure("location_mismatch", f"response location: expected {url!r}, got {actual!r}"),
+    )
+
+
+def _session_compare(current, earlier):
+    """The session_cookie_mismatch Finding for two present session cookies (spec section 8.4): empty
+    when their values match, else a mismatch naming both."""
+    return _pick(
+        current["value"] == earlier["value"],
+        lambda: [],
+        lambda: _failure(
+            "session_cookie_mismatch",
+            f"session cookie: expected one shared value, got {current['value']!r} "
+            f"and {earlier['value']!r}"),
     )
 
 
@@ -321,16 +404,11 @@ def assert_same_session_cookie(response, previous):
     session_cookie_mismatch failure naming the two values or the absence."""
     current = _find_cookie(response["cookies"], "session")
     earlier = _find_cookie(previous["cookies"], "session")
-    if current is None or earlier is None:
-        return _failure(
+    return _pick(
+        current is None or earlier is None,
+        lambda: _failure(
             "session_cookie_mismatch",
             f"session cookie: expected one shared value, present={current is not None}, "
-            f"previous present={earlier is not None}",
-        )
-    if current["value"] == earlier["value"]:
-        return []
-    return _failure(
-        "session_cookie_mismatch",
-        f"session cookie: expected one shared value, got {current['value']!r} "
-        f"and {earlier['value']!r}",
+            f"previous present={earlier is not None}"),
+        lambda: _session_compare(current, earlier),
     )
