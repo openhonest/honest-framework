@@ -116,7 +116,9 @@ A normalizer returns the `ExceptionReport` on success or a `Fault` on failure, a
 
 `environment` and `timestamp` are **arguments**, not read inside the function from `os.getenv` or the system clock. The boundary that catches the failure already knows the environment and the time; it passes them in.
 
-Each function validates the raw payload against the required keys for its shape and returns a `Fault(code="malformed_payload", ...)` when a required key is absent, otherwise the `ExceptionReport`. Severity for the Python path is `error`. For the JS path a small predicate derives it from the payload: a message whose text contains the token `critical`, matched case-insensitively, yields `critical`; every other message yields `error`. It is a predicate, not an `if` ladder that would grow a branch per rule.
+Each function validates the raw payload against the required keys for its shape and returns a `Fault(code="malformed_payload", ...)` when a required key is absent, otherwise the `ExceptionReport`. The `context` key is optional; every other key of the shape is required. Severity for the Python path is `error`. For the JS path a small predicate derives it from the payload: a message whose text contains the token `critical`, matched case-insensitively, yields `critical`; every other message yields `error`. It is a predicate, not an `if` ladder that would grow a branch per rule.
+
+The Python path's `exception_type` is the exception's own type name and its `function` is the traceback's function. The browser payload carries neither a type name nor a function, so the JS path sets `exception_type` to `Error` and `function` to the empty string.
 
 ---
 
@@ -175,7 +177,7 @@ DedupKey      = { exception_type, file, line }
 CadenceState  = { live: list<LiveDisplay> }
 ```
 
-`DedupKey` is the display identity of a report: two failures with the same type, file, and line are the same display. A `display` declared `Once` adds the key at most one live entry, so the same failure does not re-display while its entry is live.
+`DedupKey` is the display identity of a report: two failures with the same type, file, and line are the same display. `add_display` adds no second entry for a key that is already live, whatever the duration, so the same failure does not stack a second display while its first is live.
 
 **The orchestrator is the single mutator of `CadenceState`.** The pure functions compute; they do not mutate. From the current state, the new report, the cadence, and `now`, they return the next state and the actions due now:
 
@@ -183,7 +185,7 @@ CadenceState  = { live: list<LiveDisplay> }
 advance_cadence(state, report, cadence, now) -> (CadenceState', list<DisplayAction>)
 ```
 
-`advance_cadence` and the pure functions it composes return a new state and never mutate the argument. They expire the entries whose `until` has passed, release the `Pending` entries whose `due` has arrived, and add the new report's entry per the declaration. The orchestrator takes their returned `CadenceState'`, writes it as the module's one owned, persisted state, and returns the `DisplayAction` list for honest-alerts. One function applies the change, so a reader sees the single place the cadence state moves (the single-mutator law, read from the orchestrator's side: `honest-state-architecture.md` §1.2).
+`advance_cadence` and the pure functions it composes return a new state and never mutate the argument. They expire the entries whose `until` has reached `now` (`until <= now`), release the `Pending` entries whose `due` has reached `now` (`due <= now`), and add the new report's entry per the declaration. The orchestrator takes their returned `CadenceState'`, writes it as the module's one owned, persisted state, and returns the `DisplayAction` list for honest-alerts. One function applies the change, so a reader sees the single place the cadence state moves (the single-mutator law, read from the orchestrator's side: `honest-state-architecture.md` §1.2).
 
 The current state is loaded at the start of a capture. On first use, when nothing is persisted yet, the load yields an empty state (`{ live: [] }`) rather than a fault, so the first failure is handled against a clean slate.
 
