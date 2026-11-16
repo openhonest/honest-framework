@@ -13,7 +13,7 @@ Last verified: 2026-11-11.
 | honest-type | ✅ `3ced304` rebuild to spec | 7 | rewritten; broken by later checker strengthening → back-fix when prioritized |
 | honest-check | ✅ `4604a87`/`b9fbbd1` (11-01) | 0 | rewritten; passes own checker; `.hd` crossing still has ~69 faults |
 | honest-test | ✅ `24677c6` (11-04) | 0 | rewritten; back-fix done — 19 HC-P019/P020 cleared, TypedDict `_is_machine` crash fixed (`isinstance(value, dict)`); conformance 75/75 + 90/90, runs on gherkin. 37 HC-P005 warnings left (AST isinstance, non-blocking); two HC-P020 guard-miss branches have no probe |
-| honest-parse | ✅ built (tree-sitter) | 0 | rewritten; full-gate completion unverified |
+| honest-parse | ✅ built (tree-sitter); if-free + fault-return back-fix (11-15) | 0 | COMPLETE this pass — all gates green (verified 2026-11-15): honest-check 0/0, hd-status crossing CLEAN, feature bijection 7/7, conformance 33 + 11 laws. The 5 `if`s are gone (two-row `_pick`, `next`/`filter`). `parse` now returns an `unknown_grammar` fault as data on a table miss, the way every table handles a miss; the `UnknownGrammar` exception was deleted as a defensive guard against a case the closed language table never produces, which also removed the last crossing fault (an exported exception class the `.hd` could not name). |
 | honest-features | ✅ `7dd4984` (11-11) | 0 | complete this pass (all gates green) |
 | honest-gherkin | ✅ `33c46b1` (11-11) | 0 | complete this pass (all gates green) |
 | honest-design | ❌ not this pass | 25 | NOT rewritten; grammar spec-rewritten 07-17, code predates the new standard |

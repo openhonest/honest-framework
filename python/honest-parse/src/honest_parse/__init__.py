@@ -53,22 +53,41 @@ _LANGUAGES = types.MappingProxyType(
 )
 
 
-class UnknownGrammar(Exception):
-    """A grammar name this module does not carry.
+# Lazy two-row boolean dispatch. The table holds the two selectors; _pick looks a flag up and runs
+# only the chosen thunk, so a branch becomes a lookup (HC-P001) and the unchosen side never runs.
+_TWO_ROW = {True: lambda t, f: t, False: lambda t, f: f}
 
-    Raised rather than returned because this is the boundary, the one place the principles put a
-    typed exception. A bare KeyError from the table lookup names the missing key and nothing a
-    caller can act on: not what was asked for, not what the module carries, not what to do instead.
+
+def _pick(flag, when_true, when_false):
+    """Run the thunk the flag selects and return its result; the other thunk never runs."""
+    return _TWO_ROW[bool(flag)](when_true, when_false)()
+
+
+def _unknown_grammar(language):
+    """The unknown_grammar fault, returned as data for a grammar this module does not carry.
+
+    The language is a bounded vocabulary — the ten grammars _LANGUAGES holds — so a miss can only be
+    a program bug, hence category server. A table miss returns a fault rather than raising, exactly
+    as `language_of` does for an unplaceable extension.
     """
+    return {
+        "err": {
+            "code": "unknown_grammar",
+            "message": f"no grammar named {language!r}; honest-parse carries {', '.join(sorted(_LANGUAGES))}",
+            "category": "server",
+            "detail": {"language": language},
+        }
+    }
 
 
 def parse(source: bytes, language: str):
-    """Parse source bytes under the named grammar; return the tree-sitter tree."""
-    if language not in _LANGUAGES:
-        raise UnknownGrammar(
-            f"no grammar named {language!r}; honest-parse carries {', '.join(sorted(_LANGUAGES))}"
-        )
-    return Parser(_LANGUAGES[language]).parse(source)
+    """Parse source bytes under the named grammar: the tree-sitter tree, or an unknown_grammar fault
+    for a language the table does not hold."""
+    return _pick(
+        language in _LANGUAGES,
+        lambda: Parser(_LANGUAGES[language]).parse(source),
+        lambda: _unknown_grammar(language),
+    )
 
 
 
@@ -106,9 +125,8 @@ def walk(node):
 
 def first_error_node(root):
     """The first ERROR or MISSING node in the tree, or None if the tree is clean."""
-    for node in walk(root):
-        if node.is_error or node.is_missing:
-            return node
+    for node in filter(lambda node: node.is_error or node.is_missing, walk(root)):
+        return node
     return None
 
 # Section: the one chooser. The extension table is this module's own vocabulary, written out in
@@ -140,18 +158,44 @@ _LANGUAGE_BY_SUFFIX = types.MappingProxyType(
 def language_of(path: str):
     """The grammar a path is read under, from the closed suffix table. ok(language), or err for a
     suffix the table does not carry. Pure."""
-    for suffix, language in _LANGUAGE_BY_SUFFIX.items():
-        if path.endswith(suffix):
-            return {"ok": language}
+    match = next(filter(lambda item: path.endswith(item[0]), _LANGUAGE_BY_SUFFIX.items()), None)
+    return _pick(
+        match is None,
+        lambda: {
+            "err": {
+                "code": "unplaceable_extension",
+                "message": f"no grammar is declared for the extension of {path!r}; the table carries "
+                           f"{', '.join(sorted(_LANGUAGE_BY_SUFFIX))}",
+                "category": "client",
+                "detail": {"path": path},
+            }
+        },
+        lambda: {"ok": match[1]},
+    )
+
+
+def _syntax_error(root, path: str, language: str):
+    """The located syntax_error fault for a tree that already carries a parse error. Pure: it reads
+    the already-built tree and touches no world."""
+    line, col = line_col(first_error_node(root))
     return {
         "err": {
-            "code": "unplaceable_extension",
-            "message": f"no grammar is declared for the extension of {path!r}; the table carries "
-                       f"{', '.join(sorted(_LANGUAGE_BY_SUFFIX))}",
+            "code": "syntax_error",
+            "message": f"{path} does not parse under {language}: error at line {line}, column {col}",
             "category": "client",
-            "detail": {"path": path},
+            "detail": {"path": path, "line": line, "col": col},
         }
     }
+
+
+def _checked_tree(tree, path: str, language: str):
+    """ok(tree) for a clean tree, or the located syntax_error fault. Pure: it reads the already-built
+    tree and touches no world."""
+    return _pick(
+        tree.root_node.has_error,
+        lambda: _syntax_error(tree.root_node, path, language),
+        lambda: {"ok": tree},
+    )
 
 
 def place_source(source: bytes, path: str):
@@ -162,22 +206,11 @@ def place_source(source: bytes, path: str):
     one other. It holds the routing and nothing else does.
     """
     language = language_of(path)
-    if "ok" not in language:
-        return language
-    tree = parse(source, language["ok"])
-    root = tree.root_node
-    if root.has_error:
-        error = first_error_node(root)
-        line, col = line_col(error)
-        return {
-            "err": {
-                "code": "syntax_error",
-                "message": f"{path} does not parse under {language['ok']}: error at line {line}, column {col}",
-                "category": "client",
-                "detail": {"path": path, "line": line, "col": col},
-            }
-        }
-    return {"ok": tree}
+    return _pick(
+        "ok" in language,
+        lambda: _checked_tree(parse(source, language["ok"]), path, language["ok"]),
+        lambda: language,
+    )
 
 
 def parse_source(source: bytes, path: str):
@@ -191,7 +224,6 @@ def parse_source(source: bytes, path: str):
 
 
 __all__ = [
-    "UnknownGrammar",
     "first_error_node",
     "language_of",
     "line_col",

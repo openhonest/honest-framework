@@ -49,7 +49,7 @@ module honest-parse
 
   boundary_in fn parse_source : (source: bytes, path: str) -> Tree | Fault side_effect reads "caller" note "the door: it hands the call to the one orchestrator and adds nothing of its own"
 
-  reader fn parse : (source: bytes, language: Language) -> Tree raises unknown_grammar side_effect reads "tree-sitter" note "the one place tree-sitter is touched; a pull many orchestrators may ask"
+  reader fn parse : (source: bytes, language: Language) -> Tree | Fault side_effect reads "tree-sitter" note "the one place tree-sitter is touched; a pull many orchestrators may ask. A language the table does not hold returns an unknown_grammar fault as data, the way every table handles a miss, not a raised exception"
 
   # Step 2. The door's path, which names the orchestrator by what the path does.
 

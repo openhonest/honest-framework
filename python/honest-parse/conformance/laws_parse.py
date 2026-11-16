@@ -252,21 +252,18 @@ def _law_language_vocabulary():
     for language, grammar in _GRAMMARS.items():
         if parse(grammar["corpus"][0].encode("utf-8"), language).root_node.has_error:
             bad.append(f"parse(.., {language!r}) failed on valid source")
-    # A grammar nobody declared is refused by name. A bare KeyError from a dict lookup is the
-    # implementation leaking: it says 'klingon' and nothing about what was asked for, what the
-    # module carries, or what to do instead. The principles put typed exceptions at the boundary,
-    # and this reader is the boundary.
-    from honest_parse import UnknownGrammar
-
-    try:
-        parse(b"x = 1", "klingon")
-        bad.append("an unknown grammar must be refused by name, never guessed")
-    except UnknownGrammar as refusal:
+    # A grammar the table does not hold returns a fault as data, the way every table in the
+    # framework handles a miss. Not a bare KeyError (which names the missing key and nothing a
+    # caller can act on) and not a raised exception: an ordinary returned fault, the same shape
+    # language_of returns for an extension it does not carry.
+    refusal = parse(b"x = 1", "klingon")
+    if "err" not in refusal:
+        bad.append("an unknown grammar must return a fault, never guess or crash")
+    else:
+        message = refusal["err"].get("message", "")
         for needed in ("klingon", "python", "no grammar"):
-            if needed not in str(refusal):
-                bad.append(f"the refusal must say {needed!r}: {refusal}")
-    except KeyError:
-        bad.append("a bare KeyError names the missing key and nothing a caller can act on")
+            if needed not in message:
+                bad.append(f"the unknown_grammar fault must say {needed!r}: {refusal['err']}")
     return bad
 
 
@@ -426,11 +423,11 @@ def _law_fault_details_and_surface():
     blanks a fault code, category, message or detail, swaps a fault key, or drops an export survives a
     suite that proves parsing behaviour alone; these assertions catch them."""
     import honest_parse
-    from honest_parse import _LANGUAGE_BY_SUFFIX, _LANGUAGES, UnknownGrammar, language_of, parse, place_source
+    from honest_parse import _LANGUAGE_BY_SUFFIX, _LANGUAGES, language_of, parse, place_source
 
     bad = []
 
-    expected_all = ["UnknownGrammar", "first_error_node", "language_of", "line_col", "parse", "parse_source", "place_source", "walk"]
+    expected_all = ["first_error_node", "language_of", "line_col", "parse", "parse_source", "place_source", "walk"]
     if honest_parse.__all__ != expected_all:
         bad.append(f"__all__ drifted from the declared surface: {honest_parse.__all__}")
 
@@ -463,12 +460,16 @@ def _law_fault_details_and_surface():
         if "bad.py" not in e.get("message", "") or "line" not in e.get("message", "") or "column" not in e.get("message", ""):
             bad.append(f"the syntax fault message must name the file, line and column: {e.get('message')}")
 
-    try:
-        parse(b"x = 1\n", "nope")
-        bad.append("parse must raise UnknownGrammar for an unknown grammar")
-    except UnknownGrammar as exc:
-        if "nope" not in str(exc) or ", ".join(sorted(_LANGUAGES)) not in str(exc):
-            bad.append(f"the UnknownGrammar message must name the grammar and the separated registry: {exc}")
+    refusal = parse(b"x = 1\n", "nope")
+    if "err" not in refusal:
+        bad.append("parse must return a fault for an unknown grammar")
+    else:
+        e = refusal["err"]
+        if e.get("code") != "unknown_grammar":
+            bad.append(f"the unknown-grammar fault code must be 'unknown_grammar': {e.get('code')!r}")
+        message = e.get("message", "")
+        if "nope" not in message or ", ".join(sorted(_LANGUAGES)) not in message:
+            bad.append(f"the unknown_grammar fault message must name the grammar and the carried set: {e}")
 
     return bad
 
