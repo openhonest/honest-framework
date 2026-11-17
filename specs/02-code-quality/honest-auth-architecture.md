@@ -54,11 +54,13 @@ Every authentication plugin provides a value conforming to:
 AuthProvider = {
     name:                 String,                          # unique stable identifier
     actor_recognizer:     Recognizer,                      # token wire-format recognizer
-    resolve_actor:        (Token) -> Result[Actor, AuthFault],   # validate + identify, at the boundary
+    resolve_actor:        (Token) -> Actor | AuthFault,    # validate + identify, at the boundary
     test_token_generator: TestTokenGenerator,              # produces token classes for tests
     fault_mapping:        dict[AuthFault, HttpStatus],
 }
 ```
+
+Faults return as a bare union, never a `{ok}/{err}` envelope: a function that can fail returns `Value | AuthFault`, and the caller recognizes the failure by the fault's own shape with `is_fault`. An `AuthFault` is a `Fault` record and carries the reserved boolean tag `is_err: true`; `is_err` is reserved framework-wide, so no non-fault value an auth function returns — an `Actor`, a `Registry`, the absence a lookup yields — may carry a field of that name, and `is_fault` recognizes a fault by that tag alone, not by inferring from `code` or any content field. This keeps the actor and the fault disjoint by construction, so a resolved actor is never mistaken for a failure.
 
 ### 2.1 `name`
 
@@ -81,11 +83,11 @@ Examples:
 The boundary validator. Given a token that passed `actor_recognizer`, it validates the token and resolves it to an actor, or to a typed failure.
 
 ```
-resolve_actor(token: Token) -> Result[Actor, AuthFault]
+resolve_actor(token: Token) -> Actor | AuthFault
 ```
 
-- **`ok(actor)`** — the token is valid; `actor` is the resolved identity (a `user_id`, a capability-granted scope, a JWT claims set). This value is what the boundary passes inward.
-- **`err(fault)`** — the token is invalid; `fault` is an `AuthFault` category (`unauthenticated`, `expired`, `revoked`, `forged`, …). The boundary maps it to an HTTP status via `fault_mapping` and the request never enters a chain.
+- **the `Actor`** — the token is valid; the returned value is the resolved identity (a `user_id`, a capability-granted scope, a JWT claims set), passed inward as data. It carries no `is_err` tag, so `is_fault` reads it as a value, not a failure.
+- **an `AuthFault`** — the token is invalid; the returned fault carries `is_err: true` and an `AuthFault` category (`unauthenticated`, `expired`, `revoked`, `forged`, …). The boundary recognizes it with `is_fault`, maps it to an HTTP status via `fault_mapping`, and the request never enters a chain.
 
 `resolve_actor` runs at the boundary, so it **may perform I/O** — session-store lookups, signature verification, an introspection call to an identity provider. That is the point of placing it at the boundary. What it must not do is mutate domain state or emit observable side effects beyond the read it needs to identify the actor; auditing of failed authentications is emitted through honest-observe at the boundary, not woven into resolution.
 
@@ -97,12 +99,12 @@ A generator that produces tokens in named classes, consumed by honest-test's aut
 
 | Class | Description | Expected outcome |
 |---|---|---|
-| `valid` | A well-formed token for a real, active identity | `resolve_actor` returns `ok(actor)` |
-| `revoked` | A token that was once valid but has been revoked | `err(revoked)` |
-| `expired` | A token whose expiry is in the past | `err(expired)` |
+| `valid` | A well-formed token for a real, active identity | `resolve_actor` returns the `Actor` |
+| `revoked` | A token that was once valid but has been revoked | an `AuthFault` (`revoked`) |
+| `expired` | A token whose expiry is in the past | an `AuthFault` (`expired`) |
 | `malformed` | A token that does not match `actor_recognizer` | rejected by the recognizer, before `resolve_actor` |
-| `missing` | NULL / empty / absent | `err(unauthenticated)` |
-| `forged` | A token that passes `actor_recognizer` but maps to no real identity | `err(forged)` (or the provider's `fault_mapping` equivalent) |
+| `missing` | NULL / empty / absent | an `AuthFault` (`unauthenticated`) |
+| `forged` | A token that passes `actor_recognizer` but maps to no real identity | an `AuthFault` (`forged`) (or the provider's `fault_mapping` equivalent) |
 
 The generator is a plain callable, like the provider's other fields — the framework has no objects with methods:
 
@@ -114,7 +116,7 @@ test_token_generator(class: ClassName, context: TestContext) -> Token
 
 ### 2.5 `fault_mapping`
 
-A lookup table that translates authentication-failure categories to HTTP response status codes. The boundary uses it to turn an `err(fault)` from `resolve_actor` into the correct HTTP response.
+A lookup table that translates authentication-failure categories to HTTP response status codes. The boundary uses it to turn an `AuthFault` from `resolve_actor` into the correct HTTP response.
 
 ```
 fault_mapping = {
@@ -134,13 +136,15 @@ Exactly one provider is active per application instance. Registration occurs at 
 
 ```
 empty_registry() -> Registry
-register_auth_provider(registry: Registry, provider: AuthProvider) -> Result
+register_auth_provider(registry: Registry, provider: AuthProvider) -> Registry | AuthFault
 
-Result = ok(Registry) | err({code: "already_registered"})
-         | err({code: "invalid_provider", detail: ValidationError})
+# On success the new registry carries the provider. On failure an AuthFault (is_err: true):
+#   {code: "already_registered", ...} | {code: "invalid_provider", detail: ValidationError, ...}
 
 registered_provider(registry: Registry) -> AuthProvider | Nothing
 ```
+
+`register_auth_provider` returns the new `Registry` on success or an `AuthFault` on failure, recognized by `is_fault` — no envelope. `registered_provider` returns the active provider or `Nothing`, a bounded absence: having no provider is a valid state, not a failure, so `Nothing` carries no `is_err` tag and is never recognized as a fault.
 
 The application's startup holds the registry and hands it to the boundary, which reads the active provider with `registered_provider`.
 
@@ -186,7 +190,7 @@ The provider need not expose its internals. Conformance auditors predict the pro
 
 ### 4.7 The authentication-honesty verifier
 
-honest-auth ships the contract of §4.2–§4.6 as an executable pure function, so a provider's honesty is checked, not asserted. `authentication_honesty(provider, context)` runs the provider's `test_token_generator` across every token class and, for each, sends the token through the boundary flow (`authenticate`) and checks the outcome the class names: a `valid` token resolves to an actor; a `malformed` one is rejected at the recognizer before `resolve_actor`; and `revoked`, `expired`, `missing`, and `forged` each fail as unauthenticated — no valid identity. It returns `ok(provider)` or an `err` listing every class whose outcome was wrong. It is pure over the provider's injected generator and resolver, so it is deterministic and mock-free. This is the executable core of §9.1's Core level, and the function honest-test auto-generates its authentication-honesty test around (§8).
+honest-auth ships the contract of §4.2–§4.6 as an executable pure function, so a provider's honesty is checked, not asserted. `authentication_honesty(provider, context)` runs the provider's `test_token_generator` across every token class and, for each, sends the token through the boundary flow (`authenticate`) and checks the outcome the class names: a `valid` token resolves to an actor; a `malformed` one is rejected at the recognizer before `resolve_actor`; and `revoked`, `expired`, `missing`, and `forged` each fail as unauthenticated — no valid identity. It returns the `provider` when every class's outcome is right, or an `AuthFault` (carrying `is_err: true`) whose detail lists every class whose outcome was wrong — a bare union recognized by `is_fault`, no envelope. It is pure over the provider's injected generator and resolver, so it is deterministic and mock-free. This is the executable core of §9.1's Core level, and the function honest-test auto-generates its authentication-honesty test around (§8).
 
 For the Full level, `resolve_actor_deterministic(provider, token)` resolves the same token twice under the same backing state and reports whether the two results agree (§4.4).
 
