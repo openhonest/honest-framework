@@ -3,57 +3,47 @@
 The spec (§5.3): for each state, feed each adversarial neighbor of that state the first valid
 event and emit an invalid_state failure when the neighbor is accepted; for each event, feed
 the first valid state each adversarial neighbor and emit an invalid_event failure when the
-neighbor is accepted. The neighbors come from adversarial_neighbors. This probe builds a tiny
-machine and injects run_transition two ways: a correct one that faults invalid_state /
-invalid_event for any unknown state / event, which must yield no findings, and one that
-accepts every unknown token, which must yield both an invalid_state and an invalid_event
-failure.
+neighbor is accepted. The neighbors come from adversarial_neighbors.
+
+The machine under test is a REAL honest-type state_machine, whose states and events are
+frozensets (not subscriptable lists). The real honest-type `transition` is injected for the
+pass path (every unknown token faults invalid_state/invalid_event, so no findings), and a
+buggy runner that accepts every token is injected for the fail path (both an invalid_state
+and an invalid_event failure). Using the real machine shape is what exercises the check
+against what honest-type actually produces.
 
 No classes, no mocks. It calls the real honest_test.test_adversarial_state_machine.
 """
+
+from honest_type import state_machine, transition
 
 from honest_test import test_adversarial_state_machine
 
 
 def _machine():
-    return {
-        "states": ["locked", "unlocked"],
-        "events": ["coin", "push"],
-        "transitions": {
+    return state_machine(
+        {"locked", "unlocked"},
+        {"coin", "push"},
+        {
             ("locked", "coin"): "unlocked",
             ("locked", "push"): "locked",
             ("unlocked", "push"): "locked",
             ("unlocked", "coin"): "unlocked",
         },
-        "initial": "locked",
-        "terminal": [],
-    }
-
-
-def _correct_transition(machine, state, event):
-    if state not in machine["states"]:
-        return {"code": "invalid_state"}
-    if event not in machine["events"]:
-        return {"code": "invalid_event"}
-    key = (state, event)
-    if key in machine["transitions"]:
-        return {"state": machine["transitions"][key]}
-    return {"code": "no_transition"}
+        "locked",
+    )
 
 
 def _accepts_everything(machine, state, event):
-    """Buggy: an unknown state or event is accepted instead of faulting."""
-    key = (state, event)
-    if key in machine["transitions"]:
-        return {"state": machine["transitions"][key]}
-    return {"state": machine["states"][0]}
+    """Buggy runner: never faults — it accepts every token, returning a declared state."""
+    return {"state": machine["initial"]}
 
 
 def probe_test_adversarial_state_machine():
     bad = []
     machine = _machine()
 
-    clean = test_adversarial_state_machine(machine, _correct_transition)
+    clean = test_adversarial_state_machine(machine, transition)
     if clean != []:
         bad.append(f"rejecting every adversarial neighbor should yield no findings, got {len(clean)} finding(s)")
 

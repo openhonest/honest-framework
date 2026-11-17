@@ -53,8 +53,8 @@ def test_adversarial_state_machine(machine, run_transition):
     """Test adversarial neighbors of the machine's states and events (section 5.3): each
     neighbor of a state fed the first valid event must fault invalid_state, and each
     neighbor of an event fed the first valid state must fault invalid_event."""
-    first_event = machine["events"][0]
-    first_state = machine["states"][0]
+    first_event = sorted(machine["events"])[0]
+    first_state = sorted(machine["states"])[0]
 
     def _state_failures():
         out = []

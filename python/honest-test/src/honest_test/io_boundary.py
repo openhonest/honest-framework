@@ -13,11 +13,13 @@ import tomllib
 from pathlib import Path
 
 from honest_type.chains import chain_meta, is_chain, is_link, link_meta
+from honest_type.state_machine import transition
 
 from honest_test._util import _choose, _pick
 from honest_test.analyze import classify_mutant_result, mutate_source, resolve_supplied_config
-from honest_test.generate import enumerate_sets
+from honest_test.generate import adversarial_neighbors, enumerate_sets
 from honest_test.honesty import detect_mutation, test_body_violations, test_chain_contracts, verify_purity
+from honest_test.machines import test_adversarial_state_machine, test_invalid_transitions, test_valid_transitions
 from honest_test.report import (
     build_coverage_report,
     build_run_report,
@@ -62,6 +64,7 @@ def load_under_test(src_dir):
     attributes = [value for module in modules for value in vars(module).values()]
     links = list(filter(is_link, attributes))
     vocabularies = list(filter(lambda value: hasattr(value, "get") and "base_types" in value, attributes))
+    machines = list(filter(lambda value: hasattr(value, "get") and "transitions" in value and "states" in value, attributes))
     chains = list(filter(is_chain, attributes))
 
     def _contract(chain):
@@ -76,7 +79,7 @@ def load_under_test(src_dir):
         "link_declarations": [link_meta(link) for link in links],
         "chains": chains,
         "chain_declarations": [_contract(chain) for chain in chains],
-        "machines": [],
+        "machines": machines,
         "schemas": [],
         "components": [],
         "providers": [],
@@ -178,6 +181,24 @@ def run_suite(src_dir):
         findings = [found for entry in checkable for found in test_chain_contracts(entry["links"], entry["vocab"], entry["binding"])]
         return len(list(filter(lambda found: found["kind"] == "failure", findings)))
 
+    def _machine_checks(machine):
+        return test_valid_transitions(machine, transition) + test_invalid_transitions(machine, transition) + test_adversarial_state_machine(machine, transition)
+
+    def _machine_failures(live):
+        findings = [found for machine in live["machines"] for found in _machine_checks(machine)]
+        return len(list(filter(lambda found: found["kind"] == "failure", findings)))
+
+    def _machine_adversarial_total(machine):
+        return sum(len(adversarial_neighbors(name)) for name in machine["states"]) + sum(len(adversarial_neighbors(name)) for name in machine["events"])
+
+    def _machine_adversarial_failures(machine):
+        return len(list(filter(lambda found: found["kind"] == "failure", test_adversarial_state_machine(machine, transition))))
+
+    def _adversarial_rejected(live):
+        total = sum(_machine_adversarial_total(machine) for machine in live["machines"])
+        failures = sum(_machine_adversarial_failures(machine) for machine in live["machines"])
+        return total - failures
+
     def _complete_run(sources):
         live = load_under_test(src_dir)
         permutations = sum(len(enumerate_sets(vocab)) for vocab in live["vocabularies"])
@@ -185,7 +206,8 @@ def run_suite(src_dir):
         caught, total = _mutation_tally(sources)
         report = build_run_report(
             len(live["chains"]), len(live["links"]), len(live["vocabularies"]),
-            permutations, _honesty_failures(live) + _contract_failures(live), 0, coverage, caught, total,
+            permutations, _honesty_failures(live) + _contract_failures(live) + _machine_failures(live),
+            _adversarial_rejected(live), coverage, caught, total,
         )
         print_report(render_report(report))
         write_coverage(report)

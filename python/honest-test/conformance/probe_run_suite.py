@@ -186,6 +186,24 @@ def probe_run_suite():
         if chain_untyped.get("failures") != 0:
             bad.append(f"a chain with no upstream vocabulary is skipped, so failures should be 0, got {chain_untyped.get('failures')!r}")
 
+    # run_suite must discover state machines and drive the §5 checks over them. A valid
+    # machine driven with honest-type's correct transition cannot fail, so the observable
+    # is the adversarial-rejection count: every adversarial neighbor of a state or event
+    # is correctly rejected, so adversarial_rejected is non-zero and failures stays 0.
+    machine = _run_in(str(_FIXTURES / "adopter_machine"))
+    if _is_fault(machine):
+        bad.append(f"the machine adopter should run to a report, got fault {machine}")
+    elif not isinstance(machine, dict):
+        bad.append(f"the machine adopter should run to a RunReport, got {machine!r}")
+    else:
+        if machine.get("failures") != 0:
+            bad.append(f"a valid machine cannot fail the state-machine checks, so failures should be 0, got {machine.get('failures')!r}")
+        if machine.get("adversarial_rejected", 0) < 1:
+            bad.append(
+                "run_suite must drive the state-machine checks: a valid machine's adversarial "
+                f"neighbors are all rejected, so adversarial_rejected should be > 0, got {machine.get('adversarial_rejected')!r}"
+            )
+
     return bad
 
 
