@@ -225,6 +225,58 @@
     }
   },
   {
+    "type": "expose_decl",
+    "named": true,
+    "fields": {
+      "kind": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "component",
+            "named": false
+          },
+          {
+            "type": "gate",
+            "named": false
+          },
+          {
+            "type": "machine",
+            "named": false
+          },
+          {
+            "type": "provider",
+            "named": false
+          },
+          {
+            "type": "schema",
+            "named": false
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "note",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "field",
     "named": true,
     "fields": {
@@ -497,6 +549,10 @@
         },
         {
           "type": "example_decl",
+          "named": true
+        },
+        {
+          "type": "expose_decl",
           "named": true
         },
         {
@@ -1150,6 +1206,10 @@
     "extra": true
   },
   {
+    "type": "component",
+    "named": false
+  },
+  {
     "type": "dispatch",
     "named": false
   },
@@ -1170,6 +1230,10 @@
     "named": false
   },
   {
+    "type": "expose",
+    "named": false
+  },
+  {
     "type": "flow",
     "named": false
   },
@@ -1183,6 +1247,10 @@
   },
   {
     "type": "from",
+    "named": false
+  },
+  {
+    "type": "gate",
     "named": false
   },
   {
@@ -1210,6 +1278,10 @@
     "named": false
   },
   {
+    "type": "machine",
+    "named": false
+  },
+  {
     "type": "module",
     "named": false
   },
@@ -1234,6 +1306,10 @@
     "named": false
   },
   {
+    "type": "provider",
+    "named": false
+  },
+  {
     "type": "raises",
     "named": false
   },
@@ -1255,6 +1331,10 @@
   },
   {
     "type": "rule",
+    "named": false
+  },
+  {
+    "type": "schema",
     "named": false
   },
   {

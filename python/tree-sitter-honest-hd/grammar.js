@@ -50,6 +50,7 @@ module.exports = grammar({
       $.example_decl,
       $.function_decl,
       $.chain_decl,
+      $.expose_decl,
       $.route_decl,
       $.entry_decl,
       $.html_attr_decl,
@@ -195,6 +196,21 @@ module.exports = grammar({
     chain_decl: $ => prec.right(seq('chain', field('name', $.identifier), '=', $.chain_body, optional($.note))),
 
     chain_body: $ => seq($.identifier, repeat(seq('->', $.identifier))),
+
+    // --- Exposed values ------------------------------------------------------
+
+    // A value the module presents to the honest-test runner for checking: a state machine, schema,
+    // component, provider, or gate the module builds and exposes under <name>. A chain already names
+    // its links and a link carries its own vocabulary, so expose covers the five kinds the file
+    // cannot otherwise name. The runner reads each name and resolves it to the live value the module
+    // exposes (honest-test-architecture.md §11.1). An optional trailing note rides on it like any
+    // other declaration, so prec.right binds the note to the expose it follows.
+    expose_decl: $ => prec.right(seq(
+      'expose',
+      field('kind', choice('machine', 'schema', 'component', 'provider', 'gate')),
+      field('name', $.identifier),
+      optional($.note),
+    )),
 
     // --- Routes and declared client attributes -------------------------------
 

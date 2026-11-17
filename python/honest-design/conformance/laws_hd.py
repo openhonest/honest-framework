@@ -73,6 +73,32 @@ def _probe_module():
     return bad
 
 
+def _probe_expose():
+    """`expose <kind> <name>` names a value the module presents to the honest-test runner. It folds
+    to {kind, name, note}, one record per line in declared order, the note empty unless one trails.
+    A module with no expose line carries an empty exposes list, never a missing key."""
+    bad = []
+    src = ('module m\n  layer foundation\n'
+           '  expose machine order_machine\n'
+           '  expose schema user_schema note "the user record shape"\n'
+           '  expose gate build_gate\n'
+           '  fn f : (a: str) -> str note "test"\n')
+    result = read_hd(src)
+    if "ok" not in result:
+        return [f"a module with expose lines did not read cleanly: {result}"]
+    m = result["ok"]["modules"][0]
+    if m["exposes"] != [
+        {"kind": "machine", "name": "order_machine", "note": ""},
+        {"kind": "schema", "name": "user_schema", "note": "the user record shape"},
+        {"kind": "gate", "name": "build_gate", "note": ""},
+    ]:
+        bad.append(f"exposes records (kind, name, and a trailing note) wrong: {m['exposes']}")
+    bare = _module('module m\n  layer foundation\n  fn f : (a: str) -> str note "test"\n')
+    if bare["exposes"] != []:
+        bad.append(f"a module with no expose line carries an empty exposes list: {bare['exposes']}")
+    return bad
+
+
 def _probe_types():
     """Record fields, alias types, union types, and nested generics fold correctly."""
     bad = []
@@ -1051,6 +1077,7 @@ def run():
         "side_kinds": _probe_side_kinds(),
         "door_orchestrator": _probe_door_orchestrator(),
         "module": _probe_module(),
+        "expose": _probe_expose(),
         "types": _probe_types(),
         "functions": _probe_functions(),
         "edges": _probe_edges(),

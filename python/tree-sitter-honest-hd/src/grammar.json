@@ -115,6 +115,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "expose_decl"
+        },
+        {
+          "type": "SYMBOL",
           "name": "route_decl"
         },
         {
@@ -1400,6 +1404,68 @@
           }
         }
       ]
+    },
+    "expose_decl": {
+      "type": "PREC_RIGHT",
+      "value": 0,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "expose"
+          },
+          {
+            "type": "FIELD",
+            "name": "kind",
+            "content": {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "machine"
+                },
+                {
+                  "type": "STRING",
+                  "value": "schema"
+                },
+                {
+                  "type": "STRING",
+                  "value": "component"
+                },
+                {
+                  "type": "STRING",
+                  "value": "provider"
+                },
+                {
+                  "type": "STRING",
+                  "value": "gate"
+                }
+              ]
+            }
+          },
+          {
+            "type": "FIELD",
+            "name": "name",
+            "content": {
+              "type": "SYMBOL",
+              "name": "identifier"
+            }
+          },
+          {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "note"
+              },
+              {
+                "type": "BLANK"
+              }
+            ]
+          }
+        ]
+      }
     },
     "route_decl": {
       "type": "SEQ",

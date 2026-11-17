@@ -158,6 +158,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 | `edge fn <name> : (args) -> ret` | Column 1. A pure function a module with boundaries publishes as an import surface, named by an `entry`. It keeps every pure discipline — the validator treats `fn` and `edge` as the two pure roles, so a side effect on either is `impure_pure_function` and a handle in either signature is `handle_read` — and differs from a `fn` only in that the world reaches it directly rather than through a door. Nothing inside the module invokes it. |
 | `boundary_out fn <name> : (args) -> ret side_effect writes "<sink>" [raises <faults>]` | Column 4. Output boundary; declares what it writes, and names what it raises if it throws. |
 | `chain <name> = a -> b -> c` | An ordered composition of functions. |
+| `expose <kind> <name>` | A value the module presents to the honest-test runner for checking: a state machine, schema, component, provider, or gate the module builds and exposes under `<name>`. A `chain` already names its links and a link carries its own vocabulary, so `expose` covers the five kinds the file cannot otherwise name. `kind` is one of `machine`, `schema`, `component`, `provider`, `gate`. The runner reads each name and resolves it to the live value the module exposes (`honest-test-architecture.md` §11.1). |
 | `route "METHOD /path" -> fn` | An input-boundary route binding. |
 | `entry "<callsite>" -> fn` | An entry point whose call-site shape is a string — a decorator, a context manager, a middleware registration — dispatching to a function. |
 | `html_attr "attr" "desc"` | A declared client-side attribute. |
@@ -181,7 +182,9 @@ The reader produces a normalized, language-agnostic IR — plain data, the singl
 
 ```
 Module   = { name, layer, note, envs, stores, inputs, outputs, surface_declared, types, sets, vocabularies, dispatches,
-             surfaces, functions, chains, examples, routes, entries, html_attrs }
+             surfaces, functions, chains, exposes, examples, routes, entries, html_attrs }
+             # exposes: [ { kind, name, note } ], the state machines, schemas, components, providers
+             #   and gates the module presents to the honest-test runner (honest-test-architecture.md §11.1).
              # surfaces: [ { name, members } ], members [ { id, element } ] in declared order,
              #   because that order is the contract. Distinct from `surface_declared`, the boolean
              #   saying whether the module closed its world with an inputs/outputs block.

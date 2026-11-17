@@ -186,6 +186,12 @@ def _read_chain(node, source) -> ir.Chain:
     return {"name": _field_text(node, "name", source), "links": [_text(i, source) for i in _children(body, "identifier")], "note": _note(node, source)}
 
 
+def _read_expose(node, source) -> ir.Exposed:
+    """A value the module presents to the honest-test runner: its kind (one of machine, schema,
+    component, provider, gate) and the name it is exposed under, with the declaration's note."""
+    return {"kind": _field_text(node, "kind", source), "name": _field_text(node, "name", source), "note": _note(node, source)}
+
+
 def _read_route(node, source) -> ir.Route:
     parts = _unquote(_field_text(node, "path", source)).split(" ", 1)
     path = parts[1] if len(parts) > 1 else ""
@@ -252,6 +258,7 @@ _BODY = {
     "example_decl": ("examples", _read_example),
     "function_decl": ("functions", _read_function),
     "chain_decl": ("chains", _read_chain),
+    "expose_decl": ("exposes", _read_expose),
     "route_decl": ("routes", _read_route),
     "entry_decl": ("entries", _read_entry),
     "html_attr_decl": ("html_attrs", _read_html_attr),
@@ -280,6 +287,7 @@ def _read_module(node, source) -> ir.Module:
         "examples": groups.get("examples", []),
         "functions": groups.get("functions", []),
         "chains": groups.get("chains", []),
+        "exposes": groups.get("exposes", []),
         "routes": groups.get("routes", []),
         "entries": groups.get("entries", []),
         "html_attrs": groups.get("html_attrs", []),

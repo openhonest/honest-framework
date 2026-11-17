@@ -123,6 +123,12 @@ class Chain(TypedDict):
     note: str  # the one comment the parser keeps; "" when the declaration has none
 
 
+class Exposed(TypedDict):
+    kind: str   # "machine" | "schema" | "component" | "provider" | "gate"
+    name: str   # the name the module exposes the value under; the runner resolves it to the live value
+    note: str  # the one comment the parser keeps; "" when the declaration has none
+
+
 class Route(TypedDict):
     method: str
     path: str
@@ -157,6 +163,7 @@ class Module(TypedDict):
     examples: list
     functions: list
     chains: list
+    exposes: list  # list[Exposed]: the values the module presents to the honest-test runner for checking
     routes: list
     entries: list
     html_attrs: list

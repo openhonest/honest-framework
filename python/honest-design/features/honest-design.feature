@@ -184,6 +184,11 @@ Feature: honest-design — reading, checking, drawing and tracing .hd itself
     When _read_chain reads its links
     Then it returns a Chain carrying the links in order and any note
 
+  Scenario: _read_expose folds one expose node into an Exposed
+    Given an expose node and the source
+    When _read_expose reads its kind and name
+    Then it returns an Exposed carrying the kind, the name and any note
+
   Scenario: _read_route folds one route node into a Route
     Given a route node and the source
     When _read_route reads it

@@ -157,6 +157,12 @@ module honest-design
     note: str
   }
 
+  type Exposed = {
+    kind: str
+    name: str
+    note: str
+  } note "a value the module presents to the honest-test runner for checking: its kind (machine, schema, component, provider or gate) and the name it is exposed under"
+
   type Route = {
     method: str
     path: str
@@ -191,6 +197,7 @@ module honest-design
     examples: list<Example>
     functions: list<Function>
     chains: list<Chain>
+    exposes: list<Exposed>
     routes: list<Route>
     entries: list<Entry>
     html_attrs: list<HtmlAttr>
@@ -291,7 +298,7 @@ module honest-design
 
   fn _document : (groups: dict<str, any>) -> Document note "assembles the four top-level lists into a Document"
 
-  fn _read_module : (node: Node, source: bytes) -> Module invokes _read_layer, _read_env, _read_store, _read_surface, _read_type_decl, _read_set, _read_vocab, _read_dispatch, _read_surfaces, _read_example, _read_function, _read_chain, _read_route, _read_entry, _read_html_attr, _note note "folds one module node, each body declaration through its own reader"
+  fn _read_module : (node: Node, source: bytes) -> Module invokes _read_layer, _read_env, _read_store, _read_surface, _read_type_decl, _read_set, _read_vocab, _read_dispatch, _read_surfaces, _read_example, _read_function, _read_chain, _read_expose, _read_route, _read_entry, _read_html_attr, _note note "folds one module node, each body declaration through its own reader"
 
   fn _read_rule : (node: Node, source: bytes) -> Rule note "reads a workspace rule: its id, the module it binds when it names one, and the statement it makes"
   fn _read_actor : (node: Node, source: bytes) -> Actor note "reads an actor, a person or system the workspace names by name alone"
@@ -320,6 +327,7 @@ module honest-design
   fn _read_param : (node: Node, source: bytes) -> Param invokes _read_type note "reads one parameter: its name and its type"
   fn _read_side_effect : (node: Node, source: bytes) -> SideEffect note "splits a dotted target into the module and the door it enters; a colon names a kind, a dot names a path"
   fn _read_chain : (node: Node, source: bytes) -> Chain invokes _note note "reads a chain as its links in the order they run"
+  fn _read_expose : (node: Node, source: bytes) -> Exposed invokes _note note "reads an exposed value: its kind and the name the module presents it under for the honest-test runner"
   fn _read_route : (node: Node, source: bytes) -> Route note "reads a route: its method, its path, the function it targets, and an optional label"
   fn _read_entry : (node: Node, source: bytes) -> Entry note "reads an entry: where a caller comes in from and the function it calls"
   fn _read_html_attr : (node: Node, source: bytes) -> HtmlAttr note "reads an HTML attribute the module defines and what it means"

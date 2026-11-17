@@ -10,6 +10,13 @@
       "expect": "ok"
     },
     {
+      "id": "read-expose-ok",
+      "read": {
+        "source": "module x\n  layer foundation\n  expose machine order_machine\n  expose schema user_schema note \"the user record shape\"\n  expose gate build_gate\n  fn f : (a: str) -> str note \"t\"\n"
+      },
+      "expect": "ok"
+    },
+    {
       "id": "read-workspace-ok",
       "read": {
         "source": "rule HC001 = \"x\"\nactor browser\nflow f in server = browser -> m\n"
@@ -77,6 +84,7 @@
                   }
                 ],
                 "chains": [],
+                "exposes": [],
                 "routes": [],
                 "entries": [],
                 "html_attrs": []
