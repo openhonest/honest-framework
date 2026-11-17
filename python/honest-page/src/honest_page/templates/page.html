@@ -3,7 +3,7 @@
 
    The search box is declared user state: the manifest below names it, so domx collects it into every
    HTMX request as _state (§5.1) — the page never reads it by hand. The hx-get target names a path the
-   route map resolves to a chain (§9), so honest-check can follow template -> path -> chain and check
+   route map resolves to a chain (§9), so honest-check can follow template to path to chain and check
    the first link against exactly the fields this page sends. #}
 {% extends "base.html" %}
 

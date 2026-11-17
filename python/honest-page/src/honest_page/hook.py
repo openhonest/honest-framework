@@ -30,9 +30,7 @@ _REGISTERED_SOURCES = []
 def surface_slot(surface_id):
     """Resolve a surface id against the surface registry (§2.1): the slot that surface's markup lands
     in, or nothing when the id is not a declared surface. Pure."""
-    if surface_id in _SURFACE_SLOTS:
-        return _SURFACE_SLOTS[surface_id]
-    return None
+    return {surface_id: None, **_SURFACE_SLOTS}[surface_id]
 
 
 @link(boundary=True)

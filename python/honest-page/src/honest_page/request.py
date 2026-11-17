@@ -50,8 +50,8 @@ def search_chain(manifest):
     """The chain the (GET, /search) route runs (§10.2): the classified manifest in, the rows out. Pure.
     The reference keeps the body trivial; the route map names it so honest-check can check this chain's
     first link against the fields the templates targeting /search send."""
-    query = manifest.get("search", "")
-    return [row for row in _SEARCH_ROWS if query in row]
+    query = {"search": "", **manifest}["search"]
+    return list(filter(lambda row: query in row, _SEARCH_ROWS))
 
 
 def run_search(manifest):
@@ -78,12 +78,12 @@ async def intake(request: Request, call_next):
     resolved and no handler re-reads the request for its inputs. Async, because it awaits the request
     body and the next handler. The one HTTP read on the request path."""
     body = await request.body()
-    state = json.loads(dict(parse_qsl(body.decode("utf-8"))).get("_state", "{}")) if body else {}
+    fields = dict(parse_qsl(body.decode("utf-8")))
+    state = json.loads({"_state": "{}", **fields}["_state"])
     request.state.manifest = build_manifest(dict(request.path_params), dict(request.query_params), state)
     response = await call_next(request)
     request_id = request.headers.get("X-Request-ID")
-    if request_id is not None:
-        response.headers["X-Request-ID"] = request_id
+    response.headers.update({True: {"X-Request-ID": request_id}, False: {}}[request_id is not None])
     return response
 
 
