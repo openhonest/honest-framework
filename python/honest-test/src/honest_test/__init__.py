@@ -76,6 +76,7 @@ from honest_test.oracle import (
 from honest_test.io_boundary import (
     check_test_body,
     emit_proof_event,
+    io_monitor,
     load_under_test,
     print_report,
     read_config,
@@ -103,7 +104,7 @@ __all__ = [
     "test_persist_schema_contract", "test_route_isolation", "test_startup_isolation",
     "build_coverage_report", "build_proof_event", "build_run_report", "coverage_ratio", "render_report",
     "compare_output", "evaluate_case", "resolve_call", "run_case", "run_resolved_call",
-    "check_test_body", "emit_proof_event", "load_under_test", "print_report", "read_config",
+    "check_test_body", "emit_proof_event", "io_monitor", "load_under_test", "print_report", "read_config",
     "read_source", "read_template", "run_body_check", "run_cli", "run_mutant_suite", "run_suite",
     "write_coverage", "write_scaffolding",
 ]

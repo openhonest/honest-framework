@@ -31,6 +31,7 @@ _RUNREPORT_FIELDS = (
     "permutations",
     "failures",
     "adversarial_rejected",
+    "warnings",
     "coverage",
     "mutation_caught",
     "mutation_total",
@@ -43,6 +44,7 @@ _COUNT_FIELDS = (
     "permutations",
     "failures",
     "adversarial_rejected",
+    "warnings",
     "mutation_caught",
     "mutation_total",
 )
@@ -203,6 +205,24 @@ def probe_run_suite():
                 "run_suite must drive the state-machine checks: a valid machine's adversarial "
                 f"neighbors are all rejected, so adversarial_rejected should be > 0, got {machine.get('adversarial_rejected')!r}"
             )
+
+    # run_suite must drive the boundary-isolation check (§4.4): a non-boundary link that
+    # performs I/O raises an io_detected warning. The dishonest adopter opens a file, so it
+    # reports at least one warning; the honest adopter does no I/O, so it reports zero.
+    io_bad = _run_in(str(_FIXTURES / "adopter_io_dishonest"))
+    if _is_fault(io_bad):
+        bad.append(f"the io-dishonest adopter should run to a report, got fault {io_bad}")
+    elif not isinstance(io_bad, dict):
+        bad.append(f"the io-dishonest adopter should run to a RunReport, got {io_bad!r}")
+    elif io_bad.get("warnings", 0) < 1:
+        bad.append(
+            "run_suite must drive boundary isolation: a non-boundary link that opens a file "
+            f"should raise an io_detected warning, so warnings should be >= 1, got {io_bad.get('warnings')!r}"
+        )
+
+    io_ok = _run_in(str(_FIXTURES / "adopter_honest"))
+    if isinstance(io_ok, dict) and io_ok.get("warnings") != 0:
+        bad.append(f"the honest adopter does no I/O, so warnings should be 0, got {io_ok.get('warnings')!r}")
 
     return bad
 

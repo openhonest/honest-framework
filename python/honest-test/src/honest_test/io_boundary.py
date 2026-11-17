@@ -5,6 +5,7 @@ I/O lives only here, at the declared readers, doors and sinks; the orchestrators
 the pure core and touch the world only through them.
 """
 
+import builtins
 import importlib
 import json
 import subprocess
@@ -18,7 +19,7 @@ from honest_type.state_machine import transition
 from honest_test._util import _choose, _pick
 from honest_test.analyze import classify_mutant_result, mutate_source, resolve_supplied_config
 from honest_test.generate import adversarial_neighbors, enumerate_sets
-from honest_test.honesty import detect_mutation, test_body_violations, test_chain_contracts, verify_purity
+from honest_test.honesty import detect_mutation, test_body_violations, test_chain_contracts, verify_purity, verify_under_monitor
 from honest_test.machines import test_adversarial_state_machine, test_invalid_transitions, test_valid_transitions
 from honest_test.report import (
     build_coverage_report,
@@ -102,6 +103,59 @@ def run_mutant_suite(source):
         return {"output": completed.stdout + completed.stderr, "completed": True}
     except subprocess.TimeoutExpired:
         return {"output": "", "completed": False}
+
+
+def io_monitor(link, test_manifest):
+    """The boundary-isolation monitor (section 4.4), the kind=io plug run_suite injects into
+    verify_under_monitor. Record-and-restore instrumentation: it patches the known I/O
+    functions so each records its own call name and then delegates to the real function, runs
+    the link once, and restores every original in a finally — so the patch never leaks and no
+    result changes. It returns the list of detected I/O call names, empty when the link did no
+    I/O. A stream method that cannot be patched in this interpreter is left alone; the three
+    builtins are always patched."""
+    record = []
+
+    def _wrap(name, original):
+        def _recording(*args, **kwargs):
+            record.append(name)
+            return original(*args, **kwargs)
+        return _recording
+
+    def _install(targets, saved):
+        for owner, attr, name in targets:
+            original = getattr(owner, attr)
+            setattr(owner, attr, _wrap(name, original))
+            saved.append((owner, attr, original))
+        return saved
+
+    def _restore(saved):
+        for owner, attr, original in saved:
+            setattr(owner, attr, original)
+        return None
+
+    def _try_streams(saved):
+        try:
+            return _install(stream_targets, saved)
+        except AttributeError:
+            return saved
+
+    builtin_targets = [
+        (builtins, "open", "builtins.open"),
+        (builtins, "print", "builtins.print"),
+        (builtins, "input", "builtins.input"),
+    ]
+    stream_targets = [
+        (sys.stdout, "write", "sys.stdout.write"),
+        (sys.stderr, "write", "sys.stderr.write"),
+        (sys.stdin, "read", "sys.stdin.read"),
+    ]
+
+    saved = _try_streams(_install(builtin_targets, []))
+    try:
+        link(test_manifest)
+    finally:
+        _restore(saved)
+    return record
 
 
 # ---- doors -----------------------------------------------------------------
@@ -199,6 +253,19 @@ def run_suite(src_dir):
         failures = sum(_machine_adversarial_failures(machine) for machine in live["machines"])
         return total - failures
 
+    def _warnings(live):
+        checkable = filter(_checkable, zip(live["links"], live["link_declarations"]))
+        findings = []
+        for link, decl in checkable:
+            manifests = list(enumerate_sets(decl["accepts"]))
+            found = _pick(
+                len(manifests) == 0,
+                lambda: [],
+                lambda: verify_under_monitor(link, manifests[0], io_monitor, "io"),
+            )
+            findings.extend(found)
+        return len(list(filter(lambda found: found["kind"] == "warning", findings)))
+
     def _complete_run(sources):
         live = load_under_test(src_dir)
         permutations = sum(len(enumerate_sets(vocab)) for vocab in live["vocabularies"])
@@ -207,7 +274,7 @@ def run_suite(src_dir):
         report = build_run_report(
             len(live["chains"]), len(live["links"]), len(live["vocabularies"]),
             permutations, _honesty_failures(live) + _contract_failures(live) + _machine_failures(live),
-            _adversarial_rejected(live), coverage, caught, total,
+            _adversarial_rejected(live), _warnings(live), coverage, caught, total,
         )
         print_report(render_report(report))
         write_coverage(report)

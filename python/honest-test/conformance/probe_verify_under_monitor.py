@@ -13,6 +13,8 @@ returns an empty record (no watched call); a noisy monitor returns a non-empty r
 link is a plain, non-boundary function. A Finding carries a "code" and a "kind".
 """
 
+from honest_type import link
+
 from honest_test import verify_under_monitor
 
 
@@ -21,6 +23,12 @@ def _codes(findings):
 
 
 def _link(manifest):
+    return {"ok": manifest}
+
+
+@link(boundary=True)
+def _boundary_link(manifest):
+    """A declared boundary: it is allowed to perform I/O, so a watched call is not a warning."""
     return {"ok": manifest}
 
 
@@ -52,6 +60,12 @@ def probe_verify_under_monitor():
         )
     elif warn_io[0].get("kind") != "warning":
         bad.append(f"the io_detected finding must be graded a warning, got kind {warn_io[0].get('kind')!r}")
+
+    boundary = verify_under_monitor(_boundary_link, manifest, _noisy_monitor, "io")
+    if boundary != []:
+        bad.append(
+            f"a declared boundary link is allowed I/O, so a watched call must not warn, got {boundary!r}"
+        )
 
     clean_nd = verify_under_monitor(_link, manifest, _quiet_monitor, "nondeterminism")
     if clean_nd != []:

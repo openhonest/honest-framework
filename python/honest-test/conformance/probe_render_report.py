@@ -28,6 +28,7 @@ def probe_render_report():
         "permutations": 88,
         "failures": 5,
         "adversarial_rejected": 73,
+        "warnings": 9,
         "coverage": coverage,
         "mutation_caught": 2,
         "mutation_total": 2,
@@ -38,7 +39,7 @@ def probe_render_report():
         return [f"render_report returned {text!r}, expected a string"]
     if not text.strip():
         bad.append("render_report returned an empty string")
-    for name in ("chains", "links", "vocabularies", "permutations", "failures", "adversarial_rejected"):
+    for name in ("chains", "links", "vocabularies", "permutations", "failures", "adversarial_rejected", "warnings"):
         if str(report[name]) not in text:
             bad.append(f"the rendered report does not show the {name} count {report[name]}")
     return bad

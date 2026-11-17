@@ -7,7 +7,7 @@ location.
 import copy
 
 from honest_parse import line_col, parse, walk
-from honest_type import is_fault
+from honest_type import is_fault, link_meta
 
 from honest_test._util import _choose, _pick, _read_or
 from honest_test.generate import enumerate_test_cases
@@ -67,8 +67,9 @@ def verify_under_monitor(link, test_manifest, monitor, kind):
     block."""
     record = monitor(link, test_manifest)
     code = _read_or(_MONITOR_CODES, kind, "io_detected")
+    boundary = _read_or(link_meta(link), "boundary", False)
     return _choose(
-        len(record) > 0,
+        len(record) > 0 and not boundary,
         [_finding("warning", code, f"a non-boundary link performed a watched call: {list(record)!r}", "")],
         [],
     )
