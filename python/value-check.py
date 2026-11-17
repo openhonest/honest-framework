@@ -35,6 +35,22 @@ def _why(verdict):
     return str(verdict)
 
 
+def _verdict(case, function_map):
+    """The oracle's verdict for one case, or a Fault saying it could not reach one.
+
+    evaluate_case answers with a verdict, so a raise from under it is off-contract: the function
+    being judged broke before the oracle could judge it. Reporting that as this case's own failure is
+    what keeps the gate corpus-wide. Until now one unmigrated module ended the whole run on its first
+    case, and the gate printed no count at all, so every other module's value cases went unproved and
+    unreported. A gate blinded by the first thing it finds wrong is indistinguishable from a gate with
+    nothing to say, which is how 21 stale fault expectations in four modules passed unseen.
+    """
+    try:
+        return evaluate_case(case, function_map)
+    except Exception as exc:
+        return {"problem": f"raised {type(exc).__name__}: {exc}"}
+
+
 def main():
     total = 0
     failures = []
@@ -51,14 +67,14 @@ def main():
         ]
         for case in value_cases:
             total += 1
-            verdict = evaluate_case(case, function_map)
+            verdict = _verdict(case, function_map)
             if not (isinstance(verdict, dict) and "ok" in verdict):
                 failures.append((module, case["id"], _why(verdict)))
     for module, case_id, why in failures:
         print(f"value-check: FAIL honest-{module} {case_id}: {why}", file=sys.stderr)
     print(f"value-check: {total - len(failures)}/{total} value cases proved across the public surfaces.")
     if failures:
-        print("value-check: a value case asserts the wrong output, or its function/fixture is unresolved.", file=sys.stderr)
+        print("value-check: a value case asserts the wrong output, raised instead of answering, or its function/fixture is unresolved.", file=sys.stderr)
         return 1
     return 0
 
