@@ -1,112 +1,86 @@
-"""Conformance fragment for the test_startup_isolation scenario (honest-test.feature).
+"""honest-test conformance: test_startup_isolation.
 
-Scenario: test_startup_isolation reports startup_cascade when one component's
-load failure breaks another.
-  Then with load_component the injected loader driving the genuine load, when one
-  component fails to load every other must still load.
-  And it returns a startup_cascade failure Finding when a failure in one component
-  causes another to fail to load, empty when each component's load failure is isolated.
-  And the effect of loading belongs to the injected loader; honest-test only observes
-  which loads then fail.
+test_startup_isolation(components, load_component) -> list<Finding> returns a
+startup_cascade failure when one component failing to load causes another to fail to load,
+the empty list when each component's load failure is isolated, because when one component
+fails every other must still load (honest-test-architecture.md section 7.3).
 
-load_component is injected as a real plain function, never a mock. The probe defines
-two loaders. The isolated loader lets 'b' fail to load on its own while 'a' and 'c'
-load regardless, so no failure cascades and the result is empty. The cascading loader
-models shared state so that once 'b' has failed, 'c' can no longer load, so one
-startup_cascade failure arises. The probe calls the real
-honest_test.test_startup_isolation on each and checks the findings.
-
-This is its own fragment file so the other scenarios' fragments never collide with it.
-run_conformance.py / laws_htest.py are untouched.
+load_component is the injected loader driving the genuine load; the effect of loading
+belongs to it and honest-test only observes which loads then fail. This probe builds the
+loader itself as a real pure function closed over local state: a clean loader whose one
+failure is isolated, and a violating loader where loading one component poisons another.
+No classes, no mocks; a Finding is recognized by its own shape — a dict carrying a "code"
+and a "kind" — never raised.
 """
 
 from honest_test import test_startup_isolation
 
 
+def _is_finding(value):
+    return isinstance(value, dict) and "code" in value and "kind" in value
+
+
 def _component(name):
-    """A minimal Component dict: name, empty template, no routes."""
     return {"name": name, "template": "", "routes": []}
 
 
-def _isolated_loader(component):
-    """'b' fails to load on its own; every other component loads fine regardless."""
-    if component["name"] == "b":
-        raise RuntimeError("component 'b' cannot load")
-    return None
-
-
-def _make_cascading_loader():
-    """Shared state: once 'b' has failed to load, 'c' can no longer load either."""
-    state = {"b_failed": False}
-
-    def load(component):
-        name = component["name"]
-        if name == "b":
-            state["b_failed"] = True
-            raise RuntimeError("component 'b' cannot load")
-        if name == "c" and state["b_failed"]:
-            raise RuntimeError("component 'c' cannot load after 'b' failed")
-        return None
-
-    return load
-
-
-# 'b' is the trigger that fails; it is placed last so that after it fails the main
-# loop ends, and the cascade onto 'c' is observed exactly once in the recheck of the
-# remaining components (spec section 7.3).
-_COMPONENTS = [_component("a"), _component("c"), _component("b")]
-
-_CASES = [
-    # Isolated failure: 'b' fails alone, 'a' and 'c' still load -> no cascade.
-    {
-        "load_component": _isolated_loader,
-        "expect_count": 0,
-        "expect_code": None,
-    },
-    # Cascading failure: 'b' failing knocks out 'c' -> one startup_cascade failure.
-    {
-        "load_component": _make_cascading_loader(),
-        "expect_count": 1,
-        "expect_code": "startup_cascade",
-    },
-]
-
-
 def probe_test_startup_isolation():
-    """test_startup_isolation returns a startup_cascade failure when one component's load failure breaks another, and nothing when each component's load failure is isolated."""
     bad = []
-    for case in _CASES:
-        got = test_startup_isolation(_COMPONENTS, case["load_component"])
-        if len(got) != case["expect_count"]:
-            bad.append(
-                f"test_startup_isolation({_COMPONENTS}) produced {len(got)} "
-                f"finding(s): {got}, expected {case['expect_count']}"
-            )
-            continue
-        if case["expect_code"] is not None:
-            finding = got[0]
-            if finding["code"] != case["expect_code"]:
-                bad.append(
-                    f"test_startup_isolation(...) -> code {finding['code']!r}, "
-                    f"expected {case['expect_code']!r}"
-                )
-            if finding["kind"] != "failure":
-                bad.append(
-                    f"test_startup_isolation(...) -> kind {finding['kind']!r}, "
-                    "expected 'failure'"
-                )
+    broken = _component("broken")
+    healthy = _component("healthy")
+
+    # Clean: the loader fails only for "broken"; every other component loads regardless.
+    def load_isolated(component):
+        if component["name"] == "broken":
+            raise RuntimeError("broken fails to load on its own")
+        return component
+
+    clean = test_startup_isolation([broken, healthy], load_isolated)
+    if not isinstance(clean, list):
+        bad.append(f"test_startup_isolation should return a list, got {clean!r}")
+    elif clean != []:
+        bad.append(f"an isolated load failure should yield no findings, got {clean!r}")
+
+    # Violating: loading "trigger" poisons shared state so "dependent" then fails to load,
+    # which is a real cascade — the dependent cannot load once the trigger has failed.
+    trigger = _component("trigger")
+    dependent = _component("dependent")
+    poisoned = {"flag": False}
+
+    def load_cascading(component):
+        if component["name"] == "trigger":
+            poisoned["flag"] = True
+            raise RuntimeError("trigger fails to load")
+        if component["name"] == "dependent" and poisoned["flag"]:
+            raise RuntimeError("dependent cannot load after trigger failed")
+        return component
+
+    dirty = test_startup_isolation([trigger, dependent], load_cascading)
+    if not isinstance(dirty, list) or len(dirty) < 1:
+        bad.append(f"a cascading load failure should yield at least one finding, got {dirty!r}")
+    else:
+        for finding in dirty:
+            if not _is_finding(finding):
+                bad.append(f"each result should be a Finding carrying a code and a kind, got {finding!r}")
+                continue
+            if finding.get("code") != "startup_cascade":
+                bad.append(f"the code should be startup_cascade, got {finding.get('code')!r}")
+            if finding.get("kind") != "failure":
+                bad.append(f"a startup cascade is a failure, got kind {finding.get('kind')!r}")
+        joined = " ".join(f.get("message", "") for f in dirty if _is_finding(f))
+        if "trigger" not in joined or "dependent" not in joined:
+            bad.append(f"a cascade message should name the failing and the cascaded component, got {joined!r}")
+
     return bad
 
 
 def run():
-    bad = probe_test_startup_isolation()
-    for line in bad:
-        print(line)
-    print(f"probe_test_startup_isolation: {len(bad)} failure(s)")
-    return bad
+    messages = probe_test_startup_isolation()
+    for message in messages:
+        print(f"FAIL HT-probe [test_startup_isolation]: {message}")
+    print(f"test_startup_isolation: {0 if messages else 1} passed, {1 if messages else 0} failed, 1 total")
+    return 0 if not messages else 1
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

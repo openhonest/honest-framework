@@ -1,109 +1,73 @@
-"""Conformance fragment for the test_route_isolation scenario (honest-test.feature ~line 345).
+"""honest-test conformance: test_route_isolation.
 
-Scenario: test_route_isolation reports route_collision when two components define the same path.
-  Given components: list of Component
-  When test_route_isolation is called
-  Then it accumulates every component's route paths and returns a route_collision
-  failure Finding naming both components when a path is defined twice.
-  And it returns one failure per collided path, empty when every route path is unique.
-  And it reads no world and returns pure data.
+test_route_isolation(components) -> list<Finding> accumulates every component's route
+paths and returns a route_collision failure naming both components when a path is defined
+twice; one failure per collided path, the empty list when every route path is unique
+(honest-test-architecture.md section 7.2).
 
-Cases are data; one pure probe feeds them to the real honest_test.test_route_isolation
-and returns a list of failure strings (empty when every case holds). No classes, no mocks:
-the probe builds plain Component dicts and asserts on the returned Finding records' code
-("route_collision") and kind ("failure"), on the count of findings, and on both colliding
-component names appearing in the failure message.
-
-Its own fragment file so the other scenarios' fragments never collide with it.
-run_conformance.py / laws_htest.py are untouched.
+A pure check over a list of real Component records. This probe builds a clean set (unique
+paths) and a violating set (one path defined by two components) and asserts the findings.
+No classes, no mocks; a Finding is recognized by its own shape — a dict carrying a "code"
+and a "kind" — never raised.
 """
 
 from honest_test import test_route_isolation
 
 
+def _is_finding(value):
+    return isinstance(value, dict) and "code" in value and "kind" in value
+
+
 def _component(name, paths):
-    """A Component dict with an empty template and one ComponentRoute per path."""
-    return {"name": name, "template": "", "routes": [{"path": p} for p in paths]}
-
-
-_CASES = [
-    # (a) Two components define the same path "/dashboard" -> exactly one
-    # route_collision failure, and it names both components.
-    {
-        "given": [
-            _component("alpha", ["/dashboard"]),
-            _component("beta", ["/dashboard"]),
-        ],
-        "expect_count": 1,
-        "expect_names": {"alpha", "beta"},
-    },
-    # (b) Every route path is distinct across every component -> empty list.
-    {
-        "given": [
-            _component("alpha", ["/dashboard", "/alpha"]),
-            _component("beta", ["/beta", "/settings"]),
-            _component("gamma", ["/gamma"]),
-        ],
-        "expect_count": 0,
-        "expect_names": set(),
-    },
-    # (c) Three components, two collide on one path "/reports", the third is
-    # clean -> exactly one failure, for the one collided path.
-    {
-        "given": [
-            _component("alpha", ["/reports", "/alpha"]),
-            _component("beta", ["/reports"]),
-            _component("gamma", ["/gamma", "/settings"]),
-        ],
-        "expect_count": 1,
-        "expect_names": {"alpha", "beta"},
-    },
-]
+    return {"name": name, "template": "", "routes": [{"path": path} for path in paths]}
 
 
 def probe_test_route_isolation():
-    """test_route_isolation returns one route_collision failure per path two components share, naming both, and empty when every path is unique."""
     bad = []
-    for case in _CASES:
-        given = case["given"]
-        findings = test_route_isolation(components=given)
 
-        if len(findings) != case["expect_count"]:
-            bad.append(
-                f"test_route_isolation({given}) produced {len(findings)} findings, "
-                f"expected {case['expect_count']}"
-            )
-            continue
+    # Clean: every route path is unique across components.
+    clean = test_route_isolation([
+        _component("home", ["/"]),
+        _component("blog", ["/blog", "/blog/new"]),
+        _component("about", ["/about"]),
+    ])
+    if not isinstance(clean, list):
+        bad.append(f"test_route_isolation should return a list, got {clean!r}")
+    elif clean != []:
+        bad.append(f"unique route paths should yield no findings, got {clean!r}")
 
-        for finding in findings:
-            if finding["code"] != "route_collision":
-                bad.append(
-                    f"test_route_isolation({given}) -> finding code "
-                    f"{finding['code']!r}, expected 'route_collision'"
-                )
-            if finding["kind"] != "failure":
-                bad.append(
-                    f"test_route_isolation({given}) -> finding kind "
-                    f"{finding['kind']!r}, expected 'failure'"
-                )
-            missing = {n for n in case["expect_names"] if n not in finding["message"]}
-            if missing:
-                bad.append(
-                    f"test_route_isolation({given}) -> message "
-                    f"{finding['message']!r} does not name {missing}"
-                )
+    # Violating: two components both define "/dash".
+    dirty = test_route_isolation([
+        _component("alpha", ["/dash", "/alpha"]),
+        _component("beta", ["/dash"]),
+    ])
+    if not isinstance(dirty, list) or len(dirty) != 1:
+        bad.append(f"one path defined twice should yield exactly one finding, got {dirty!r}")
+    else:
+        finding = dirty[0]
+        if not _is_finding(finding):
+            bad.append(f"the result should be a Finding carrying a code and a kind, got {finding!r}")
+        else:
+            if finding.get("code") != "route_collision":
+                bad.append(f"the code should be route_collision, got {finding.get('code')!r}")
+            if finding.get("kind") != "failure":
+                bad.append(f"a route collision is a failure, got kind {finding.get('kind')!r}")
+            message = finding.get("message", "")
+            if "/dash" not in message:
+                bad.append(f"the message should name the collided path '/dash', got {message!r}")
+            if "alpha" not in message or "beta" not in message:
+                bad.append(f"the message should name both components, got {message!r}")
+
     return bad
 
 
 def run():
-    bad = probe_test_route_isolation()
-    for line in bad:
-        print(line)
-    print(f"probe_test_route_isolation: {len(bad)} failure(s)")
-    return bad
+    messages = probe_test_route_isolation()
+    for message in messages:
+        print(f"FAIL HT-probe [test_route_isolation]: {message}")
+    print(f"test_route_isolation: {0 if messages else 1} passed, {1 if messages else 0} failed, 1 total")
+    return 0 if not messages else 1
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

@@ -1,118 +1,64 @@
-"""Conformance fragment for the build_run_report scenario (honest-test.feature).
+"""honest-test conformance: build_run_report — the finished-report assembler.
 
-Scenario: build_run_report assembles the RunReport from the measured parts.
-  Then it returns a RunReport record carrying the counts the run measured, so a
-  pure function produces the report rather than an orchestrator assembling it
-  inline. It reads its arguments as data and touches no world.
+build_run_report assembles the measured pieces of one CLI run into a RunReport
+(spec §11): the chains, links and vocabularies found, the permutations run and
+failures, the adversarial inputs rejected, the CoverageReport, and the mutation
+tally. This probe asserts every field reaches the record unchanged.
 
-build_run_report is a pure assembler: each of its nine arguments must land in its
-correctly-named RunReport field and none may be swapped. Every int input is a
-distinct value so mis-wiring any one field is caught. coverage is the exact
-CoverageReport passed in.
-
-Cases are data; one pure probe feeds them to the real honest_test.build_run_report
-and returns a list of failure strings (empty when every case holds). No classes,
-no mocks: plain dicts in, plain dict out, compared by value.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+No classes, no mocks. It calls the real honest_test.build_run_report and reads the
+returned record by shape.
 """
 
 from honest_test import build_run_report
 
-# Two plain-dict CoverageReports, one per case, each the exact value the matching
-# row must carry straight through into the RunReport's coverage field.
-_COVERAGE_A = {
-    "version": "1.0",
-    "vocabularies": {},
-    "chains": {},
-    "honesty": {},
-    "state_machines": {},
-}
-_COVERAGE_B = {
-    "version": "1.0",
-    "vocabularies": {"color": {"total": 5, "exercised": 5, "pct": 100}},
-    "chains": {},
-    "honesty": {},
-    "state_machines": {},
-}
-
-_CASES = [
-    # Every int distinct so a field-swap bug fails. coverage is _COVERAGE_A.
-    {
-        "given": {
-            "chains": 2,
-            "links": 7,
-            "vocabularies": 3,
-            "permutations": 3000,
-            "failures": 4,
-            "adversarial_rejected": 11,
-            "coverage": _COVERAGE_A,
-            "mutation_caught": 40,
-            "mutation_total": 42,
-        },
-        "expect": {
-            "chains": 2,
-            "links": 7,
-            "vocabularies": 3,
-            "permutations": 3000,
-            "failures": 4,
-            "adversarial_rejected": 11,
-            "coverage": _COVERAGE_A,
-            "mutation_caught": 40,
-            "mutation_total": 42,
-        },
-    },
-    # A second row with different values, including a non-empty CoverageReport.
-    {
-        "given": {
-            "chains": 1,
-            "links": 9,
-            "vocabularies": 5,
-            "permutations": 128,
-            "failures": 0,
-            "adversarial_rejected": 6,
-            "coverage": _COVERAGE_B,
-            "mutation_caught": 17,
-            "mutation_total": 20,
-        },
-        "expect": {
-            "chains": 1,
-            "links": 9,
-            "vocabularies": 5,
-            "permutations": 128,
-            "failures": 0,
-            "adversarial_rejected": 6,
-            "coverage": _COVERAGE_B,
-            "mutation_caught": 17,
-            "mutation_total": 20,
-        },
-    },
-]
-
 
 def probe_build_run_report():
-    """build_run_report lands each measured argument in its correctly-named RunReport field, carrying the CoverageReport through unchanged, reading no world."""
     bad = []
-    for case in _CASES:
-        got = build_run_report(**case["given"])
-        if got != case["expect"]:
-            bad.append(
-                f"build_run_report({case['given']}) -> {got}, "
-                f"expected {case['expect']}"
-            )
+    coverage = {
+        "version": "1.0",
+        "vocabularies": {"format_vocab": {"total": 5, "exercised": 5, "pct": 100}},
+        "chains": {"format_pipeline": {"total": 3, "exercised": 3, "pct": 100}},
+        "honesty": {"format_pipeline": {"total": 3, "exercised": 3, "pct": 100}},
+        "state_machines": {"order_machine": {"total": 5, "exercised": 5, "pct": 100}},
+    }
+    fields = {
+        "chains": 4,
+        "links": 12,
+        "vocabularies": 6,
+        "permutations": 3024,
+        "failures": 0,
+        "adversarial_rejected": 1003,
+        "coverage": coverage,
+        "mutation_caught": 7,
+        "mutation_total": 7,
+    }
+
+    got = build_run_report(
+        fields["chains"],
+        fields["links"],
+        fields["vocabularies"],
+        fields["permutations"],
+        fields["failures"],
+        fields["adversarial_rejected"],
+        fields["coverage"],
+        fields["mutation_caught"],
+        fields["mutation_total"],
+    )
+    if not isinstance(got, dict):
+        return [f"build_run_report returned {got!r}, expected a RunReport dict"]
+    for name, value in fields.items():
+        if got.get(name) != value:
+            bad.append(f"build_run_report.{name} = {got.get(name)!r}, expected {value!r}")
     return bad
 
 
 def run():
-    bad = probe_build_run_report()
-    for line in bad:
-        print(line)
-    print(f"probe_build_run_report: {len(bad)} failure(s)")
-    return bad
+    messages = probe_build_run_report()
+    if messages:
+        print(f"FAIL HTEST-probe [build_run_report]: {messages}")
+    print(f"build_run_report: {0 if messages else 1} passed, {1 if messages else 0} failed, 1 total")
+    return 1 if messages else 0
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

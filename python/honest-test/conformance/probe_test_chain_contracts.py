@@ -1,118 +1,97 @@
-"""Conformance fragment for the test_chain_contracts scenario (honest-test.feature).
+"""honest-test conformance: test_chain_contracts checks each adjacent link join.
 
-Scenario: test_chain_contracts checks each adjacent pair of links and reports
-  chain_contract on a broken join.
-  Then for each adjacent pair it enumerates the input cases the upstream link
-  accepts, runs the upstream link, and when that produces an ok manifest feeds it
-  to the downstream link.
-  And it returns a chain_contract failure Finding when the downstream link rejects
-  that valid output with a server fault.
-  And a client fault from the downstream link is not a contract failure — only a
-  server fault indicates a broken join.
-  And it returns one failure per broken join, empty when every join holds.
+Spec section 4.6, feature "test_chain_contracts checks each adjacent link join", .hd
+test_chain_contracts. For each adjacent pair it enumerates the input cases the upstream
+link accepts, runs the upstream link, and when that produces a manifest feeds it to the
+downstream link, returning a chain_contract failure when the downstream link rejects that
+valid output with a server fault. A client fault from the downstream link is not a
+contract failure — only a server fault indicates a broken join.
 
-Cases are data; one pure probe feeds them to the real function and returns a list
-of failure strings (empty when every case holds). No classes, no mocks: the links
-are plain functions injected as real test inputs, each taking a manifest and
-returning honest-type's real ok/err Result built with ok(), err() and fault(). The
-vocab and binding are built with the real honest_type.vocabulary and
-honest_type.binding, and the probe calls the real honest_test.test_chain_contracts.
-
-A singleton Set vocabulary makes enumerate_test_cases yield exactly one input
-manifest per link, so "one failure per broken join" is one failure, however the
-engine counts — the join-count and the manifest-count agree at one.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+No classes, no mocks. The links are real pure functions defined here and injected as a
+list. The vocabulary and binding are genuine honest-type values that drive the case
+enumeration. A link returns the bare-union shape every real link returns since the
+bare-union migration: a bare manifest, or a bare Fault carrying a "code" and a "category"
+("server" or "client"), recognized by is_fault — never wrapped in an ok/err envelope. A
+Finding carries a "code" and a "kind".
 """
 
-from honest_type import binding, fault, vocabulary
+from honest_type import binding, fault, is_fault, vocabulary
 
 from honest_test import test_chain_contracts
 
-# One Set of one member: enumerate_test_cases yields exactly one input manifest,
-# so a broken join produces exactly one failure and the count is unambiguous.
-_VOCAB = vocabulary({"color": {"red"}})
+_VOCAB = vocabulary({"color": {"alpha", "beta", "gamma"}})
 _BINDING = binding({"color": "color"})
 
 
-def _accept(manifest):
-    """A link that accepts its input and passes the manifest on bare (no ok/err envelope)."""
+def _codes(findings):
+    return [f.get("code") for f in findings if isinstance(f, dict)]
+
+
+def _upstream(manifest):
+    """Produces a bare manifest the downstream link must accept — no ok() wrapper."""
+    return {"token": "x"}
+
+
+def _downstream_good(manifest):
+    """Accepts the upstream's valid output and returns a bare manifest — the join holds."""
     return manifest
 
 
-def _server_reject(manifest):
-    """A downstream link that rejects a valid upstream output with a SERVER fault:
-    a broken join, every valid output of one link must be accepted by the next. Returns the
-    Fault bare (honest-type 12.1)."""
-    return fault("broken_join", "rejected valid upstream output", "server", [], {})
+def _downstream_server_fault(manifest):
+    """Rejects the upstream's valid output with a bare server fault — the broken join."""
+    return fault("rejected", "downstream refused a valid upstream output", "server", [], {})
 
 
-def _client_reject(manifest):
-    """A downstream link that rejects with a CLIENT fault: not a broken join, the
-    server-vs-client carve-out the scenario pins. Returns the Fault bare."""
-    return fault("bad_input", "rejected as client error", "client", [], {})
+def _downstream_client_fault(manifest):
+    """Rejects with a bare client fault — not a contract failure."""
+    return fault("bad_input", "downstream reports a client error", "client", [], {})
 
 
-_CASES = [
-    # Every join holds: both links accept the upstream ok output -> empty list.
-    {
-        "links": [_accept, _accept],
-        "expect_failures": 0,
-    },
-    # One broken join: the downstream link returns a SERVER fault on a valid
-    # upstream output -> exactly one chain_contract failure. This is the literal,
-    # non-trivial case a `return []` stub cannot pass.
-    {
-        "links": [_accept, _server_reject],
-        "expect_failures": 1,
-    },
-    # The client-fault carve-out: the downstream link returns a CLIENT fault on a
-    # valid upstream output -> NOT a contract failure, empty list. The explicit
-    # absence case, written out, not left to a default.
-    {
-        "links": [_accept, _client_reject],
-        "expect_failures": 0,
-    },
-]
+def _upstream_fault(manifest):
+    """Rejects its own input with a bare fault: there is no valid output to check downstream."""
+    return fault("upstream_reject", "upstream refused the input", "client", [], {})
 
 
 def probe_test_chain_contracts():
-    """test_chain_contracts reports a chain_contract failure Finding when a downstream link rejects a valid upstream output with a server fault, treats a client fault as no violation, and is empty when every join holds."""
     bad = []
-    for case in _CASES:
-        findings = test_chain_contracts(case["links"], _VOCAB, _BINDING)
-        if len(findings) != case["expect_failures"]:
-            bad.append(
-                f"test_chain_contracts({[f.__name__ for f in case['links']]}) "
-                f"returned {len(findings)} finding(s), "
-                f"expected {case['expect_failures']}: {findings}"
-            )
-            continue
-        # On the broken-join case, pin the exact grade and code of the Finding.
-        for finding in findings:
-            if finding["code"] != "chain_contract":
-                bad.append(
-                    f"test_chain_contracts({[f.__name__ for f in case['links']]}) "
-                    f"finding code {finding['code']!r}, expected 'chain_contract'"
-                )
-            if finding["kind"] != "failure":
-                bad.append(
-                    f"test_chain_contracts({[f.__name__ for f in case['links']]}) "
-                    f"finding kind {finding['kind']!r}, expected 'failure'"
-                )
+
+    if is_fault(_VOCAB):
+        return [f"the test vocabulary did not build: {_VOCAB!r}"]
+
+    holds = test_chain_contracts([_upstream, _downstream_good], _VOCAB, _BINDING)
+    if holds != []:
+        bad.append(f"a chain whose every join holds should yield no finding, got {holds!r}")
+
+    broken = test_chain_contracts([_upstream, _downstream_server_fault], _VOCAB, _BINDING)
+    if not broken or set(_codes(broken)) != {"chain_contract"}:
+        bad.append(
+            f"a downstream link rejecting a valid upstream output with a server fault "
+            f"should yield chain_contract failures, got {broken!r}"
+        )
+    elif {f.get("kind") for f in broken} != {"failure"}:
+        bad.append(f"a chain_contract finding must be graded a failure, got {broken!r}")
+
+    client = test_chain_contracts([_upstream, _downstream_client_fault], _VOCAB, _BINDING)
+    if client != []:
+        bad.append(f"a client fault from the downstream link is not a contract failure, got {client!r}")
+
+    up_faults = test_chain_contracts([_upstream_fault, _downstream_server_fault], _VOCAB, _BINDING)
+    if up_faults != []:
+        bad.append(
+            "when the upstream link faults there is no valid output to check downstream, "
+            f"so no finding, got {up_faults!r}"
+        )
+
     return bad
 
 
 def run():
-    bad = probe_test_chain_contracts()
-    for line in bad:
-        print(line)
-    print(f"probe_test_chain_contracts: {len(bad)} failure(s)")
-    return bad
+    messages = probe_test_chain_contracts()
+    for message in messages:
+        print(f"FAIL HT-probe [test_chain_contracts]: {message}")
+    print(f"test_chain_contracts: {'passed' if not messages else f'{len(messages)} failed'}")
+    return 0 if not messages else 1
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

@@ -1,100 +1,65 @@
-"""Conformance fragment for the verify_purity scenario (honest-test.feature).
+"""honest-test conformance: verify_purity runs a link twice and flags a different result.
 
-Scenario: verify_purity runs a link twice on the same manifest and reports a
-  non_deterministic failure when results differ.
-  Then it runs the link twice on the same manifest and returns a
-  non_deterministic failure Finding when the two results differ, because a pure
-  function must return the same output for the same input.
-  And it returns the failure as a one-element list, or the empty list when the
-  link is pure.
-  And it performs no I/O of its own; any effect belongs to the injected link.
+Spec section 4.1, feature "verify_purity runs a link twice and flags a different
+result", .hd verify_purity. A pure function must return the same output for the same
+input, always: verify_purity runs the injected link twice on one manifest and returns a
+non_deterministic failure when the two results differ, the empty list when they match.
 
-Cases are data; one pure probe feeds them to the real function and returns a list
-of failure strings (empty when every case holds). No classes, no mocks, no
-monkeypatching: the link is a real Callable injected as test input. A Manifest is
-a plain dict (honest-type's manifest shape). It calls the real
-honest_test.verify_purity.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+No classes, no mocks. The link handed in is a real pure function defined here, used as
+test input, not a stand-in: one genuinely pure link whose output depends only on its
+manifest, and one deliberately impure link that returns a different result each call. A
+Finding is recognized by its own shape — it carries a "code" and a "kind".
 """
 
 from honest_test import verify_purity
 
 
-def pure_link(manifest):
-    """A pure link: same input, same output, every call. Mutates nothing."""
-    return {**manifest, "seen": True}
+def _codes(findings):
+    return [f.get("code") for f in findings if isinstance(f, dict)]
 
 
-# A drifting link: identical input, different output each call. The module-level
-# counter makes the second run differ from the first, which is exactly the
-# non-determinism verify_purity must catch.
-_DRIFT_COUNTER = {"n": 0}
+def _pure_link(manifest):
+    """Deterministic: the output depends only on the manifest, so two runs match."""
+    return {"ok": {"size": len(manifest)}}
 
 
-def drifting_link(manifest):
-    """A non-deterministic link: its output changes on each identical call."""
-    _DRIFT_COUNTER["n"] += 1
-    return {**manifest, "call": _DRIFT_COUNTER["n"]}
+def _make_impure_link():
+    """A link that returns a different result on each call — the non-deterministic case."""
+    state = {"n": 0}
 
+    def link(manifest):
+        state["n"] += 1
+        return {"ok": {"n": state["n"]}}
 
-_CASES = [
-    # A pure link run twice on the same manifest agrees with itself: no finding.
-    {
-        "link": pure_link,
-        "test_manifest": {"color": "red", "size": "small"},
-        "expect_codes": [],
-    },
-    # A drifting link returns a different result the second time: one
-    # non_deterministic failure Finding, returned as a one-element list.
-    {
-        "link": drifting_link,
-        "test_manifest": {"color": "red", "size": "small"},
-        "expect_codes": ["non_deterministic"],
-    },
-]
+    return link
 
 
 def probe_verify_purity():
-    """verify_purity returns one non_deterministic failure Finding when a link gives different results on identical input, and the empty list when the link is pure."""
     bad = []
-    for case in _CASES:
-        got = verify_purity(case["link"], case["test_manifest"])
-        if not isinstance(got, list):
-            bad.append(
-                f"verify_purity({case['link'].__name__}) -> {got!r}, "
-                f"expected a list"
-            )
-            continue
-        got_codes = [f["code"] for f in got]
-        if got_codes != case["expect_codes"]:
-            bad.append(
-                f"verify_purity({case['link'].__name__}) produced codes "
-                f"{got_codes}, expected {case['expect_codes']}"
-            )
-            continue
-        # For the failing case, pin the grade too: a non_deterministic finding
-        # is a failure, never a warning or rejection.
-        for finding in got:
-            if finding["kind"] != "failure":
-                bad.append(
-                    f"verify_purity({case['link'].__name__}) finding "
-                    f"{finding['code']} has kind {finding['kind']!r}, "
-                    f"expected 'failure'"
-                )
+
+    clean = verify_purity(_pure_link, {"slot": "value"})
+    if clean != []:
+        bad.append(f"a pure link run twice on one manifest should yield no finding, got {clean!r}")
+
+    dirty = verify_purity(_make_impure_link(), {"slot": "value"})
+    if _codes(dirty) != ["non_deterministic"]:
+        bad.append(
+            f"a link returning a different result on identical input should yield one "
+            f"non_deterministic failure, got {dirty!r}"
+        )
+    elif dirty[0].get("kind") != "failure":
+        bad.append(f"the non_deterministic finding must be graded a failure, got kind {dirty[0].get('kind')!r}")
+
     return bad
 
 
 def run():
-    bad = probe_verify_purity()
-    for line in bad:
-        print(line)
-    print(f"probe_verify_purity: {len(bad)} failure(s)")
-    return bad
+    messages = probe_verify_purity()
+    for message in messages:
+        print(f"FAIL HT-probe [verify_purity]: {message}")
+    print(f"verify_purity: {'passed' if not messages else f'{len(messages)} failed'}")
+    return 0 if not messages else 1
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

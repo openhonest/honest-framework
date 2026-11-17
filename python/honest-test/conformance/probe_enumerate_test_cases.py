@@ -1,115 +1,85 @@
-"""Conformance fragment for the enumerate_test_cases scenario (honest-test.feature).
+"""RED probe for honest-test.enumerate_test_cases — the link-input case builder (.hd, spec sections 3.2, 4.6).
 
-Scenario: enumerate_test_cases builds the input manifests a link accepts for
-chain-contract testing.
-  Given accepts: Vocabulary and binding: Binding
-  When enumerate_test_cases is called
-  Then it enumerates the vocabulary the way enumerate_sets does and resolves each
-  combination into a manifest through the binding, so each case is a ready input
-  for the link under test.
-  And it returns the list of manifests, reading no world and returning pure data.
-
-enumerate_test_cases is the binding-aware sibling of enumerate_sets. The one thing
-that distinguishes it: the manifest keys are the BINDING's slot names, not the
-vocabulary's type names. So when the binding maps type "color" -> slot "hue", the
-manifests are keyed "hue", not "color". Every case below pins that renaming with a
-literal expected manifest, so a stub returning [] (or one that forgets to rename)
-cannot pass.
-
-Cases are data; one pure probe feeds them to the real function and returns a list
-of failure strings (empty when every case holds). No classes, no mocks: it calls
-the real honest_type.vocabulary and honest_type.binding to build the inputs and the
-real honest_test.enumerate_test_cases to produce the output.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+enumerate_test_cases enumerates the vocabulary a link accepts the way enumerate_sets
+does, then resolves each combination into a manifest through the binding, so the slot
+each member fills is the binding slot name, not the type name. The same Maybe and
+predicate rules hold: a Maybe slot adds its absent arm, binding that slot to Nothing
+(a null value). It reads no world and returns pure data.
+honest-test has no code yet, so importing honest_test fails — the correct red state.
 """
 
-from honest_type import binding, vocabulary
+from honest_type import binding, maybe, vocabulary
 
 from honest_test import enumerate_test_cases
 
-# 150 distinct members for the scenario-sibling 5 x 150 x 4 = 3000 count literal.
-_B150 = {f"b{i}" for i in range(150)}
 
-_CASES = [
-    # Two Sets, with a binding that renames each type to a different slot. The
-    # Cartesian product is the four manifests below, written out by hand and keyed
-    # by the SLOT names ("hue", "dimension"), never the type names ("color",
-    # "size"). A stub returning [] cannot pass, and one that keeps the type names
-    # as keys cannot pass either.
-    {
-        "accepts": {"color": {"red", "green"}, "size": {"small", "large"}},
-        "binding": {"color": "hue", "size": "dimension"},
-        "expect_count": 4,
-        "expect_manifests": [
-            {"hue": "red", "dimension": "small"},
-            {"hue": "red", "dimension": "large"},
-            {"hue": "green", "dimension": "small"},
-            {"hue": "green", "dimension": "large"},
-        ],
-    },
-    # A singleton Set yields exactly one manifest, keyed by its renamed slot.
-    {
-        "accepts": {"only": {"x"}},
-        "binding": {"only": "payload"},
-        "expect_count": 1,
-        "expect_manifests": [{"payload": "x"}],
-    },
-    # The count literal shared with enumerate_sets: three Sets of 5, 150 and 4
-    # members yield all 3,000 cases, no sampling, with every type renamed to a
-    # slot. Content is not spelled out; the count is.
-    {
-        "accepts": {
-            "a": {"a0", "a1", "a2", "a3", "a4"},
-            "b": _B150,
-            "c": {"c0", "c1", "c2", "c3"},
-        },
-        "binding": {"a": "slot_a", "b": "slot_b", "c": "slot_c"},
-        "expect_count": 3000,
-        "expect_manifests": None,
-    },
-]
-
-
-def _as_set(manifests):
-    """A list of manifest dicts as a hashable set, so order is not asserted."""
+def _manifest_set(manifests):
+    """The list of manifest dicts as an order-independent set of frozensets of items."""
     return {frozenset(m.items()) for m in manifests}
 
 
+def _vocab(decls):
+    vocab = vocabulary(decls)
+    if isinstance(vocab, dict) and "code" in vocab:
+        return None, f"vocabulary({decls!r}) faulted: {vocab!r}"
+    return vocab, None
+
+
 def probe_enumerate_test_cases():
-    """enumerate_test_cases yields the full Cartesian product of every Set member, one manifest per combination, each manifest keyed by the binding's slot names rather than the vocabulary's type names."""
+    """enumerate_test_cases names each slot from the binding, builds the product across
+    two Sets, and adds the Nothing arm for a Maybe slot."""
     bad = []
-    for case in _CASES:
-        vocab = vocabulary(case["accepts"])
-        bind = binding(case["binding"])
-        got = enumerate_test_cases(vocab, bind)
-        if len(got) != case["expect_count"]:
-            bad.append(
-                f"enumerate_test_cases({case['accepts']}, {case['binding']}) "
-                f"produced {len(got)} manifests, expected {case['expect_count']}"
-            )
-            continue
-        if case["expect_manifests"] is not None:
-            got_set = _as_set(got)
-            want_set = _as_set(case["expect_manifests"])
-            if got_set != want_set:
-                bad.append(
-                    f"enumerate_test_cases({case['accepts']}, {case['binding']}) "
-                    f"-> {got_set}, expected {want_set}"
-                )
+
+    # The binding renames the type 'color' to the slot 'shade'.
+    one, err = _vocab({"color": {"crimson", "azure"}})
+    if err:
+        bad.append(err)
+    else:
+        got = _manifest_set(enumerate_test_cases(one, binding({"color": "shade"})))
+        want = {frozenset({("shade", "crimson")}), frozenset({("shade", "azure")})}
+        if got != want:
+            bad.append(f"one Set bound to 'shade' -> {got!r}, expected {want!r}")
+
+    # Two Sets, each renamed by the binding -> the 2x2 product on the slot names.
+    two, err = _vocab({"color": {"crimson", "azure"}, "size": {"small", "large"}})
+    if err:
+        bad.append(err)
+    else:
+        got = _manifest_set(enumerate_test_cases(two, binding({"color": "c", "size": "sz"})))
+        want = {
+            frozenset({("c", "crimson"), ("sz", "small")}),
+            frozenset({("c", "crimson"), ("sz", "large")}),
+            frozenset({("c", "azure"), ("sz", "small")}),
+            frozenset({("c", "azure"), ("sz", "large")}),
+        }
+        if got != want:
+            bad.append(f"two Sets bound to 'c'/'sz' -> {got!r}, expected the 4-case product {want!r}")
+
+    # A Maybe slot adds its absent arm: besides one case per member, one binding the
+    # slot to Nothing (a null value). A Maybe Set of 2 members -> 3 cases.
+    mb, err = _vocab({"color": {"crimson", "azure"}})
+    if err:
+        bad.append(err)
+    else:
+        got = _manifest_set(enumerate_test_cases(mb, binding({"color": maybe("shade")})))
+        want = {
+            frozenset({("shade", "crimson")}),
+            frozenset({("shade", "azure")}),
+            frozenset({("shade", None)}),
+        }
+        if got != want:
+            bad.append(f"a Maybe Set of 2 -> {got!r}, expected 3 cases incl. the Nothing arm {want!r}")
+
     return bad
 
 
 def run():
-    bad = probe_enumerate_test_cases()
-    for line in bad:
-        print(line)
-    print(f"probe_enumerate_test_cases: {len(bad)} failure(s)")
-    return bad
+    failures = probe_enumerate_test_cases()
+    for message in failures:
+        print(f"FAIL enumerate_test_cases: {message}")
+    print(f"enumerate_test_cases probe: {'PASS' if not failures else str(len(failures)) + ' failed'}")
+    return failures
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(1 if run() else 0)

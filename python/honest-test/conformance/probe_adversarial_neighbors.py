@@ -1,120 +1,62 @@
-"""Conformance fragment for the adversarial_neighbors scenario (honest-test.feature).
+"""honest-test conformance: adversarial_neighbors — the deduplicated union of five classes.
 
-Scenario: adversarial_neighbors generates the five classes of adversarial
-  neighbors of one value.
-  Then it returns the deduplicated union of edit-distance-1 neighbors, Unicode
-  confusables, control-character injections, length extensions and encoding
-  variants, with the original value removed.
+The spec fixes the composition (§3.5): adversarial_neighbors returns the deduplicated union
+of the edit-distance-1, Unicode-confusable, control-character, length-extension and
+encoding-variant classes, with the original value removed. This probe builds the known-good
+union from the real five class functions and asserts adversarial_neighbors equals it as a
+set, carries no duplicates, and never contains the original value.
 
-This probe asserts the union-and-dedup contract, not the exact membership of each
-class (sibling probes cover the five class functions). For a short value it pins:
-  (a) the result is non-empty and large;
-  (b) the original value is NOT present (it is removed);
-  (c) there are no duplicate entries (dedup: len(list) == len(set(list)));
-  (d) representative members from several classes are present at once -- an
-      edit-distance deletion, a case variant, a length repetition, a
-      control-character injection ('\\x00'), and a neighbor with a non-ASCII
-      codepoint.
-
-Cases are data; one pure probe feeds them to the real function and returns a list
-of failure strings (empty when every case holds). No classes, no mocks: it calls
-the real honest_test.adversarial_neighbors. It does not import the five class
-functions; it only calls adversarial_neighbors itself.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+No classes, no mocks. It calls the real honest_test functions and compares the union.
 """
 
-from honest_test import adversarial_neighbors
-
-_CASES = [
-    {
-        # "ab": deleting 'b' yields "a"; upper-casing yields "AB"; a length
-        # extension repeats the value ("ab" * 10). A control-character injection
-        # puts '\x00' into some neighbor; a confusable / encoding variant puts a
-        # non-ASCII codepoint into some neighbor.
-        "value": "ab",
-        "required_members": ["a", "AB", "ab" * 10],
-        "min_count": 20,
-    },
-    {
-        # "x7": deleting 'x' yields "7"; upper-casing yields "X7" (7 has no
-        # case); "x7" * 10 is the repetition length extension.
-        "value": "x7",
-        "required_members": ["7", "X7", "x7" * 10],
-        "min_count": 20,
-    },
-]
-
-
-def _has_control(neighbors):
-    """True when some neighbor carries a NUL control character."""
-    return any("\x00" in n for n in neighbors)
-
-
-def _has_non_ascii(neighbors):
-    """True when some neighbor carries a codepoint above the ASCII range."""
-    return any(any(ord(c) > 127 for c in n) for n in neighbors)
+from honest_test import (
+    adversarial_neighbors,
+    control_characters,
+    edit_distance_1,
+    encoding_variants,
+    length_extensions,
+    unicode_confusables,
+)
 
 
 def probe_adversarial_neighbors():
-    """adversarial_neighbors returns the deduplicated union of the five neighbor classes with the original value removed."""
     bad = []
-    for case in _CASES:
-        value = case["value"]
-        got = adversarial_neighbors(value)
+    value = "Ab"
+    expected = set(
+        edit_distance_1(value)
+        + unicode_confusables(value)
+        + control_characters(value)
+        + length_extensions(value)
+        + encoding_variants(value)
+    )
+    expected.discard(value)
 
-        # (a) non-empty and large
-        if len(got) < case["min_count"]:
-            bad.append(
-                f"adversarial_neighbors({value!r}) produced {len(got)} neighbors, "
-                f"expected at least {case['min_count']}"
-            )
+    got = adversarial_neighbors(value)
+    if not isinstance(got, list):
+        return [f"adversarial_neighbors({value!r}) -> {type(got).__name__}, expected a list"]
+    got_set = set(got)
 
-        # (b) the original value is removed
-        if value in got:
-            bad.append(
-                f"adversarial_neighbors({value!r}) still contains the original "
-                f"value {value!r}, which must be removed"
-            )
-
-        # (c) no duplicates (union, not naive concatenation)
-        if len(got) != len(set(got)):
-            dupes = len(got) - len(set(got))
-            bad.append(
-                f"adversarial_neighbors({value!r}) has {dupes} duplicate entry(ies); "
-                f"the union must be deduplicated (len {len(got)} != set len {len(set(got))})"
-            )
-
-        # (d) representative members from several classes
-        for member in case["required_members"]:
-            if member not in got:
-                bad.append(
-                    f"adversarial_neighbors({value!r}) is missing representative "
-                    f"neighbor {member!r}"
-                )
-        if not _has_control(got):
-            bad.append(
-                f"adversarial_neighbors({value!r}) has no control-character neighbor "
-                f"(none containing '\\x00')"
-            )
-        if not _has_non_ascii(got):
-            bad.append(
-                f"adversarial_neighbors({value!r}) has no neighbor with a non-ASCII "
-                f"codepoint (confusable or encoding variant)"
-            )
+    if value in got_set:
+        bad.append("adversarial_neighbors must remove the original value from the union")
+    if len(got) != len(got_set):
+        bad.append("adversarial_neighbors must deduplicate: the returned list carries duplicates")
+    if got_set != expected:
+        missing = expected - got_set
+        extra = got_set - expected
+        if missing:
+            bad.append(f"adversarial_neighbors is missing {len(missing)} neighbor(s) the five classes produce")
+        if extra:
+            bad.append(f"adversarial_neighbors produced {len(extra)} neighbor(s) no class produces")
     return bad
 
 
 def run():
-    bad = probe_adversarial_neighbors()
-    for line in bad:
-        print(line)
-    print(f"probe_adversarial_neighbors: {len(bad)} failure(s)")
-    return bad
+    messages = probe_adversarial_neighbors()
+    if messages:
+        print(f"FAIL HTEST-probe [adversarial_neighbors]: {messages}")
+    print(f"adversarial_neighbors: {0 if messages else 1} passed, {1 if messages else 0} failed, 1 total")
+    return 1 if messages else 0
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

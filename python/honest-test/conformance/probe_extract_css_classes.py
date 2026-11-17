@@ -1,71 +1,56 @@
-"""Conformance fragment for the extract_css_classes scenario (honest-test.feature).
+"""honest-test conformance: extract_css_classes.
 
-Scenario: extract_css_classes pulls the CSS class names out of a component's
-  template.
-  Then it returns the set of class names the component's rendered-HTML template
-  references, for test_css_isolation to intersect against another component's
-  (section 7.1). It reads no world and returns pure data.
+extract_css_classes(template) -> set<str> pulls the CSS class names a component's
+rendered HTML references out of its template, so test_css_isolation can intersect
+one component's classes against another's (honest-test-architecture.md section 7.1).
 
-Cases are data; one pure probe feeds them to the real function and returns a list
-of failure strings (empty when every case holds). No classes, no mocks: it calls
-the real honest_test.extract_css_classes on literal HTML templates and compares
-the returned set of class names against the literal set written out per case.
-
-The .hd note is silent on single- vs double-quoted class attributes, so every
-template below uses double quotes (see the Gaps block in the report). The return
-is set<str>, so each case compares as a set.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+A pure extractor: given a template string it returns exactly the set of class-attribute
+tokens the markup uses. This probe calls the real function and asserts its exact output
+on known templates. No classes, no mocks; every input is a real template string and the
+function called is the real honest_test function.
 """
 
 from honest_test import extract_css_classes
 
-_CASES = [
-    # (a) a single element with one class
-    {"given": {"template": '<div class="card"></div>'}, "expect": {"card"}},
-    # (b) multiple classes on one element
-    {
-        "given": {"template": '<div class="card card--active"></div>'},
-        "expect": {"card", "card--active"},
-    },
-    # (c) classes across several elements
-    {
-        "given": {"template": '<div class="a"><span class="b c"></span></div>'},
-        "expect": {"a", "b", "c"},
-    },
-    # (d) a template with no class attributes -> the explicit empty set
-    {"given": {"template": "<div><span>hello</span></div>"}, "expect": set()},
-    # (e) duplicate class names across elements collapse to one set entry
-    {
-        "given": {"template": '<p class="x"></p><p class="x"></p>'},
-        "expect": {"x"},
-    },
-]
-
 
 def probe_extract_css_classes():
-    """extract_css_classes returns the set of CSS class names a component's template references, collapsing duplicates and yielding the empty set when there are none."""
     bad = []
-    for case in _CASES:
-        got = extract_css_classes(**case["given"])
-        if got != case["expect"]:
-            bad.append(
-                f"extract_css_classes({case['given']}) -> {got}, "
-                f"expected {case['expect']}"
-            )
+
+    # A template that references four distinct classes across two class attributes.
+    template = '<div class="card card__body"><p class="card__text note">hi</p></div>'
+    got = extract_css_classes(template)
+    if not isinstance(got, (set, frozenset)):
+        bad.append(f"extract_css_classes should return a set, got {type(got).__name__}: {got!r}")
+    else:
+        expected = {"card", "card__body", "card__text", "note"}
+        if set(got) != expected:
+            bad.append(f"extract_css_classes({template!r}) -> {set(got)!r}, expected {expected!r}")
+
+    # One class, one attribute.
+    one = extract_css_classes('<span class="panel">x</span>')
+    if set(one) != {"panel"}:
+        bad.append(f"a single class should yield {{'panel'}}, got {set(one)!r}")
+
+    # No class attribute anywhere.
+    none = extract_css_classes("<section><p>plain text, no classes</p></section>")
+    if set(none) != set():
+        bad.append(f"a template with no class attribute should yield the empty set, got {set(none)!r}")
+
+    # Repeated class across elements collapses to one member (a set, not a list).
+    repeated = extract_css_classes('<a class="link">a</a><b class="link">b</b>')
+    if set(repeated) != {"link"}:
+        bad.append(f"a class used twice should appear once, got {set(repeated)!r}")
+
     return bad
 
 
 def run():
-    bad = probe_extract_css_classes()
-    for line in bad:
-        print(line)
-    print(f"probe_extract_css_classes: {len(bad)} failure(s)")
-    return bad
+    messages = probe_extract_css_classes()
+    for message in messages:
+        print(f"FAIL HT-probe [extract_css_classes]: {message}")
+    print(f"extract_css_classes: {0 if messages else 1} passed, {1 if messages else 0} failed, 1 total")
+    return 0 if not messages else 1
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

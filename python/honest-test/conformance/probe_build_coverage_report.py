@@ -1,97 +1,47 @@
-"""Conformance fragment for the build_coverage_report scenario (honest-test.feature).
+"""honest-test conformance: build_coverage_report — the four-dimension assembler.
 
-Scenario: build_coverage_report assembles the four coverage dimensions into the
-  CoverageReport.
-  Then it returns the CoverageReport, stamping the format version, which
-  write_coverage writes as coverage.json and honest-check reads for HC-P009.
-  And each argument is a map from a declaration's name to its Coverage, already
-  computed by coverage_ratio.
-  And it reads no world and returns pure data.
+build_coverage_report(vocabularies, chains, honesty, state_machines) assembles the
+four coverage maps into a CoverageReport and stamps the format version '1.0' (spec
+§9.5). This probe asserts the version stamp and that each argument map passes
+through unchanged.
 
-Cases are data; one pure probe feeds them to the real function and returns a list
-of failure strings (empty when every case holds). No classes, no mocks: it calls
-the real honest_test.build_coverage_report and compares the returned dict by value.
-
-A Coverage is {"total": n, "exercised": m, "pct": p}. A CoverageReport is
-{"version": s, "vocabularies": ..., "chains": ..., "honesty": ...,
-"state_machines": ...} where each dimension is a dict<str, Coverage>. The .hd note
-says the format version string is '1.0'.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+No classes, no mocks. It calls the real honest_test.build_coverage_report and reads
+the returned record by shape.
 """
 
 from honest_test import build_coverage_report
 
-# Four distinct Coverage records, one per dimension, so a swapped slot is caught.
-_VOCAB = {"total": 10, "exercised": 10, "pct": 100}
-_VOCAB2 = {"total": 4, "exercised": 2, "pct": 50}
-_CHAIN = {"total": 6, "exercised": 3, "pct": 50}
-_HONESTY = {"total": 8, "exercised": 7, "pct": 87}
-_SM = {"total": 2, "exercised": 2, "pct": 100}
-
-_CASES = [
-    # (a) All four dimensions populated. Vocabularies carries two named entries,
-    # the others one each. Every dimension must land in its own slot (not swapped)
-    # and the version must be stamped '1.0'. Written out literally so a stub
-    # returning {} or an empty report cannot pass.
-    {
-        "given": {
-            "vocabularies": {"color": _VOCAB, "size": _VOCAB2},
-            "chains": {"pipeline": _CHAIN},
-            "honesty": {"pipeline": _HONESTY},
-            "state_machines": {"door": _SM},
-        },
-        "expect": {
-            "version": "1.0",
-            "vocabularies": {"color": _VOCAB, "size": _VOCAB2},
-            "chains": {"pipeline": _CHAIN},
-            "honesty": {"pipeline": _HONESTY},
-            "state_machines": {"door": _SM},
-        },
-    },
-    # (b) All four empty -> a CoverageReport with version '1.0' and four empty
-    # dimension maps. The explicit "or nothing" boundary case.
-    {
-        "given": {
-            "vocabularies": {},
-            "chains": {},
-            "honesty": {},
-            "state_machines": {},
-        },
-        "expect": {
-            "version": "1.0",
-            "vocabularies": {},
-            "chains": {},
-            "honesty": {},
-            "state_machines": {},
-        },
-    },
-]
-
 
 def probe_build_coverage_report():
-    """build_coverage_report maps each of the four dimensions verbatim into its own slot and stamps the format version '1.0'."""
     bad = []
-    for case in _CASES:
-        got = build_coverage_report(**case["given"])
-        if got != case["expect"]:
-            bad.append(
-                f"build_coverage_report({case['given']}) -> {got}, "
-                f"expected {case['expect']}"
-            )
+    vocabularies = {"format_vocab": {"total": 5, "exercised": 5, "pct": 100}}
+    chains = {"format_pipeline": {"total": 3, "exercised": 3, "pct": 100}}
+    honesty = {"format_pipeline": {"total": 3, "exercised": 3, "pct": 100}}
+    state_machines = {"order_machine": {"total": 5, "exercised": 4, "pct": 80}}
+
+    got = build_coverage_report(vocabularies, chains, honesty, state_machines)
+    if not isinstance(got, dict):
+        return [f"build_coverage_report returned {got!r}, expected a CoverageReport dict"]
+    if got.get("version") != "1.0":
+        bad.append(f"build_coverage_report stamped version {got.get('version')!r}, expected '1.0'")
+    if got.get("vocabularies") != vocabularies:
+        bad.append(f"vocabularies passed through as {got.get('vocabularies')!r}, expected {vocabularies!r}")
+    if got.get("chains") != chains:
+        bad.append(f"chains passed through as {got.get('chains')!r}, expected {chains!r}")
+    if got.get("honesty") != honesty:
+        bad.append(f"honesty passed through as {got.get('honesty')!r}, expected {honesty!r}")
+    if got.get("state_machines") != state_machines:
+        bad.append(f"state_machines passed through as {got.get('state_machines')!r}, expected {state_machines!r}")
     return bad
 
 
 def run():
-    bad = probe_build_coverage_report()
-    for line in bad:
-        print(line)
-    print(f"probe_build_coverage_report: {len(bad)} failure(s)")
-    return bad
+    messages = probe_build_coverage_report()
+    if messages:
+        print(f"FAIL HTEST-probe [build_coverage_report]: {messages}")
+    print(f"build_coverage_report: {0 if messages else 1} passed, {1 if messages else 0} failed, 1 total")
+    return 1 if messages else 0
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

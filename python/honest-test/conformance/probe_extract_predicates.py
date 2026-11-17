@@ -1,98 +1,79 @@
-"""Conformance fragment for the extract_predicates scenario (honest-test.feature).
+"""RED probe for honest-test.extract_predicates — the predicate-node finder (.hd, spec section 2).
 
-Scenario: extract_predicates walks a parsed tree and returns each recognizer
-  predicate node.
-  Then it returns one node per predicate found, each the body honest-test analyzes.
-  And an empty list means the file declares no predicates.
-  And it reads no world and returns pure data.
-
-The input is built by the REAL pipeline, never hand-constructed: parse_source turns
-a Python source snippet into a tree-sitter tree, and extract_predicates walks that
-tree. A recognizer predicate appears in source as a callable passed to honest-type's
-predicate(...) (honest-type-architecture.md §2, the Detection column analyzes the
-predicate body: len(s), s.isdigit(), int(s)). A Set recognizer contributes no
-predicate (§3.2), so a Set-only vocabulary declares none.
-
-Cases are data; one pure probe feeds them to the real functions and returns a list
-of failure strings (empty when every case holds). No classes, no mocks.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+extract_predicates walks a parsed source tree and returns one node per recognizer
+predicate the file declares — the body each predicate strategy then analyzes. A file
+declaring no recognizers yields the empty list. Recognizers are marked `@recognizer`
+(spec sections 1, 8.3); a plain function or a `@link` is not a recognizer predicate and
+is not returned. It reads no world and returns pure data.
+honest-test has no code yet, so importing honest_test fails — the correct red state.
 """
 
 from honest_test import extract_predicates, parse_source
 
-_CASES = [
-    # Two recognizer predicates, each a lambda passed to predicate(). A stub that
-    # returns [] fails this: the count literal 2 is written out, not computed.
-    {
-        "source": (
-            "from honest_type import vocabulary, predicate\n"
-            "\n"
-            "vocab = vocabulary({\n"
-            '    "short":  predicate(lambda s: len(s) <= 10),\n'
-            '    "digits": predicate(lambda s: s.isdigit()),\n'
-            "})\n"
-        ),
-        "expect_count": 2,
-    },
-    # One recognizer predicate.
-    {
-        "source": (
-            "from honest_type import vocabulary, predicate\n"
-            "\n"
-            'vocab = vocabulary({"small": predicate(lambda s: int(s) < 100)})\n'
-        ),
-        "expect_count": 1,
-    },
-    # The explicit absence case: a Set-only vocabulary declares no predicate, so
-    # extract_predicates returns the empty list.
-    {
-        "source": (
-            "from honest_type import vocabulary\n"
-            "\n"
-            'vocab = vocabulary({"color": {"red", "green", "blue"}})\n'
-        ),
-        "expect_count": 0,
-    },
-]
 
-
-def _is_tree_node(item):
-    """A tree-sitter node, not a string: it carries a `type` attribute and is not str."""
-    return not isinstance(item, str) and hasattr(item, "type")
+def _predicate_nodes(source):
+    """Parse source and return extract_predicates' node list for it."""
+    return extract_predicates(parse_source(source))
 
 
 def probe_extract_predicates():
-    """extract_predicates returns one tree-sitter node per recognizer predicate in the source, and the empty list when the source declares none."""
+    """extract_predicates returns one node per `@recognizer`-marked predicate, the empty
+    list when the file declares none, and ignores plain functions and `@link`s."""
     bad = []
-    for case in _CASES:
-        tree = parse_source(case["source"])
-        got = extract_predicates(tree)
-        if len(got) != case["expect_count"]:
-            bad.append(
-                f"extract_predicates(parse_source(...)) returned {len(got)} nodes, "
-                f"expected {case['expect_count']} for source:\n{case['source']}"
-            )
-            continue
-        non_nodes = [item for item in got if not _is_tree_node(item)]
-        if non_nodes:
-            bad.append(
-                f"extract_predicates returned non-node items {non_nodes!r} "
-                f"(expected tree-sitter nodes) for source:\n{case['source']}"
-            )
+
+    three = (
+        "@recognizer\n"
+        "def is_five(s):\n"
+        "    return len(s) == 5\n"
+        "\n"
+        "@recognizer\n"
+        "def is_digits(s):\n"
+        "    return s.isdigit()\n"
+        "\n"
+        "@recognizer\n"
+        "def is_positive(s):\n"
+        "    return int(s) > 0\n"
+    )
+    nodes = _predicate_nodes(three)
+    if not isinstance(nodes, list):
+        bad.append(f"extract_predicates returned {type(nodes).__name__}, expected a list of nodes")
+    elif len(nodes) != 3:
+        bad.append(f"a file with three recognizers must yield 3 predicate nodes, got {len(nodes)}")
+
+    # A file with no recognizer predicate yields the empty list.
+    empty = _predicate_nodes("x = 1\n\ndef helper(a, b):\n    return a + b\n")
+    if empty != []:
+        bad.append(f"a file declaring no recognizer must yield [], got {empty!r}")
+
+    # Only `@recognizer` predicates count: a plain function and a `@link` are excluded.
+    mixed = (
+        "@recognizer\n"
+        "def is_name(s):\n"
+        "    return s.isalpha()\n"
+        "\n"
+        "@link\n"
+        "def format_name(m):\n"
+        "    return m\n"
+        "\n"
+        "def plain(s):\n"
+        "    return len(s) == 3\n"
+    )
+    mixed_nodes = _predicate_nodes(mixed)
+    if len(mixed_nodes) != 1:
+        bad.append(
+            f"only the one `@recognizer` must be returned, not the `@link` or the plain def; got {len(mixed_nodes)}"
+        )
+
     return bad
 
 
 def run():
-    bad = probe_extract_predicates()
-    for line in bad:
-        print(line)
-    print(f"probe_extract_predicates: {len(bad)} failure(s)")
-    return bad
+    failures = probe_extract_predicates()
+    for message in failures:
+        print(f"FAIL extract_predicates: {message}")
+    print(f"extract_predicates probe: {'PASS' if not failures else str(len(failures)) + ' failed'}")
+    return failures
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(1 if run() else 0)

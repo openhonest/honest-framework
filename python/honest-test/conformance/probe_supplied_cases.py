@@ -1,97 +1,77 @@
-"""Conformance fragment for the supplied_cases scenario (honest-test.feature).
+"""RED probe for honest-test.supplied_cases — the external-lookup value resolver (.hd, spec section 3.6).
 
-Scenario: supplied_cases resolves one predicate's programmer-supplied values from
-  the config.
-  Then it returns a SuppliedCases carrying that predicate's valid and invalid
-  values when the config has an entry.
-  And it returns missing true with empty lists when the config has no entry, the
-  case the runner turns into a missing_supplied_values warning rather than
-  passing over.
-  And it reads no file: the supplied values entered through read_config at the
-  boundary, and it reads only the record it was handed.
-  And it returns pure data.
-
-Cases are data; one pure probe feeds them to the real honest_test.supplied_cases
-and returns a list of failure strings (empty when every case holds). No classes,
-no mocks: SuppliedConfig and SuppliedCases are plain dicts, compared by value.
-
-This is its own fragment file so the other scenarios' fragments never collide
-with it. run_conformance.py / laws_htest.py are untouched.
+supplied_cases looks one predicate up in the resolved SuppliedConfig the reader
+handed in. When the config holds an entry it returns that entry's valid and invalid
+lists with missing false; when it holds no entry it returns empty lists with missing
+true — the case the runner turns into a missing_supplied_values warning rather than
+passing over. It reads no file and returns pure data.
+honest-test has no code yet, so importing honest_test fails — the correct red state.
 """
 
 from honest_test import supplied_cases
 
-# A config with more than one predicate, so the lookup must pick the right one.
-_CONFIG = {
-    "is_country_code": {
-        "valid": ["US", "CA", "FR"],
-        "invalid": ["XX", "usa", ""],
-        "strategy": "supplied_only",
-    },
-    "is_known_currency": {
-        "valid": ["USD", "EUR"],
-        "invalid": ["ZZZ"],
-        "strategy": "supplied_only",
-    },
-}
-
-_CASES = [
-    # (a) predicate PRESENT: missing False, valid/invalid copied from its entry,
-    #     and the lookup picks is_country_code out of the two-predicate config.
-    {
-        "given": {"predicate_name": "is_country_code", "supplied_values": _CONFIG},
-        "expect": {
-            "valid": ["US", "CA", "FR"],
-            "invalid": ["XX", "usa", ""],
-            "missing": False,
-        },
-    },
-    # (a) the OTHER present predicate, to prove the lookup is by name not by
-    #     position: the second entry's own lists, not the first's.
-    {
-        "given": {"predicate_name": "is_known_currency", "supplied_values": _CONFIG},
-        "expect": {
-            "valid": ["USD", "EUR"],
-            "invalid": ["ZZZ"],
-            "missing": False,
-        },
-    },
-    # (b) predicate ABSENT: missing True with BOTH lists empty — the case the
-    #     runner turns into a missing_supplied_values warning.
-    {
-        "given": {"predicate_name": "is_timezone", "supplied_values": _CONFIG},
-        "expect": {"valid": [], "invalid": [], "missing": True},
-    },
-    # (b) absent against the empty config: same missing-True, both lists empty.
-    {
-        "given": {"predicate_name": "anything", "supplied_values": {}},
-        "expect": {"valid": [], "invalid": [], "missing": True},
-    },
-]
-
 
 def probe_supplied_cases():
-    """supplied_cases returns one predicate's supplied valid and invalid values when the config holds it, and missing true with two empty lists when it does not."""
+    """supplied_cases copies a present entry's valid and invalid values with missing
+    false, and reports missing true with empty lists when the predicate has no entry."""
     bad = []
-    for case in _CASES:
-        got = supplied_cases(**case["given"])
-        if got != case["expect"]:
-            bad.append(
-                f"supplied_cases({case['given']}) -> {got}, "
-                f"expected {case['expect']}"
-            )
+
+    # A resolved SuppliedConfig: a map from predicate name to its SuppliedEntry.
+    config = {
+        "customer_id": {
+            "valid": ["CUST-00001", "CUST-99999"],
+            "invalid": ["CUST-0", "cust-00001", "CUST-AAAAA"],
+            "strategy": "supplied_only",
+        },
+        "order_amount": {
+            "valid": [],
+            "invalid": [],
+            "strategy": "fibonacci",
+        },
+    }
+
+    present = supplied_cases("customer_id", config)
+    if not isinstance(present, dict):
+        bad.append(f"supplied_cases returned {type(present).__name__}, expected a SuppliedCases dict")
+    else:
+        if present.get("valid") != ["CUST-00001", "CUST-99999"]:
+            bad.append(f"customer_id valid = {present.get('valid')!r}, expected the two supplied values")
+        if present.get("invalid") != ["CUST-0", "cust-00001", "CUST-AAAAA"]:
+            bad.append(f"customer_id invalid = {present.get('invalid')!r}, expected the three supplied values")
+        if present.get("missing") is not False:
+            bad.append(f"customer_id missing = {present.get('missing')!r}, expected False for a present entry")
+
+    # A present entry carrying empty lists is still present — missing stays false.
+    empty_entry = supplied_cases("order_amount", config)
+    if empty_entry.get("valid") != [] or empty_entry.get("invalid") != []:
+        bad.append(f"order_amount lists should be empty: {empty_entry!r}")
+    if empty_entry.get("missing") is not False:
+        bad.append(f"order_amount missing = {empty_entry.get('missing')!r}, expected False: the entry exists")
+
+    # A predicate absent from the config: missing true, both lists empty.
+    absent = supplied_cases("unknown_predicate", config)
+    if absent.get("missing") is not True:
+        bad.append(f"an absent predicate must report missing True: {absent!r}")
+    if absent.get("valid") != [] or absent.get("invalid") != []:
+        bad.append(f"an absent predicate must carry empty lists: {absent!r}")
+
+    # The empty config: every lookup is missing.
+    none_at_all = supplied_cases("anything", {})
+    if none_at_all.get("missing") is not True:
+        bad.append(f"an empty config must report missing True: {none_at_all!r}")
+    if none_at_all.get("valid") != [] or none_at_all.get("invalid") != []:
+        bad.append(f"an empty config must carry empty lists: {none_at_all!r}")
+
     return bad
 
 
 def run():
-    bad = probe_supplied_cases()
-    for line in bad:
-        print(line)
-    print(f"probe_supplied_cases: {len(bad)} failure(s)")
-    return bad
+    failures = probe_supplied_cases()
+    for message in failures:
+        print(f"FAIL supplied_cases: {message}")
+    print(f"supplied_cases probe: {'PASS' if not failures else str(len(failures)) + ' failed'}")
+    return failures
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(1 if run() else 0)

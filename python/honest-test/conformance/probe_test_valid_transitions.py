@@ -1,94 +1,81 @@
-"""Conformance fragment for the test_valid_transitions scenario (honest-test.feature ~257).
+"""honest-test conformance: test_valid_transitions — every declared transition is correct.
 
-Scenario: test_valid_transitions exhaustively tests every declared transition.
-  Then for each (state, event) to next_state in the machine's transition table it
-  applies the event and returns a transition_incorrect failure Finding when the
-  result is not ok of the expected next state.
-  And it returns one failure per wrong transition, empty when every declared
-  transition is correct.
-  And run_transition is honest-type's transition applied to the machine, passed in
-  as a callable.
+The spec (§5.1): for each (state, event) -> next_state in the machine's transition table,
+apply the event and emit a transition_incorrect failure when the result is not ok of the
+expected next state. honest-type's bare-union model carries ok of a manifest as the manifest
+itself ({"state": next_state}) and a fault as a dict carrying "code". This probe builds a
+tiny turnstile machine as data and injects run_transition two ways: a correct one, which
+must yield no findings, and one that returns the wrong next state, which must yield one
+transition_incorrect failure per declared transition.
 
-Cases are data; one pure probe feeds them to the real function and returns a list
-of failure strings (empty when every case holds). No classes, no mocks: it builds a
-real StateMachine with honest_type.state_machine, passes honest_type.transition
-itself as the honest run_transition, and passes a plain deliberately-wrong function
-(real code as test input, not a double) as the failing run_transition.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+No classes, no mocks. It calls the real honest_test.test_valid_transitions.
 """
-
-from honest_type import state_machine, transition
 
 from honest_test import test_valid_transitions
 
-# A real turnstile machine with four declared transitions. Two of them land on
-# "unlocked", two on "locked".
-_MACHINE = state_machine(
-    states={"locked", "unlocked"},
-    events={"coin", "push"},
-    transitions={
-        ("locked", "coin"): "unlocked",
-        ("unlocked", "push"): "locked",
-        ("locked", "push"): "locked",
-        ("unlocked", "coin"): "unlocked",
-    },
-    initial="locked",
-)
+
+def _machine():
+    return {
+        "states": ["locked", "unlocked"],
+        "events": ["coin", "push"],
+        "transitions": {
+            ("locked", "coin"): "unlocked",
+            ("locked", "push"): "locked",
+            ("unlocked", "push"): "locked",
+        },
+        "initial": "locked",
+        "terminal": [],
+    }
 
 
-def _always_locked(machine, current_state, event):
-    """A deliberately-wrong run_transition: every event lands on "locked".
+def _correct_transition(machine, state, event):
+    """A correct transition: the next-state manifest on a declared pair, the matching
+    fault on an unknown state, unknown event, or undeclared pair."""
+    if state not in machine["states"]:
+        return {"code": "invalid_state"}
+    if event not in machine["events"]:
+        return {"code": "invalid_event"}
+    key = (state, event)
+    if key in machine["transitions"]:
+        return {"state": machine["transitions"][key]}
+    return {"code": "no_transition"}
 
-    It is a plain pure function used as test input, not a stand-in for transition.
-    The two declared transitions whose expected next state is "unlocked" -
-    (locked, coin) and (unlocked, coin) - come back wrong; the two expecting
-    "locked" come back right. So exactly two transition_incorrect failures.
-    """
-    return {"state": "locked"}
+
+def _wrong_next(machine, state, event):
+    """Buggy: a declared transition lands in the wrong next state."""
+    key = (state, event)
+    if key in machine["transitions"]:
+        return {"state": "WRONG"}
+    return _correct_transition(machine, state, event)
 
 
 def probe_test_valid_transitions():
-    """test_valid_transitions returns no failure when every declared transition is correct, and one transition_incorrect failure per wrong transition otherwise."""
     bad = []
+    machine = _machine()
 
-    # Honest case: the real transition is correct for every declared pair -> [].
-    honest = test_valid_transitions(_MACHINE, transition)
-    if honest != []:
-        bad.append(
-            f"test_valid_transitions(machine, real transition) -> {honest}, "
-            f"expected [] (every declared transition correct)"
-        )
+    clean = test_valid_transitions(machine, _correct_transition)
+    if clean != []:
+        bad.append(f"every declared transition correct should yield no findings, got {clean!r}")
 
-    # Failing case: the wrong run_transition lands two declared transitions on the
-    # wrong next state -> exactly two transition_incorrect failures.
-    wrong = test_valid_transitions(_MACHINE, _always_locked)
-    if len(wrong) != 2:
-        bad.append(
-            f"test_valid_transitions(machine, _always_locked) produced "
-            f"{len(wrong)} failures, expected 2"
-        )
-    for finding in wrong:
-        if finding["code"] != "transition_incorrect":
-            bad.append(
-                f"finding code {finding['code']!r}, expected 'transition_incorrect'"
-            )
-        if finding["kind"] != "failure":
-            bad.append(f"finding kind {finding['kind']!r}, expected 'failure'")
-
+    flagged = test_valid_transitions(machine, _wrong_next)
+    declared = len(machine["transitions"])
+    if len(flagged) != declared:
+        bad.append(f"a wrong next state should yield one finding per declared transition ({declared}), got {len(flagged)}")
+    for f in flagged:
+        if f.get("code") != "transition_incorrect":
+            bad.append(f"a wrong transition should carry code 'transition_incorrect', got {f.get('code')!r}")
+        if f.get("kind") != "failure":
+            bad.append(f"a transition_incorrect finding should be a failure, got kind {f.get('kind')!r}")
     return bad
 
 
 def run():
-    bad = probe_test_valid_transitions()
-    for line in bad:
-        print(line)
-    print(f"probe_test_valid_transitions: {len(bad)} failure(s)")
-    return bad
+    messages = probe_test_valid_transitions()
+    if messages:
+        print(f"FAIL HTEST-probe [test_valid_transitions]: {messages}")
+    print(f"test_valid_transitions: {0 if messages else 1} passed, {1 if messages else 0} failed, 1 total")
+    return 1 if messages else 0
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

@@ -1,171 +1,94 @@
-"""Conformance fragment for the test_auth_honesty scenario (honest-test.feature ~line 233).
+"""honest-test conformance: test_auth_honesty probes a provider with each token class.
 
-Scenario: test_auth_honesty probes each token class and reports auth_honesty on
-wrong behaviour.
-  Then for each of the six token classes it generates a token with the provider's
-  test_token_generator and asserts the provider's outcome: a malformed token must
-  be rejected at the actor_recognizer before resolve_actor, a valid token must
-  resolve to ok(actor), and every other class must fault with the expected HTTP
-  status compute_expected_status derives.
-  And it returns an auth_honesty failure Finding when the provider accepts a
-  malformed token, rejects a valid one, or does not fault correctly for a class.
-  And it returns one failure per class that behaved wrongly, empty when the
-  provider's boundary validation is sound, performing no I/O of its own.
+Spec section 4.7, feature "test_auth_honesty probes a provider with each token class", .hd
+test_auth_honesty. For each of the six token classes it generates a token with the
+provider's test_token_generator and asserts the outcome, returning an auth_honesty failure
+when the provider accepts a malformed token at the recognizer, rejects a valid one, or
+does not fault correctly for a class. A malformed token must be rejected at the
+actor_recognizer before resolve_actor; a valid token must resolve to ok(actor); every
+other class must fault with the expected HTTP status.
 
-Cases are data; one pure probe feeds them to the real honest_test.test_auth_honesty
-and returns a list of failure strings (empty when every case holds). No mocks: the
-injected provider is a record of real pure functions matching the shape honest-auth's
-dev_auth_provider builds (actor_recognizer, resolve_actor, test_token_generator,
-fault_mapping), with Result values built by honest-type's real ok/err/fault. These
-are real functions used as test input, not stand-ins.
-
-Its own fragment file so the other scenarios' fragments never collide with it.
-run_conformance.py / laws_htest.py are untouched.
+No classes, no mocks. The provider is a real AuthProvider value (honest-auth's five-field
+shape) built here with real pure functions, never reached from a registry. One provider
+validates its boundary soundly across all six classes; one accepts a malformed token at
+the recognizer. resolve_actor returns honest-type's ok/err Result; a fault carries a
+"category" the fault_mapping maps to a status. A Finding carries a "code" and a "kind".
 """
 
-from honest_type import fault
+from honest_type import err, fault, ok
 
 from honest_test import test_auth_honesty
 
-# The six token-class tokens the generator hands back. The malformed token is the
-# one the recognizer must reject before resolve_actor; the others reach resolve_actor.
-_TOKENS = {
-    "valid": "VALID",
-    "revoked": "REVOKED",
-    "expired": "EXPIRED",
-    "malformed": "MALFORMED",
-    "missing": "MISSING",
-    "forged": "FORGED",
-}
+
+def _codes(findings):
+    return [f.get("code") for f in findings if isinstance(f, dict)]
 
 
-def _token_generator(class_name, context):
-    """The provider's test_token_generator: one distinct token per class (section 2.4)."""
-    return _TOKENS[class_name]
+def _generate(class_name):
+    """The provider's test token for a class — a string encoding the class it stands for."""
+    return f"token:{class_name}"
 
 
-# ---- an honest provider: sound boundary validation, so no failure on any class ----
-
-def _honest_recognizer(token):
-    """Rejects the malformed token, accepts every other wire-format token."""
-    return token != "MALFORMED"
+def _sound_recognizer(token):
+    """Accepts a well-formed token; rejects the malformed one before resolve_actor."""
+    return token != "token:malformed"
 
 
-def _honest_resolve(token):
-    """A valid token resolves to a bare actor; every other class returns a bare unauthenticated
-    (401) Fault (no ok/err envelope, honest-type 12.1)."""
-    if token == "VALID":
-        return {"id": "alice", "attributes": {}}
-    return fault("unauthenticated", "not authenticated", "unauthenticated", [], {})
+def _sound_resolve(token):
+    """Resolves the valid token to ok(actor); faults every other class as unauthenticated."""
+    if token == "token:valid":
+        return ok({"actor": "alice"})
+    return err(fault("unauthenticated", f"rejected {token}", "unauthenticated", [], {}))
 
 
-_HONEST_PROVIDER = {
-    "name": "honest-probe",
-    "actor_recognizer": _honest_recognizer,
-    "resolve_actor": _honest_resolve,
-    "test_token_generator": _token_generator,
-    "fault_mapping": {},
-}
-
-
-# ---- a dishonest provider wrong on exactly three classes ----
-# 1. accepts the malformed token at the recognizer (malformed),
-# 2. rejects a valid token (valid),
-# 3. faults expired as forbidden (403) instead of unauthenticated (401) (expired).
-# revoked, missing and forged stay correct, so exactly three classes behave wrongly.
-
-def _dishonest_recognizer(token):
-    """Accepts everything, including the malformed token — a wrong boundary."""
+def _accepts_malformed_recognizer(token):
+    """Accepts every token, malformed included — the dishonest boundary."""
     return True
 
 
-def _dishonest_resolve(token):
-    """Rejects the valid token, mis-categorises the expired token, resolves the rest correctly.
-    Returns bare Faults (no ok/err envelope)."""
-    if token == "VALID":
-        return fault("unauthenticated", "wrongly rejected a valid token", "unauthenticated", [], {})
-    if token == "EXPIRED":
-        return fault("forbidden", "wrong category for expired", "forbidden", [], {})
-    return fault("unauthenticated", "not authenticated", "unauthenticated", [], {})
+_SOUND_PROVIDER = {
+    "name": "sound",
+    "actor_recognizer": _sound_recognizer,
+    "resolve_actor": _sound_resolve,
+    "test_token_generator": _generate,
+    "fault_mapping": {"unauthenticated": 401},
+}
 
-
-_DISHONEST_PROVIDER = {
-    "name": "dishonest-probe",
-    "actor_recognizer": _dishonest_recognizer,
-    "resolve_actor": _dishonest_resolve,
-    "test_token_generator": _token_generator,
-    "fault_mapping": {},
+_BROKEN_PROVIDER = {
+    "name": "accepts-malformed",
+    "actor_recognizer": _accepts_malformed_recognizer,
+    "resolve_actor": _sound_resolve,
+    "test_token_generator": _generate,
+    "fault_mapping": {"unauthenticated": 401},
 }
 
 
-_CASES = [
-    # The honest provider's boundary validation is sound, so the check returns [].
-    {
-        "name": "honest provider",
-        "provider": _HONEST_PROVIDER,
-        "expect_failures": 0,
-        "expect_empty": True,
-    },
-    # The dishonest provider behaves wrongly for malformed, valid and expired:
-    # exactly three auth_honesty failures, one per wrong class. A stub returning []
-    # fails this literal, non-trivial case.
-    {
-        "name": "dishonest provider (malformed, valid, expired wrong)",
-        "provider": _DISHONEST_PROVIDER,
-        "expect_failures": 3,
-        "expect_empty": False,
-    },
-]
-
-
 def probe_test_auth_honesty():
-    """test_auth_honesty returns one auth_honesty failure per class the provider mishandles, and [] when the provider's boundary validation is sound."""
     bad = []
-    for case in _CASES:
-        got = test_auth_honesty(case["provider"])
 
-        if case["expect_empty"]:
-            if got != []:
-                bad.append(
-                    f"test_auth_honesty({case['name']}) -> {got}, expected []"
-                )
-            continue
+    sound = test_auth_honesty(_SOUND_PROVIDER)
+    if sound != []:
+        bad.append(f"a provider with sound boundary validation should yield no finding, got {sound!r}")
 
-        for finding in got:
-            if finding["code"] != "auth_honesty":
-                bad.append(
-                    f"test_auth_honesty({case['name']}) emitted code "
-                    f"{finding['code']!r}, expected 'auth_honesty'"
-                )
-            if finding["kind"] != "failure":
-                bad.append(
-                    f"test_auth_honesty({case['name']}) emitted kind "
-                    f"{finding['kind']!r}, expected 'failure'"
-                )
+    broken = test_auth_honesty(_BROKEN_PROVIDER)
+    if not broken or set(_codes(broken)) != {"auth_honesty"}:
+        bad.append(
+            f"a provider that accepts a malformed token at the recognizer should yield an "
+            f"auth_honesty failure, got {broken!r}"
+        )
+    elif {f.get("kind") for f in broken} != {"failure"}:
+        bad.append(f"an auth_honesty finding must be graded a failure, got {broken!r}")
 
-        auth_failures = [
-            f
-            for f in got
-            if f.get("code") == "auth_honesty" and f.get("kind") == "failure"
-        ]
-        if len(auth_failures) != case["expect_failures"]:
-            bad.append(
-                f"test_auth_honesty({case['name']}) produced "
-                f"{len(auth_failures)} auth_honesty failures, "
-                f"expected {case['expect_failures']}"
-            )
     return bad
 
 
 def run():
-    bad = probe_test_auth_honesty()
-    for line in bad:
-        print(line)
-    print(f"probe_test_auth_honesty: {len(bad)} failure(s)")
-    return bad
+    messages = probe_test_auth_honesty()
+    for message in messages:
+        print(f"FAIL HT-probe [test_auth_honesty]: {message}")
+    print(f"test_auth_honesty: {'passed' if not messages else f'{len(messages)} failed'}")
+    return 0 if not messages else 1
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

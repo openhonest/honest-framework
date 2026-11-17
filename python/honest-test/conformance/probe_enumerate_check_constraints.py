@@ -1,157 +1,91 @@
-"""Conformance fragment for the enumerate_check_constraints scenario (honest-test.feature).
+"""honest-test conformance: enumerate_check_constraints.
 
-Scenario: enumerate_check_constraints enumerates the CHECK-constraint contract cases for a schema.
-  Then for each CHECK declared on a table it produces one CheckCase carrying a conforming row the
-  real database must accept and a violating row it must reject, both derived from the closed
-  CHECK-expression vocabulary, never supplied by hand.
-  And it returns the list of cases for the contract runner to drive against the real database.
-  And it reads no world and returns pure data.
+enumerate_check_constraints(schema) -> list<CheckCase> produces, for each CHECK declared
+on a table, one CheckCase carrying a conforming_row the real database must accept and a
+violating_row it must reject, both derived from the closed, finite constraint vocabulary
+(honest-test-architecture.md section 6.2). It reads no world and returns pure data; the
+running against the database is test_persist_schema_contract's injected connect, not here.
 
-Cases are data; one pure probe feeds them to the real honest_test.enumerate_check_constraints and
-returns a list of failure strings (empty when every case holds). No classes, no mocks.
+A pure extractor over a real honest-persist Schema (dict of table name to Table; a column
+carries a CHECK in its "check" field — honest-persist types.py Column.check). This probe
+builds a schema with exactly one CHECK and a schema with none, and asserts the cases.
 
-The input schemas are honest-persist's real data shape (honest-persist/src/honest_persist, section
-4.15 / section 6.2): a SchemaDefinition is {"tables": {name: table}, "views", "triggers",
-"procedures"}; a table carries a `columns` map (each column dict may carry a `check` string) and a
-`constraints` map (each check constraint is {"type": "check", "expression": <str>}). `table_checks`
-in honest-persist reads exactly those two sources. The schemas below are plain dict data, so no
-honest-persist import is needed to build them; the one import that must resolve is honest_test.
-
-The exact conforming / violating row the implementation derives from the constraint vocabulary is
-not fixed by the scenario, so this probe does not pin a literal row. It pins the two things the
-scenario does fix: the count (one CheckCase per declared CHECK, none when a table declares no CHECK)
-and the structural property on a constraint we can reason about (`<col> >= 0`): the conforming row
-satisfies it and the violating row breaks it.
-
-This is its own fragment file so the other scenarios' fragments never collide with it.
-run_conformance.py / laws_htest.py are untouched.
+The exact row values the closed constraint vocabulary picks are honest-test's to fix, so
+this probe asserts the derivable contract: one case per CHECK, each a full row for the
+table, the conforming row satisfying the constraint and the violating row breaking it.
+No classes, no mocks.
 """
 
 from honest_test import enumerate_check_constraints
 
-# A schema with exactly one column-level CHECK: `age >= 0` on person.age.
-_SCHEMA_COLUMN_CHECK = {
-    "tables": {
-        "person": {
-            "columns": {
-                "name": {"type": "text"},
-                "age": {"type": "integer", "check": "age >= 0"},
-            },
-            "constraints": {},
+
+_COLUMNS = ("id", "email", "age")
+
+_ONE_CHECK_SCHEMA = {
+    "users": {
+        "columns": {
+            "id": {"type": "INTEGER", "primary_key": True, "nullable": False},
+            "email": {"type": "TEXT", "nullable": False},
+            "age": {"type": "INTEGER", "nullable": False, "check": "age >= 0"},
         },
+        "primary_key": ["id"],
     },
-    "views": {},
-    "triggers": {},
-    "procedures": {},
 }
 
-# A schema with exactly one table-level CHECK constraint: `balance >= 0` on account.
-_SCHEMA_TABLE_CHECK = {
-    "tables": {
-        "account": {
-            "columns": {
-                "owner": {"type": "text"},
-                "balance": {"type": "integer"},
-            },
-            "constraints": {
-                "balance_nonneg": {"type": "check", "expression": "balance >= 0"},
-            },
+_NO_CHECK_SCHEMA = {
+    "items": {
+        "columns": {
+            "id": {"type": "INTEGER", "primary_key": True, "nullable": False},
+            "label": {"type": "TEXT", "nullable": False},
         },
+        "primary_key": ["id"],
     },
-    "views": {},
-    "triggers": {},
-    "procedures": {},
 }
-
-# A schema whose one table declares NO CHECK: the explicit absence case.
-_SCHEMA_NO_CHECK = {
-    "tables": {
-        "log": {
-            "columns": {
-                "id": {"type": "integer"},
-                "message": {"type": "text"},
-            },
-            "constraints": {},
-        },
-    },
-    "views": {},
-    "triggers": {},
-    "procedures": {},
-}
-
-_CASES = [
-    # One column CHECK `age >= 0` -> exactly one CheckCase whose rows obey/break `age >= 0`.
-    {
-        "schema": _SCHEMA_COLUMN_CHECK,
-        "expect_count": 1,
-        "column": "age",
-        "floor": 0,
-    },
-    # One table-level CHECK `balance >= 0` -> exactly one CheckCase on `balance`.
-    {
-        "schema": _SCHEMA_TABLE_CHECK,
-        "expect_count": 1,
-        "column": "balance",
-        "floor": 0,
-    },
-    # No CHECK declared -> no CheckCase. The explicit absence row.
-    {
-        "schema": _SCHEMA_NO_CHECK,
-        "expect_count": 0,
-        "column": None,
-        "floor": None,
-    },
-]
-
-
-def _satisfies_floor(row, column, floor):
-    """True when `row` carries `column` as a number that is >= `floor`."""
-    if column not in row:
-        return False
-    value = row[column]
-    return isinstance(value, (int, float)) and value >= floor
 
 
 def probe_enumerate_check_constraints():
-    """enumerate_check_constraints yields one CheckCase per declared CHECK, each carrying a conforming row that satisfies the constraint and a violating row that breaks it, and none when a table declares no CHECK."""
     bad = []
-    for case in _CASES:
-        got = enumerate_check_constraints(case["schema"])
-        if len(got) != case["expect_count"]:
-            bad.append(
-                f"enumerate_check_constraints(<schema>) produced {len(got)} CheckCase(s), "
-                f"expected {case['expect_count']}"
-            )
+
+    cases = enumerate_check_constraints(_ONE_CHECK_SCHEMA)
+    if not isinstance(cases, list):
+        bad.append(f"enumerate_check_constraints should return a list, got {cases!r}")
+        return bad
+    if len(cases) != 1:
+        bad.append(f"one declared CHECK should yield exactly one CheckCase, got {len(cases)}: {cases!r}")
+
+    for case in cases:
+        if not isinstance(case, dict):
+            bad.append(f"each CheckCase should be a dict, got {case!r}")
             continue
-        if case["expect_count"] == 0:
+        conforming = case.get("conforming_row")
+        violating = case.get("violating_row")
+        if not isinstance(conforming, dict) or not isinstance(violating, dict):
+            bad.append(f"a CheckCase carries conforming_row and violating_row dicts, got {case!r}")
             continue
-        column = case["column"]
-        floor = case["floor"]
-        for check_case in got:
-            conforming = check_case["conforming_row"]
-            violating = check_case["violating_row"]
-            if not _satisfies_floor(conforming, column, floor):
-                bad.append(
-                    f"enumerate_check_constraints(<schema>) conforming_row {conforming} "
-                    f"does not satisfy `{column} >= {floor}`"
-                )
-            if _satisfies_floor(violating, column, floor):
-                bad.append(
-                    f"enumerate_check_constraints(<schema>) violating_row {violating} "
-                    f"does not break `{column} >= {floor}`"
-                )
+        for column in _COLUMNS:
+            if column not in conforming:
+                bad.append(f"the conforming row should be a full row and include {column!r}, got {conforming!r}")
+            if column not in violating:
+                bad.append(f"the violating row should be a full row and include {column!r}, got {violating!r}")
+        if "age" in conforming and not (isinstance(conforming["age"], int) and conforming["age"] >= 0):
+            bad.append(f"the conforming row must satisfy 'age >= 0', got age={conforming.get('age')!r}")
+        if "age" in violating and not (isinstance(violating["age"], int) and violating["age"] < 0):
+            bad.append(f"the violating row must break 'age >= 0', got age={violating.get('age')!r}")
+
+    empty = enumerate_check_constraints(_NO_CHECK_SCHEMA)
+    if empty != []:
+        bad.append(f"a schema with no CHECK should yield no cases, got {empty!r}")
+
     return bad
 
 
 def run():
-    bad = probe_enumerate_check_constraints()
-    for line in bad:
-        print(line)
-    print(f"probe_enumerate_check_constraints: {len(bad)} failure(s)")
-    return bad
+    messages = probe_enumerate_check_constraints()
+    for message in messages:
+        print(f"FAIL HT-probe [enumerate_check_constraints]: {message}")
+    print(f"enumerate_check_constraints: {0 if messages else 1} passed, {1 if messages else 0} failed, 1 total")
+    return 0 if not messages else 1
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

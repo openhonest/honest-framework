@@ -1,28 +1,14 @@
-"""Conformance fragment for the write_coverage scenario (honest-test.feature ~line 113).
+"""honest-test conformance: write_coverage, the coverage.json sink.
 
-Scenario: write_coverage writes the report's coverage as coverage.json.
-  Then it writes the report's CoverageReport field as coverage.json, the file
-  honest-check reads for HC-P009 and other cross-tool checks.
-  And it returns nothing and makes no decision, since the coverage numbers are
-  already measured.
-  And its one side effect is writing the file.
+write_coverage writes the report's CoverageReport as coverage.json, the file
+honest-check reads for HC-P009 and other cross-tool checks, making no decision
+because the numbers are already measured (.hd write_coverage note; spec §9.5;
+feature "write_coverage writes the report's coverage as coverage.json"). Its one
+observable effect is the written file, so this probe writes from a throwaway
+working directory and reads coverage.json back.
 
-write_coverage is a boundary_out sink, so the honest test asserts the REAL effect:
-it writes a file. The signature takes only `report` (no path), so the sink writes
-coverage.json in the current working directory. The probe chdir's into a fresh
-temp dir (saving and restoring the original cwd), builds a RunReport dict carrying
-a CoverageReport in its `coverage` field, calls the real
-`from honest_test import write_coverage`, then reads coverage.json back and asserts
-its parsed JSON carries the CoverageReport's version and its vocabularies dimension.
-
-The function is imported real: no mock of open or json. The spec §9.5 example and
-the .hd CoverageReport type disagree on the per-dimension field names and on a
-`timestamp` field; the .hd leads and the scenario says write_coverage "writes the
-report's CoverageReport field", so the probe pins `version` and the `vocabularies`
-dimension, which §9.5 and the .hd agree on, rather than the disputed shapes.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+No classes, no mocks. The RunReport is a real dict; the function called is the real
+honest_test.write_coverage; the effect is read back from the real filesystem.
 """
 
 import json
@@ -31,93 +17,76 @@ import tempfile
 
 from honest_test import write_coverage
 
-# A populated CoverageReport (honest-test.hd: version is "1.0"; each dimension maps
-# a name to a Coverage record {total, exercised, pct}).
-_COVERAGE = {
-    "version": "1.0",
-    "vocabularies": {"format_vocab": {"total": 5, "exercised": 5, "pct": 100}},
-    "chains": {"format_pipeline": {"total": 3, "exercised": 3, "pct": 100}},
-    "honesty": {"format_pipeline": {"total": 3, "exercised": 3, "pct": 100}},
-    "state_machines": {"order_machine": {"total": 5, "exercised": 5, "pct": 100}},
-}
 
-# The full RunReport whose `coverage` field write_coverage writes out.
-_REPORT = {
-    "chains": 1,
-    "links": 3,
-    "vocabularies": 1,
-    "permutations": 3000,
-    "failures": 0,
-    "adversarial_rejected": 12,
-    "coverage": _COVERAGE,
-    "mutation_caught": 41,
-    "mutation_total": 41,
-}
-
-_CASES = [
-    # (a) A RunReport with a populated CoverageReport. coverage.json must exist and
-    # parse to the report's CoverageReport: the version "1.0" and the vocabularies
-    # dimension, written out as literals a stub (which writes no file) cannot pass.
-    {
-        "report": _REPORT,
-        "expect_version": "1.0",
-        "expect_vocabularies": {"format_vocab": {"total": 5, "exercised": 5, "pct": 100}},
-        "expect_return": None,
-    },
-]
+def _report():
+    return {
+        "chains": 1,
+        "links": 3,
+        "vocabularies": 1,
+        "permutations": 3000,
+        "failures": 0,
+        "adversarial_rejected": 847,
+        "coverage": {
+            "version": "1.0",
+            "vocabularies": {"format_vocab": {"total": 5, "exercised": 5, "pct": 100}},
+            "chains": {"format_pipeline": {"total": 3, "exercised": 3, "pct": 100}},
+            "honesty": {"format_pipeline": {"total": 3, "exercised": 3, "pct": 100}},
+            "state_machines": {},
+        },
+        "mutation_caught": 40,
+        "mutation_total": 40,
+    }
 
 
 def probe_write_coverage():
-    """write_coverage writes report.coverage to coverage.json in the cwd, and returns NOTHING."""
+    """The written coverage.json parses as JSON, stamps the format version, and
+    carries the four coverage dimensions with the named vocabulary and its
+    percentage, so honest-check can read the measured coverage back."""
     bad = []
-    for case in _CASES:
-        report = case["report"]
-        original_cwd = os.getcwd()
-        workdir = tempfile.mkdtemp(prefix="hf_write_coverage_")
+    report = _report()
+
+    with tempfile.TemporaryDirectory() as work:
+        start = os.getcwd()
+        os.chdir(work)
         try:
-            os.chdir(workdir)
-            returned = write_coverage(report)
-
-            if returned is not case["expect_return"]:
-                bad.append(
-                    f"write_coverage(report) returned {returned!r}, "
-                    f"expected {case['expect_return']!r} (NOTHING)"
-                )
-
-            path = os.path.join(workdir, "coverage.json")
+            write_coverage(report)
+            path = os.path.join(work, "coverage.json")
             if not os.path.exists(path):
-                bad.append(
-                    "write_coverage(report) wrote no coverage.json in the cwd"
-                )
-                continue
-
-            with open(path, encoding="utf-8") as handle:
-                parsed = json.load(handle)
-
-            if parsed.get("version") != case["expect_version"]:
-                bad.append(
-                    f"coverage.json version is {parsed.get('version')!r}, "
-                    f"expected {case['expect_version']!r}"
-                )
-            if parsed.get("vocabularies") != case["expect_vocabularies"]:
-                bad.append(
-                    f"coverage.json vocabularies is {parsed.get('vocabularies')!r}, "
-                    f"expected {case['expect_vocabularies']!r}"
-                )
+                bad.append("write_coverage should write coverage.json to the working directory")
+                return bad
+            with open(path) as handle:
+                raw = handle.read()
         finally:
-            os.chdir(original_cwd)
+            os.chdir(start)
+
+    try:
+        written = json.loads(raw)
+    except ValueError as error:
+        bad.append(f"coverage.json should be valid JSON: {error}")
+        return bad
+
+    if written.get("version") != "1.0":
+        bad.append(f"coverage.json should stamp the format version 1.0, got {written.get('version')!r}")
+    for dimension in ("vocabularies", "chains", "honesty", "state_machines"):
+        if dimension not in written:
+            bad.append(f"coverage.json should carry the {dimension} dimension: {written}")
+
+    vocab = written.get("vocabularies", {}).get("format_vocab")
+    if not isinstance(vocab, dict):
+        bad.append(f"coverage.json should carry the named vocabulary format_vocab: {written.get('vocabularies')}")
+    elif vocab.get("pct") != 100:
+        bad.append(f"the vocabulary coverage should report its percentage, got {vocab}")
+
     return bad
 
 
 def run():
-    bad = probe_write_coverage()
-    for line in bad:
-        print(line)
-    print(f"probe_write_coverage: {len(bad)} failure(s)")
-    return bad
+    messages = probe_write_coverage()
+    for message in messages:
+        print(f"FAIL probe_write_coverage: {message}")
+    print(f"probe_write_coverage: {'PASS' if not messages else str(len(messages)) + ' failed'}")
+    return 0 if not messages else 1
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

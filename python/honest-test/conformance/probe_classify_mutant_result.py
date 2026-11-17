@@ -1,109 +1,54 @@
-"""Conformance fragment for the classify_mutant_result scenario (honest-test.feature).
+"""honest-test conformance: classify_mutant_result — the mutation verdict.
 
-Scenario: classify_mutant_result judges one mutant run against the baseline.
-  Then it returns a MutantResult of caught when the mutant output shows at least
-  one case failed.
-  And it returns set_aside with the demonstration as its reason when the mutant
-  output is identical to the baseline, so the change cannot alter the result.
-  And it returns undecided with the bound as its reason when completed is false,
-  because a run that hit its bound produced no verdict and recording it as caught
-  would assert a detection that did not happen.
-  And it reads no world and returns pure data.
+classify_mutant_result(baseline_output, mutant_output, completed) judges one mutant
+run (spec §9.6): caught when the mutant output differs from the baseline, set_aside
+when the two are identical, and undecided when completed is false — a run that hit
+its bound produced no verdict, so undecided takes precedence even when the outputs
+differ. reason is empty for caught and names the demonstration or the bound
+otherwise. This probe pins each verdict and the precedence of undecided.
 
-MutantResult in Python is a plain dict {"verdict": "...", "reason": "..."}.
-Per the .hd note on MutantResult, reason is empty for caught and non-empty for
-both set_aside and undecided.
-
-Cases are data; one pure probe feeds them to the real function and returns a list
-of failure strings (empty when every case holds). No classes, no mocks: it calls
-the real honest_test.classify_mutant_result.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+No classes, no mocks. It calls the real honest_test.classify_mutant_result.
 """
 
 from honest_test import classify_mutant_result
 
-_CASES = [
-    # (a) completed, outputs differ: a case failed, so the mutant is caught and
-    # the reason is empty (nothing to demonstrate; the failure is the record).
-    {
-        "given": {
-            "baseline_output": "ok",
-            "mutant_output": "WRONG",
-            "completed": True,
-        },
-        "expect_verdict": "caught",
-        "expect_reason_empty": True,
-    },
-    # (b) completed, outputs identical: the change could not alter the result, so
-    # it is set_aside and the reason carries the demonstration (non-empty).
-    {
-        "given": {
-            "baseline_output": "ok",
-            "mutant_output": "ok",
-            "completed": True,
-        },
-        "expect_verdict": "set_aside",
-        "expect_reason_empty": False,
-    },
-    # (c) not completed, outputs identical: the run hit its bound, so nothing may
-    # be claimed; undecided with the bound as its non-empty reason.
-    {
-        "given": {
-            "baseline_output": "ok",
-            "mutant_output": "ok",
-            "completed": False,
-        },
-        "expect_verdict": "undecided",
-        "expect_reason_empty": False,
-    },
-    # (d) not completed, outputs differ: incompletion dominates. A differing
-    # output would read as caught were completed true, but the run produced no
-    # verdict, so it must be undecided — never misread as caught.
-    {
-        "given": {
-            "baseline_output": "ok",
-            "mutant_output": "WRONG",
-            "completed": False,
-        },
-        "expect_verdict": "undecided",
-        "expect_reason_empty": False,
-    },
-]
+
+def _verdict(baseline, mutant, completed, want):
+    """One known run: the verdict must be `want`; a caught run carries an empty
+    reason, a set_aside or undecided run a non-empty one."""
+    bad = []
+    got = classify_mutant_result(baseline, mutant, completed)
+    if not isinstance(got, dict):
+        return [f"classify_mutant_result({baseline!r}, {mutant!r}, {completed}) -> {got!r}, expected a MutantResult dict"]
+    if got.get("verdict") != want:
+        bad.append(f"classify_mutant_result({baseline!r}, {mutant!r}, {completed}).verdict = {got.get('verdict')!r}, expected {want!r}")
+    if want == "caught" and got.get("reason"):
+        bad.append(f"a caught verdict should carry an empty reason, got {got.get('reason')!r}")
+    if want in ("set_aside", "undecided") and not got.get("reason"):
+        bad.append(f"a {want} verdict should carry a reason naming the demonstration or the bound, got {got.get('reason')!r}")
+    return bad
 
 
 def probe_classify_mutant_result():
-    """classify_mutant_result returns caught (empty reason) only when the run completed and a case failed, set_aside with a demonstration when completed and output is unchanged, and undecided with the bound whenever completed is false."""
     bad = []
-    for case in _CASES:
-        got = classify_mutant_result(**case["given"])
-        verdict = got["verdict"]
-        reason = got["reason"]
-        if verdict != case["expect_verdict"]:
-            bad.append(
-                f"classify_mutant_result({case['given']}) -> verdict {verdict!r}, "
-                f"expected {case['expect_verdict']!r}"
-            )
-            continue
-        reason_empty = reason == ""
-        if reason_empty != case["expect_reason_empty"]:
-            bad.append(
-                f"classify_mutant_result({case['given']}) -> reason {reason!r}, "
-                f"expected it to be {'empty' if case['expect_reason_empty'] else 'non-empty'}"
-            )
+    # A completed run whose output differs from the baseline: the change was caught.
+    bad += _verdict("18 passed", "17 passed, 1 failed", True, "caught")
+    # A completed run whose output is identical: the change cannot alter the result.
+    bad += _verdict("18 passed", "18 passed", True, "set_aside")
+    # An incomplete run: no verdict, even though the outputs differ.
+    bad += _verdict("18 passed", "17 passed, 1 failed", False, "undecided")
+    # Incomplete dominates: identical outputs but the run hit its bound.
+    bad += _verdict("18 passed", "18 passed", False, "undecided")
     return bad
 
 
 def run():
-    bad = probe_classify_mutant_result()
-    for line in bad:
-        print(line)
-    print(f"probe_classify_mutant_result: {len(bad)} failure(s)")
-    return bad
+    messages = probe_classify_mutant_result()
+    if messages:
+        print(f"FAIL HTEST-probe [classify_mutant_result]: {messages}")
+    print(f"classify_mutant_result: {0 if messages else 1} passed, {1 if messages else 0} failed, 1 total")
+    return 1 if messages else 0
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

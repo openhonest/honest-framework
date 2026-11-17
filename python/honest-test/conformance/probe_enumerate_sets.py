@@ -1,97 +1,93 @@
-"""Conformance fragment for the enumerate_sets scenario (honest-test.feature).
+"""RED probe for honest-test.enumerate_sets — the Set-based case generator (.hd, spec section 3.2).
 
-Scenario: enumerate_sets generates every test case for a Set-based vocabulary.
-  Then it enumerates every member of every Set recognizer and produces the
-  Cartesian product of their members, with no sampling, so a vocabulary of three
-  Sets of 5, 150 and 4 members yields all 3,000 cases.
-  And it returns the list of test manifests, one per combination.
-
-Cases are data; one pure probe feeds them to the real function and returns a list
-of failure strings (empty when every case holds). No classes, no mocks: it calls
-the real honest_type.vocabulary to build the input and the real
-honest_test.enumerate_sets to produce the output.
-
-This is its own fragment file so the other scenarios' fragments never collide with
-it. run_conformance.py / laws_htest.py are untouched.
+enumerate_sets enumerates every member of every Set recognizer in a vocabulary and
+produces the Cartesian product of their members, no sampling. Each case is a manifest:
+a map from each Set slot's name (the type name) to the member chosen for it. A
+predicate recognizer contributes no slot, so a vocabulary of only predicates
+enumerates to one empty manifest. It reads no world and returns pure data.
+honest-test has no code yet, so importing honest_test fails — the correct red state.
 """
 
-from honest_type import vocabulary
+from honest_type import predicate, vocabulary
 
 from honest_test import enumerate_sets
 
-# 150 distinct members for the scenario's own 5 x 150 x 4 = 3000 literal.
-_B150 = {f"b{i}" for i in range(150)}
 
-_CASES = [
-    # Two Sets of two members: the Cartesian product is the four manifests below,
-    # written out by hand so a stub returning [] cannot pass.
-    {
-        "given": {"color": {"red", "green"}, "size": {"small", "large"}},
-        "expect_count": 4,
-        "expect_manifests": [
-            {"color": "red", "size": "small"},
-            {"color": "red", "size": "large"},
-            {"color": "green", "size": "small"},
-            {"color": "green", "size": "large"},
-        ],
-    },
-    # A singleton Set yields exactly one manifest, its one member.
-    {
-        "given": {"only": {"x"}},
-        "expect_count": 1,
-        "expect_manifests": [{"only": "x"}],
-    },
-    # The scenario's own count literal: three Sets of 5, 150 and 4 members yield
-    # all 3,000 cases, no sampling. Content is not spelled out; the count is.
-    {
-        "given": {
-            "a": {"a0", "a1", "a2", "a3", "a4"},
-            "b": _B150,
-            "c": {"c0", "c1", "c2", "c3"},
-        },
-        "expect_count": 3000,
-        "expect_manifests": None,
-    },
-]
-
-
-def _as_set(manifests):
-    """A list of manifest dicts as a hashable set, so order is not asserted."""
+def _manifest_set(manifests):
+    """The list of manifest dicts as an order-independent set of frozensets of items,
+    so the Cartesian product is compared without asserting enumeration order."""
     return {frozenset(m.items()) for m in manifests}
 
 
+def _build(decls):
+    vocab = vocabulary(decls)
+    if isinstance(vocab, dict) and "code" in vocab:
+        return None, f"vocabulary({decls!r}) faulted: {vocab!r}"
+    return vocab, None
+
+
 def probe_enumerate_sets():
-    """enumerate_sets yields the full Cartesian product of every Set member, one manifest per combination, with no sampling."""
+    """enumerate_sets yields one manifest per member for one Set, the full product for
+    two Sets, one empty manifest for a predicate-only vocabulary, and ignores predicate
+    recognizers that sit alongside a Set."""
     bad = []
-    for case in _CASES:
-        vocab = vocabulary(case["given"])
-        got = enumerate_sets(vocab)
-        if len(got) != case["expect_count"]:
-            bad.append(
-                f"enumerate_sets({case['given']}) produced {len(got)} manifests, "
-                f"expected {case['expect_count']}"
-            )
-            continue
-        if case["expect_manifests"] is not None:
-            got_set = _as_set(got)
-            want_set = _as_set(case["expect_manifests"])
-            if got_set != want_set:
-                bad.append(
-                    f"enumerate_sets({case['given']}) -> {got_set}, "
-                    f"expected {want_set}"
-                )
+
+    # One Set of two members -> two single-slot manifests keyed by the type name.
+    one, err = _build({"color": {"crimson", "azure"}})
+    if err:
+        bad.append(err)
+    else:
+        got = _manifest_set(enumerate_sets(one))
+        want = {frozenset({("color", "crimson")}), frozenset({("color", "azure")})}
+        if got != want:
+            bad.append(f"one Set of 2 -> {got!r}, expected {want!r}")
+
+    # Two Sets -> the full Cartesian product, 2 x 2 = 4 manifests of two slots each.
+    two, err = _build({"color": {"crimson", "azure"}, "size": {"small", "large"}})
+    if err:
+        bad.append(err)
+    else:
+        got = _manifest_set(enumerate_sets(two))
+        want = {
+            frozenset({("color", "crimson"), ("size", "small")}),
+            frozenset({("color", "crimson"), ("size", "large")}),
+            frozenset({("color", "azure"), ("size", "small")}),
+            frozenset({("color", "azure"), ("size", "large")}),
+        }
+        if got != want:
+            bad.append(f"two Sets of 2x2 -> {got!r}, expected the 4-case product {want!r}")
+        if len(list(enumerate_sets(two))) != 4:
+            bad.append("two Sets of 2x2 must yield exactly 4 cases, no sampling and no duplication")
+
+    # A vocabulary of only predicate recognizers enumerates to one empty manifest.
+    pred_only, err = _build({"tag": predicate(lambda s: s == "vip")})
+    if err:
+        bad.append(err)
+    else:
+        got = list(enumerate_sets(pred_only))
+        if got != [{}]:
+            bad.append(f"a predicate-only vocabulary must enumerate to [{{}}], got {got!r}")
+
+    # A predicate alongside a Set contributes no slot: only the Set's members appear.
+    mixed, err = _build({"color": {"crimson", "azure"}, "tag": predicate(lambda s: s == "vip")})
+    if err:
+        bad.append(err)
+    else:
+        got = _manifest_set(enumerate_sets(mixed))
+        want = {frozenset({("color", "crimson")}), frozenset({("color", "azure")})}
+        if got != want:
+            bad.append(f"a Set plus a predicate -> {got!r}, expected only the Set's 2 cases {want!r}")
+
     return bad
 
 
 def run():
-    bad = probe_enumerate_sets()
-    for line in bad:
-        print(line)
-    print(f"probe_enumerate_sets: {len(bad)} failure(s)")
-    return bad
+    failures = probe_enumerate_sets()
+    for message in failures:
+        print(f"FAIL enumerate_sets: {message}")
+    print(f"enumerate_sets probe: {'PASS' if not failures else str(len(failures)) + ' failed'}")
+    return failures
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(1 if run() else 0)

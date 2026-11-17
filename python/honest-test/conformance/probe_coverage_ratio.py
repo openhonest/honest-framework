@@ -1,75 +1,51 @@
-"""Conformance fragment for the coverage_ratio scenario (honest-test.feature).
+"""honest-test conformance: coverage_ratio — one dimension's arithmetic.
 
-Scenario: coverage_ratio computes one coverage dimension's numbers.
-  Then it returns a Coverage carrying exercised, total and their whole-number
-  percentage — the share of the things that could be exercised that were, one
-  computation for all four dimensions.
-  And it reads no world and returns pure data.
+coverage_ratio(exercised, total) returns a Coverage {total, exercised, pct}:
+it carries exercised and total back unchanged and computes their whole-number
+percentage (spec §9.1). This probe asserts the arithmetic on known inputs whose
+percentage is a whole number either way it rounds.
 
-Coverage is honest-type's record idiom, a plain dict
-{"total": int, "exercised": int, "pct": int}. pct is exercised over total as a
-whole-number percentage (honest-test.hd, type Coverage, section 9).
-
-Cases are data; one pure probe feeds them to the real coverage_ratio and returns
-a list of failure strings (empty when every case holds). No classes, no mocks: it
-calls the real honest_test.coverage_ratio and asserts all three fields by key.
-
-This is its own fragment file so the other scenarios' fragments never collide
-with it. run_conformance.py / laws_htest.py are untouched.
+No classes, no mocks. It calls the real honest_test.coverage_ratio and reads the
+returned record by shape.
 """
 
 from honest_test import coverage_ratio
 
-_CASES = [
-    # A clean fraction: 3 of 4 is 75 percent.
-    {
-        "given": {"exercised": 3, "total": 4},
-        "expect": {"total": 4, "exercised": 3, "pct": 75},
-    },
-    # Full coverage: exercised equals total, 100 percent.
-    {
-        "given": {"exercised": 5, "total": 5},
-        "expect": {"total": 5, "exercised": 5, "pct": 100},
-    },
-    # The explicit zero case: nothing exercised is 0 percent.
-    {
-        "given": {"exercised": 0, "total": 10},
-        "expect": {"total": 10, "exercised": 0, "pct": 0},
-    },
-    # A rounding case pinned to a fraction that is unambiguous: 1 of 3 is
-    # 33.33..., which is 33 under floor, round and truncate alike, so the whole
-    # case holds whatever whole-number rule the note leaves unstated.
-    {
-        "given": {"exercised": 1, "total": 3},
-        "expect": {"total": 3, "exercised": 1, "pct": 33},
-    },
-]
+
+def _check(exercised, total, want_pct):
+    """One known ratio: the record must carry exercised and total unchanged and
+    report the whole-number percentage."""
+    bad = []
+    got = coverage_ratio(exercised, total)
+    if not isinstance(got, dict):
+        return [f"coverage_ratio({exercised}, {total}) -> {got!r}, expected a Coverage dict"]
+    if got.get("exercised") != exercised:
+        bad.append(f"coverage_ratio({exercised}, {total}).exercised = {got.get('exercised')!r}, expected {exercised}")
+    if got.get("total") != total:
+        bad.append(f"coverage_ratio({exercised}, {total}).total = {got.get('total')!r}, expected {total}")
+    if got.get("pct") != want_pct:
+        bad.append(f"coverage_ratio({exercised}, {total}).pct = {got.get('pct')!r}, expected {want_pct}")
+    return bad
 
 
 def probe_coverage_ratio():
-    """coverage_ratio returns a Coverage carrying exercised, total and their whole-number percentage."""
     bad = []
-    for case in _CASES:
-        got = coverage_ratio(**case["given"])
-        want = case["expect"]
-        for field in ("total", "exercised", "pct"):
-            if got.get(field) != want[field]:
-                bad.append(
-                    f"coverage_ratio({case['given']}) -> {field}={got.get(field)}, "
-                    f"expected {field}={want[field]}"
-                )
+    # Each percentage is a whole number under floor and round alike.
+    bad += _check(5, 5, 100)
+    bad += _check(3, 4, 75)
+    bad += _check(0, 4, 0)
+    bad += _check(1, 4, 25)
+    bad += _check(1, 3, 33)
     return bad
 
 
 def run():
-    bad = probe_coverage_ratio()
-    for line in bad:
-        print(line)
-    print(f"probe_coverage_ratio: {len(bad)} failure(s)")
-    return bad
+    messages = probe_coverage_ratio()
+    if messages:
+        print(f"FAIL HTEST-probe [coverage_ratio]: {messages}")
+    print(f"coverage_ratio: {0 if messages else 1} passed, {1 if messages else 0} failed, 1 total")
+    return 1 if messages else 0
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(run())

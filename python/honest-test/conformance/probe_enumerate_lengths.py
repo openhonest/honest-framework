@@ -1,101 +1,73 @@
-"""Conformance fragment for the enumerate_lengths scenario (honest-test.feature).
+"""RED probe for honest-test.enumerate_lengths — the length-bounded generator (.hd, spec section 3.4).
 
-Scenario: enumerate_lengths generates the strings for a length-bounded predicate.
-  Then it reads the minimum and maximum length from the comparison operators the
-  node holds, distinguishing == (one exact length) from <= (a range up to a
-  maximum) from < (a range up to one below).
-  And it returns a LengthCases with one valid string at every length in the range,
-  built by repeating the alphabet so lengths beyond the alphabet are still generated.
-  And the invalid list carries the boundary lengths just outside — one over the
-  maximum always, and one under the minimum when the minimum exceeds one.
-
-The alphabet and the repetition rule are fixed by section 3.4 of
-../specs/02-code-quality/honest-test-architecture.md:
-
-    chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-    string_of_length(n, chars) repeats chars to length n.
-
-So the exact strings are pinned, not an implementation detail, and this probe
-asserts their exact content. The expected strings below are written out as
-literals, never computed from the function under test, so a stub cannot pass.
-
-Inputs are built through the real pipeline: parse_source -> extract_predicates ->
-enumerate_lengths. No classes, no mocks; this is its own fragment file so the
-other scenarios' fragments never collide with it.
+enumerate_lengths reads the minimum and maximum length from a predicate's comparison
+operators and returns a LengthCases: one valid string at every length in the range, and
+the invalid boundary lengths just outside — one over the maximum always, and one under
+the minimum when the minimum exceeds one. Valid strings are built from
+"abcdefghijklmnopqrstuvwxyz0123456789" sliced to the wanted length. A pure lower bound
+with no maximum is unbounded above and generates nothing here, falling to supplied
+values. It reads no world and returns pure data.
+honest-test has no code yet, so importing honest_test fails — the correct red state.
 """
 
 from honest_test import enumerate_lengths, extract_predicates, parse_source
 
-_CASES = [
-    # len(s) <= 5: (min, max) = (1, 5). Valid is one string at lengths 1..5.
-    # min == 1, so the one-under case is the empty string and is NOT emitted here
-    # (it is an empty_token rejection, section 9.3). Only one over the max: length 6.
-    {
-        "source": "recognize = lambda s: len(s) <= 5\n",
-        "expect_valid": ["a", "ab", "abc", "abcd", "abcde"],
-        "expect_invalid": {"abcdef"},
-    },
-    # len(s) == 3: (min, max) = (3, 3), exact length. Valid is the single length-3
-    # string. min == max == 3 > 1, so invalid carries one over (length 4) and one
-    # under (length 2).
-    {
-        "source": "recognize = lambda s: len(s) == 3\n",
-        "expect_valid": ["abc"],
-        "expect_invalid": {"abcd", "ab"},
-    },
-    # 2 <= len(s) <= 8: (min, max) = (2, 8). Valid is lengths 2..8. min == 2 > 1,
-    # so invalid carries one over (length 9) and one under (length 1).
-    {
-        "source": "recognize = lambda s: 2 <= len(s) <= 8\n",
-        "expect_valid": [
-            "ab",
-            "abc",
-            "abcd",
-            "abcde",
-            "abcdef",
-            "abcdefg",
-            "abcdefgh",
-        ],
-        "expect_invalid": {"a", "abcdefghi"},
-    },
-]
+_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
-def _predicate_node(source):
-    """The one length-bounded predicate node, built by the real parse pipeline."""
-    tree = parse_source(source)
-    nodes = extract_predicates(tree)
-    return nodes[0]
+def _s(n):
+    """The length-n string enumerate_lengths builds: the alphabet sliced to n (n <= 36 here)."""
+    return _CHARS[:n]
+
+
+def _one_predicate_node(source):
+    nodes = extract_predicates(parse_source(source))
+    if not isinstance(nodes, list) or len(nodes) != 1:
+        return None, f"expected exactly one predicate node, got {nodes!r}"
+    return nodes[0], None
 
 
 def probe_enumerate_lengths():
-    """enumerate_lengths reads the operator for (min, max) and returns one valid string per in-range length plus the boundary lengths just outside — one over the max always, one under the min when min > 1."""
+    """enumerate_lengths reads the operator to fix the bounds, enumerates every valid
+    length, and places the symmetric boundary lengths — one over the maximum always, one
+    under the minimum only when the minimum exceeds one."""
     bad = []
-    for case in _CASES:
-        node = _predicate_node(case["source"])
+
+    cases = [
+        # (source body, expected valid, expected invalid) — invalid order: over, then under.
+        ("len(s) == 5", [_s(5)], [_s(6), _s(4)]),
+        ("len(s) <= 8", [_s(n) for n in range(1, 9)], [_s(9)]),
+        ("len(s) < 8", [_s(n) for n in range(1, 8)], [_s(8)]),
+        ("3 <= len(s) <= 8", [_s(n) for n in range(3, 9)], [_s(9), _s(2)]),
+        # A pure lower bound with no maximum generates nothing here.
+        ("len(s) >= 3", [], []),
+    ]
+
+    for body, want_valid, want_invalid in cases:
+        source = f"@recognizer\ndef r(s):\n    return {body}\n"
+        node, err = _one_predicate_node(source)
+        if err:
+            bad.append(f"{body!r}: {err}")
+            continue
         got = enumerate_lengths(node)
-        if got["valid"] != case["expect_valid"]:
-            bad.append(
-                f"enumerate_lengths({case['source']!r}).valid -> {got['valid']}, "
-                f"expected {case['expect_valid']}"
-            )
-        if set(got["invalid"]) != case["expect_invalid"]:
-            bad.append(
-                f"enumerate_lengths({case['source']!r}).invalid -> "
-                f"{set(got['invalid'])}, expected {case['expect_invalid']}"
-            )
+        if not isinstance(got, dict):
+            bad.append(f"{body!r}: enumerate_lengths returned {type(got).__name__}, expected a LengthCases dict")
+            continue
+        if got.get("valid") != want_valid:
+            bad.append(f"{body!r}: valid = {got.get('valid')!r}, expected {want_valid!r}")
+        if got.get("invalid") != want_invalid:
+            bad.append(f"{body!r}: invalid = {got.get('invalid')!r}, expected {want_invalid!r}")
+
     return bad
 
 
 def run():
-    bad = probe_enumerate_lengths()
-    for line in bad:
-        print(line)
-    print(f"probe_enumerate_lengths: {len(bad)} failure(s)")
-    return bad
+    failures = probe_enumerate_lengths()
+    for message in failures:
+        print(f"FAIL enumerate_lengths: {message}")
+    print(f"enumerate_lengths probe: {'PASS' if not failures else str(len(failures)) + ' failed'}")
+    return failures
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(1 if run() else 0)
+    raise SystemExit(1 if run() else 0)
