@@ -1,0 +1,27 @@
+{
+  "module": "honest-utilities",
+  "suite_version": "0",
+  "cases": [
+    {"id": "int-ok", "coerce": {"type": "int", "raw": "42"}, "expect": "ok", "expect_value": 42},
+    {"id": "int-neg", "coerce": {"type": "int", "raw": "-7"}, "expect": "ok", "expect_value": -7},
+    {"id": "int-nonnumeric", "coerce": {"type": "int", "raw": "x"}, "expect": "fault"},
+    {"id": "int-floatlike", "coerce": {"type": "int", "raw": "3.14"}, "expect": "fault"},
+    {"id": "float-ok", "coerce": {"type": "float", "raw": "3.14"}, "expect": "ok", "expect_value": 3.14},
+    {"id": "float-intlike", "coerce": {"type": "float", "raw": "42"}, "expect": "ok", "expect_value": 42.0},
+    {"id": "float-bad", "coerce": {"type": "float", "raw": "abc"}, "expect": "fault"},
+    {"id": "bool-true", "coerce": {"type": "bool", "raw": "true"}, "expect": "ok", "expect_value": true},
+    {"id": "bool-true-upper", "coerce": {"type": "bool", "raw": "TRUE"}, "expect": "ok", "expect_value": true},
+    {"id": "bool-one", "coerce": {"type": "bool", "raw": "1"}, "expect": "ok", "expect_value": true},
+    {"id": "bool-yes", "coerce": {"type": "bool", "raw": "yes"}, "expect": "ok", "expect_value": true},
+    {"id": "bool-on", "coerce": {"type": "bool", "raw": "on"}, "expect": "ok", "expect_value": true},
+    {"id": "bool-false", "coerce": {"type": "bool", "raw": "false"}, "expect": "ok", "expect_value": false},
+    {"id": "bool-zero", "coerce": {"type": "bool", "raw": "0"}, "expect": "ok", "expect_value": false},
+    {"id": "bool-no-upper", "coerce": {"type": "bool", "raw": "NO"}, "expect": "ok", "expect_value": false},
+    {"id": "bool-off", "coerce": {"type": "bool", "raw": "off"}, "expect": "ok", "expect_value": false},
+    {"id": "bool-bad", "coerce": {"type": "bool", "raw": "maybe"}, "expect": "fault"},
+    {"id": "str-passthrough", "coerce": {"type": "str", "raw": "postgres://host/db"}, "expect": "ok", "expect_value": "postgres://host/db"},
+    {"id": "key-passthrough", "coerce": {"type": "key", "raw": "sk-live-abc123"}, "expect": "ok", "expect_value": "sk-live-abc123"},
+    {"id": "uuid-ok", "coerce": {"type": "UUID", "raw": "12345678-1234-5678-1234-567812345678"}, "expect": "ok"},
+    {"id": "uuid-bad", "coerce": {"type": "UUID", "raw": "not-a-uuid"}, "expect": "fault"}
+  ]
+}

@@ -1,0 +1,20 @@
+[project]
+name = "honest-utilities"
+version = "0.1.0"
+description = "Shared capability for the Honest Framework: the law runner and the environment-variable reader."
+requires-python = ">=3.11"
+dependencies = ["honest-type"]
+
+[tool.uv.sources]
+honest-type = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honest_utilities"]
+
+[tool.honest-check]
+conformance = "python"
+conformance-suite-version = "0"

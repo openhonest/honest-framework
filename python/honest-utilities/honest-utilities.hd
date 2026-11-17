@@ -1,0 +1,150 @@
+# honest-utilities declared in .hd — the capability several modules share and none owns
+# (honest-utilities-architecture.md). It holds exactly two capabilities now, each entered by import
+# and running from no flow of its own: the law runner and the environment-variable reader. Each
+# takes the framework's standard shape, so the crossing checker reads it with no exception — a door
+# takes the import and hands its input to ONE orchestrator; the orchestrator drives the pure
+# functions that decide and any reader that touches the world; the door and the reader are the only
+# cards that touch the world or run code the module did not write. honest-utilities never calls its
+# sibling modules; the siblings reach into it. The law runner here is the same capability honest-test
+# declares at its section 4.10; this module is where it comes to rest once more than one module uses it.
+# Architecture: ../../specs/02-code-quality/honest-utilities-architecture.md
+
+module honest-utilities
+
+  layer foundation
+
+  note "the capability several modules share and none owns: a law runner that checks a caller's injected predicate across a bounded space of subjects, and an environment-variable reader that coerces named variables to a caller-declared type, returns NOTHING for an absent optional, and returns one fault naming every missing-required or uncoercible variable together"
+
+  # ----------------------------------------------------------------------------------------
+  # Step 1. The world, kept thin. honest-utilities touches two outside things. The law runner runs
+  # the caller's injected check predicate, which honest-utilities executes but did not write — that
+  # is the engine's boundary, declared as a read of the running process. The environment-variable
+  # reader reads named variables from the OS process environment. The world calls in by import; the
+  # caller is not a resource the module reads, so it is represented by the entries at the foot of the
+  # file, not by an input. The module writes nothing: both answers travel back through their door,
+  # and a return is not a write. The variable names are the caller's to choose at runtime, so there
+  # is no fixed `env NAME` the module itself reads; read_raw_env reads the environment ambiently.
+  # ----------------------------------------------------------------------------------------
+
+  inputs  = { "process" : "the running process, into which run_check executes a caller-injected check predicate it did not write, reading back the messages the predicate returned",
+              "env" : "the operating-system process environment, from which read_raw_env pulls the raw string of each caller-named variable" }
+  outputs = { }
+
+  # ----------------------------------------------------------------------------------------
+  # Step 3. The closed word-set. A variable's target type is one of a closed set of six, so it is a
+  # vocabulary and never a plain str on EnvRequest; a reader can list and count every allowed value
+  # and honest-test can enumerate them.
+  # ----------------------------------------------------------------------------------------
+
+  set target_types = {
+    "str"   : "the raw string passes through unchanged",
+    "int"   : "the raw string parses as a whole number; anything else faults",
+    "bool"  : "'true', '1', 'yes', 'on' read as true and 'false', '0', 'no', 'off' as false, case-insensitive; any other word faults",
+    "float" : "the raw string parses as a number; anything else faults",
+    "UUID"  : "the raw string parses as a UUID; anything else faults",
+    "key"   : "a secret such as an API key or token: it passes through as a string, but its value never appears in a fault message or anywhere the module reports — only its name does"
+  } note "the six closed target types a declared environment variable coerces to (Appendix B). A variable coerces to exactly one of these; the EnvRequest.type_name field carries one of these words and the by_target_type dispatch has exactly one coercer per word. Declared as a set, never a free string, so the catalogue of coercions is closed and listable."
+  vocabulary TargetType = { target_types } note "the closed set of target-type words an EnvRequest.type_name field carries (Appendix B). Exactly the six target_types words — str, int, bool, float, UUID, key — and no other; resolve_env selects a coercer by this word through the by_target_type dispatch."
+
+  # ----------------------------------------------------------------------------------------
+  # Step 3. The data dictionary. The law runner's four records, the reader's two, and honest-type's
+  # Fault across the seam. Every field is bounded: a closed set of words is the TargetType
+  # vocabulary, never a str.
+  # ----------------------------------------------------------------------------------------
+
+  type Law = {
+    identifier: str
+    statement: str
+    check: Callable
+  } note "one law: a property to prove, paired with the predicate that proves it (Appendix A). identifier is the law's short name, carried into every violation it raises. statement is the plain-language sentence of the property, the sentence a reader checks the evidence against. check is the caller's pure predicate from one subject's params to a list of violation messages: it returns an empty list when the property holds for that subject, and one message per violation otherwise. A check never raises and never returns a bare boolean; the messages are the evidence a failure reports. A caller builds a Law with the law constructor before anything enters the door."
+
+  type Subject = {
+    name: str
+    params: dict<str, any>
+  } note "one case a law is checked against (Appendix A), a (name, params) pair. name labels the case in the report, so a violation can say which subject failed. params is the record the law's check reads — an open map because a subject's fields vary by what the law is about. One law is checked against many subjects, so the same property is proven across a bounded space of cases; a caller builds those subjects from the generators it already has, honest-test's Set enumeration and adversarial neighbors."
+
+  type Violation = {
+    identifier: str
+    statement: str
+    subject: str
+    messages: list<str>
+  } note "one law that failed on one subject (Appendix A). identifier is the failing law's identifier; statement is its plain-language property, repeated so the report is self-explaining; subject is the name of the case it failed on; messages are the non-empty list of violation messages the law's check returned, the evidence of what was wrong. run_laws collects one of these per law-and-subject pair that did not hold. (honest-test's existing Violation names this first field `law` rather than `identifier`; the spec's Appendix A names it `identifier`, which this declaration follows — a discrepancy to reconcile when honest-test migrates onto this module.)"
+
+  type LawRun = {
+    passed: int
+    total: int
+    violations: list<Violation>
+  } note "the record verify_laws returns after running every law against every subject (Appendix A). total is how many law-and-subject pairs were checked, laws times subjects. passed is how many of those pairs the check found no violation on. violations is one Violation per failed pair. passed plus the number of violations equals total; an all-clear run has passed equal to total and an empty violations list. A caller aggregates several LawRun records into one status and prints the pass-and-fail counts."
+
+  type EnvRequest = {
+    name: str
+    type_name: TargetType
+    required: bool
+  } note "one variable a caller declares it wants from the environment (Appendix B). name is the environment variable's name. type_name is the target type to coerce the raw string to, one of the six TargetType words. required says whether the variable must be present: a required variable that is absent is a fault, while an absent optional variable resolves to NOTHING. A caller hands read_env a list of these as its whole declaration."
+
+  type EnvValues = {
+    values: dict<str, any>
+  } note "the resolved record read_env returns when every required variable is present and every value coerces (Appendix B). values maps each declared variable's name to its resolved value: the coerced value for a present, valid variable — whose static type is the caller's declared TargetType for that name, which is why it is an open value here rather than a single named type — or NOTHING for an absent optional variable. Every declared name appears as a key. When any required variable is missing or any value will not coerce, read_env returns a Fault instead of this record."
+
+  type Fault = {
+    code: str
+    message: str
+    category: str
+    detail: dict<str, any>
+  } note "honest-type's Fault shape, imported across the seam from honest-type and declared locally so this module can name it in a signature — the idiom honest-parse, honest-errors and honest-features each use for honest-type's Fault. It is the error branch of a function's decision table, carried by the return as X | Fault with the success type still visible — a bare union recognized by its own shape, never raised and never wrapped in an ok/err envelope. A fault travels by return: resolve_env builds it, load_env forwards it, and read_env returns it out to the importing caller. code is the short reason the resolution failed; message is the human sentence naming every variable at fault — one fault names them all together, so a misconfigured deployment reports all its problems at once rather than one restart at a time; a key variable's name may appear here but its value never does. category and detail carry honest-type's standard classification and structured context. Two fields minimum: the code to branch on and the message to read. Only the environment-variable reader produces a Fault; the law runner never does."
+
+  # ----------------------------------------------------------------------------------------
+  # Capability 1 — the law runner, an ENGINE. Its boundary (run_check) runs the caller's injected
+  # predicate, which is why run_check is a reader and not a pure function. The path never produces a
+  # Fault: a check never raises, so verify_laws answers a LawRun and nothing else. This is the same
+  # capability honest-test declares at section 4.10.
+  # ----------------------------------------------------------------------------------------
+
+  boundary_in fn verify_laws : (laws: list<Law>, subjects: list<Subject>) -> LawRun invokes run_laws note "the law-runner door (Appendix A), the one a sibling module's conformance runner enters to run every stated law against a bounded set of subjects. laws is the properties to check, each stated with the law constructor; subjects is the bounded set of cases, each a (name, params) pair the caller built from its generators. It adds no logic of its own: it hands the two lists to the run_laws orchestrator and returns the LawRun that comes back — how many law-and-subject pairs passed, the total checked, and one Violation per failed pair. It is a door: the sibling enters by import, the running of each injected check predicate is the engine's boundary realized by run_check, and verify_laws itself only hands its input to the orchestrator. It never raises and never returns a Fault; the law runner reports failures as Violations in the run record, not as faults."
+
+  orchestrator fn run_laws : (laws: list<Law>, subjects: list<Subject>) -> LawRun invokes run_check, to_violation note "the law-runner's one orchestrator (Appendix A), the sequence verify_laws hands the laws and subjects to. For each law and each subject it runs the law's check predicate on the subject's params at the boundary with run_check, which returns the violation messages — empty when the property holds for that subject. When the messages are non-empty it builds one Violation with to_violation. It counts the pairs that held as passed and the pairs checked as total, collects the violations, and returns the assembled LawRun, where passed plus the number of violations equals total. It composes no other orchestrator and reads no world of its own; each check runs at run_check's boundary."
+
+  reader fn run_check : (check: Callable, params: dict<str, any>) -> list<str> side_effect reads "process" note "runs one injected check predicate on one subject at the law engine's boundary (Appendix A), honest-utilities executing a predicate the caller wrote — code it did not write — which is what makes the law runner an engine and not the pure library honest-type is. check is the law's pure predicate, a function from one subject's params to a list of violation messages; params is the subject's record the predicate reads. It runs the predicate and returns its messages: the empty list when the property holds for that subject, and one message per violation otherwise, the evidence a failure reports. The predicate never raises and never returns a bare boolean, so the messages are the whole result. Its one side effect is the process-level effect of running the caller's injected code, which may do anything, and reading back what it returned; the collecting and counting is run_laws's work."
+
+  fn to_violation : (law: Law, subject: Subject, messages: list<str>) -> Violation note "builds one Violation from a law that failed on a subject (Appendix A), the pure half of the law engine. law is the failing law; subject is the case it failed on; messages are the violation messages run_check returned, non-empty by the time run_laws calls this. It returns a Violation naming the law's identifier, its statement repeated so the report is self-explaining, the subject's name, and the messages, the evidence of what was wrong. It reads no world and returns pure data."
+
+  fn law : (identifier: str, statement: str, check: Callable) -> Law note "states one property as data, the pure constructor a sibling module imports to write its own generative conformance (Appendix A). identifier is the law's short name, carried into every violation it raises; statement is its plain-language property; check is the pure predicate it is proven by — a function from one subject's params to a list of violation messages, empty when the property holds and one message per violation otherwise, which never raises and never returns a bare boolean. It returns the Law record of those three fields. A caller imports law to build each Law and then hands the list to verify_laws, so law is reached by import and verify_laws is reached by import, the two halves of the one API a sibling enters. It reads no world and returns pure data."
+
+  # ----------------------------------------------------------------------------------------
+  # Capability 2 — the environment-variable reader, a READER. Its boundary (read_raw_env) reads the
+  # process environment. The pure resolve_env coerces each value by its declared target type through
+  # the by_target_type dispatch, fills an absent optional with NOTHING, and collects every failure
+  # into one Fault. The fault travels by return out to the door.
+  # ----------------------------------------------------------------------------------------
+
+  boundary_in fn read_env : (declarations: list<EnvRequest>) -> EnvValues | Fault invokes load_env note "the environment-variable reader's door (Appendix B). A caller imports and calls it with the variables it wants, each declared as a name, a target type, and whether it is required. It adds no logic of its own: it hands the declarations to the load_env orchestrator and returns what comes back — an EnvValues with every present, valid variable coerced to its type and every absent optional set to NOTHING, or a Fault when a required variable is missing or any value will not coerce. The Fault names every variable at fault together, so a misconfigured deployment reports all its problems at once. It returns the fault as data and never raises."
+
+  orchestrator fn load_env : (declarations: list<EnvRequest>) -> EnvValues | Fault invokes read_raw_env, resolve_env note "the environment-variable reader's one orchestrator (Appendix B). It reads the environment once through read_raw_env for the declared names, then hands the declarations and the raw map to resolve_env, and returns resolve_env's answer — the EnvValues of coerced values and NOTHINGs, or the one aggregate Fault. It reads the world through its reader and makes no coercion decision itself; resolve_env owns that. A returned Fault passes straight back out through the door."
+
+  reader fn read_raw_env : (names: list<str>) -> dict<str, str | NOTHING> side_effect reads "env" note "pulls the raw strings for the declared names from the process environment (Appendix B). names is the list of variable names the declarations ask for. It returns a map from each name to its raw environment string, or to NOTHING when that variable is absent from the environment. It is the capability's boundary — the one place the environment is touched — which is why it is a reader. Because the names are the caller's to choose at runtime, there is no fixed env variable this module declares; it reads the environment ambiently. It coerces nothing and decides nothing: it reads, and resolve_env does the rest. Its one side effect is reading the environment."
+
+  fn resolve_env : (declarations: list<EnvRequest>, raw: dict<str, str | NOTHING>) -> EnvValues | Fault invokes by_target_type note "resolves the raw environment map against the declarations (Appendix B). declarations is what the caller asked for; raw is the name-to-raw-string-or-NOTHING map read_raw_env returned. For each declaration it decides by three cases: an absent required variable is a failure; an absent optional variable resolves to NOTHING; a present variable is coerced to its declared type by selecting the matching coercer from the by_target_type dispatch on type_name. It collects every failure — each missing required variable and each value a coercer rejected — into one Fault that names them all, returning that Fault when there is at least one failure, and otherwise an EnvValues mapping every declared name to its coerced value or NOTHING. A key variable's name may appear in the Fault but never its value. It is pure: every value it reasons about was handed in, and it returns the fault as data rather than raising."
+
+  dispatch by_target_type = { "str" -> coerce_str, "int" -> coerce_int, "bool" -> coerce_bool, "float" -> coerce_float, "UUID" -> coerce_uuid, "key" -> coerce_key } note "selects the coercer for a present variable by its declared target type (Appendix B): the single place the six coercions are enumerated, one row per TargetType word, so adding or changing a coercion is editing this table, never control flow. resolve_env dispatches each present variable's type_name through it; the six rows cover the whole TargetType vocabulary, so a word outside it can only come from a construction bug."
+
+  fn coerce_str : (raw: str) -> any | Fault note "coerces a raw environment string under the str target type (Appendix B): the raw string passes through unchanged and the returned value is the string itself. It never fails, so its Fault arm is unused; its return is typed with the shared coercer shape only because every row of by_target_type answers alike. The returned value is open because, across the dispatch, a coercer's static result type is the caller's declared target type, not a single named type."
+
+  fn coerce_int : (raw: str) -> any | Fault note "coerces a raw environment string under the int target type (Appendix B): it parses the string as a whole number and returns that integer. A string that is not a whole number will not coerce, and it returns a Fault naming the variable rather than guessing a value. The boundary cases a scenario must hit are a clean integer string, a non-numeric string, and a float-looking string, which is not a whole number."
+
+  fn coerce_bool : (raw: str) -> any | Fault note "coerces a raw environment string under the bool target type (Appendix B): it reads 'true', '1', 'yes' and 'on' as true and 'false', '0', 'no' and 'off' as false, matched case-insensitively, and returns that boolean. Any other word will not coerce, and it returns a Fault. The boundary cases a scenario must hit are each accepted word in both letter cases and at least one rejected word."
+
+  fn coerce_float : (raw: str) -> any | Fault note "coerces a raw environment string under the float target type (Appendix B): it parses the string as a number and returns that float. A string that is not a number will not coerce, and it returns a Fault. An integer-looking string is a valid float; a non-numeric string is the failing case."
+
+  fn coerce_uuid : (raw: str) -> any | Fault note "coerces a raw environment string under the UUID target type (Appendix B): it parses the string as a UUID and returns the parsed UUID. A string that is not a valid UUID will not coerce, and it returns a Fault. A well-formed UUID string is the passing case; any malformed string is the failing one."
+
+  fn coerce_key : (raw: str) -> any | Fault note "coerces a raw environment string under the key target type (Appendix B): a key is a secret such as an API key or token, so the raw string passes through as a string, but its value never appears in a fault message or anywhere the module reports — only the variable's name does. It does not fail on the value's content, since any string is an acceptable secret; its distinguishing behaviour is that the value is never surfaced, which is the property a scenario must assert."
+
+  # ----------------------------------------------------------------------------------------
+  # The world arrives here. A sibling module imports a door, or the law constructor, and calls it.
+  # Functions reached only by another function on a path (the orchestrators, the readers, the pure
+  # functions, the coercers) need no entry; the call that reaches them is their arrival.
+  # ----------------------------------------------------------------------------------------
+
+  entry "import honest_utilities" -> verify_laws
+  entry "import honest_utilities" -> law
+  entry "import honest_utilities" -> read_env

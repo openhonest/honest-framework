@@ -6,7 +6,35 @@ requires-python = ">=3.11"
 dependencies = []
 
 [tool.uv.workspace]
-members = ["honest-*", "tree-sitter-honest-jinja", "tree-sitter-honest-hd"]
+# Members are listed explicitly, not globbed. A "honest-*" glob pulls in every
+# folder under python/, and uv refuses to resolve the workspace if any member
+# lacks a pyproject.toml. Our method writes a module's .hd before its code, so a
+# new module spends time as a declaration-only folder with no pyproject.toml; a
+# glob would make each one break every `uv run` in the workspace until the code
+# stage. A module joins this list when it gets its pyproject.toml, which is its
+# code stage. Until then its declaration-only folder stays invisible to uv.
+members = [
+  "honest-alerts",
+  "honest-auth",
+  "honest-check",
+  "honest-check_cli",
+  "honest-design",
+  "honest-errors",
+  "honest-estimate",
+  "honest-features",
+  "honest-gherkin",
+  "honest-observe",
+  "honest-page",
+  "honest-parse",
+  "honest-persist",
+  "honest-rca",
+  "honest-state",
+  "honest-test",
+  "honest-type",
+  "honest-utilities",
+  "tree-sitter-honest-jinja",
+  "tree-sitter-honest-hd",
+]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"

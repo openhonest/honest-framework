@@ -21,7 +21,7 @@ import sqlite3
 import sys
 from contextlib import redirect_stderr
 
-from honest_test import law, verify_laws
+from honest_utilities import law, verify_laws
 from postgres_fixture import postgres_connection
 from turso_fixture import turso_connection
 

@@ -25,6 +25,7 @@ members = [
     "honest-state",
     "honest-test",
     "honest-type",
+    "honest-utilities",
     "honest-workspace",
     "tree-sitter-honest-hd",
     "tree-sitter-honest-jinja",
@@ -379,6 +380,17 @@ requires-dist = [
 name = "honest-type"
 version = "0.1.0"
 source = { editable = "honest-type" }
+
+[[package]]
+name = "honest-utilities"
+version = "0.1.0"
+source = { editable = "honest-utilities" }
+dependencies = [
+    { name = "honest-type" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "honest-type", editable = "honest-type" }]
 
 [[package]]
 name = "honest-workspace"

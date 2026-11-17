@@ -18,7 +18,8 @@ directory is outside the honest-check gate (it builds throwing predicates on pur
 is free to construct adversarial fixtures.
 """
 
-from honest_test import adversarial_neighbors, enumerate_sets, law, verify_laws
+from honest_test import adversarial_neighbors, enumerate_sets
+from honest_utilities import law, verify_laws
 
 from honest_type import (
     binding,
