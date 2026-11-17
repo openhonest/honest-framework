@@ -117,6 +117,16 @@ Feature: honest-type — generated, one scenario per function (39 total)
     When link_meta is called
     Then the metadata a declared link carries: its name, accepts, binds, boundary, authorizes and emits
 
+  Scenario: is_chain
+    Given value: any
+    When is_chain is called
+    Then true when a value is a composed chain built by chain(), recognized by the ordered-links metadata chain() attaches; the mirror of is_link for a whole chain
+
+  Scenario: chain_meta
+    Given value: any
+    When chain_meta is called
+    Then the ordered links a composed chain was built from, which chain() attaches; the mirror of link_meta; empty for an undeclared value
+
   Scenario: chain
     Given links: list<Callable>
     When chain is called

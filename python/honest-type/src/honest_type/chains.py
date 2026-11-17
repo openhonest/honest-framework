@@ -168,8 +168,24 @@ def chain(*links):
     short-circuit. A
     chain containing any async link is itself async (its run awaits through execute_chain_async); a
     chain of all sync links is sync. Composition preserves this — an async chain is a coroutine
-    function, so a parent chain that contains it is async too."""
-    return _combinator(execute_chain, execute_chain_async, links)
+    function, so a parent chain that contains it is async too. It also attaches ordered-links
+    metadata to the composed link it returns (section 12.7), the way link() stamps its own; this
+    is pure construction, it changes nothing the chain composes or how it runs."""
+    composed = _combinator(execute_chain, execute_chain_async, links)
+    composed.__honest_chain__ = {"links": list(links)}
+    return composed
+
+
+def is_chain(value) -> bool:
+    """True if value is a composed chain built by chain() (section 12.7), recognized by the
+    ordered-links metadata chain() attaches. The mirror of is_link for a whole chain."""
+    return hasattr(value, "__honest_chain__")
+
+
+def chain_meta(value) -> dict:
+    """A composed chain's ordered-links metadata (section 12.7): {"links": [...]} in build order.
+    Empty for a value chain() never built. The mirror of link_meta."""
+    return getattr(value, "__honest_chain__", {})
 
 
 def _run_validate_all(links, manifest) -> dict:

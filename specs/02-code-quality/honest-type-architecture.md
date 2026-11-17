@@ -1216,6 +1216,8 @@ create_user_pipeline = chain(validation_chain, persistence_chain)
 
 The outermost chain has the same `execute_chain` contract. Short-circuit propagates through all levels — a fault in `validation_chain` short-circuits the entire `create_user_pipeline`.
 
+**Chain metadata for verification.** Like `@link`, the `chain()` constructor attaches metadata to the composed link it returns: the ordered links it was built from. The metadata does not change the chain's runtime behavior — the chain is still a link with the same `execute_chain` contract. It lets honest-test find a chain among a module's values and recover its adjacent link pairs, so the chain-contract check (honest-test §4.6) can verify that every link accepts what the link before it emits. A recognizer `is_chain(value)` reports whether a value is a composed chain, and `chain_meta(value)` reads its ordered links, mirroring `is_link` and `link_meta` for a single link.
+
 ### 12.8 What the Chain Does NOT Do
 
 - **Does not classify tokens.** Classification happens before the chain, at the boundary (honest.intake for HTTP, honest.boot for DOM, or any other boundary). The chain receives a manifest, not raw tokens.

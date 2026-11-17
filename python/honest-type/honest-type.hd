@@ -83,6 +83,9 @@ module honest-type
     authorizes: bool
     emits: list<str>
   }
+  type Chain = {
+    links: list<Callable>
+  }
   type StateMachine = {
     states: Vocabulary
     events: Vocabulary
@@ -131,7 +134,9 @@ module honest-type
   fn link : (accepts: Vocabulary, binds: Binding, boundary: bool, authorizes: bool, emits: list<str>) -> Callable note "declares a link by attaching its vocabulary and role to a function for the checker; it never changes the function's behaviour"
   fn is_link : (fn: Callable) -> bool note "true when a function was declared with link"
   fn link_meta : (fn: Callable) -> Link note "the metadata a declared link carries: its name, accepts, binds, boundary, authorizes and emits"
-  fn chain : (links: list<Callable>) -> Callable note "composes links into one short-circuiting link the host later runs, manifest to Result"
+  fn chain : (links: list<Callable>) -> Callable note "composes links into one short-circuiting link the host later runs, manifest to Result; this is pure construction, and it also attaches metadata recording its ordered links to the function it returns, so is_chain and chain_meta can read them later, mirroring the metadata link attaches (spec 12.7)"
+  fn is_chain : (value: any) -> bool note "true when a value is a composed chain built by chain(), recognized by the ordered-links metadata chain() attaches; the mirror of is_link for a whole chain. honest-test's loader uses it to find a chain among a module's values (spec 12.7)"
+  fn chain_meta : (value: any) -> Chain note "the metadata a composed chain carries: the ordered links it was built from, which chain() attaches. honest-test reads it to recover a chain's adjacent link pairs for the chain-contract check (honest-test 4.6, spec 12.7 here); the mirror of link_meta. For an undeclared value it is empty, as link_meta is"
   fn validate_all : (links: list<Callable>) -> Callable note "composes links into one accumulating link the host later runs: every link runs against the same manifest and any error makes the whole a validation_failed carrying every result"
   fn is_fault : (value: any) -> bool note "true when a value is a Fault, recognized by its shape (it carries a code); a manifest never does. The chain executor and validate_all short-circuit on it and catch_at_boundary routes it, in place of the old ok/err envelope (section 12.1)"
   fn execute_chain : (links: list<Callable>, initial_manifest: Manifest) -> Manifest | Fault invokes is_fault note "runs links in sequence, short-circuiting on the first fault, recognized by is_fault"
@@ -164,6 +169,7 @@ module honest-type
   entry "import honest_type" -> maybe
   entry "import honest_type" -> link
   entry "import honest_type" -> link_meta
+  entry "import honest_type" -> chain_meta
   entry "import honest_type" -> execute_chain
   entry "import honest_type" -> is_fault
   entry "import honest_type" -> ok
@@ -180,5 +186,6 @@ module honest-type
   entry "call:application" -> _run_validate_all
   entry "call:application" -> _run_validate_all_async
   entry "call:application" -> is_link
+  entry "call:application" -> is_chain
   entry "call:application" -> catch_at_boundary
   entry "call:application" -> check_rejections

@@ -11,8 +11,10 @@ from honest_type.boundary import (
 )
 from honest_type.chains import (
     chain,
+    chain_meta,
     execute_chain,
     execute_chain_async,
+    is_chain,
     is_link,
     link,
     link_meta,
@@ -41,6 +43,8 @@ __all__ = [
     "link",
     "is_link",
     "link_meta",
+    "is_chain",
+    "chain_meta",
     "catch_at_boundary",
     "check_rejections",
     "DEFAULT_REJECTION_POLICY",

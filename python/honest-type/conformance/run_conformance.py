@@ -23,10 +23,12 @@ from honest_type import (
     binding,
     catch_at_boundary,
     chain,
+    chain_meta,
     check_rejections,
     classify,
     composed,
     fault,
+    is_chain,
     is_fault,
     is_link,
     link,
@@ -277,6 +279,22 @@ def _check_linkmeta(case):
     return matched, f"got {meta}"
 
 
+def _check_chainmeta(case):
+    """chain() records its ordered links so honest-test can recover a chain's adjacent
+    pairs (§12.7): is_chain(built) is True, chain_meta(built)["links"] is exactly the
+    links it was built from, and a plain link is neither (is_chain False, chain_meta {})."""
+    built = chain(*[_LINKS[name] for name in case["chain_links"]])
+    expected = [_LINKS[name] for name in case["chain_links"]]
+    plain = _LINKS[case.get("not_chain", "pass")]
+    matched = (
+        is_chain(built)
+        and chain_meta(built).get("links") == expected
+        and not is_chain(plain)
+        and chain_meta(plain) == {}
+    )
+    return matched, f"is_chain={is_chain(built)} meta_links={chain_meta(built).get('links')} plain_is_chain={is_chain(plain)}"
+
+
 def _check_statemachine(case):
     if "apply" in case:
         machine = _build_sm(case)
@@ -325,6 +343,7 @@ _CHECKERS = {
     "boundary": _check_boundary,
     "rejections": _check_rejections,
     "linkmeta": _check_linkmeta,
+    "chainmeta": _check_chainmeta,
     "statemachine": _check_statemachine,
     "value": _check_value,
 }
@@ -335,6 +354,8 @@ def _kind(case):
         return "value"
     if "sm" in case:
         return "statemachine"
+    if "chain_links" in case:
+        return "chainmeta"
     if "link" in case:
         return "linkmeta"
     if "expect_status" in case:

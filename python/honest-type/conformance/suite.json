@@ -78,6 +78,11 @@
       "expect_authorizes": false
     },
     {
+      "id": "chainmeta-records-ordered-links",
+      "chain_links": ["pass", "set_role"],
+      "not_chain": "plain"
+    },
+    {
       "id": "classify-non-string-token",
       "declarations": {
         "cc": [
