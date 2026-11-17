@@ -2231,7 +2231,10 @@ def _probe_connection_pool():
         def classify(exc):
             return "unresolvable_dsn"
 
+        slept = []
+
         async def sleep(delay_ms):
+            slept.append(delay_ms)
             return None
 
         attempts = {"n": 0}
@@ -2250,6 +2253,8 @@ def _probe_connection_pool():
             bad.append(f"open_pool should establish each connection resiliently and emit created: {opened}, {[p['event'] for p in created]}")
         elif (created[-1]["pool_size"], created[-1]["active"], created[-1]["waiting"]) != (2, 0, 0):
             bad.append(f"the created pool event should report the pool size and no active/waiting: {created[-1]}")
+        elif len(slept) != 1:
+            bad.append(f"the one transient failure should back off exactly once before retrying: {slept}")
 
         # A connection that cannot be established closes the ones already opened — none leak — and
         # returns the establishment fault.
@@ -2268,12 +2273,18 @@ def _probe_connection_pool():
             conn.close()
             cleaned.append(conn)
 
+        partial_events = []
+
         async def emit_partial(event_type, aggregate_type, aggregate_id, payload):
+            partial_events.append(payload)
             return None
 
         partial = await open_pool("main", first_then_down, classify, close_partial, 2, 1, 1, sleep, emit_partial)
         if partial.get("err", {}).get("code") != "unresolvable_dsn" or cleaned != made:
             bad.append(f"open_pool should close the connections it opened when a later one fails: {partial}, {cleaned}, {made}")
+        # A pool that failed to finish opening never announces itself as created.
+        elif any(p.get("event") == "created" for p in partial_events):
+            bad.append(f"a pool that failed to open should not emit a created event: {partial_events}")
 
         # lease emits exhausted on a full pool, and stays quiet when a connection is free.
         exhausted = []
@@ -2382,12 +2393,17 @@ def _probe_connect_retry():
         async def emit_down(event_type, aggregate_type, aggregate_id, payload):
             down_events.append(payload)
 
+        slept_noop = []
+
         async def sleep_noop(delay_ms):
+            slept_noop.append(delay_ms)
             return None
 
         failed = await connect_with_retry({"database": "main"}, down, classify, 2, 10, sleep_noop, emit_down)
         if failed.get("err", {}).get("code") != "unresolvable_dsn" or [p["event"] for p in down_events] != ["retry", "retry", "error"]:
             bad.append(f"an unresolvable DSN should exhaust its retries and emit error: {failed}, {[p['event'] for p in down_events]}")
+        elif len(slept_noop) != 2:
+            bad.append(f"two retries should back off twice before erroring: {slept_noop}")
         elif (down_events[-1]["pool_size"], down_events[-1]["active"], down_events[-1]["waiting"]) != (0, 0, 0):
             bad.append(f"an error pool event should report no pool counters (0/0/0): {down_events[-1]}")
 
