@@ -212,6 +212,13 @@ def _read_layer(node, source):
     return _field_text(node, "name", source)
 
 
+def _read_version(node, source):
+    """The version the architect gives this declaration, as written. The reader keeps the string
+    and never parses it: the format does not say what a version means, so comparing two of them
+    is the reader's own business and nothing here orders them."""
+    return _unquote(_field_text(node, "value", source))
+
+
 def _read_store(node, source) -> ir.Store:
     """State held between calls: one pure function's answers by its arguments, and why."""
     return {"name": _field_text(node, "name", source), "fn": _field_text(node, "fn", source),
@@ -246,6 +253,7 @@ def _read_surfaces(node, source) -> ir.Surfaces:
 # body declaration -> (Module field, handler). Each handler is a function of (node, source).
 _BODY = {
     "layer_decl": ("layer", _read_layer),
+    "version_decl": ("version", _read_version),
     "env_decl": ("envs", _read_env),
     "store_decl": ("stores", _read_store),
     "inputs_decl": ("inputs", _read_surface),
@@ -273,6 +281,7 @@ def _read_module(node, source) -> ir.Module:
     return {
         "name": _field_text(node, "name", source),
         "layer": (groups.get("layer") or [""])[0],
+        "version": (groups.get("version") or [""])[0],
         "note": _note(node, source),
         "envs": groups.get("envs", []),
         "stores": groups.get("stores", []),

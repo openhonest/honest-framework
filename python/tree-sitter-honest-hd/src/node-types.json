@@ -600,6 +600,10 @@
           "named": true
         },
         {
+          "type": "version_decl",
+          "named": true
+        },
+        {
           "type": "vocabulary_decl",
           "named": true
         }
@@ -1107,6 +1111,22 @@
     }
   },
   {
+    "type": "version_decl",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "vocabulary_decl",
     "named": true,
     "fields": {
@@ -1359,6 +1379,10 @@
   },
   {
     "type": "type",
+    "named": false
+  },
+  {
+    "type": "version",
     "named": false
   },
   {

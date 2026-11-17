@@ -93,6 +93,7 @@ The model is language-agnostic. The same `.hd` describes the module whether it i
 module honest-type
 
   layer foundation
+  version "1.4.0"
   note "the type layer: it recognizes tokens, composes vocabularies, and classifies input into a dispatch-ready manifest."
 
   # Living-spec examples, each bound to a chain.
@@ -139,6 +140,7 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 |---|---|
 | `module <name>` | The module — one per file, the unit of editing and of the diagram. |
 | `layer <name>` | The module's tier: `foundation`, `correctness`, `tooling`, `domain`, ... |
+| `version "<text>"` | The version the architect gives this declaration. Optional, free text, kept as written: the format neither parses it nor orders two of them, so what a bump means is the architect's to say. No date rides beside it, because a typed date is a claim nothing checks, and the question a reader asks a date is answered by the file's own history (§3.2.1). |
 | `env <NAME> : <type>` | An environment variable the module reads: the name the deployment must supply, and its type. Write the type as a union with `Absent` when the variable may be missing, so the boundary that reads it has to handle that case; a bare type means required. The function that reads it declares `side_effect reads "env:<NAME>"`. |
 | `inputs = { "side" : "description", ... }` | Every side of the world the module reads, closed: `HTTP`, `caller`, `clock`, `filesystem`. A door reads a listed side when the world knocks; a reader reads one when the program asks. A side a boundary names that the list does not carry is a fault, so the surface has one source of truth and a wrong boundary cannot be declared. `env:` targets stay outside the list, closed by their own declarations. |
 | `outputs = { "side" : "description", ... }` | Every side of the world the module writes, closed, the same way. A `reads_writes` side is in both lists. The DOM appears here once and a `surfaces` block enumerates what sits behind it; `store:` targets stay outside, being the module's own memory. A door exists only if something outside starts the work and the module cannot obtain the value itself; everything else is a reader, or is built where it is needed. |
@@ -167,6 +169,14 @@ A module may also declare `route "METHOD /path" -> fn` (an input-boundary route 
 
 A function signature is `: (name: type, ...) -> ret`. `side_effect reads "X"` / `writes "X"` / `reads_writes "X"` names the source or sink — `HTTP`, `DOM`, `filesystem`, `network`, `localStorage`, `stdout`, `database`, an environment variable by name as `env:<NAME>`, a store by name as `store:<name>`, or another module such as `honest-observe` — and a function may declare more than one. `invokes` lists the chains and functions an orchestrator (or boundary) calls. `raises` lists the codes of the faults a boundary throws, written bare (`no_transition`) or quoted (`"alert.delivery_failed"`). Only a `boundary_in` or `boundary_out` throws, so only one of them carries `raises`; a fault anywhere else comes back in the return type. A dispatch entry may add `from <field>`, naming the slice of the caller's input that entry's handler is fed; the handler then declares that field's type instead of the whole record, so a predicate reading one field of sixteen says so in its signature rather than in a comment. There is exactly one way to say each thing.
 
+### 3.2.1 A declaration's version, and why its date is not declared
+
+A declaration carries an optional `version`, and it carries no date. The split is deliberate and Adam set it on 17 November 2026, after a session read `persistum.hd`, reported 19 findings to another session, and was still holding that number while the file was amended underneath it. The amended file raised 22. Neither session could see that the declaration had moved, and both were talking about a count neither could place.
+
+A version is a claim a person chooses to make. The architect decides that this declaration is 1.4.0 rather than 1.3.0, and what the difference means is theirs to say, which is why the format keeps the string as written, parses nothing out of it and orders no two of them. That is the same contract `note` has.
+
+A date is not that kind of claim. The question a reader asks a date is whether two of them read the same declaration, and a date typed into the file answers that question only while somebody remembers to retype it. The first edit that forgets leaves a stamp that is wrong in the one direction that matters: it says the file is older than it is, so a stale reading looks current. A gate that lies is worse than no gate, so the format declines to hold the date at all. A reader who needs it reads the file's own history, where an edit cannot be forgotten, and a tool that draws a stamp draws it from there: the last commit that touched that `.hd`, and a mark when the working file is newer than its last commit. The architecture-explorer draws exactly that beside the version, and it already stamps itself the same way for the same reason.
+
 ### 3.3 Workspace files
 
 Two file kinds sit above the modules and describe the workspace as a whole:
@@ -181,7 +191,7 @@ Two file kinds sit above the modules and describe the workspace as a whole:
 The reader produces a normalized, language-agnostic IR — plain data, the single value every downstream consumer (validator, renderer, honest-check conformance tier) reads. It is not tied to tree-sitter node shapes; the reader folds the parse tree into it so no consumer touches the grammar.
 
 ```
-Module   = { name, layer, note, envs, stores, inputs, outputs, surface_declared, types, sets, vocabularies, dispatches,
+Module   = { name, layer, version, note, envs, stores, inputs, outputs, surface_declared, types, sets, vocabularies, dispatches,
              surfaces, functions, chains, exposes, examples, routes, entries, html_attrs }
              # exposes: [ { kind, name, note } ], the state machines, schemas, components, providers
              #   and gates the module presents to the honest-test runner (honest-test-architecture.md §11.1).

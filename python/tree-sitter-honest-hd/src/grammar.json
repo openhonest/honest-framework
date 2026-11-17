@@ -63,6 +63,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "version_decl"
+        },
+        {
+          "type": "SYMBOL",
           "name": "note"
         },
         {
@@ -144,6 +148,23 @@
           "content": {
             "type": "SYMBOL",
             "name": "identifier"
+          }
+        }
+      ]
+    },
+    "version_decl": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "version"
+        },
+        {
+          "type": "FIELD",
+          "name": "value",
+          "content": {
+            "type": "SYMBOL",
+            "name": "string"
           }
         }
       ]

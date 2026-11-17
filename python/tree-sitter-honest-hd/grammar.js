@@ -37,6 +37,7 @@ module.exports = grammar({
 
     _body_decl: $ => choice(
       $.layer_decl,
+      $.version_decl,
       $.note,
       $.env_decl,
       $.store_decl,
@@ -57,6 +58,16 @@ module.exports = grammar({
     ),
 
     layer_decl: $ => seq('layer', field('name', $.identifier)),
+
+    // The version the architect gives this declaration. It is a claim a person chooses to make,
+    // the way a note is, and the format neither parses it nor orders two of them: a reader who
+    // sees 1.4.0 against 1.3.0 knows what the architect meant by the difference and nothing here
+    // does. No date rides beside it on purpose. A typed date is a claim nothing checks, and the
+    // one question a reader asks a date (did the two of us read the same declaration?) is
+    // answered by the file's own history, which cannot be forgotten on an edit. Adam set that
+    // split on 2026-11-17, after a declaration changed under a session that had already reported
+    // its red count and neither side could see that the file had moved.
+    version_decl: $ => seq('version', field('value', $.string)),
 
     // A note is the one comment the parser keeps. It rides on the declaration it explains and is
     // drawn on that card; a `#` comment is for the file's reader and never reaches the map. A note

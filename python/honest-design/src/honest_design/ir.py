@@ -149,6 +149,7 @@ class HtmlAttr(TypedDict):
 class Module(TypedDict):
     name: str
     layer: str
+    version: str  # the version the architect gives this declaration; "" when it declares none
     note: str  # one line saying what the module is for; "" when the module declares none
     envs: list  # list[Env]
     stores: list  # list[Store]
