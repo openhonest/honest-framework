@@ -116,8 +116,8 @@ def io_monitor(link, test_manifest):
     functions so each records its own call name and then delegates to the real function, runs
     the link once, and restores every original in a finally — so the patch never leaks and no
     result changes. It returns the list of detected I/O call names, empty when the link did no
-    I/O. A stream method that cannot be patched in this interpreter is left alone; the three
-    builtins are always patched."""
+    I/O. All six targets — open, print, input and the three sys streams — are patched the one
+    uniform way."""
     record = []
 
     def _wrap(name, original):
@@ -138,24 +138,16 @@ def io_monitor(link, test_manifest):
             setattr(owner, attr, original)
         return None
 
-    def _try_streams(saved):
-        try:
-            return _install(stream_targets, saved)
-        except AttributeError:
-            return saved
-
-    builtin_targets = [
+    targets = [
         (builtins, "open", "builtins.open"),
         (builtins, "print", "builtins.print"),
         (builtins, "input", "builtins.input"),
-    ]
-    stream_targets = [
         (sys.stdout, "write", "sys.stdout.write"),
         (sys.stderr, "write", "sys.stderr.write"),
         (sys.stdin, "read", "sys.stdin.read"),
     ]
 
-    saved = _try_streams(_install(builtin_targets, []))
+    saved = _install(targets, [])
     try:
         link(test_manifest)
     finally:

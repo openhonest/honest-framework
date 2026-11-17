@@ -10,6 +10,8 @@ No classes, no mocks: the links are real functions, and io_monitor is the real r
 restore instrumentation, not a test double.
 """
 
+import sys
+
 from honest_test import io_monitor
 
 
@@ -17,6 +19,12 @@ def _io_link(manifest):
     """Does I/O: opens a file and closes it."""
     with open(__file__):
         pass
+    return manifest
+
+
+def _stream_link(manifest):
+    """Does I/O by writing straight to the stdout stream, bypassing print()."""
+    sys.stdout.write("")
     return manifest
 
 
@@ -31,6 +39,13 @@ def probe_io_monitor():
     recorded = io_monitor(_io_link, {"a": 1})
     if not recorded:
         bad.append(f"io_monitor should record the open() call a link makes, got {recorded!r}")
+
+    # The .hd names sys.stdout/stderr/stdin among io_monitor's patched targets, so a link that
+    # writes straight to the stream — not through print() — must be detected too. This pins the
+    # stream path that the open() case alone never exercises.
+    streamed = io_monitor(_stream_link, {"a": 1})
+    if not streamed:
+        bad.append(f"io_monitor should record a direct sys.stdout.write call, got {streamed!r}")
 
     clean = io_monitor(_pure_link, {"a": 1})
     if clean != []:
