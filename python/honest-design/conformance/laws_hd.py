@@ -1070,8 +1070,37 @@ def _probe_edge():
     return bad
 
 
+def _probe_reserved_field():
+    """`is_err` is the mark that tells the fault arm of a bare `value | Fault` union from the value
+    arm, so only Fault may declare it. The rule fires on a second record carrying the name, stays
+    silent on Fault's own, and names the field and the type so the author knows which line to
+    change."""
+    bad = []
+    stolen = ('module m\n  type Fault = { is_err: bool\n code: str }\n'
+              '  type Money = { is_err: bool\n amount: int }\n'
+              '  fn f : (a: str) -> Money | Fault note "test"\n')
+    taken = [f for f in validate(_module(stolen)) if f["code"] == "reserved_field"]
+    if len(taken) != 1:
+        bad.append(f"a record other than Fault declaring is_err is refused: {validate(_module(stolen))}")
+    if taken and taken[0]["detail"] != {"type": "Money", "field": "is_err"}:
+        bad.append(f"the fault names the type and the field: {taken[0]['detail']}")
+    if taken and taken[0]["category"] != "client":
+        bad.append(f"a declaration taking a reserved name is the author's to fix, so client: {taken[0]['category']}")
+    # Fault's own is_err is the whole point of the reservation, so it is never the fault.
+    kept = ('module m\n  type Fault = { is_err: bool\n code: str }\n'
+            '  fn f : (a: str) -> str | Fault note "test"\n')
+    if [f for f in validate(_module(kept)) if f["code"] == "reserved_field"]:
+        bad.append("Fault carrying is_err is the reservation working, not a violation")
+    # A module declaring no reserved field is silent: the rule judges the name, not the shape.
+    quiet = _module('module m\n  type Money = { amount: int }\n  fn f : (a: str) -> Money note "test"\n')
+    if [f for f in validate(quiet) if f["code"] == "reserved_field"]:
+        bad.append("the rule fires on the reserved name alone")
+    return bad
+
+
 def run():
     probes = {
+        "reserved_field": _probe_reserved_field(),
         "edge": _probe_edge(),
         "couples_on": _probe_couples_on(),
         "side_kinds": _probe_side_kinds(),

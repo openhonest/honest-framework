@@ -45,6 +45,7 @@
         }
       ],
       "expect": {
+        "is_err": true,
         "code": "unknown_recognizer_kind",
         "message": "recognize got an unknown recognizer kind 'bogus'; the accepted kinds are set, insensitive, predicate; no matcher ran",
         "category": "server",
@@ -1352,6 +1353,7 @@
           {}
         ],
         "expected": {
+          "is_err": true,
           "code": "unrecognized",
           "message": "bad",
           "category": "server",
@@ -1411,6 +1413,7 @@
           }
         ],
         "expected": {
+          "is_err": true,
           "code": "unknown_recognizer_kind",
           "message": "recognize got an unknown recognizer kind 'bogus'; the accepted kinds are set, insensitive, predicate; no matcher ran",
           "category": "server",
@@ -1475,6 +1478,26 @@
         "function": "is_reserved",
         "args": [
           "ok"
+        ],
+        "expected": false
+      }
+    },
+    {
+      "id": "value-is-reserved-field-tag",
+      "value_case": {
+        "function": "is_reserved_field",
+        "args": [
+          "is_err"
+        ],
+        "expected": true
+      }
+    },
+    {
+      "id": "value-is-reserved-field-ordinary",
+      "value_case": {
+        "function": "is_reserved_field",
+        "args": [
+          "code"
         ],
         "expected": false
       }

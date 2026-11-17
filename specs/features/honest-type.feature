@@ -89,6 +89,12 @@ Feature: honest-type — vocabulary, classification, chains, and the boundary
     When is_reserved checks it
     Then it answers yes when the token is among the reserved words, otherwise no
 
+  Scenario: is_reserved_field reports whether a field name belongs to Fault alone
+    Given a field name
+    When is_reserved_field checks it
+    Then it answers yes for is_err, the mark that tells the fault arm of a bare union from the value arm, otherwise no
+    But it judges field names only, which is a different reservation from the reserved words above
+
   Scenario: reservation_layer names the layer that reserves a token
     Given a token
     When reservation_layer inspects it

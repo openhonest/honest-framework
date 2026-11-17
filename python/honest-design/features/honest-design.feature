@@ -261,6 +261,16 @@ Feature: honest-design — reading, checking, drawing and tracing .hd itself
     When _fault_shape reads the Fault type
     Then it faults a Fault declared as a bare name or with fewer than two fields to say what went wrong and what to do instead
 
+  Scenario: _reserved_field faults a record other than Fault that declares is_err
+    Given a module's declared types
+    When _reserved_field reads each record's field names
+    Then it faults a type other than Fault declaring is_err, the mark that tells the fault arm of a bare union from the value arm, and says nothing about Fault's own
+
+  Scenario: _edge_role_withdrawn faults a function declared an edge
+    Given a module's declared functions
+    When _edge_role_withdrawn reads each function's role
+    Then it faults every function declared an edge, and says where the function belongs instead: a utility module of its own when many modules import it, the importing module as a plain fn when one does, and nowhere at all when nothing reaches it
+
   Scenario: _unawaited_caller faults a caller of an awaited function that is not awaited
     Given a module's awaited functions and its call graph
     When _unawaited_caller follows the awaited word up through the returns

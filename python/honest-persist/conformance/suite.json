@@ -674,6 +674,7 @@
     ],
     "expected": {
      "err": {
+      "is_err": true,
       "code": "uncompilable_check",
       "message": "CHECK on 't' can be neither natively enforced on 'turso' nor compiled: x @@ 1",
       "category": "server",
@@ -808,6 +809,7 @@
     ],
     "expected": {
      "err": {
+      "is_err": true,
       "code": "check_violation",
       "message": "Row violates CHECK (price > 0)",
       "category": "client",

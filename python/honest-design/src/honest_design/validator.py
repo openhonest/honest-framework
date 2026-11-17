@@ -339,6 +339,36 @@ def _fault_shape(module):
     return [fault("fault_shape", "Fault is declared without the fields to say what went wrong and what to do instead", "server", {"type": FAULT})] if thin else []
 
 
+# The field that marks a record as the fault arm of a bare union. Only a Fault may carry it.
+RESERVED_FIELDS = {"is_err": FAULT}
+
+
+def _reserved_field(module):
+    """A fault returns as a bare `value | Fault`, so something has to tell the two arms apart, and
+    whatever tells them apart must belong to one arm alone. `is_err` is that mark, and reserving the
+    name is what makes the reading exact: a reader that keyed on a contentful field would read a
+    success value carrying a currency `code` or an HTTP status `code` as a failure. A record other
+    than Fault that declares `is_err` takes the name back, and the union stops being readable.
+
+    This judges only the declaration, which is why it lives here. honest-check owns the same
+    reservation over the Python source, where a record is a class rather than a `type` line.
+    """
+    return [
+        fault(
+            "reserved_field",
+            f"Type '{declared['name']}' declares the field '{field['name']}', which only {owner} may "
+            f"carry: it is the mark that tells the fault arm of a bare union from the value arm, and a "
+            f"second record carrying it makes the two arms indistinguishable. Name the field something "
+            f"this type owns, and let {owner} keep the mark",
+            "client",
+            {"type": declared["name"], "field": field["name"]})
+        for declared in module["types"]
+        for field in declared["record"]
+        for owner in [RESERVED_FIELDS.get(field["name"], "")]
+        if owner and declared["name"] != owner
+    ]
+
+
 def _door_called(module):
     """A door is where the world calls in, and nothing inside the module calls one: no invokes
     names it, and it is never a chain link after the first. A read the program initiates, a clock,
@@ -678,6 +708,7 @@ _CHECKS = (
     _held_not_read,
     _fault_swallowed,
     _fault_shape,
+    _reserved_field,
     _unawaited_caller,
     _door_called,
     _door_orchestrator,

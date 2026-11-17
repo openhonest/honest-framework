@@ -51,7 +51,7 @@ def _probe_build_event():
 
     # empty required field (event_type) -> invalid_event naming it; the full fault is pinned.
     result = build_event(**{**_BASE, "event_type": ""})
-    if result != {"err": {"code": "invalid_event", "message": "Event is missing required field(s): ['event_type']", "category": "server", "results": [], "detail": {"missing": ["event_type"]}}}:
+    if result != {"err": {"is_err": True, "code": "invalid_event", "message": "Event is missing required field(s): ['event_type']", "category": "server", "results": [], "detail": {"missing": ["event_type"]}}}:
         bad.append(f"an empty required field should fault invalid_event in full: {result}")
 
     # an empty aggregate_id is also caught (a different required field).
@@ -149,7 +149,7 @@ def _stand_ins(append_ok=True):
         appended.append(event)
         if append_ok:
             return {"ok": {}}
-        return {"err": {"code": "log_write_failed", "message": "boom", "category": "server", "results": [], "detail": None}}
+        return {"err": {"is_err": True, "code": "log_write_failed", "message": "boom", "category": "server", "results": [], "detail": None}}
 
     return appended, _id, _ts, _seq, _append
 
@@ -196,7 +196,7 @@ def _probe_emit():
         # Append failure -> emit_failed wrapping the cause.
         appended4, _id, _ts, _seq, _append = _stand_ins(append_ok=False)
         failed = await run_emit("hf.chain.completed", "chain", "c1", {}, context, "1.0", None, _id, _ts, _seq, _append, [], [])
-        if failed != {"err": {"code": "emit_failed", "message": "Failed to append event to the log", "category": "server", "results": [], "detail": {"cause": {"code": "log_write_failed", "message": "boom", "category": "server", "results": [], "detail": None}}}}:
+        if failed != {"err": {"is_err": True, "code": "emit_failed", "message": "Failed to append event to the log", "category": "server", "results": [], "detail": {"cause": {"is_err": True, "code": "log_write_failed", "message": "boom", "category": "server", "results": [], "detail": None}}}}:
             bad.append(f"an append failure should become emit_failed wrapping the cause in full: {failed}")
         return bad
 
@@ -475,7 +475,7 @@ def _probe_browser():
     if "request_id" in no_req["ok"]:
         bad.append("request_id must be absent when not supplied")
     bad_event = build_browser_event("hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "", {}, "uuid-v4-3")
-    if bad_event != {"err": {"code": "invalid_event", "message": "Browser event is missing required field(s): ['session_id']", "category": "client", "results": [], "detail": {"missing": ["session_id"]}}}:
+    if bad_event != {"err": {"is_err": True, "code": "invalid_event", "message": "Browser event is missing required field(s): ['session_id']", "category": "client", "results": [], "detail": {"missing": ["session_id"]}}}:
         bad.append(f"an empty required field (session_id) should fault invalid_event in full: {bad_event}")
 
     # §8.4 the four automatic browser events.
@@ -656,7 +656,7 @@ def _probe_query():
 
     # An unknown name is a full fault as data — code, message, category, and detail all pinned.
     missing = run_named_projection(registry, "nope", events)
-    if missing != {"err": {"code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "results": [], "detail": {"name": "nope"}}}:
+    if missing != {"err": {"is_err": True, "code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "results": [], "detail": {"name": "nope"}}}:
         bad.append(f"an unknown projection name should be a complete fault as data: {missing}")
     return bad
 
@@ -784,7 +784,7 @@ def _probe_cli():
     from honest_observe import run_bucketed_projection
 
     unknown = run_bucketed_projection({}, "nope", span, 60)
-    if unknown != {"err": {"code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "results": [], "detail": {"name": "nope"}}}:
+    if unknown != {"err": {"is_err": True, "code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "results": [], "detail": {"name": "nope"}}}:
         bad.append(f"run_bucketed_projection should surface a complete unknown_projection fault: {unknown}")
 
     # main with no subcommand is an argparse usage error (exit 2) that names the program (required=True,
@@ -930,10 +930,10 @@ def _probe_config():
     # Validation, as data: a bad provider and a custom provider without fields both fault; custom with a
     # non-empty fields list is accepted.
     badprov = load_config({"auth": {"provider": "nope"}})
-    if badprov != {"err": {"code": "invalid_config", "message": "auth.provider must be one of honest-auth, custom, none; got 'nope'", "category": "client", "results": [], "detail": {"provider": "nope"}}}:
+    if badprov != {"err": {"is_err": True, "code": "invalid_config", "message": "auth.provider must be one of honest-auth, custom, none; got 'nope'", "category": "client", "results": [], "detail": {"provider": "nope"}}}:
         bad.append(f"an unrecognised auth provider should be a complete invalid_config fault: {badprov}")
     nofields = load_config({"auth": {"provider": "custom"}})
-    if nofields != {"err": {"code": "invalid_config", "message": "auth.provider 'custom' requires a non-empty fields list", "category": "client", "results": [], "detail": {"provider": "custom"}}}:
+    if nofields != {"err": {"is_err": True, "code": "invalid_config", "message": "auth.provider 'custom' requires a non-empty fields list", "category": "client", "results": [], "detail": {"provider": "custom"}}}:
         bad.append(f"a custom provider with no fields should be a complete invalid_config fault: {nofields}")
     withfields = load_config({"auth": {"provider": "custom", "fields": ["user_id"]}})
     if "ok" not in withfields or withfields["ok"]["auth"]["fields"] != ["user_id"]:

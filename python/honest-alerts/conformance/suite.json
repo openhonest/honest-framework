@@ -448,6 +448,7 @@
         ],
         "expected": {
           "err": {
+            "is_err": true,
             "code": "invalid_actor_type",
             "message": "'ghost' is not a declared actor type",
             "category": "client",
@@ -486,6 +487,7 @@
         ],
         "expected": {
           "err": {
+            "is_err": true,
             "code": "invalid_termination",
             "message": "'bogus' is not a declared termination condition",
             "category": "client",
@@ -506,6 +508,7 @@
         ],
         "expected": {
           "err": {
+            "is_err": true,
             "code": "incomplete_termination",
             "message": "a 'ttl' termination is missing required fields: ['ttl_seconds']",
             "category": "client",
@@ -548,6 +551,7 @@
         ],
         "expected": {
           "err": {
+            "is_err": true,
             "code": "incomplete_reply_option",
             "message": "a reply option is missing required fields: ['label_id']",
             "category": "client",
@@ -572,6 +576,7 @@
         ],
         "expected": {
           "err": {
+            "is_err": true,
             "code": "invalid_reply_style",
             "message": "'neon' is not a declared reply style",
             "category": "client",
@@ -662,6 +667,7 @@
         ],
         "expected": {
           "err": {
+            "is_err": true,
             "code": "invalid_ack_scope",
             "message": "'everywhere' is not a declared ack scope",
             "category": "client",
@@ -701,6 +707,7 @@
         ],
         "expected": {
           "err": {
+            "is_err": true,
             "code": "invalid_channel",
             "message": "'carrier_pigeon' is not a declared channel",
             "category": "client",
@@ -737,6 +744,7 @@
         ],
         "expected": {
           "err": {
+            "is_err": true,
             "code": "invalid_channel",
             "message": "'pigeon' is not a declared channel",
             "category": "client",
@@ -781,6 +789,7 @@
         ],
         "expected": {
           "err": {
+            "is_err": true,
             "code": "incomplete_escalation",
             "message": "an escalation rule is missing required fields: ['escalate_to']",
             "category": "client",
@@ -841,6 +850,7 @@
         ],
         "expected": {
           "err": {
+            "is_err": true,
             "code": "invalid_actor_type",
             "message": "'ghost' is not a declared actor type",
             "category": "client",
@@ -1246,6 +1256,7 @@
         ],
         "expected": {
           "err": {
+            "is_err": true,
             "code": "unknown_alert_event",
             "message": "'alert.teleported' is not a declared alert event",
             "category": "server",

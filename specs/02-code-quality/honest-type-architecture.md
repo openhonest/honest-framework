@@ -86,6 +86,18 @@ Each implementation extends the blacklist with its language's full reserved word
 - **JavaScript** adds: `arguments`, `debugger`, `enum`, `eval`, `with`, `volatile`, ...
 - **Ruby** adds: `begin`, `end`, `ensure`, `rescue`, `unless`, `until`, `when`, ...
 
+### Reserved Fields
+
+A separate reservation, over a different namespace, and the two must not be merged. The three layers above reserve a token as a **vocabulary Set member**, so a user's word cannot collide with a framework noun. This reserves a name as a **field of a declared record**.
+
+```
+is_err
+```
+
+Only a `Fault` may declare `is_err`. It is the mark the Fault recognizer reads (section 12.1), and a second record carrying it would make the two arms of a bare `value | Fault` union indistinguishable. Putting the name in Layer 1 instead would forbid the wrong thing: a vocabulary member spelled `is_err`, which nobody wants and which was never the risk.
+
+honest-design enforces the reservation over a `.hd` record declaration, where a record is a `type` line, and faults `reserved_field`. honest-check enforces it over the source, where a record is a class. The list of reserved field names lives in one place, `honest_type.reserved.RESERVED_FIELDS`, which both read, so the reservation cannot drift between them.
+
 ### Validation Rule
 
 The vocabulary constructor must check every Set member against all three layers at construction time. If any member is reserved, construction fails with an explicit error naming the offending token and its reservation layer.
@@ -1088,7 +1100,11 @@ Every link returns its value on success, or a `Fault` on failure — a bare unio
 link(manifest) -> manifest | Fault
 ```
 
-A `Fault` is the error branch of the link's decision table: a record carrying at least a `code` and a `message`, returned as an ordinary value, never raised and never wrapped in an envelope. The chain executor tells the value from the fault with the **Fault recognizer**, `is_fault` — a pure predicate over the declared `Fault` shape. The outcome it recognizes is a closed two-member set (the value, or a `Fault`), so the executor dispatches on it rather than branching ad hoc. There is no `{"ok"}/{"err"}` wrapper and no `ok()`/`fault()` constructor: the function's own already-informative return is recognized, not repackaged.
+A `Fault` is the error branch of the link's decision table: a record carrying the reserved `is_err` field, a `code` and a `message`, returned as an ordinary value, never raised and never wrapped in an envelope. The chain executor tells the value from the fault with the **Fault recognizer**, `is_fault` — a pure predicate over the declared `Fault` shape. The outcome it recognizes is a closed two-member set (the value, or a `Fault`), so the executor dispatches on it rather than branching ad hoc. There is no `{"ok"}/{"err"}` wrapper and no `ok()`/`fault()` constructor: the function's own already-informative return is recognized, not repackaged.
+
+**The recognizer reads `is_err` and nothing else.** Its presence is the answer, not its value. `is_err` is a reserved field name (section 2, Reserved Fields) that no record but a `Fault` may declare, so the fault space and the value space are disjoint by construction and the reading is exact. A recognizer keying on a contentful field cannot promise that: a success value legitimately carrying a currency `code` or an HTTP status `code` reads as a failure. The reserved tag is what the removed `{"ok"}/{"err"}` envelope was buying — the safety, without the box, carried inside the fault rather than wrapped around it.
+
+Reserving the field also makes the propagation check exact. A function that can fault is identified by the `is_err`-carrying type in its return union, not inferred from a field that happens to look like a fault's.
 
 ### 12.2 The Manifest as Data Dictionary
 
@@ -1244,6 +1260,7 @@ A fault carries a `category` that says who is responsible, and never relies on a
 
 ```
 fault = {
+    is_err:   Boolean     — the reserved tag that marks this record as the fault arm of a bare union. Always true; the recognizer reads its presence, not its value. No other record may declare this field (section 2, Reserved Fields)
     code:     String      — machine-readable identifier
     message:  String      — human-readable description. For a chain fault or a dispatch fault, the message names the link or table that failed, the value that reached it, and the values that were expected.
     category: String      — "client" or "server"
@@ -1253,6 +1270,8 @@ fault = {
 ```
 
 Every field is always present. `results` and `detail` are empty, never absent, when they do not apply, so a caller never tests for a missing key and a `Fault` never carries an optional field.
+
+`is_err` is not a constructor parameter. Every record the fault constructor builds is a fault, so the tag is the constructor's own statement of what it made; a parameter would let a caller build a fault that denies being one.
 
 The Fault does not carry the failing link and the input as top-level fields. Instead the context travels two ways at once: the `message` states it in a sentence a person reads, and `detail` carries the same facts as structured data a test or caller reads without parsing prose. A chain fault reads `check_duplicate rejected the manifest` in its `message` and carries `{"link": "check_duplicate"}` in `detail`. An enumerable fact never lives in prose alone; that is the same defect as a vocabulary sitting in a plain string, one level up. `validate_all()`'s every-result list stays in `results`, and each accumulated fault carries its own failing link in its own `detail`, so a caller holding `results` tells the faults apart without reading English.
 

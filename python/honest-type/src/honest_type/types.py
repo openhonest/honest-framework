@@ -25,13 +25,15 @@ class Rejection(TypedDict):
 
 class Fault(TypedDict):
     """A processing error. Data, not an exception (sections 11.2, 13.2). Every field is always present.
-    code/message/category say what went wrong and who is responsible ('client'|'server'); a fault
-    without a category is itself a server error. results holds every accumulated result for a
-    validate_all fault and is [] otherwise. detail carries the fault's enumerable facts as structured
-    data a test or caller reads without parsing the message (the failing link, a dispatch fault's
-    accepted keys and arriving value, a rejected token, a state machine's state and event) and is {}
-    when there is none."""
+    is_err marks the record as the fault arm of a bare union, and the framework reserves that field
+    name so no other record can carry it. code/message/category say what went wrong and who is
+    responsible ('client'|'server'); a fault without a category is itself a server error. results
+    holds every accumulated result for a validate_all fault and is [] otherwise. detail carries the
+    fault's enumerable facts as structured data a test or caller reads without parsing the message
+    (the failing link, a dispatch fault's accepted keys and arriving value, a rejected token, a state
+    machine's state and event) and is {} when there is none."""
 
+    is_err: bool
     code: str
     message: str
     category: str
@@ -50,18 +52,34 @@ def rejection(token, reason: str, detail=None) -> Rejection:
 def fault(code: str, message: str, category: str, results: list, detail: dict) -> Fault:
     """A fault (sections 11.2, 13.2). Every field is passed explicitly: results is [] unless this is a
     validate_all fault, detail is {} unless there is structured context. Nothing is defaulted, so a
-    caller can never omit a field by accident and manufacture an untested input region."""
-    return {"code": code, "message": message, "category": category, "results": results, "detail": detail}
+    caller can never omit a field by accident and manufacture an untested input region.
+
+    is_err is not passed, because a caller has no say in it. Every record this function builds is a
+    fault, so the tag is the constructor's own statement of what it made, and a parameter would let a
+    caller build a fault that denies being one."""
+    return {"is_err": True, "code": code, "message": message, "category": category,
+            "results": results, "detail": detail}
 
 
 def is_fault(value) -> bool:
     """The Fault recognizer (section 12.1): true for a Fault-shaped value, false for a manifest.
 
     A link returns its value on success or a Fault on failure — a bare union, no envelope (sections
-    12.1, 12.3). The chain executor tells the two apart by this predicate: a Fault carries a `code`,
-    a manifest never does. It trusts the contract that both members of the union are dicts, so it reads
-    the key directly without re-testing the type in the interior."""
-    return "code" in value
+    12.1, 12.3). The chain executor tells the two apart by this predicate, which reads the reserved
+    `is_err` field. The field's presence is the answer, not its value: a reserved name no other record
+    may carry makes the fault space and the value space disjoint, so nothing a success value happens to
+    hold can be mistaken for a fault. Keying on a contentful field could not promise that — a success
+    value legitimately carrying a currency `code` or an HTTP status `code` read as a fault.
+
+    The `code` arm below is the migration, not the contract. Faults that predate the tag carry `code`
+    and no `is_err`, and dropping that arm in one step would make every one of them unrecognizable: the
+    chain executor would read a fault as the next link's manifest and keep running, which is the silent
+    failure this framework exists to prevent. `fault-tag-check.py` warns while any constructor still
+    omits the tag and fails once none does, naming this arm as the thing to delete.
+
+    It trusts the contract that both members of the union are dicts, so it reads the keys directly
+    without re-testing the type in the interior."""
+    return "is_err" in value or "code" in value
 
 
 def ok(manifest) -> dict:

@@ -22,7 +22,7 @@ from honest_type.chains import (
 )
 from honest_type.classify import classify
 from honest_type.recognizers import insensitive, predicate, recognize
-from honest_type.reserved import RESERVED_WORDS, is_reserved
+from honest_type.reserved import RESERVED_FIELDS, RESERVED_WORDS, is_reserved, is_reserved_field
 from honest_type.state_machine import state_machine, transition
 from honest_type.types import Fault, Rejection, Ticket, err, fault, is_fault, ok, rejection, ticket
 from honest_type.vocabulary import (
@@ -62,8 +62,10 @@ __all__ = [
     "recognize",
     "state_machine",
     "transition",
+    "RESERVED_FIELDS",
     "RESERVED_WORDS",
     "is_reserved",
+    "is_reserved_field",
     "Ticket",
     "Rejection",
     "Fault",
