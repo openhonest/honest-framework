@@ -33,7 +33,7 @@ for m in $mods; do
 
   # The functions written in src/ (empty while the code stage still lags).
   srcfuncs=""
-  [ -d "$src" ] && srcfuncs=$(grep -rhoE '^(async )?def [a-z_][a-z0-9_]*' "$src" | sed -E 's/^(async )?def //' | sort -u)
+  [ -d "$src" ] && srcfuncs=$(grep -rhoE --include='*.py' '^(async )?def [a-z_][a-z0-9_]*' "$src" | sed -E 's/^(async )?def //' | sort -u)
 
   # The functions the .hd declares (empty if the module carries no declaration yet). The build
   # order writes the .hd first, so these may name functions the code has not written yet.
