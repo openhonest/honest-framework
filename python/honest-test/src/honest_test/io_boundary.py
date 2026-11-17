@@ -33,6 +33,11 @@ _LIVE_FIELDS = (
     "machines", "schemas", "components", "providers", "gates",
 )
 
+NONDETERMINISTIC_CALLS = (
+    "time.time", "time.time_ns", "time.monotonic", "time.perf_counter", "time.process_time",
+    "random.random", "random.randint", "uuid.uuid4", "os.urandom",
+)
+
 
 # ---- readers ---------------------------------------------------------------
 
@@ -158,6 +163,48 @@ def io_monitor(link, test_manifest):
     return record
 
 
+def call_monitor(link, test_manifest):
+    """The non-determinism monitor (section 4.5), the kind=nondeterminism plug run_suite
+    injects into verify_under_monitor, the exact parallel of io_monitor. Record-and-restore
+    instrumentation: for each call-form in NONDETERMINISTIC_CALLS it imports the owning module
+    and patches the attribute so each records its own call-form name then delegates to the real
+    function, runs the link once, and restores every original in a finally — so the patch never
+    leaks and no result changes. It returns the list of detected non-deterministic call-form
+    names, empty when the link made no such call. By patching the target symbols it catches
+    non-determinism that enters through an attribute chain or dynamic dispatch, the dynamic
+    paths static HC008 misses."""
+    record = []
+
+    def _wrap(name, original):
+        def _recording(*args, **kwargs):
+            record.append(name)
+            return original(*args, **kwargs)
+        return _recording
+
+    def _target(name):
+        module_name, attr = name.rsplit(".", 1)
+        return (importlib.import_module(module_name), attr, name)
+
+    def _install(targets, saved):
+        for owner, attr, name in targets:
+            original = getattr(owner, attr)
+            setattr(owner, attr, _wrap(name, original))
+            saved.append((owner, attr, original))
+        return saved
+
+    def _restore(saved):
+        for owner, attr, original in saved:
+            setattr(owner, attr, original)
+        return None
+
+    saved = _install([_target(name) for name in NONDETERMINISTIC_CALLS], [])
+    try:
+        link(test_manifest)
+    finally:
+        _restore(saved)
+    return record
+
+
 # ---- doors -----------------------------------------------------------------
 
 
@@ -261,7 +308,8 @@ def run_suite(src_dir):
             found = _pick(
                 len(manifests) == 0,
                 lambda: [],
-                lambda: verify_under_monitor(link, manifests[0], io_monitor, "io"),
+                lambda: verify_under_monitor(link, manifests[0], io_monitor, "io")
+                + verify_under_monitor(link, manifests[0], call_monitor, "nondeterminism"),
             )
             findings.extend(found)
         return len(list(filter(lambda found: found["kind"] == "warning", findings)))

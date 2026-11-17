@@ -1,4 +1,4 @@
-Feature: honest-test — generated, one scenario per function (60 total)
+Feature: honest-test — generated, one scenario per function (61 total)
 
   Scenario: run_cli opens the CLI door and drives the whole run
     Given src_dir: str
@@ -179,6 +179,14 @@ Feature: honest-test — generated, one scenario per function (60 total)
     Then it is the boundary-isolation monitor (section 4.4), the kind io plug run_suite injects into verify_under_monitor; it runs the link once inside record-and-restore instrumentation that temporarily patches the known I/O functions — open, print, input, and sys.stdout, sys.stderr and sys.stdin — so each records the call it was given, delegates to the real function, and is restored afterward, changing no result, so it is not the runtime rebinding section 4.8 forbids
     And link is the link under test, run once inside the instrumentation, and test_manifest is the one generated input it is run on; it returns the record of detected I/O calls as the list of call names, empty when the link did no I/O, the record verify_under_monitor judges against the link's boundary flag to decide the io_detected warning
     And it raises nothing; its one side effect is reaching into the running process to patch, run and restore — a process-level effect of the same breadth as load_under_test and run_mutant_suite, which is why it is a reader over the running process rather than a pure function
+
+  Scenario: call_monitor records the link's non-deterministic calls while leaving its result unchanged
+    Given link: Callable and test_manifest: Manifest
+    When call_monitor is called
+    Then it is the non-determinism monitor (section 4.5), the kind nondeterminism plug run_suite injects into verify_under_monitor, the parallel reader to io_monitor; it runs the link once inside record-and-restore instrumentation that temporarily patches the non-deterministic watch-list call-forms — time.time, time.monotonic, time.perf_counter, time.time_ns, random.random, random.randint, uuid.uuid4 and os.urandom — so each records the call it was given, delegates to the real function, and is restored afterward, changing no result, so it is not the runtime rebinding section 4.8 forbids
+    And link is the link under test, run once inside the instrumentation, and test_manifest is the one generated input it is run on; it returns the record of detected non-deterministic call names as the list, empty when the link called none, the record verify_under_monitor judges against the link's boundary flag to decide the nondeterminism_detected warning
+    And by patching the target symbols it catches non-determinism entering through an attribute chain or dynamic dispatch, the dynamic paths static HC008 misses; honest-test carries the trapped call-form subset itself rather than importing honest-check's NONDETERMINISTIC_WATCH_LIST, and its conformance verifies the subset against the published list so the two cannot drift
+    And it raises nothing; its one side effect is reaching into the running process to patch, run and restore — a process-level effect of the same breadth as load_under_test and io_monitor, which is why it is a reader over the running process rather than a pure function
 
   Scenario: test_chain_contracts checks each adjacent link join
     Given links: list<Callable> and vocab: Vocabulary and binding: Binding

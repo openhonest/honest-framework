@@ -222,7 +222,22 @@ def probe_run_suite():
 
     io_ok = _run_in(str(_FIXTURES / "adopter_honest"))
     if isinstance(io_ok, dict) and io_ok.get("warnings") != 0:
-        bad.append(f"the honest adopter does no I/O, so warnings should be 0, got {io_ok.get('warnings')!r}")
+        bad.append(f"the honest adopter does no I/O or nondeterminism, so warnings should be 0, got {io_ok.get('warnings')!r}")
+
+    # run_suite must drive the non-determinism check (§4.5): a non-boundary link that calls
+    # a non-deterministic source (the clock) raises a nondeterminism_detected warning. The
+    # link ignores the value, so its result stays stable and the purity check passes — only
+    # call_monitor catches it, which is the point of §4.5.
+    nd_bad = _run_in(str(_FIXTURES / "adopter_nd_dishonest"))
+    if _is_fault(nd_bad):
+        bad.append(f"the nondeterminism-dishonest adopter should run to a report, got fault {nd_bad}")
+    elif not isinstance(nd_bad, dict):
+        bad.append(f"the nondeterminism-dishonest adopter should run to a RunReport, got {nd_bad!r}")
+    elif nd_bad.get("warnings", 0) < 1:
+        bad.append(
+            "run_suite must drive non-determinism detection: a non-boundary link that reads "
+            f"the clock should raise a nondeterminism_detected warning, so warnings should be >= 1, got {nd_bad.get('warnings')!r}"
+        )
 
     return bad
 
