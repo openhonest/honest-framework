@@ -1,335 +1,314 @@
-"""honest-auth conformance laws: the registry, provider validation, the boundary flow, and fault mapping.
+"""honest-auth conformance laws: the plugin contract, the value registry, the boundary flow, and the
+executable authentication-honesty verifier, each exercised over a synthetic provider built here.
 
-These exercise the functions across every branch, including the ones that take live callables (a provider's
-recognizer and resolver), which the portable suite.json value cases cannot carry. Pure assertions:
-data in, data out.
+honest-auth owns no world: every function is pure composition over a provider's injected callables
+(honest-auth-architecture.md §1, §2). So these laws build one synthetic AuthProvider — a recognizer, a
+resolver, a token generator and a fault mapping — and drive the real functions through it: registration
+and its two failures (§3), the boundary flow's two paths (§2.2, §2.3), the per-class outcome table
+(§4.7), the honesty verifier on an honest and a dishonest provider (§4.7), the determinism check (§4.4),
+and the HTTP-status mapping (§2.5). A fault is a bare union arm carrying the reserved is_err tag,
+recognized by honest-type's is_fault, never raised and never enveloped (§2). Pure assertions: data and
+injected callables in, data out, no mocks.
 """
 
+from honest_type import is_fault
+
+import honest_auth as A
 from honest_auth import (
+    auth_fault,
     authenticate,
+    authentication_honesty,
     empty_registry,
     fault_status,
     register_auth_provider,
     registered_provider,
+    resolve_actor_deterministic,
     validate_provider,
 )
-from honest_type import err, fault, ok
+
+NOTHING = A.NOTHING
+
+# The recognizer-reject code authenticate stamps on a token that fails actor_recognizer, the code
+# _expect_recognizer_reject keys on to tell a recognizer reject from a resolution fault (§2.2, §4.7).
+_MALFORMED_CODE = "malformed_token"
+
+# --- the synthetic provider ------------------------------------------------------------------------
+# A provider is a record of callables (§2). The dev wire format is any string beginning "tok:"; a token
+# that does not match is malformed and never reaches the resolver. The resolver maps four live tokens to
+# an Actor or a resolution fault; a token it does not know resolves to an unauthenticated fault.
+
+_ACTOR = {"user_id": "u1"}
+
+_RESOLVE = {
+    "tok:valid":   dict(_ACTOR),
+    "tok:revoked": {"is_err": True, "category": "revoked", "code": "revoked", "message": "the token was revoked", "detail": {}},
+    "tok:expired": {"is_err": True, "category": "expired", "code": "expired", "message": "the token has expired", "detail": {}},
+    "tok:forged":  {"is_err": True, "category": "forged",  "code": "forged",  "message": "the token maps to no identity", "detail": {}},
+}
+
+# The token each class is generated as (§2.4). malformed and missing do not match the recognizer.
+_TOKENS = {
+    "valid":     "tok:valid",
+    "revoked":   "tok:revoked",
+    "expired":   "tok:expired",
+    "malformed": "garbage",
+    "missing":   "",
+    "forged":    "tok:forged",
+}
 
 
-def _provider(recognizer=None, resolver=None, fault_mapping=None):
-    return {
-        "name": "p",
-        "actor_recognizer": recognizer or (lambda token: token != "bad"),
-        "resolve_actor": resolver or (lambda token: ok("actor") if token == "good" else err(fault("nope", "no", "unauthenticated", [], {}))),
-        "test_token_generator": lambda class_name, context: class_name,
-        "fault_mapping": fault_mapping or {},
+def _recognizer(token):
+    return isinstance(token, str) and token.startswith("tok:")
+
+
+def _resolver(token):
+    return _RESOLVE.get(token, {"is_err": True, "category": "unauthenticated", "code": "unresolved", "message": "no identity", "detail": {}})
+
+
+def _generator(cls, context):
+    return _TOKENS[cls]
+
+
+def _provider(**override):
+    """A well-formed synthetic provider, with named fields overridable to build the malformed and
+    dishonest variants the laws need."""
+    base = {
+        "name": "dev",
+        "actor_recognizer": _recognizer,
+        "resolve_actor": _resolver,
+        "test_token_generator": _generator,
+        "fault_mapping": {"unauthenticated": 401, "forbidden": 403, "conflict": 409},
     }
+    base.update(override)
+    return base
 
 
-# A real, minimal conforming provider (section 5.3 style, not a mock): each token class maps to a token
-# its recognizer and resolver handle so the class's outcome is correct — 'good' resolves to an actor,
-# 'bad' is malformed (recognizer rejects), and every other class resolves to an unauthenticated fault.
-def _honest_provider():
-    return {
-        "name": "honest",
-        "actor_recognizer": lambda token: token != "bad",
-        "resolve_actor": lambda token: ok("alice") if token == "good" else err(fault(token, "no valid identity", "unauthenticated", [], {})),
-        "test_token_generator": lambda class_name, context: {"valid": "good", "malformed": "bad"}.get(class_name, class_name),
-        "fault_mapping": {},
-    }
-
-
-# A dishonest provider: its resolver hands an actor back for every recognized token, so revoked, expired,
-# missing, and forged tokens all wrongly resolve to an actor instead of failing as unauthenticated.
-def _dishonest_provider():
-    return {
-        "name": "dishonest",
-        "actor_recognizer": lambda token: token != "bad",
-        "resolve_actor": lambda token: ok("alice"),
-        "test_token_generator": lambda class_name, context: {"valid": "good", "malformed": "bad"}.get(class_name, class_name),
-        "fault_mapping": {},
-    }
-
-
-_MISSING_FOUR = ["actor_recognizer", "resolve_actor", "test_token_generator", "fault_mapping"]
-_MISSING_MESSAGE = f"AuthProvider is missing required fields: {_MISSING_FOUR}"
+# --- laws ------------------------------------------------------------------------------------------
 
 
 def _law_exports():
-    import honest_auth
-
     bad = []
-    expected = ["AuthProvider", "Registry", "empty_registry", "register_auth_provider", "registered_provider", "validate_provider", "authenticate", "fault_status", "authentication_honesty", "resolve_actor_deterministic", "resolve_actor_touches_no_domain", "dev_auth_provider"]
-    if sorted(getattr(honest_auth, "__all__", [])) != sorted(expected):
-        bad.append(f"__all__ should be exactly the public surface: {getattr(honest_auth, '__all__', None)}")
-    missing = [name for name in expected if not hasattr(honest_auth, name)]
+    # The seven .hd import entries are the public surface — exactly these, in __all__.
+    import_entries = [
+        "empty_registry", "register_auth_provider", "registered_provider", "authenticate",
+        "fault_status", "authentication_honesty", "resolve_actor_deterministic",
+    ]
+    # Reached only by invokes or the dispatch table, so importable attributes but not exported.
+    internal = ["auth_fault", "validate_provider", "_expect_actor", "_expect_unauthenticated", "_expect_recognizer_reject"]
+    all_ = getattr(A, "__all__", None)
+    if all_ is None:
+        bad.append("honest_auth declares no __all__")
+        return bad
+    if sorted(all_) != sorted(import_entries):
+        bad.append(f"__all__ must be exactly the seven import entries {sorted(import_entries)}: {sorted(all_)}")
+    missing = [n for n in import_entries + internal if not hasattr(A, n)]
     if missing:
-        bad.append(f"__all__ names not importable: {missing}")
+        bad.append(f"these functions are not importable: {missing}")
+    return bad
+
+
+def _law_auth_fault():
+    bad = []
+    f = auth_fault("unauthenticated", "already_registered", "a provider is already active", {"existing": "dev"})
+    if f.get("is_err") is not True:
+        bad.append(f"auth_fault must set is_err true, the reserved arm tag: {f}")
+    if not is_fault(f):
+        bad.append("auth_fault's result must be recognized by is_fault off its is_err tag")
+    if (f.get("category"), f.get("code"), f.get("message"), f.get("detail")) != (
+        "unauthenticated", "already_registered", "a provider is already active", {"existing": "dev"}
+    ):
+        bad.append(f"auth_fault must carry its parts unchanged: {f}")
     return bad
 
 
 def _law_empty_registry():
     bad = []
-    if empty_registry() != {"provider": None}:
-        bad.append(f"empty_registry should hold no provider: {empty_registry()}")
-    return bad
-
-
-def _law_validate_provider():
-    bad = []
-    if "ok" not in validate_provider(_provider()):
-        bad.append("a complete provider should validate")
-    f = validate_provider({"name": "x"}).get("err", {})
-    if f.get("code") != "invalid_provider" or f.get("category") != "client" or f.get("detail") != _MISSING_FOUR:
-        bad.append(f"a provider missing fields should be invalid_provider listing them: {f}")
-    if f.get("message") != _MISSING_MESSAGE:
-        bad.append(f"invalid_provider message wrong: {f.get('message')}")
-    return bad
-
-
-def _law_register_auth_provider():
-    bad = []
-    reg = register_auth_provider(empty_registry(), _provider())
-    if "ok" not in reg or registered_provider(reg["ok"])["name"] != "p":
-        bad.append(f"registering a valid provider should hold it: {reg}")
-    sf = register_auth_provider(reg["ok"], _provider()).get("err", {})
-    if sf.get("code") != "already_registered" or sf.get("category") != "client" or sf.get("message") != "an AuthProvider is already registered for this application":
-        bad.append(f"a second registration should be already_registered: {sf}")
-    if register_auth_provider(empty_registry(), {"name": "x"}).get("err", {}).get("code") != "invalid_provider":
-        bad.append("registering a malformed provider should be invalid_provider")
-    base = empty_registry()
-    register_auth_provider(base, _provider())
-    if base["provider"] is not None:
-        bad.append("register_auth_provider must not mutate its argument (the registry is a value)")
+    r = empty_registry()
+    if r.get("provider") is not NOTHING:
+        bad.append(f"empty_registry's provider field must be NOTHING: {r}")
+    if is_fault(r):
+        bad.append("an empty Registry must never be recognized as a fault")
     return bad
 
 
 def _law_registered_provider():
     bad = []
-    if registered_provider(empty_registry()) is not None:
-        bad.append("an empty registry has no provider")
-    if registered_provider({"provider": {"name": "q"}}) != {"name": "q"}:
-        bad.append("registered_provider returns the held provider")
+    if registered_provider(empty_registry()) is not NOTHING:
+        bad.append("registered_provider on an empty registry must be NOTHING")
+    p = _provider()
+    r = register_auth_provider(empty_registry(), p)
+    if registered_provider(r) is not p:
+        bad.append("registered_provider must return the active provider once one is registered")
+    # The bounded absence is disjoint from a fault.
+    if is_fault(registered_provider(empty_registry())):
+        bad.append("NOTHING must not be recognized by is_fault")
+    return bad
+
+
+def _law_validate_provider():
+    bad = []
+    p = _provider()
+    if validate_provider(p) is not p:
+        bad.append("a well-formed provider must be returned unchanged")
+    # Each missing required field faults with invalid_provider naming the field.
+    for field in ("name", "actor_recognizer", "resolve_actor", "test_token_generator", "fault_mapping"):
+        broken = _provider()
+        del broken[field]
+        out = validate_provider(broken)
+        if not is_fault(out):
+            bad.append(f"a provider missing {field} must fault")
+            continue
+        if out.get("code") != "invalid_provider":
+            bad.append(f"a malformed provider faults with code invalid_provider: {out.get('code')}")
+        if field not in str(out.get("detail")):
+            bad.append(f"the fault detail must name the missing field {field}: {out.get('detail')}")
+    # A fault_mapping that dropped the required unauthenticated category is malformed (§2.5).
+    out = validate_provider(_provider(fault_mapping={"forbidden": 403}))
+    if not is_fault(out) or out.get("code") != "invalid_provider":
+        bad.append(f"a fault_mapping without unauthenticated must fault invalid_provider: {out}")
+    return bad
+
+
+def _law_register_auth_provider():
+    bad = []
+    p = _provider()
+    empty = empty_registry()
+    r = register_auth_provider(empty, p)
+    if is_fault(r):
+        bad.append(f"registering into an empty registry must succeed: {r}")
+    if r.get("provider") is not p:
+        bad.append("a successful registration carries the provider")
+    # Never mutates its argument.
+    if empty.get("provider") is not NOTHING:
+        bad.append("register_auth_provider must not mutate its registry argument")
+    # Already registered.
+    out = register_auth_provider(r, _provider(name="other"))
+    if not is_fault(out) or out.get("code") != "already_registered":
+        bad.append(f"registering a second provider must fault already_registered: {out}")
+    # Malformed provider surfaces validate_provider's invalid_provider fault.
+    out = register_auth_provider(empty_registry(), _provider(fault_mapping={"forbidden": 403}))
+    if not is_fault(out) or out.get("code") != "invalid_provider":
+        bad.append(f"registering a malformed provider must fault invalid_provider: {out}")
     return bad
 
 
 def _law_authenticate():
     bad = []
-    prov = _provider()
-    if authenticate(prov, "good") != ok("actor"):
-        bad.append("a recognised valid token resolves to its actor")
-    rf = authenticate(prov, "bad").get("err", {})
-    if rf.get("category") != "client" or rf.get("code") != "malformed_token" or rf.get("message") != "token does not match the provider's wire format":
-        bad.append(f"a malformed token is rejected at the recognizer (client), before resolve_actor: {rf}")
-    if authenticate(prov, "other").get("err", {}).get("category") != "unauthenticated":
-        bad.append("a recognised but invalid token faults via resolve_actor")
-    # A missing credential (None / empty) is unauthenticated, not malformed (section 2.4), and never
-    # reaches the recognizer or resolver.
-    for absent in (None, ""):
-        mf = authenticate(prov, absent).get("err", {})
-        if mf.get("category") != "unauthenticated" or mf.get("code") != "unauthenticated" or mf.get("message") != "no credential was presented at the boundary":
-            bad.append(f"a missing credential ({absent!r}) should be unauthenticated, before the recognizer: {mf}")
-    return bad
-
-
-def _law_dev_provider():
-    from honest_auth import authentication_honesty, dev_auth_provider, validate_provider
-
-    bad = []
-    dev = dev_auth_provider({"alice": "secret", "bob": ""})
-    if "ok" not in validate_provider(dev):
-        bad.append("the dev provider should be a valid AuthProvider")
-    if "ok" not in authentication_honesty(dev, None):
-        bad.append(f"the dev provider should be authentication-honest: {authentication_honesty(dev, None)}")
-    # A real user with a matching password resolves; a wrong password fails.
-    if authenticate(dev, "alice:secret") != ok({"id": "alice"}):
-        bad.append(f"a correct username:password should resolve to the actor: {authenticate(dev, 'alice:secret')}")
-    if authenticate(dev, "alice:wrong").get("err", {}).get("category") != "unauthenticated":
-        bad.append("a wrong password should be unauthenticated")
-    # Requirement 2: a user whose stored password is empty accepts ANY password (dev convenience).
-    if authenticate(dev, "bob:anything-at-all") != ok({"id": "bob"}) or authenticate(dev, "bob:") != ok({"id": "bob"}):
-        bad.append(f"an empty stored password should accept any password: {authenticate(dev, 'bob:anything-at-all')}")
-    # An unknown user, a malformed token, and a missing credential each fail as the class expects.
-    if authenticate(dev, "ghost:x").get("err", {}).get("category") != "unauthenticated":
-        bad.append("an unknown user should be unauthenticated")
-    if authenticate(dev, "nocolon").get("err", {}).get("code") != "malformed_token":
-        bad.append("a token with no colon is malformed at the recognizer")
-    if authenticate(dev, None).get("err", {}).get("category") != "unauthenticated":
-        bad.append("a missing credential is unauthenticated")
-    # Requirement 1: the default table is a single dev user with an empty password — log in with anything.
-    default_dev = dev_auth_provider(None)
-    if authenticate(default_dev, "dev:whatever") != ok({"id": "dev"}):
-        bad.append(f"the default dev provider should log in the 'dev' user with any password: {authenticate(default_dev, 'dev:whatever')}")
-    if dev["name"] != "dev-plaintext":
-        bad.append(f"the dev provider is named dev-plaintext: {dev['name']}")
-    # An empty username (no name before the colon) is malformed at the recognizer, not an unknown user.
-    if authenticate(dev, ":secret").get("err", {}).get("code") != "malformed_token":
-        bad.append("a token with an empty username should be malformed at the recognizer")
-    # The resolver faults carry their own code and message, distinct per cause.
-    ghost = authenticate(dev, "ghost:x").get("err", {})
-    if ghost.get("code") != "forged" or ghost.get("message") != "no such dev user":
-        bad.append(f"an unknown dev user should fault as forged: {ghost}")
-    wrong = authenticate(dev, "alice:wrong").get("err", {})
-    if wrong.get("code") != "bad_password" or wrong.get("message") != "wrong password for the dev user":
-        bad.append(f"a wrong password should fault as bad_password: {wrong}")
-    # The generator: the valid token targets the first user; malformed is unrecognised; missing is None;
-    # and revoked/expired/forged are each recognised (real wire format) yet resolve unauthenticated via
-    # the resolver — not via the missing-credential guard, which an empty token would hit instead.
-    gen, recognises = dev["test_token_generator"], dev["actor_recognizer"]
-    if gen("valid", None) != "alice:secret":
-        bad.append(f"the valid test token should target the first user: {gen('valid', None)}")
-    if recognises(gen("malformed", None)):
-        bad.append("the malformed test token should be rejected by the recognizer")
-    if gen("missing", None) is not None:
-        bad.append("the missing test token should be a None credential")
-    for cls in ("revoked", "expired", "forged"):
-        token = gen(cls, None)
-        if not recognises(token) or authenticate(dev, token).get("err", {}).get("category") != "unauthenticated":
-            bad.append(f"the {cls} test token should be recognised yet resolve unauthenticated: {token!r}")
+    p = _provider()
+    # A recognized, live token resolves to an Actor, returned unchanged.
+    actor = authenticate(p, "tok:valid")
+    if is_fault(actor) or actor != _ACTOR:
+        bad.append(f"a valid token must resolve to its Actor: {actor}")
+    # A token that fails the recognizer is rejected before resolve_actor, as a recognizer-reject fault.
+    out = authenticate(p, "garbage")
+    if not is_fault(out):
+        bad.append(f"a malformed token must be rejected as a fault: {out}")
+    if out.get("code") != _MALFORMED_CODE:
+        bad.append(f"the recognizer reject must carry code {_MALFORMED_CODE}: {out.get('code')}")
+    if out.get("category") != "unauthenticated":
+        bad.append(f"the recognizer reject must carry category unauthenticated: {out.get('category')}")
+    # A recognized token that the resolver fails returns the resolver's fault unchanged.
+    out = authenticate(p, "tok:revoked")
+    if not is_fault(out) or out.get("category") != "revoked":
+        bad.append(f"a recognized token's resolution fault must be returned unchanged: {out}")
     return bad
 
 
 def _law_fault_status():
     bad = []
-    default = _provider()
-    for category, status in {"unauthenticated": 401, "forbidden": 403, "conflict": 409, "client": 400, "server": 500}.items():
-        if fault_status(default, {"category": category}) != status:
-            bad.append(f"default status for {category} should be {status}: {fault_status(default, {'category': category})}")
-    if fault_status(default, {"category": "weird"}) != 500:
-        bad.append("an unknown category falls back to 500")
-    if fault_status(_provider(fault_mapping={"unauthenticated": 419}), {"category": "unauthenticated"}) != 419:
-        bad.append("the provider fault_mapping overrides the default status")
+    p = _provider()
+    cases = {"unauthenticated": 401, "forbidden": 403, "conflict": 409}
+    for category, status in cases.items():
+        f = auth_fault(category, "x", "m", {})
+        got = fault_status(p, f)
+        if got != status:
+            bad.append(f"fault_status for {category} must be {status}: {got}")
+    # A provider that extends the mapping maps its own category.
+    custom = _provider(fault_mapping={"unauthenticated": 401, "rate_limited": 429})
+    got = fault_status(custom, auth_fault("rate_limited", "x", "m", {}))
+    if got != 429:
+        bad.append(f"a provider's custom category must map through fault_mapping: {got}")
+    return bad
+
+
+def _law_expect_checkers():
+    bad = []
+    fault = auth_fault("unauthenticated", "revoked", "m", {})
+    reject = auth_fault("unauthenticated", _MALFORMED_CODE, "m", {})
+    # _expect_actor: true only for an Actor.
+    if A._expect_actor("valid", _ACTOR) is not True:
+        bad.append("_expect_actor must pass an Actor")
+    if A._expect_actor("valid", fault) is not False:
+        bad.append("_expect_actor must fail a Fault")
+    # _expect_unauthenticated: true only for a Fault.
+    if A._expect_unauthenticated("revoked", fault) is not True:
+        bad.append("_expect_unauthenticated must pass a Fault")
+    if A._expect_unauthenticated("revoked", _ACTOR) is not False:
+        bad.append("_expect_unauthenticated must fail an Actor")
+    # _expect_recognizer_reject: true only for a recognizer-reject fault, by its code.
+    if A._expect_recognizer_reject("malformed", reject) is not True:
+        bad.append("_expect_recognizer_reject must pass a recognizer-reject fault")
+    if A._expect_recognizer_reject("malformed", fault) is not False:
+        bad.append("_expect_recognizer_reject must fail a resolution fault (wrong code)")
+    if A._expect_recognizer_reject("malformed", _ACTOR) is not False:
+        bad.append("_expect_recognizer_reject must fail an Actor")
     return bad
 
 
 def _law_authentication_honesty():
-    from honest_auth import authentication_honesty
-
     bad = []
-    if "ok" not in authentication_honesty(_honest_provider(), None):
-        bad.append(f"an honest provider should pass the authentication-honesty check: {authentication_honesty(_honest_provider(), None)}")
-    dishonest = authentication_honesty(_dishonest_provider(), None)
-    if "err" not in dishonest or dishonest["err"]["code"] != "authentication_dishonest" or dishonest["err"]["category"] != "server" or dishonest["err"]["message"] != "the provider does not honour the token-class contract":
-        bad.append(f"a provider that resolves revoked/forged tokens to an actor should be authentication_dishonest: {dishonest}")
-    else:
-        classes = {v["class"] for v in dishonest["err"]["detail"]}
-        if classes != {"revoked", "expired", "missing", "forged"}:
-            bad.append(f"the violation should name each dishonest class (got an actor, expected unauthenticated): {classes}")
-        got = {v["class"]: (v["expected"], v["got"]) for v in dishonest["err"]["detail"]}
-        if got.get("forged") != ("unauthenticated", "actor"):
-            bad.append(f"each violation should carry the expected and actual outcome: {got.get('forged')}")
-    return bad
+    p = _provider()
+    out = authentication_honesty(p, {})
+    if is_fault(out):
+        bad.append(f"an honest provider must pass the honesty verifier unchanged: {out}")
+    if out is not p:
+        bad.append("the honesty verifier returns the provider unchanged on success")
+    # A provider whose resolver hands an Actor back for a revoked token is dishonest at that class.
+    def _lying_resolver(token):
+        if token == "tok:revoked":
+            return dict(_ACTOR)
+        return _resolver(token)
 
-
-def _law_resolve_actor_touches_no_domain():
-    """Section 4.3: resolution reads what identifies the actor and changes nothing else.
-
-    Until this existed a provider could reach the Full level on determinism alone, and a resolver that
-    mutates on every call is perfectly deterministic — it can return the same actor each time while
-    writing a row, bumping a counter, or expiring a session as a side effect of being asked who
-    someone is. Determinism and no-mutation are independent claims and the level asserted both while
-    checking one.
-
-    The caller hands in the same state the provider's resolver reads, so the check observes the real
-    effect rather than asking the provider to describe itself (section 4.6: internals stay private)."""
-    from honest_auth import resolve_actor_touches_no_domain
-
-    bad = []
-    quiet_state = {"sessions": {"good": "u1"}, "hits": 0}
-    quiet = {"name": "quiet", "actor_recognizer": lambda t: isinstance(t, str) and bool(t),
-             "resolve_actor": lambda t: {"ok": {"id": quiet_state["sessions"][t]}} if t in quiet_state["sessions"]
-                              else {"err": {"category": "unauthenticated"}},
-             "test_token_generator": lambda c: "good", "fault_mapping": {"unauthenticated": 401}}
-    if not resolve_actor_touches_no_domain(quiet, "good", quiet_state):
-        bad.append("a resolver that only reads must be reported as touching no domain state")
-
-    counting_state = {"sessions": {"good": "u1"}, "hits": 0}
-
-    def _counting_resolve(token):
-        counting_state["hits"] += 1          # the mutation section 4.3 forbids
-        return {"ok": {"id": "u1"}}
-
-    counting = dict(quiet, name="counting", resolve_actor=_counting_resolve)
-    if resolve_actor_touches_no_domain(counting, "good", counting_state):
-        bad.append("a resolver that bumps a counter while resolving must be reported as mutating")
-
-    # The two claims are independent, and this is the case the Full level was missing: the counting
-    # resolver returns the same answer every time, so determinism passes while 4.3 fails.
-    from honest_auth import resolve_actor_deterministic
-    if not resolve_actor_deterministic(counting, "good"):
-        bad.append("the mutating resolver is still deterministic, which is why one check cannot stand in for the other")
+    liar = _provider(resolve_actor=_lying_resolver)
+    out = authentication_honesty(liar, {})
+    if not is_fault(out):
+        bad.append("a dishonest provider must fail the honesty verifier")
+    elif "revoked" not in str(out.get("detail")):
+        bad.append(f"the honesty fault must name every wrong class: {out.get('detail')}")
     return bad
 
 
 def _law_resolve_actor_deterministic():
-    from honest_auth import resolve_actor_deterministic
-
     bad = []
-    if not resolve_actor_deterministic(_honest_provider(), "good"):
-        bad.append("a resolver that returns the same result for a token should be reported deterministic")
-    calls = []
+    p = _provider()
+    # Two Actors that match agree; two faults of the same category agree.
+    if resolve_actor_deterministic(p, "tok:valid") is not True:
+        bad.append("a deterministic resolver must agree on a valid token")
+    if resolve_actor_deterministic(p, "tok:revoked") is not True:
+        bad.append("two faults of the same category must agree")
+    # A resolver that returns a different actor each call is not deterministic.
+    seq = iter([{"user_id": "a"}, {"user_id": "b"}])
 
-    def flaky(token):
-        calls.append(1)
-        return ok("a") if len(calls) % 2 == 0 else err(fault("x", "y", "unauthenticated", [], {}))
+    def _flaky(token):
+        return next(seq)
 
-    if resolve_actor_deterministic(_provider(resolver=flaky), "good"):
-        bad.append("a resolver that returns different results for the same token is not deterministic")
-    return bad
-
-
-# A synthetic application (section 9.2): a boundary that resolves an actor from the request's token and
-# passes it inward as data, and an interior operation that takes the manifest only. The interior never
-# receives the request, so it has nothing to read an actor out of — the shape the law below proves.
-def _synthetic_boundary(provider, request):
-    """The boundary: authenticate the request's token and put the resolved actor in the manifest."""
-    resolved = authenticate(provider, request["token"])
-    return {"actor": resolved["ok"]} if "ok" in resolved else {"fault": resolved["err"]["code"]}
-
-
-def _synthetic_interior(manifest):
-    """An interior operation: pure over the manifest it is handed. It takes no request."""
-    return f"profile of {manifest['actor']}"
-
-
-def _law_actor_reaches_interior_as_data():
-    """Section 9.2: the resolved actor reaches the interior as data, and no operation reads an actor from
-    request input. The first half is checked by value — the actor the boundary resolved is the actor the
-    interior receives. The second is checked by falsification rather than assertion: the interior is run
-    again with the same manifest while the request is changed out from under it, and its result must not
-    move. An interior that reached back into the request for an actor would answer differently."""
-    bad = []
-    provider = _honest_provider()
-    manifest = _synthetic_boundary(provider, {"token": "good"})
-    if manifest != {"actor": "alice"}:
-        bad.append(f"the boundary must resolve the actor and pass it inward as data: {manifest}")
-    if _synthetic_interior(manifest) != "profile of alice":
-        bad.append("the interior must receive the resolved actor as data")
-    # Change the request entirely; the interior sees only the manifest, so its answer cannot move.
-    _synthetic_boundary(provider, {"token": "bad"})
-    if _synthetic_interior(manifest) != "profile of alice":
-        bad.append("the interior must not depend on request input — it answered differently after the request changed")
-    # A rejected token yields no actor at all, so nothing downstream can proceed with one. "bad" fails
-    # the recognizer, so it is refused as malformed before the resolver is ever consulted.
-    rejected = _synthetic_boundary(provider, {"token": "bad"})
-    if "actor" in rejected or rejected.get("fault") != "malformed_token":
-        bad.append(f"a rejected token must yield a fault and no actor: {rejected}")
+    if resolve_actor_deterministic(_provider(resolve_actor=_flaky), "tok:valid") is not False:
+        bad.append("a non-deterministic resolver must be reported as not deterministic")
     return bad
 
 
 _LAWS = {
     "exports": _law_exports,
+    "auth_fault": _law_auth_fault,
     "empty_registry": _law_empty_registry,
+    "registered_provider": _law_registered_provider,
     "validate_provider": _law_validate_provider,
     "register_auth_provider": _law_register_auth_provider,
-    "registered_provider": _law_registered_provider,
     "authenticate": _law_authenticate,
     "fault_status": _law_fault_status,
+    "expect_checkers": _law_expect_checkers,
     "authentication_honesty": _law_authentication_honesty,
     "resolve_actor_deterministic": _law_resolve_actor_deterministic,
-    "resolve_actor_touches_no_domain": _law_resolve_actor_touches_no_domain,
-    "actor_reaches_interior_as_data": _law_actor_reaches_interior_as_data,
-    "dev_provider": _law_dev_provider,
 }
 
 
@@ -341,3 +320,7 @@ def run():
         print(f"FAIL HA-law [{name}]: {msgs}")
     print(f"HA laws: {passed} passed, {len(failed)} failed, {len(_LAWS)} total")
     return 0 if not failed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())

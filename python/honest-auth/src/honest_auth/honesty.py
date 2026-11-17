@@ -1,78 +1,102 @@
-"""The authentication-honesty contract as executable checks (section 4.7).
-
-A provider proves it honours the token-class contract (section 4.2): a valid token resolves to an
-actor, a malformed one is rejected at the recognizer before `resolve_actor`, and every other class
-fails as unauthenticated — no valid identity. `authentication_honesty` runs the provider's own
-`test_token_generator` across the classes and checks each outcome; `resolve_actor_deterministic`
-confirms a token resolves the same way twice (section 4.4). Pure over the provider's injected generator
-and resolver — no mocks, the provider proves itself.
+"""The executable authentication-honesty verifier and the determinism check
+(honest-auth-architecture.md §4.4, §4.7). A provider's honesty is checked, not asserted: the verifier
+folds every token class through authenticate and the per-class outcome table, and reports the classes
+whose outcome was wrong. Pure over the provider's injected generator and resolver — deterministic and
+mock-free.
 """
 
-from copy import deepcopy
+from honest_type import is_fault
 
-from honest_type import err, fault, ok
-
+from honest_auth._util import _pick
 from honest_auth.authenticate import authenticate
+from honest_auth.types import MALFORMED_CODE, auth_fault
 
-# The six token classes every provider's test_token_generator produces (section 2.4).
-_TOKEN_CLASSES = ("valid", "revoked", "expired", "malformed", "missing", "forged")
 
-# The outcome authenticate() must produce for a token of each class (section 4.2): an actor for a valid
-# token, a recognizer rejection for a malformed one, and an unauthenticated fault for the rest.
-_EXPECTED = {
-    "valid": "actor",
-    "malformed": "recognizer_reject",
-    "revoked": "unauthenticated",
-    "expired": "unauthenticated",
-    "missing": "unauthenticated",
-    "forged": "unauthenticated",
+def _expect_actor(cls, result):
+    """The outcome checker for the valid token class (§4.7). True when result is an Actor and not a
+    fault — the valid class must resolve to an actor — recognizing a Fault by its is_err tag through
+    is_fault. Reached through the class_outcome table; reads no world and returns no fault."""
+    return not is_fault(result)
+
+
+def _expect_unauthenticated(cls, result):
+    """The outcome checker for the revoked, expired, missing and forged token classes (§4.7). True
+    when result is a Fault — the class must fail as unauthenticated, no valid identity — recognizing
+    the fault by its is_err tag through is_fault. Reached through the class_outcome table; reads no
+    world and returns no fault."""
+    return is_fault(result)
+
+
+def _expect_recognizer_reject(cls, result):
+    """The outcome checker for the malformed token class (§4.7). True when result is a Fault produced
+    by the recognizer before resolve_actor ran — authenticate's recognizer-reject fault — told from a
+    resolution fault by its code, so the check confirms the token was rejected at actor_recognizer and
+    not resolved (§2.2, §4.7). Reached through the class_outcome table; reads no world and returns no
+    fault."""
+    return is_fault(result) and result.get("code") == MALFORMED_CODE
+
+
+# The token-class-to-expected-outcome table the honesty verifier folds each class through (§4.7). Its
+# keys are exactly the six token classes; its values are the three outcome checkers. Folding its
+# .items() makes the six classes and their required outcomes a declared, countable value, so a
+# verifier that silently checked only one class could not ship green.
+_CLASS_OUTCOME = {
+    "valid": _expect_actor,
+    "revoked": _expect_unauthenticated,
+    "expired": _expect_unauthenticated,
+    "malformed": _expect_recognizer_reject,
+    "missing": _expect_unauthenticated,
+    "forged": _expect_unauthenticated,
 }
 
 
-def _outcome(result):
-    """Classify what authenticate() produced (section 4.2): 'actor' for ok, 'recognizer_reject' when the
-    recognizer rejected the token before resolution, else the fault's category. Pure."""
-    if "ok" in result:
-        return "actor"
-    if result["err"]["code"] == "malformed_token":
-        return "recognizer_reject"
-    return result["err"]["category"]
-
-
 def authentication_honesty(provider, context):
-    """Check a provider honours the token-class contract (sections 4.2, 4.7): run its
-    test_token_generator across every class and confirm authenticate() produces the outcome the class
-    names. Returns ok(provider), or err(authentication_dishonest) listing each class whose outcome was
-    wrong with its expected and actual outcome. Pure over the provider's injected generator and
-    resolver — the provider proves itself, nothing is mocked."""
-    violations = []
-    for class_name in _TOKEN_CLASSES:
-        outcome = _outcome(authenticate(provider, provider["test_token_generator"](class_name, context)))
-        if outcome != _EXPECTED[class_name]:
-            violations.append({"class": class_name, "expected": _EXPECTED[class_name], "got": outcome})
-    if violations:
-        return err(fault("authentication_dishonest", "the provider does not honour the token-class contract", "server", [], detail=violations))
-    return ok(provider)
+    """The executable authentication-honesty verifier (§4.7). It folds over every token class in the
+    class_outcome table and, for each, generates a token with the provider's injected
+    test_token_generator against context, sends it through authenticate, and selects the right outcome
+    checker. It returns the provider unchanged when every class's outcome is right, or an auth_fault
+    whose detail lists every class whose outcome was wrong. Pure over the injected generator and
+    resolver, deterministic and mock-free."""
 
+    def _class_wrong(pair):
+        # Generate a token for one class, send it through authenticate, and report whether its
+        # outcome was wrong (§4.7). Wrong is the negation of the class's own checker. The token
+        # generator is called as an injected record field.
+        cls, checker = pair
+        token = provider["test_token_generator"](cls, context)
+        result = authenticate(provider, token)
+        return not checker(cls, result)
 
-def resolve_actor_touches_no_domain(provider, token, domain):
-    """Whether resolution left the domain state it reads unchanged (section 4.3).
-
-    The caller hands in the same value the provider's resolver reads, and this compares it against a
-    copy taken beforehand. Observing the state rather than asking the provider about itself keeps
-    section 4.6 intact: internals stay private, and the check still sees the effect.
-
-    This is a claim the determinism check cannot make. A resolver that writes a row or bumps a counter
-    on every call is perfectly deterministic, returning the same actor each time, so a Full level
-    resting on determinism alone asserted something it never tested. Pure over the injected resolver.
-    """
-    before = deepcopy(domain)
-    authenticate(provider, token)
-    return domain == before
+    wrong = list(map(lambda pair: pair[0], filter(_class_wrong, _CLASS_OUTCOME.items())))
+    return _pick(
+        not wrong,
+        lambda: provider,
+        lambda: auth_fault(
+            "conflict",
+            "dishonest_provider",
+            f"the provider's authentication is dishonest for these token classes: {wrong}",
+            {"wrong_classes": wrong},
+        ),
+    )
 
 
 def resolve_actor_deterministic(provider, token):
-    """Whether the provider resolves a token the same way twice under fixed backing state (section 4.4):
-    it runs the boundary resolution twice and reports whether the two results agree. Pure over the
-    injected resolver."""
-    return authenticate(provider, token) == authenticate(provider, token)
+    """Resolve the same token twice under the same backing state and report whether the two results
+    agree (§4.4, §4.7). It calls the injected resolve_actor twice and compares their determinism keys
+    — two Actors that match, or two faults of the same category — returning true when they agree and
+    false when they differ. Pure over the injected resolver; it reads no world of its own and
+    propagates no honest-auth fault."""
+
+    def _determinism_key(result):
+        # Reduce a result to the value two calls must agree on (§4.4): a fault's category, or an
+        # actor itself. Two faults agree when their categories match; two actors agree when they are
+        # equal; a fault and an actor never agree, because their keys differ in the first position.
+        return _pick(
+            is_fault(result),
+            lambda: ("fault", result.get("category")),
+            lambda: ("actor", result),
+        )
+
+    first = provider["resolve_actor"](token)
+    second = provider["resolve_actor"](token)
+    return _determinism_key(first) == _determinism_key(second)

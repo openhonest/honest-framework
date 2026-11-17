@@ -1,55 +1,157 @@
-# honest-auth declared in .hd — the authentication interface: the AuthProvider contract, a value
-# registry, and the boundary dispatch. Identity is validated at the boundary and passed inward as
-# data; the dispatch is pure, the provider's recognizer and resolver are the injected I/O.
+# honest-auth declared in .hd — the authentication interface layer of the Honest Framework
+# (honest-auth-architecture.md §1). It does not implement authentication. It defines a plugin
+# contract, AuthProvider, a value registry that holds exactly one active provider, and the pure
+# machinery that registers, composes and verifies a provider's injected callables. A provider is a
+# record of callables — name, actor_recognizer, resolve_actor, test_token_generator, fault_mapping
+# (§2) — and honest-auth never performs the authentication I/O itself: the real reads (session-store
+# lookup, signature verification, introspection) live inside the provider's resolve_actor, which runs
+# at the APPLICATION's request boundary (§1.1, §2.3). honest-auth composes and verifies those injected
+# callables, exactly as honest-gherkin composes injected step handlers, so it owns no door, no reader,
+# no orchestrator: it is a pure library reached by import, like honest-type. Faults return as a bare
+# union (value | Fault), recognized by honest-type's is_fault off the reserved is_err tag — never an
+# ok/err envelope (§2). Architecture: ../../specs/02-code-quality/honest-auth-architecture.md
 
 module honest-auth
 
-  layer domain
+  layer application
+
+  note "the authentication interface layer: it defines the AuthProvider plugin contract and the pure machinery that registers, composes and verifies a provider's injected callables (§1). Layer is application because honest-auth resolves identity at the request boundary and is request-pipeline machinery (§1.1) — not domain (authorization for a target is business logic, §1.4), not data (sessions and credentials are provider detail, §1.4), and not a standalone checker (it ships the honesty verifier as a library honest-check and honest-test consume, §1.2)."
+
+  # No boundary of its own, so no I/O surface. The world arrives only through the entries at the foot
+  # of the file: an application imports the registration and boundary functions, and honest-test imports
+  # the honesty verifier. Every seam honest-auth touches — recognizing, resolving, generating tokens —
+  # is an injected provider Callable, and the real I/O runs at the application's request boundary.
+  inputs  = { }
+  outputs = { }
+
+  # ------------------------------------------------------------------------------------------------
+  # Step 3. The closed word-sets. The six token classes a provider's generator produces (§2.4) and
+  # the authentication-fault categories (§2.3, §2.5) are each a finite set of words, so each is a
+  # vocabulary and never a plain str.
+  # ------------------------------------------------------------------------------------------------
+
+  set token_classes = {
+    "valid"     : "a well-formed token for a real, active identity; authenticate must resolve it to an Actor (§2.4)",
+    "revoked"   : "a token that was once valid but has been revoked; authenticate must fail it as unauthenticated (§2.4)",
+    "expired"   : "a token whose expiry is in the past; authenticate must fail it as unauthenticated (§2.4)",
+    "malformed" : "a token that does not match actor_recognizer; it is rejected at the recognizer, before resolve_actor runs (§2.4)",
+    "missing"   : "a NULL, empty or absent token; authenticate must fail it as unauthenticated (§2.4)",
+    "forged"    : "a token that passes actor_recognizer but maps to no real identity; authenticate must fail it as unauthenticated (§2.4)"
+  } note "the six named token classes a provider's test_token_generator produces, consumed by the honesty verifier (§2.4). The verifier folds over exactly these six; the class_outcome dispatch names which outcome each one must produce, so the set the verifier runs across is declared and countable rather than hidden in prose."
+  vocabulary TokenClass = { token_classes }
+
+  set fault_categories = {
+    "unauthenticated" : "no valid identity — the mapped status for missing, expired, revoked and forged tokens; maps to 401 (§2.3, §2.5)",
+    "forbidden"       : "a resolved actor is not permitted — business-logic authorization surfaced at the boundary; maps to 403 (§2.5)",
+    "conflict"        : "a stale precondition surfaced at the boundary; maps to 409 (§2.5)",
+    "expired"         : "the token's expiry is in the past — a resolution-time category a provider may raise (§2.3)",
+    "revoked"         : "the token was revoked — a resolution-time category a provider may raise (§2.3)",
+    "forged"          : "the token passed the recognizer but maps to no identity — a resolution-time category a provider may raise (§2.3)"
+  } note "the authentication-fault categories an AuthFault carries (§2.3, §2.5). unauthenticated, forbidden and conflict are the three fault_mapping keys §2.5 names; expired, revoked and forged are the finer resolution-time categories §2.3 names, each of which a provider maps to an HTTP status (unauthenticated, 401, unless the provider's mapping is finer). A provider may extend the set with custom categories as long as unauthenticated remains (§2.5), so this is honest-auth's own closed vocabulary, not a bound on every provider."
+  vocabulary FaultCategory = { fault_categories }
+
+  # ------------------------------------------------------------------------------------------------
+  # Step 3. The data dictionary. honest-type owns the Recognizer shape; the provider owns the Actor
+  # shape; honest-auth owns the AuthProvider contract, the Registry value and the Fault record.
+  # ------------------------------------------------------------------------------------------------
+
+  type Recognizer = foreign "honest-type" note "a token wire-format recognizer, honest-type's Recognizer — a Set or predicate, String to Boolean (honest-type-architecture.md §2.2 here). honest-type owns the shape, so it is foreign: honest-auth holds it in the AuthProvider record and runs it at the start of authenticate to classify the token before anything else, rejecting malformed tokens and near-misses before resolve_actor (§2.2). honest-auth receives it and runs it, never builds one."
+
+  type Token = str note "one authentication credential as it arrives on the wire, the value actor_recognizer classifies and resolve_actor validates (§2.2, §2.3). It is an opaque string to honest-auth — a base64url-encoded 256-bit value, a Macaroon serialization, three dot-separated JWT segments, whatever wire format the provider accepts (§2.2) — and honest-auth never parses it; only the provider's injected actor_recognizer and resolve_actor interpret it. The missing token class is this string empty, null or absent (§2.4)."
+
+  type TestContext = dict<str, any> note "the test-relevant backing state the honesty verifier threads to the provider's test_token_generator and reads while checking outcomes (§2.4, §4.7): which identity is the active one, the scripted session or key state a class is generated against. The spec leaves its shape open — 'any test-relevant state' (§2.4) — so it is an open map the test harness fills, not a fixed record; honest-auth passes it through and never fixes its keys."
+
+  type Actor = foreign "provider" note "the resolved identity a valid token produces, passed inward as ordinary data (§2.3). The registered provider owns the shape — a user_id, a capability-granted scope, a JWT claims set — and the spec deliberately does not fix its fields (§2.3), so it is foreign to honest-auth: honest-auth receives an Actor from the provider's injected resolve_actor and only ever distinguishes it from a fault by the absence of the reserved is_err tag (is_fault reads it as a value). It is not a door into honest-auth: the Actor is produced by composing an injected callable the application wired at its own request boundary, not by honest-auth reading the world."
 
   type AuthProvider = {
-    name: str
-    recognizes: Callable
-    resolve: Callable
-    fault_mapping: dict<str, int>
-    token_class: str
-  }
+    name:                 str
+    actor_recognizer:     Recognizer
+    resolve_actor:        Callable
+    test_token_generator: Callable
+    fault_mapping:        dict<str, HttpStatus>
+  } note "the plugin contract every authentication implementation satisfies, a record of callables with no methods and no class (§2). name is the provider's unique, stable identifier string, used in logs, honest-check diagnostics and conformance reports (§2.1). actor_recognizer is the token wire-format recognizer run at the start of authenticate (§2.2). resolve_actor is the injected boundary validator, a Callable of shape (Token) -> Actor | Fault, which validates the token and resolves it to an actor or a typed failure and is the one field permitted to perform I/O — it runs at the application's request boundary (§2.3). test_token_generator is the injected token-class generator, a Callable of shape (TokenClass, TestContext) -> Token, producing a deterministic token for a requested class (§2.4). fault_mapping translates fault categories to HTTP statuses (§2.5). honest-auth holds this record and composes its callables; it never constructs a provider."
 
   type Registry = {
-    providers: dict<str, AuthProvider>
-  }
+    provider: AuthProvider | NOTHING
+  } note "the authentication registry, a value threaded through the application rather than module state (§3). Exactly one provider is active per application instance, so the registry carries a single optional provider: an AuthProvider once one is registered, NOTHING before any is (§3, §3.2). empty_registry yields one whose provider is NOTHING; register_auth_provider returns a new Registry carrying the provider and never mutates its argument, so two runs never collide (the honest-gherkin step-registry pattern, §3). The application's startup holds the registry and hands it to the boundary, which reads the active provider with registered_provider (§3)."
 
-  type Actor = {
-    id: str
-    attributes: dict<str, any>
-  }
+  type HttpStatus = int note "an HTTP response status code, the value fault_mapping maps a fault category to and fault_status returns (§2.5). §2.5 names 401 for unauthenticated, 403 for forbidden and 409 for conflict; a provider's custom categories map to other 4xx or 5xx statuses (§2.5). It is a plain integer because the full status-code space is large and provider-extensible, not a closed framework vocabulary."
 
   type Fault = {
-    code: str
-    message: str
-    category: str
-    results: list<any>
-    detail: dict<str, any>
-  }
+    is_err:   bool
+    category: FaultCategory
+    code:     str
+    message:  str
+    detail:   dict<str, any>
+  } note "an AuthFault — the failure an authentication function returns as a bare union arm (value | Fault), recognized by honest-type's is_fault and never raised or wrapped in an ok/err envelope (§2). is_err is the reserved boolean tag, always true, the mark is_fault reads to tell the fault arm from the value arm; it is reserved framework-wide, so no non-fault honest-auth value — an Actor, a Registry, the NOTHING a lookup yields — carries a field of that name (§2). category is one of the FaultCategory words. code is the specific reason: already_registered or invalid_provider at registration (§3), or a resolution code the provider raises (§2.3). message is the human sentence naming what went wrong and what to do instead. detail is the structured context — the validation error naming the missing or malformed field for invalid_provider (§3), the list of token classes whose outcome was wrong for the honesty verifier (§4.7). Two fields minimum: the code to branch on and the message to read, with is_err the arm tag."
 
-  type Result = {
-    ok: Actor
-    err: Fault
-  }
+  # ------------------------------------------------------------------------------------------------
+  # Step 3. The per-class outcome table. The honesty verifier folds over token_classes and, for each
+  # class, checks the outcome that class names (§4.7). The selection is a dispatch, so the six classes
+  # and the three outcomes they demand are named and countable, never an if/elif ladder.
+  # ------------------------------------------------------------------------------------------------
+
+  dispatch class_outcome = {
+    "valid"     -> _expect_actor,
+    "revoked"   -> _expect_unauthenticated,
+    "expired"   -> _expect_unauthenticated,
+    "malformed" -> _expect_recognizer_reject,
+    "missing"   -> _expect_unauthenticated,
+    "forged"    -> _expect_unauthenticated
+  } note "the token-class-to-expected-outcome table the honesty verifier folds each class through (§4.7). The three outcomes §4.7 names: a valid token resolves to an Actor (_expect_actor); a malformed one is rejected at the recognizer before resolve_actor (_expect_recognizer_reject); and revoked, expired, missing and forged each fail as unauthenticated — no valid identity (_expect_unauthenticated). The table makes the six classes and their required outcomes a declared, countable value rather than a branch ladder, so a verifier that silently checked only one class could not ship green."
+
+  # ------------------------------------------------------------------------------------------------
+  # Step 5. The pure functions. honest-auth touches no world: every function is pure composition over
+  # the provider's injected callables, reached by import. A failure comes back as a Fault, never a raise.
+  # ------------------------------------------------------------------------------------------------
+
+  fn auth_fault : (category: FaultCategory, code: str, message: str, detail: dict<str, any>) -> Fault
+    note "builds one AuthFault record from its parts, the single place honest-auth assembles a fault (§2). category is one of the FaultCategory words; code is the specific reason — already_registered or invalid_provider (§3), or a resolution code; message is the human sentence; detail is the structured context — the validation error for invalid_provider (§3), the list of wrong token classes for the honesty verifier (§4.7). It sets is_err true and returns the Fault, carried by the return as a bare union arm and recognized by is_fault, never raised and never wrapped in an envelope (§2)."
 
   fn empty_registry : () -> Registry
+    note "returns a fresh Registry with no provider — its provider field is NOTHING (§3). The registry is a value, not module state, so a run threads it rather than reading a global; empty_registry is the seed register_auth_provider extends (§3). Pure: it takes nothing and reads no world."
 
-  fn validate_provider : (provider: AuthProvider) -> Result
+  fn validate_provider : (provider: AuthProvider) -> AuthProvider | Fault invokes auth_fault
+    note "checks a provider is well-formed before it is registered (§3, §9.1 Core). It confirms the provider supplies all five AuthProvider fields — name, actor_recognizer, resolve_actor, test_token_generator, fault_mapping — and that fault_mapping retains the unauthenticated category required of every mapping (§2.5, §9.1). It returns the provider unchanged when well-formed, or an auth_fault with code invalid_provider whose detail names the missing or malformed field (§3). Pure: it builds no registry, performs no I/O, and reads no world."
 
-  fn register_auth_provider : (registry: Registry, provider: AuthProvider) -> Result
+  fn register_auth_provider : (registry: Registry, provider: AuthProvider) -> Registry | Fault invokes validate_provider, auth_fault
+    note "registers the single active provider, returning a new Registry carrying it on success or an auth_fault on failure, recognized by is_fault — no envelope (§3). It faults with code already_registered when the registry already holds a provider, since exactly one provider is active per application (§3), and with code invalid_provider — via validate_provider — when the provider is malformed (§3). It never mutates its argument: it returns a new Registry, so two runs never collide (the honest-gherkin step-registry pattern, §3). Pure: it reads no world; registration happens at application startup, before any request is served (§3)."
 
-  fn registered_provider : (registry: Registry) -> AuthProvider
+  fn registered_provider : (registry: Registry) -> AuthProvider | NOTHING
+    note "returns the registry's active provider, or NOTHING when none is registered (§3, §3.2). Having no provider is a valid state — a bounded absence, not a failure — so the empty case is NOTHING: it carries no is_err tag and is never recognized by is_fault, keeping it disjoint from a Fault (§3.2). The application's startup holds the registry and the request boundary reads the active provider with this (§3). Pure: a field read, no world, no fault."
 
-  fn authenticate : (provider: AuthProvider, token: str) -> Result
+  fn authenticate : (provider: AuthProvider, token: Token) -> Actor | Fault invokes auth_fault
+    note "the boundary flow a token is sent through — it runs the provider's recognizer and resolver and returns the resolved Actor or a typed failure (§2.3, §4.7). It first runs the provider's injected actor_recognizer on the token; a token that fails the recognizer is malformed and authenticate returns an auth_fault at once, before resolve_actor, with category unauthenticated (§2.2, §2.4). A token that passes is handed to the provider's injected resolve_actor, whose Actor or Fault authenticate returns unchanged (§2.3). honest-auth performs no I/O here: the recognizer and resolve_actor are injected provider callables, and the real reads live inside resolve_actor, which runs at the application's request boundary — this function is pure composition over them (§2.3). It invokes auth_fault only to build the recognizer-reject fault; the recognizer and resolver are called as injected record fields, not named module functions."
 
-  fn fault_status : (provider: AuthProvider, auth_fault: Fault) -> int
+  fn fault_status : (provider: AuthProvider, fault: Fault) -> HttpStatus
+    note "translates an AuthFault into the HTTP response status the boundary returns, by looking the fault's category up in the provider's fault_mapping (§2.5). unauthenticated maps to 401, forbidden to 403, conflict to 409, plus any category the provider added (§2.5). The boundary calls it to turn a Fault from authenticate into a response, after which the request never enters a chain (§2.3, §2.5). Pure over the injected fault_mapping; §2.5 guarantees unauthenticated is always mapped, so the lookup for the no-valid-identity categories always resolves."
 
-  fn authentication_honesty : (provider: AuthProvider, context: dict<str, any>) -> bool
+  fn _expect_actor : (cls: TokenClass, result: Actor | Fault) -> bool
+    note "the outcome checker for the valid token class (§4.7). cls is the class under test (valid). result is what authenticate returned for that class's token. It returns true when result is an Actor and not a fault — the valid class must resolve to an actor — recognizing a Fault by its is_err tag through is_fault (§4.7). Reached through the class_outcome table; it reads no world and returns no fault."
 
-  fn resolve_actor_deterministic : (provider: AuthProvider, token: str) -> bool
+  fn _expect_unauthenticated : (cls: TokenClass, result: Actor | Fault) -> bool
+    note "the outcome checker for the revoked, expired, missing and forged token classes (§4.7). cls is the class under test. result is what authenticate returned for that class's token. It returns true when result is a Fault — the class must fail as unauthenticated, no valid identity — recognizing the fault by its is_err tag through is_fault (§4.7). Reached through the class_outcome table; it reads no world and returns no fault."
 
-  fn dev_auth_provider : (users: dict<str, any>) -> AuthProvider
+  fn _expect_recognizer_reject : (cls: TokenClass, result: Actor | Fault) -> bool
+    note "the outcome checker for the malformed token class (§4.7). cls is the class under test (malformed). result is what authenticate returned for that class's token. It returns true when result is a Fault produced by the recognizer before resolve_actor ran — authenticate's recognizer-reject fault — distinguished from a resolution fault by its code, so the check confirms the token was rejected at actor_recognizer, not resolved (§2.2, §4.7). Reached through the class_outcome table; it reads no world and returns no fault."
+
+  fn authentication_honesty : (provider: AuthProvider, context: TestContext) -> AuthProvider | Fault invokes authenticate, class_outcome, auth_fault
+    note "the executable authentication-honesty verifier — it ships §4.2 through §4.6 as a pure function, so a provider's honesty is checked, not asserted (§4.7). It folds over every token class in token_classes and, for each, generates a token with the provider's injected test_token_generator against context, sends it through authenticate, and selects the right outcome checker through the class_outcome table — a valid token resolving to an actor, a malformed one rejected at the recognizer, revoked, expired, missing and forged each failing as unauthenticated (§4.7). It returns the provider unchanged when every class's outcome is right, or an auth_fault whose detail lists every class whose outcome was wrong (§4.7). Pure over the injected generator and resolver — deterministic and mock-free — and the function honest-test auto-generates its authentication-honesty test around (§8). It invokes authenticate, the class_outcome dispatch and auth_fault; the token generator is called as an injected record field."
+
+  fn resolve_actor_deterministic : (provider: AuthProvider, token: Token) -> bool
+    note "the Full-level determinism check — it resolves the same token twice under the same backing state and reports whether the two results agree (§4.4, §4.7). It calls the provider's injected resolve_actor twice on token and compares the two returns — two Actors that match, or two faults of the same category — returning true when they agree and false when they differ, which is what honest-test's determinism monitor and honest-check's static analysis require (§4.4). It calls resolve_actor as an injected record field, not a named module function, so no honest-auth fault propagates through it; pure over the injected resolver, it reads no world of its own."
+
+  # ------------------------------------------------------------------------------------------------
+  # The world arrives here. An application imports the registration and boundary functions; honest-test
+  # imports the honesty verifier and the determinism check. A function reached only by another function
+  # or a dispatch table (auth_fault, validate_provider, the _expect_* checkers) needs no entry; the call
+  # that reaches it is its arrival.
+  # ------------------------------------------------------------------------------------------------
+
+  entry "import honest_auth" -> empty_registry
+  entry "import honest_auth" -> register_auth_provider
+  entry "import honest_auth" -> registered_provider
+  entry "import honest_auth" -> authenticate
+  entry "import honest_auth" -> fault_status
+  entry "import honest_auth" -> authentication_honesty
+  entry "import honest_auth" -> resolve_actor_deterministic
