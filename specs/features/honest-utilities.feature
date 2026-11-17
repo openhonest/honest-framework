@@ -1,14 +1,17 @@
-Feature: honest-utilities — generated, one scenario per function (15 total)
+Feature: honest-utilities — generated, one scenario per function (25 total)
 
   Derived from python/honest-utilities/honest-utilities.hd alone: its signatures, notes, the closed
   TargetType vocabulary (str, int, bool, float, UUID, key), the by_target_type dispatch, and its
   three import entries. honest-utilities is the capability several modules share and none owns. It
-  holds two capabilities, each entered by import. The law runner (door verify_laws) checks a
+  holds three capabilities, each entered by import. The law runner (door verify_laws) checks a
   caller's injected predicate across a bounded space of subjects and reports failures as Violations,
   never faults. The environment-variable reader (door read_env) coerces named variables to a
   caller-declared type, returns NOTHING for an absent optional, and returns one Fault naming every
-  missing-required or uncoercible variable together. Each orchestrator's two decision paths are
-  described within its single scenario, as honest-errors does for handle_failure.
+  missing-required or uncoercible variable together. The recurring scheduler (doors schedule and
+  run_schedules) wakes a caller's injected unit of work on a cadence, consults the caller's decide
+  after each run, and runs until the caller's stop or decide ends it, never overlapping two runs of
+  one work. Each orchestrator's decision paths are described within its single scenario, as
+  honest-errors does for handle_failure.
 
   # --- Capability 1: the law runner (Appendix A) -------------------------------
 
@@ -88,3 +91,55 @@ Feature: honest-utilities — generated, one scenario per function (15 total)
     Given raw: str
     When coerce_key is called
     Then under the key target type a key is a secret such as an API key or token, so the raw string passes through as a string and the returned value is the string itself; it does not fail on the value's content, since any string is an acceptable secret; its distinguishing behaviour is that the value never appears in a fault message or anywhere the module reports — only the variable's name does
+
+  # --- Capability 3: the recurring scheduler (Appendix C) -----------------------
+
+  Scenario: schedule
+    Given work: Callable and cadence: Cadence and decide: Callable and stop: handle
+    When schedule is called
+    Then it is the single-work scheduler door a sibling enters to wake one unit of work on a cadence and run it until stopped; work is the caller's injected awaited callable, run at run_work's boundary and never inspected; cadence is how often it runs with the optional per-run deadline; decide is the caller's pure rule, run at run_decide's boundary after each run from the outcome and run history to one Disposition; and stop is the caller's signal, flipped to end the loop, which it watches and never owns; it adds no logic of its own beyond naming this one schedule — it wraps the work, cadence, and decide in a ScheduleSpec under the fixed key "", the sole unnamed schedule, hands that spec and stop to the one orchestrator drive_schedule, and returns the RunReport that comes back; it is awaited, because drive_schedule awaits the work, and a caller awaits this door for the life of the one schedule
+
+  Scenario: run_schedules
+    Given specs: list<ScheduleSpec> and stop: handle
+    When run_schedules is called
+    Then it is the many-schedule scheduler door, the surface the host that owns the process awaits for process lifetime; specs is the set of ScheduleSpecs the caller declared, each a named unit of work with its cadence and its rule, and stop is the one signal that ends them all; it drives each spec through its own drive_schedule loop and awaits them together under this one awaited call, returning one RunReport per spec when the set ends; this is the shape honest-page's create_app takes — a module declares its set of schedules and returns them and the host runs them, because a module whose doors return cannot itself hold a set of long-lived awaited loops; it is awaited
+
+  Scenario: drive_schedule
+    Given spec: ScheduleSpec and stop: handle
+    When drive_schedule is called
+    Then it is the scheduler's one orchestrator, the per-work loop both doors hand a schedule to; spec is the one unit of work with its cadence and rule, and stop is the caller's signal; each turn it reads the wall clock with read_clock and asks the pure plan_tick whether to wait, fire, or halt, then acts on one of three paths: on plan_tick's wait it sleeps the planned seconds through wait_until and ends the loop recording signalled_stop when wait_until reports the stop fired before the interval elapsed; on fire it brackets run_work with two read_clock reads to measure whether the run passed the cadence's deadline, folds the outcome and that overrun into the run counts with build_attempt, consults the caller's decide at run_decide's boundary with run_decide, and folds the attempt, the cadence, and the disposition into a fresh ScheduleState with advance_schedule, the only writer of that state; on halt it ends the loop recording decided_stop; it tallies the attempts, successes, faults, and overruns across the whole life of the schedule and returns one RunReport; it is awaited, because run_work and wait_until are awaited; it never builds a Fault, reading only whether the work's outcome is a fault — honest-type's is_err tag, never the fault's kind — to keep its counts
+
+  Scenario: read_clock
+    Given no parameters
+    When read_clock is called
+    Then it reads the current wall-clock time, the scheduler's clock boundary; it takes nothing and returns the time as a number of seconds — the now plan_tick compares the next due time against, and the two readings drive_schedule brackets a run with to measure whether the run overran its deadline; it is a reader because the wall clock is outside the module, reading it is its one side effect, and it decides nothing
+
+  Scenario: wait_until
+    Given seconds: float and stop: handle
+    When wait_until is called
+    Then it sleeps until a due time or until the caller stops, whichever comes first, the scheduler's bounded, stop-interruptible wait; seconds is how long the next run is due to wait and stop is the caller's signal; it sleeps for seconds but races that sleep against the stop signal, returning true when the stop fired before the time elapsed and false when the full interval passed, so a stop ends an idle wait at once and never blocks shutdown; the wait is always a fixed number of seconds, never a wait on a condition, so the scheduler cannot hang on its own waiting; it is awaited, because the sleep is asynchronous; its one declared side effect is reading the clock to sleep, and it watches the stop signal the caller flips and never owns it
+
+  Scenario: run_work
+    Given work: Callable and deadline_seconds: float | NOTHING
+    When run_work is called
+    Then it runs the caller's injected unit of work once, at the scheduler's engine boundary — honest-utilities executing code it did not write, the same boundary run_check is; work is the caller's awaited callable and deadline_seconds is the optional budget the run is expected to finish within, NOTHING when the caller set none; it awaits the work and returns the work's own result, which is opaque to the scheduler — the work's success value or honest-type's Fault — typed as an open value because the scheduler never inspects the success value and reads only whether the whole outcome is a fault, never the fault's kind; typing the return as the open value rather than naming Fault is deliberate, since a card that named Fault would oblige every caller out to the door to return the fault, but the scheduler consumes the fault as data for decide and its counts and never returns one; it is awaited; two runs of one work never overlap — this one is awaited to completion before another starts — so a run that passes deadline_seconds is left to finish and the overrun is only observed, never a release that abandons a run; it carries no overran channel of its own, since drive_schedule brackets this call with two read_clock reads and measures the elapsed time against deadline_seconds; its one declared side effect is running the caller's code in the process
+
+  Scenario: run_decide
+    Given decide: Callable and outcome: any and attempt: Attempt
+    When run_decide is called
+    Then it runs the caller's injected decide rule once, at the scheduler's engine boundary, more code the module did not write; decide is the caller's pure rule, outcome is the work's opaque result from run_work which decide — not the scheduler — interprets, and attempt is the run history the scheduler holds, how many runs have faulted in a row, how many have run, and whether this run overran; it runs decide and returns the one Disposition it chose — continue, retry_after with its delay, or stop; it is not awaited, because decide is a pure synchronous rule; the scheduler owns the three dispositions and never interprets the fault, the caller owns the reading of its faults, and a spent retry budget is the caller's decide seeing the fault count pass its ceiling and returning stop; its one declared side effect is running the caller's code in the process
+
+  Scenario: plan_tick
+    Given state: ScheduleState and now: float
+    When plan_tick is called
+    Then it chooses the next move for one schedule, the pure heart of the loop; state is the schedule's memory between turns and now is the current wall-clock time read_clock returned; it returns a TickPlan — fire when the state has no next-due time yet or now has reached it, halt with reason decided_stop when the state is stopping, and otherwise wait the gap from now to the next-due time; the cadence never reaches it, because advance_schedule already folded the interval or the retry delay into the state's absolute next_due, so plan_tick only compares numbers and returns data, testable without a clock or a database; a fresh state has no next-due time so the first run fires at once, and a stop signal that fires during a wait ends the loop in drive_schedule, which records signalled_stop, so the only halt plan_tick emits is decided_stop; it reads no world and returns pure data
+
+  Scenario: advance_schedule
+    Given state: ScheduleState and attempt: Attempt and cadence: Cadence and disposition: Disposition and now: float
+    When advance_schedule is called
+    Then it folds one run's result into the schedule's memory, the single mutator of ScheduleState — no other function writes it; state is the memory before this run, attempt is the folded run history build_attempt returned from which it carries consecutive_faults, attempted, and last_overran (the attempt's overran), cadence is the schedule's interval and optional deadline, disposition is the caller's decision, and now is the time the run started; it returns a fresh ScheduleState and sets next_due from the disposition — continue sets next_due to now plus the cadence interval, retry_after sets it to now plus the disposition's delay, and stop leaves next_due and marks the state stopping; it is pure, every value it reasons about was handed in and it returns new data rather than mutating in place, so the retry delay reaches the next wait as an absolute next_due time plan_tick reads directly, which is why the cadence never reaches plan_tick
+
+  Scenario: build_attempt
+    Given state: ScheduleState and outcome: any and overran: bool
+    When build_attempt is called
+    Then it builds the run history the caller's decide reads, the pure attempt-context helper and the one place the run counts fold; state is the schedule's memory, outcome is the work's opaque result, and overran is whether this run passed its deadline, measured by drive_schedule between two clock reads; it returns an Attempt — consecutive_faults is the state's running count plus one when this outcome is a fault and zero when it is a success, attempted is the state's count plus one, and overran is the observation passed through; advance_schedule later reads these folded counts off the Attempt, so the counting rule lives in exactly this one function; it reads only whether the outcome is a fault, never the fault's kind, and returns pure data

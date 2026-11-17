@@ -1,6 +1,7 @@
 # honest-utilities declared in .hd — the capability several modules share and none owns
-# (honest-utilities-architecture.md). It holds exactly two capabilities now, each entered by import
-# and running from no flow of its own: the law runner and the environment-variable reader. Each
+# (honest-utilities-architecture.md). It holds exactly three capabilities now, each entered by import
+# and running from no flow of its own: the law runner, the environment-variable reader, and the
+# recurring scheduler. Each
 # takes the framework's standard shape, so the crossing checker reads it with no exception — a door
 # takes the import and hands its input to ONE orchestrator; the orchestrator drives the pure
 # functions that decide and any reader that touches the world; the door and the reader are the only
@@ -13,21 +14,25 @@ module honest-utilities
 
   layer foundation
 
-  note "the capability several modules share and none owns: a law runner that checks a caller's injected predicate across a bounded space of subjects, and an environment-variable reader that coerces named variables to a caller-declared type, returns NOTHING for an absent optional, and returns one fault naming every missing-required or uncoercible variable together"
+  note "the capability several modules share and none owns: a law runner that checks a caller's injected predicate across a bounded space of subjects, an environment-variable reader that coerces named variables to a caller-declared type, returns NOTHING for an absent optional, and returns one fault naming every missing-required or uncoercible variable together, and a recurring scheduler that wakes a caller's injected unit of work on a cadence, consults the caller's rule after each run, and runs until the caller stops it"
 
   # ----------------------------------------------------------------------------------------
-  # Step 1. The world, kept thin. honest-utilities touches two outside things. The law runner runs
+  # Step 1. The world, kept thin. honest-utilities touches three outside things. The law runner runs
   # the caller's injected check predicate, which honest-utilities executes but did not write — that
   # is the engine's boundary, declared as a read of the running process. The environment-variable
-  # reader reads named variables from the OS process environment. The world calls in by import; the
-  # caller is not a resource the module reads, so it is represented by the entries at the foot of the
-  # file, not by an input. The module writes nothing: both answers travel back through their door,
-  # and a return is not a write. The variable names are the caller's to choose at runtime, so there
-  # is no fixed `env NAME` the module itself reads; read_raw_env reads the environment ambiently.
+  # reader reads named variables from the OS process environment. The recurring scheduler runs the
+  # caller's injected work and decide, more code it did not write — the same process boundary — and
+  # also reads the wall clock and sleeps against it, which is the third outside thing, the clock. The
+  # world calls in by import; the caller is not a resource the module reads, so it is represented by
+  # the entries at the foot of the file, not by an input. The module writes nothing: the answers
+  # travel back through their doors, and a return is not a write. The variable names are the caller's
+  # to choose at runtime, so there is no fixed `env NAME` the module itself reads; read_raw_env reads
+  # the environment ambiently.
   # ----------------------------------------------------------------------------------------
 
-  inputs  = { "process" : "the running process, into which run_check executes a caller-injected check predicate it did not write, reading back the messages the predicate returned",
-              "env" : "the operating-system process environment, from which read_raw_env pulls the raw string of each caller-named variable" }
+  inputs  = { "process" : "the running process, into which run_check executes a caller-injected check predicate it did not write, reading back the messages the predicate returned; and into which run_work executes the caller's injected unit of work and run_decide executes the caller's injected decide rule, more code the module did not write, reading back what each returned",
+              "env" : "the operating-system process environment, from which read_raw_env pulls the raw string of each caller-named variable",
+              "clock" : "the wall clock, which read_clock reads for the current time and which wait_until sleeps against for a bounded, stop-interruptible interval between runs" }
   outputs = { }
 
   # ----------------------------------------------------------------------------------------
@@ -94,6 +99,82 @@ module honest-utilities
   } note "honest-type's Fault shape, imported across the seam from honest-type and declared locally so this module can name it in a signature — the idiom honest-parse, honest-errors and honest-features each use for honest-type's Fault. It is the error branch of a function's decision table, carried by the return as X | Fault with the success type still visible — a bare union recognized by its own shape, never raised and never wrapped in an ok/err envelope. A fault travels by return: resolve_env builds it, load_env forwards it, and read_env returns it out to the importing caller. code is the short reason the resolution failed; message is the human sentence naming every variable at fault — one fault names them all together, so a misconfigured deployment reports all its problems at once rather than one restart at a time; a key variable's name may appear here but its value never does. category and detail carry honest-type's standard classification and structured context. Two fields minimum: the code to branch on and the message to read. Only the environment-variable reader produces a Fault; the law runner never does."
 
   # ----------------------------------------------------------------------------------------
+  # Step 3 (continued). The recurring scheduler's records and its three closed word-sets. Disposition
+  # and TickPlan are each a tagged record — a `kind` vocabulary field plus the payload that kind
+  # carries — the shape honest-type's Fault takes (a category word plus its detail), not a bare
+  # vocabulary, because retry_after carries a delay and halt carries a reason. Every other field is
+  # bounded too: an absent number is `float | NOTHING`, never a sentinel, and a Callable is the
+  # caller's injected code, the same shape Law.check is.
+  # ----------------------------------------------------------------------------------------
+
+  set disposition_kinds = {
+    "continue"    : "run the work again at the normal cadence; no delay applies, and Disposition.delay is NOTHING",
+    "retry_after" : "run the work again after a delay the caller's decide computed from the fault and the run count; the seconds ride in Disposition.delay",
+    "stop"        : "end the loop; the work runs no more, and Disposition.delay is NOTHING"
+  } note "the three dispositions a caller's decide returns after each run (Appendix C). A Disposition.kind field carries exactly one of these words and no other; advance_schedule reads the word to set the schedule's next turn. Declared as a set so the catalogue of what decide may ask the scheduler to do is closed and listable, and honest-test can enumerate it."
+  vocabulary DispositionKind = { disposition_kinds } note "the closed set of disposition words a Disposition.kind field carries (Appendix C) — continue, retry_after, stop — and no other; advance_schedule selects the schedule's next turn on this word."
+
+  set tick_plan_kinds = {
+    "wait" : "sleep until the next run is due; the seconds still to go ride in TickPlan.seconds",
+    "fire" : "the next run is due now; run the work this turn",
+    "halt" : "end the loop; the reason it ended rides in TickPlan.reason"
+  } note "the three moves plan_tick can choose for the next turn of one schedule (Appendix C). A TickPlan.kind field carries exactly one of these words; drive_schedule acts on it — sleeping, running the work, or ending the loop. Declared as a set so the moves are closed and listable."
+  vocabulary TickPlanKind = { tick_plan_kinds } note "the closed set of move words a TickPlan.kind field carries (Appendix C) — wait, fire, halt — and no other; drive_schedule branches each turn of the loop on this word."
+
+  set end_reasons = {
+    "decided_stop"   : "the loop ended because the caller's decide returned the stop disposition",
+    "signalled_stop" : "the loop ended because the caller's stop signal fired"
+  } note "the two reasons one schedule's loop can end (Appendix C). A loop ends for exactly one of these; TickPlan.reason carries one when plan_tick halts, and RunReport.ended_reason carries the one that actually ended the loop. Declared as a set so the end causes are closed and listable, not free text."
+  vocabulary EndReason = { end_reasons } note "the closed set of loop-end words a TickPlan.reason or a RunReport.ended_reason field carries (Appendix C) — decided_stop, signalled_stop — and no other."
+
+  type Cadence = {
+    interval_seconds: float
+    deadline_seconds: float | NOTHING
+  } note "how often one unit of work runs and how long a run is expected to take (Appendix C). interval_seconds is the time from the start of one run to the start of the next, the number plan_tick adds to the last run to find the next due time; the caller fills it, and there is no cadence vocabulary, so a caller with no fixed interval yet fills the number once it has one. deadline_seconds is the optional budget a single run is expected to finish within — NOTHING when the caller sets no budget. The deadline is an observation, never a release: two runs of one work never overlap, so a run that passes the deadline is left to finish and the overrun is only surfaced to decide on the next cycle."
+
+  type ScheduleSpec = {
+    key: str
+    work: Callable
+    cadence: Cadence
+    decide: Callable
+  } note "one unit of work a caller hands the scheduler, named and paired with its cadence and its rule (Appendix C). key labels this schedule and is carried into its RunReport, so a caller reading a set of reports tells them apart. work is the caller's injected awaited callable, run at run_work's boundary and never inspected by the scheduler. cadence is the interval and optional deadline above. decide is the caller's pure rule, run at run_decide's boundary, from a run's outcome and history to one Disposition. A caller builds a list of these and hands it to run_schedules, or hands one work, cadence, and decide to schedule."
+
+  type ScheduleState = {
+    next_due: float | NOTHING
+    consecutive_faults: int
+    attempted: int
+    last_overran: bool
+    stopping: bool
+  } note "the memory one schedule carries between turns of its loop, mutated by advance_schedule and by no other function — the single-mutator rule (Appendix C). next_due is the absolute wall-clock time the next run is due, NOTHING in a fresh state so the first run fires at once; advance_schedule sets it from the disposition, which is why the cadence never reaches plan_tick. consecutive_faults is how many runs have faulted in a row, reset to zero by a run that did not fault — the retry count the scheduler owns, so a caller keeps no hidden counter of its own. attempted is how many runs have been made in all. last_overran is whether the most recent run passed its deadline. stopping is whether the loop is winding down because decide returned stop. advance_schedule carries the counts from the run's Attempt and sets next_due or stopping from the caller's disposition."
+
+  type Attempt = {
+    consecutive_faults: int
+    attempted: int
+    overran: bool
+  } note "the run history the scheduler holds and the caller's decide reads, built fresh after each run by build_attempt (Appendix C). consecutive_faults is how many runs, including the one that just finished, have faulted in a row. attempted is how many runs have been made in all. overran is whether the run that just finished passed its deadline. decide weighs these three with the outcome to choose a Disposition; the scheduler never interprets them for the caller."
+
+  type TickPlan = {
+    kind: TickPlanKind
+    seconds: float | NOTHING
+    reason: EndReason | NOTHING
+  } note "plan_tick's choice for the next turn of one schedule (Appendix C), a tagged record. kind is one of wait, fire, halt. seconds is the sleep length when kind is wait, and NOTHING otherwise. reason is the EndReason the loop ends for when kind is halt, and NOTHING otherwise — decided_stop, since a stop-signal end is handled in drive_schedule and never reaches a halt. drive_schedule reads kind and acts: on wait it sleeps seconds through wait_until, on fire it runs the work, on halt it ends the loop with reason. The shape mirrors honest-type's Fault — a kind word plus the payload that word needs — so every field stays bounded and no state outside the three kinds is meant to be expressed."
+
+  type Disposition = {
+    kind: DispositionKind
+    delay: float | NOTHING
+  } note "what the caller's decide returns after each run, a tagged record (Appendix C). kind is one of continue, retry_after, stop. delay is the seconds to wait before the next run when kind is retry_after — the delay decide computed from the fault and the count — and NOTHING for continue and stop. advance_schedule reads kind and delay to set the schedule's next turn. The shape mirrors honest-type's Fault, a kind word plus its payload, so the field stays bounded; run_decide returns one of these, and the scheduler owns the three kinds, never the caller."
+
+  type RunReport = {
+    key: str
+    attempted: int
+    succeeded: int
+    faulted: int
+    overran: int
+    ended_reason: EndReason
+    in_flight_at_stop: bool
+  } note "the account of one schedule's whole life, returned when its loop ends (Appendix C). key is the schedule's key, so a caller reading a list of reports tells them apart. attempted is how many runs were made; succeeded and faulted split those by whether a run's outcome was a fault, and succeeded plus faulted equals attempted. overran is how many runs passed their deadline. ended_reason is one of the two EndReason words — decided_stop when the caller's decide returned stop, signalled_stop when the caller's stop signal fired. in_flight_at_stop is whether a run had not yet returned when the stop was observed, since a run in flight at stop is left to finish and never killed. drive_schedule tallies these across the loop; schedule returns the one report, and run_schedules returns one per spec."
+
+  # ----------------------------------------------------------------------------------------
   # Capability 1 — the law runner, an ENGINE. Its boundary (run_check) runs the caller's injected
   # predicate, which is why run_check is a reader and not a pure function. The path never produces a
   # Fault: a check never raises, so verify_laws answers a LawRun and nothing else. This is the same
@@ -140,6 +221,40 @@ module honest-utilities
   fn coerce_key : (raw: str) -> any | Fault note "coerces a raw environment string under the key target type (Appendix B): a key is a secret such as an API key or token, so the raw string passes through as a string, but its value never appears in a fault message or anywhere the module reports — only the variable's name does. It does not fail on the value's content, since any string is an acceptable secret; its distinguishing behaviour is that the value is never surfaced, which is the property a scenario must assert."
 
   # ----------------------------------------------------------------------------------------
+  # Capability 3 — the recurring scheduler, an ENGINE and a CLOCK-READER. It touches two worlds. It
+  # runs the caller's injected work and decide, code it did not write — run_work and run_decide read
+  # "process", the same engine's boundary run_check is — and it reads the wall clock and sleeps —
+  # read_clock and wait_until read "clock". Two doors stand over one orchestrator: schedule drives
+  # one unit of work, and run_schedules drives a set concurrently under one awaited call and one
+  # stop, the surface the host that owns the process awaits for process lifetime. drive_schedule is
+  # the per-work loop; plan_tick, advance_schedule, and build_attempt hold every decision and read no
+  # world, testable without a clock or a database. run_work is awaited, so drive_schedule is awaited,
+  # so both doors are awaited. The scheduler never builds a Fault: the work's outcome is opaque to
+  # it, and it reads only whether that outcome is a fault — honest-type's is_err tag, never the
+  # fault's kind — so it names no Fault in its own return.
+  # ----------------------------------------------------------------------------------------
+
+  boundary_in fn schedule : (work: Callable, cadence: Cadence, decide: Callable, stop: handle) -> RunReport awaited invokes drive_schedule note "the single-work scheduler door (Appendix C), the one a sibling module enters to wake one unit of work on a cadence and run it until stopped. work is the caller's injected awaited callable, the code to run each cycle, which the scheduler runs at run_work's boundary and never inspects. cadence is how often it runs and the optional per-run deadline. decide is the caller's pure rule, run at run_decide's boundary after each run, from the outcome and run history to one Disposition. stop is the caller's signal, flipped to end the loop, which the scheduler watches and never owns. It adds no logic of its own beyond naming this one schedule: it wraps its work, cadence, and decide in a ScheduleSpec under the fixed key \"\", the sole unnamed schedule, hands that spec and stop to the one orchestrator drive_schedule, and returns the RunReport that comes back. It is awaited, because drive_schedule awaits the work; a caller awaits this door for the life of the one schedule."
+
+  boundary_in fn run_schedules : (specs: list<ScheduleSpec>, stop: handle) -> list<RunReport> awaited invokes drive_schedule note "the many-schedule scheduler door (Appendix C), the surface the host that owns the process awaits for process lifetime. specs is the set of ScheduleSpecs the caller declared, each a named unit of work with its cadence and its rule. stop is the one signal that ends them all. It drives each spec through its own drive_schedule loop and awaits them together under this one awaited call, returning one RunReport per spec when the set ends. This is the shape honest-page's create_app takes — a module declares its set of schedules and returns them, and the host runs them, because a module whose doors return cannot itself hold a set of long-lived awaited loops. It is awaited."
+
+  orchestrator fn drive_schedule : (spec: ScheduleSpec, stop: handle) -> RunReport awaited invokes read_clock, plan_tick, wait_until, run_work, build_attempt, run_decide, advance_schedule note "the scheduler's one orchestrator (Appendix C), the per-work loop both doors hand a schedule to. spec is the one unit of work with its cadence and rule; stop is the caller's signal. Each turn it reads the wall clock with read_clock, asks the pure plan_tick whether to wait, fire, or halt, and acts: on wait it sleeps the planned seconds through wait_until, and ends the loop recording signalled_stop when wait_until reports the stop fired; on fire it brackets run_work with two read_clock reads to measure whether the run passed the cadence's deadline, folds the outcome and that overrun into the run counts with build_attempt, consults the caller's decide at run_decide's boundary, and folds the attempt, the cadence, and the disposition into a fresh ScheduleState with advance_schedule — the only writer of that state; on halt it ends the loop recording decided_stop. It tallies the attempts, successes, faults, and overruns across the whole life of the schedule and returns one RunReport. It is awaited, because run_work and wait_until are awaited. It never builds a Fault: the work's outcome is opaque to it, and it reads only whether that outcome is a fault — honest-type's is_err tag, never the fault's kind — to keep its counts, so it names no Fault in its own return."
+
+  reader fn read_clock : () -> float side_effect reads "clock" note "reads the current wall-clock time (Appendix C), the scheduler's clock boundary. It takes nothing and returns the time as a number of seconds, the `now` plan_tick compares the next due time against, and the two readings drive_schedule brackets a run with to measure whether the run overran its deadline. It is a reader because the wall clock is outside the module; reading it is its one side effect, and it decides nothing."
+
+  reader fn wait_until : (seconds: float, stop: handle) -> bool awaited side_effect reads "clock" note "sleeps until a due time or until the caller stops, whichever comes first (Appendix C), the scheduler's bounded, stop-interruptible wait. seconds is how long the next run is due to wait; stop is the caller's signal. It sleeps for seconds but races that sleep against the stop signal, returning true when the stop fired before the time elapsed and false when the full interval passed, so a stop ends an idle wait at once and never blocks shutdown. The wait is always a fixed number of seconds, never a wait on a condition, so the scheduler cannot hang on its own waiting. It is awaited, because the sleep is asynchronous. Its one side effect is reading the clock to sleep; it watches the stop signal the caller flips and never owns it."
+
+  reader fn run_work : (work: Callable, deadline_seconds: float | NOTHING) -> any awaited side_effect reads "process" note "runs the caller's injected unit of work once, at the scheduler's engine boundary (Appendix C) — honest-utilities executing code it did not write, the same boundary run_check is. work is the caller's awaited callable; deadline_seconds is the optional budget the run is expected to finish within, NOTHING when the caller set none. It awaits the work and returns the work's own result, which is opaque to the scheduler: it is the work's success value or honest-type's Fault, and this card types it as an open value because the scheduler never inspects the success value and reads only whether the whole outcome is a fault, never the fault's kind. Typing the return as the open value rather than naming Fault is deliberate: a card that named Fault would, by the fault-travel rule, oblige every caller out to the door to return the fault, but the scheduler consumes the fault as data for decide and its counts and never returns one. It is awaited. Two runs of one work never overlap — this one is awaited to completion before another starts — so a run that passes deadline_seconds is left to finish and the overrun is only observed, never a release that abandons a run. run_work carries no overran channel of its own: drive_schedule brackets this call with two read_clock reads and measures the elapsed time against deadline_seconds, then passes the overrun into build_attempt."
+
+  reader fn run_decide : (decide: Callable, outcome: any, attempt: Attempt) -> Disposition side_effect reads "process" note "runs the caller's injected decide rule once, at the scheduler's engine boundary (Appendix C), more code the module did not write. decide is the caller's pure rule; outcome is the work's opaque result from run_work, which decide — not the scheduler — interprets; attempt is the run history the scheduler holds, how many runs have faulted in a row, how many have run, and whether this run overran. It runs decide and returns the one Disposition it chose — continue, retry_after with its delay, or stop. It is not awaited, because decide is a pure synchronous rule. The scheduler owns the three dispositions and never interprets the fault; the caller owns the reading of its faults, and a spent retry budget is the caller's decide seeing the fault count pass its ceiling and returning stop."
+
+  fn plan_tick : (state: ScheduleState, now: float) -> TickPlan note "chooses the next move for one schedule, the pure heart of the loop (Appendix C). state is the schedule's memory between turns; now is the current wall-clock time read_clock returned. It returns a TickPlan: fire when the state has no next-due time yet or now has reached it, halt with reason decided_stop when the state is stopping, and otherwise wait the gap from now to the next-due time. The cadence never reaches it — advance_schedule already folded the interval or the retry delay into the state's absolute next_due — so plan_tick only compares numbers and returns data, testable without a clock or a database. A fresh state has no next-due time, so the first run fires at once; a stop signal that fires during a wait ends the loop in drive_schedule, which records signalled_stop, so the only halt plan_tick emits is decided_stop."
+
+  fn advance_schedule : (state: ScheduleState, attempt: Attempt, cadence: Cadence, disposition: Disposition, now: float) -> ScheduleState note "folds one run's result into the schedule's memory (Appendix C), the single mutator of ScheduleState — no other function writes it. state is the memory before this run; attempt is the folded run history build_attempt returned, from which it carries consecutive_faults, attempted, and last_overran (the attempt's overran); cadence is the schedule's interval and optional deadline; disposition is the caller's decision; now is the time the run started. It returns a fresh ScheduleState and sets next_due from the disposition: continue sets next_due to now plus the cadence interval, retry_after sets it to now plus the disposition's delay, and stop leaves next_due and marks the state stopping. It is pure: every value it reasons about was handed in, and it returns new data rather than mutating in place. The retry delay thus reaches the next wait as an absolute next_due time that plan_tick reads directly, which is why the cadence never reaches plan_tick."
+
+  fn build_attempt : (state: ScheduleState, outcome: any, overran: bool) -> Attempt note "builds the run history the caller's decide reads, the pure attempt-context helper and the one place the run counts fold (Appendix C). state is the schedule's memory; outcome is the work's opaque result; overran is whether this run passed its deadline, measured by drive_schedule between two clock reads. It returns an Attempt: consecutive_faults is the state's running count plus one when this outcome is a fault and zero when it is a success, attempted is the state's count plus one, and overran is the observation passed through. advance_schedule later reads these folded counts off the Attempt, so the counting rule lives in exactly this one function. It reads only whether the outcome is a fault, never the fault's kind, and returns pure data."
+
+  # ----------------------------------------------------------------------------------------
   # The world arrives here. A sibling module imports a door, or the law constructor, and calls it.
   # Functions reached only by another function on a path (the orchestrators, the readers, the pure
   # functions, the coercers) need no entry; the call that reaches them is their arrival.
@@ -148,3 +263,5 @@ module honest-utilities
   entry "import honest_utilities" -> verify_laws
   entry "import honest_utilities" -> law
   entry "import honest_utilities" -> read_env
+  entry "import honest_utilities" -> schedule
+  entry "import honest_utilities" -> run_schedules
