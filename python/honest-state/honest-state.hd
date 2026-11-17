@@ -1,20 +1,125 @@
-# honest-state declared in .hd — the single-mutator law and the taxonomy of state kinds, as data.
-# It ships no primitives: it states the law and names each kind's store and mutator. All pure.
-
+# honest-state declared in .hd — the single-mutator law and the taxonomy of state kinds, as data
+# (honest-state-architecture.md). honest-state is a small, all-pure library that ships NO primitives.
+# It states the one law that governs every kind of state — every declared piece of state has exactly
+# one mutator — and it names, for each kind of state, its home store and its single mutator. The
+# mechanics of each kind live in that kind's home module: DATAOS in honest-DOM, the state machine in
+# honest-type, server state in honest-alerts, the persisted value in honest-persist. honest-state does
+# NOT re-describe them (§2). What has no other home, and is the reason honest-state exists, is the law
+# itself and the small pure checks that decide the two questions the law raises.
+#
+# It is a boundary-less pure library: it touches no file, database, clock, network or environment. Its
+# functions take data and return data, and the world reaches them only by an import from a sibling
+# module or a call from the conformance harness (the entries at the foot of the file). So it has no
+# boundary of its own, no reader and no orchestrator. The honest-check rules that ENFORCE the law
+# (HC-P004, HC-P016, HC-ST001, HC-ST002 — §3) live in honest-check, not here.
+# Architecture: ../../specs/02-code-quality/honest-state-architecture.md
 module honest-state
 
-  layer domain
+  # Layer decision (weighed against `domain`, per the task): correctness.
+  # The honest-design spec (§231) places in the correctness layer the modules that keep the pure
+  # substrate honest — the checker, the test harness, the declaration layer, the BDD engine, the
+  # error-policy leaf. honest-state states and enforces (via the honest-check rules it specifies) the
+  # single-mutator law that keeps the framework's STATE honest, which is the same keep-the-substrate-
+  # honest role. It holds no domain logic and touches no side of the world, so `domain` would overstate
+  # its reach and trip the domain-spread measure the layer vocabulary exists to run. Hence correctness.
+  layer correctness
+
+  note "states the single-mutator law — every declared piece of state has exactly one mutator — and names, as data, each of the ten state kinds with its home store and its single mutator; a tiny all-pure library that ships no primitives and decides the law's two questions (legitimate second mutator, DOM region classification)"
+
+  # No boundary, so no side of the world and no I/O surface. Empty inputs and outputs state plainly
+  # that honest-state touches nothing: the world arrives only through the import/call entries below.
+  inputs  = { }
+  outputs = { }
+
+  # ----------------------------------------------------------------------------------------
+  # The closed word-sets. The ten state kinds are a fixed, enumerable set (§1.2), and the DOM
+  # decomposition classifies a region's source into one of three fixed outcomes (§1.3). Each is a set
+  # wrapped in a vocabulary so a reader can list and count every allowed value and no free `str` stands
+  # where one of these belongs.
+  # ----------------------------------------------------------------------------------------
+
+  set state_kind_names = {
+    "individual_user"   : "individual user state: the manifest-declared regions of the DOM; the single mutator is the user, meaning any user-initiated action (§1.2, §1.3)",
+    "server_sse"        : "server (SSE) state: the non-declared DOM regions that carry alerts and notifications; the single mutator is the server / alert source in honest-alerts (§1.2, §1.3)",
+    "shared_session"    : "shared session / login state: a shared store visible to every instance in a scaled-out deployment; the single mutator is the auth provider (§1.2)",
+    "persisted_domain"  : "persisted domain state: the database; the single mutator is an ordinary honest-persist boundary write (insert/update/delete at the I/O boundary) (§1.2)",
+    "cache"             : "cache: held at or preferably across an I/O boundary; the only write is a refresh-from-source (§1.2)",
+    "transient_request" : "transient request state: the chain's in-memory manifest; the single mutator is a link's return value (functional threading) (§1.2)",
+    "static_config"     : "static config: process memory frozen at startup; the single mutator is startup, read-only thereafter (§1.2)",
+    "dynamic_config"    : "dynamic config (flags, A/B): an external flag store; the single mutator is the flag service, while the app only reads (§1.2)",
+    "contended_writes"  : "contended writes (db write / mutex / flag): held on the other side of a queue; the single mutator is the queue's single consumer (§1.2)",
+    "composed_value"    : "a conceptual value built across several pure functions: held by the orchestrator in memory and persisted when it must survive a restart; the single mutator is the orchestrator that applies each pure function's return (§1.1, §1.2)"
+  } note "the ten closed kinds of state in the taxonomy of §1.2, every piece of state belonging to exactly one. The set is the discriminant for the StateKind record: each word names one row of the §1.2 table, carries that row's store and mutator meaning, and is the key mutator_of looks a mutator up by. Declared as a frozenset so the catalogue of state kinds is closed and countable and no eleventh kind is one keystroke away. Exactly these ten words and no other."
+  vocabulary StateKindName = { state_kind_names } note "the closed set of state-kind words a StateKind.kind field carries and mutator_of accepts (§1.2). Exactly the ten state_kind_names words; state_kinds builds one row per word and mutator_of resolves any one of them to its mutator."
+
+  set region_sources = {
+    "manifest_declared" : "a DOM region declared in the DATAOS manifest (§1.3): it holds individual user state",
+    "server_driven"     : "a DOM region driven by the server over SSE — an alert or notification region (§1.3): it holds server state",
+    "other"             : "everything else: a DOM region that is neither manifest-declared nor server-driven (§1.3): it is a side effect, a derived projection with no mutator of its own"
+  } note "the three mutually-exclusive sources a DOM region can have (§1.3), the discriminant classify_dom_region dispatches on. Every part of the DOM is exactly one of these: manifest-declared, server-driven, or everything else. Declared as a frozenset so the decomposition of the DOM is closed — no hidden, unowned, indiscriminately-mutable corner remains. Exactly these three words."
+  vocabulary RegionSource = { region_sources } note "the closed set of region-source words classify_dom_region accepts (§1.3). Exactly the three region_sources words; each is a key in the dom_region_dispatch table."
+
+  set dom_classifications = {
+    "user_state"   : "the region is individual user state, whose single mutator is the user; its source was manifest_declared (§1.3)",
+    "server_state" : "the region is server state, whose single mutator is the server / alert source (honest-alerts) — a legitimate second mutator of the DOM because it is honest and disjoint; its source was server_driven (§1.3)",
+    "side_effect"  : "the region is a side effect — a derived projection of the two kinds of state above, with no mutator of its own; it is re-derived, never written (the cache pattern); its source was anything else (§1.3)"
+  } note "the three outcomes of decomposing a DOM region (§1.3): every part of the DOM is either declared state with exactly one mutator (user_state or server_state) or a pure projection of state (side_effect). Declared as a frozenset so the result of the classification is closed and countable. Exactly these three words; each is returned by one dom_region_dispatch handler."
+  vocabulary DOMClassification = { dom_classifications } note "the closed set of classification words classify_dom_region and its three dispatch handlers return (§1.3). Exactly the three dom_classifications words."
+
+  # ----------------------------------------------------------------------------------------
+  # The one record. A row of the §1.2 taxonomy, named as data: a kind of state, where it lives, and
+  # the one piece of code allowed to change it. No classes.
+  # ----------------------------------------------------------------------------------------
 
   type StateKind = {
-    kind: str
-    store: str
+    kind:    StateKindName
+    store:   str
     mutator: str
-  }
+  } note "one row of the taxonomy of §1.2, the spec's three columns carried as data: kind is which of the ten state kinds this row is (a StateKindName word); store is the prose naming where that kind lives — 'the database', 'process memory, frozen at startup', 'a shared store (scale-out)', and so on, the §1.2 'Lives in' column; mutator is the prose naming the one piece of code allowed to change it — 'the user (any user-initiated action)', 'the auth provider', 'the orchestrator (it applies each pure function's return)', the §1.2 'Single mutator' column. store and mutator are free prose because they are descriptions, not a closed set; kind is the closed discriminant. state_kinds returns the full list of ten of these; mutator_of reads a row's mutator field by its kind."
 
-  fn state_kinds : () -> list<StateKind>
+  # ----------------------------------------------------------------------------------------
+  # The DOM-region dispatch (§1.3). Dict-dispatch on the region's source, never an if/elif ladder:
+  # the three handlers are named and counted, each returning the fixed classification its source maps
+  # to. The keys are exactly the three RegionSource words.
+  # ----------------------------------------------------------------------------------------
 
-  fn mutator_of : (kind: str) -> str
+  dispatch dom_region_dispatch = { "manifest_declared" -> user_state_region, "server_driven" -> server_state_region, "other" -> side_effect_region } note "classifies a DOM region by its source (§1.3): a manifest-declared region is user state, a server/SSE-driven region is server state, and everything else is a side effect. The single place the three cases are enumerated, so the DOM decomposition is table data, not control flow — the three HC-P001 if/elif branches the earlier code carried become this one table. Keys are exactly the three RegionSource words; classify_dom_region dispatches a region's source through it."
 
-  fn second_mutator_legitimate : (honest: bool, disjoint: bool) -> bool
+  # ----------------------------------------------------------------------------------------
+  # The pure functions. Every one is pure: it reads no clock, no environment and no store, takes what
+  # it needs as arguments, and returns a value. There are no faults: every input is a bounded value
+  # (a bool, a closed vocabulary word, or a list), so there is no miss to report.
+  # ----------------------------------------------------------------------------------------
 
-  fn dom_region_kind : (declared: bool, server_driven: bool) -> str
+  # ---- the taxonomy, as data (§1.2) ----
+
+  fn state_kinds : () -> list<StateKind> note "returns the whole taxonomy of §1.2 as data: one StateKind row per state kind, ten rows in all, each naming its kind, its home store and its single mutator — the spec's three columns. It takes no argument and reads nothing; the taxonomy is a fixed table of literals. This is the module's answer to 'what are the kinds of state, and for each, where does it live and who may change it.' A reader counts the rows to count the state kinds; mutator_of reads a chosen row's mutator. Every row names exactly one mutator, which is the acceptance test of §1.2 made true by construction."
+
+  fn mutator_of : (kind: StateKindName) -> str invokes state_kinds note "maps a state-kind name to the one mutator allowed to change that kind of state (§1.2): it finds the StateKind row in the taxonomy whose kind equals the argument and returns that row's mutator prose. kind is one of the ten StateKindName words — the parameter is bounded to the closed set, so every value resolves to exactly one row and there is no miss and no fault. For 'persisted_domain' it returns the ordinary-boundary-write mutator; for 'composed_value' it returns the orchestrator; and so on for each of the ten. It invokes state_kinds to read the table rather than keeping a second copy of it."
+
+  # ---- the single-mutator law's two questions (§1.1, §1.2) ----
+
+  fn second_mutator_legitimate : (honest: bool, disjoint: bool) -> bool note "decides whether a SECOND mutator of a store is legitimate under the single-mutator law (§1.1). A second mutator of one physical store is allowed if and only if it is BOTH honest — it does not hide the state it mutates — AND disjoint — it does not touch any state another mutator already owns. honest is true when the candidate mutator does not hide its state; disjoint is true when it touches no state another mutator owns. The function returns true only when both are true (logical AND), and false otherwise. Two honest, disjoint mutators of one store never write the same declared state, so they are not a synchronization problem; two mutators of the same declared state always are. This is the test that admits honest-alerts as a legitimate second mutator of the DOM (it is non-hiding and never touches a manifest slot) while rejecting any mutator that hides state or reaches into an owned region."
+
+  fn names_one_mutator : (mutators: list<str>) -> bool note "the acceptance test of §1.2 for a candidate state kind: 'can you name exactly one mutator?' Given the list of mutators a candidate kind appears to need, it returns true when the list names exactly one mutator and false otherwise. A candidate that seems to need two is really two kinds — or one is a derived view, not state — so a false answer is the signal to split the kind, not to allow two mutators. mutators is the list of distinct mutator names a candidate kind would require. This test is how static and dynamic config separated into two kinds, and how the non-declared DOM resolved to a side effect rather than a second kind of state."
+
+  # ---- the DOM decomposition (§1.3) ----
+
+  fn classify_dom_region : (source: RegionSource) -> DOMClassification invokes dom_region_dispatch note "classifies a region of the DOM by its source into exactly one of three kinds (§1.3), dispatching the source word through dom_region_dispatch. A manifest-declared region is user_state (the user is its single mutator); a server/SSE-driven region is server_state (the server / alert source is its single mutator, a legitimate second mutator of the DOM); everything else is a side_effect (a derived projection with no mutator of its own, re-derived and never written). source is one of the three RegionSource words saying what the region is. It returns the DOMClassification the dispatch handler for that source yields. The classification is table-driven, not an if/elif ladder, so the decomposition stays closed and every part of the DOM resolves to declared state with one mutator or a pure projection of state."
+
+  fn user_state_region : () -> DOMClassification note "the dom_region_dispatch handler for a manifest-declared region: returns the fixed classification 'user_state' (§1.3). A manifest-declared DOM region is individual user state whose single mutator is the user; an HTMX swap and an in-browser JS change are two mechanisms of that one mutator, not two mutators. Takes no argument and returns a constant word."
+  fn server_state_region : () -> DOMClassification note "the dom_region_dispatch handler for a server/SSE-driven region: returns the fixed classification 'server_state' (§1.3). A server-driven DOM region is server state whose single mutator is the server / alert source (honest-alerts) — a legitimate second mutator of the DOM because it is honest (non-hiding) and disjoint (it never touches a manifest slot). Takes no argument and returns a constant word."
+  fn side_effect_region : () -> DOMClassification note "the dom_region_dispatch handler for any other region: returns the fixed classification 'side_effect' (§1.3). A DOM region that is neither manifest-declared nor server-driven is a side effect — a derived projection of user state and server state, with no mutator of its own, re-derived and never written (the cache pattern). Takes no argument and returns a constant word."
+
+  # ----------------------------------------------------------------------------------------
+  # The world arrives here. honest-state is boundary-less, so its whole public surface is reached by
+  # import from a sibling module or a call from the conformance harness; the five public functions are
+  # named below. The three dom_region_dispatch handlers need no entry — the dispatch table reaches
+  # them, which is their arrival.
+  # ----------------------------------------------------------------------------------------
+
+  entry "import honest_state" -> state_kinds
+  entry "import honest_state" -> mutator_of
+  entry "import honest_state" -> second_mutator_legitimate
+  entry "import honest_state" -> names_one_mutator
+  entry "import honest_state" -> classify_dom_region

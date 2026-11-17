@@ -1,18 +1,28 @@
-"""honest-state: the single-mutator law and the taxonomy of state kinds (section 1).
+"""honest-state: the single-mutator law and the taxonomy of state kinds, as data.
 
-honest-state defines no primitives. It states the law — every declared piece of state has exactly one
-mutator — and names each kind's store and mutator, as data. The mechanics live in the home modules:
-user state is DATAOS in honest-DOM, domain-state transitions are a honest-type state machine, server
-state is honest-alerts. The law is enforced by honest-check (HC-P004, HC-P016, the boundary-write and
-DOM-single-store rules, HC-SM01-05). Everything honest-state itself ships is pure.
+A small, all-pure, boundary-less library. It ships no primitives: it states the one law that governs
+every kind of state — every declared piece of state has exactly one mutator — names each of the ten
+state kinds with its home store and its single mutator (§1.2), and decides the law's two questions
+(a legitimate second mutator, §1.1; the DOM-region classification, §1.3).
+
+__all__ is exactly the five public functions a sibling module or the conformance harness reaches. The
+three dom-region dispatch handlers are importable by name (the laws import them) but stay out of __all__;
+the dispatch table reaches them.
 """
 
-from honest_state.law import second_mutator_legitimate
-from honest_state.taxonomy import dom_region_kind, mutator_of, state_kinds
+from honest_state.dom_region import (
+    classify_dom_region,
+    server_state_region,
+    side_effect_region,
+    user_state_region,
+)
+from honest_state.law import names_one_mutator, second_mutator_legitimate
+from honest_state.taxonomy import mutator_of, state_kinds
 
 __all__ = [
     "state_kinds",
     "mutator_of",
     "second_mutator_legitimate",
-    "dom_region_kind",
+    "names_one_mutator",
+    "classify_dom_region",
 ]

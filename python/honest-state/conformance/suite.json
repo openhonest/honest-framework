@@ -2,26 +2,38 @@
   "module": "honest-state",
   "cases": [
     {"id": "value-state-kinds", "value_case": {"function": "state_kinds", "args": [], "expected": [
-      {"kind": "user", "lives_in": "manifest-declared regions of the DOM", "mutator": "the user"},
-      {"kind": "server", "lives_in": "non-declared regions of the DOM", "mutator": "the alert source (honest-alerts)"},
-      {"kind": "session", "lives_in": "a shared store (scale-out)", "mutator": "the auth provider"},
-      {"kind": "domain", "lives_in": "the database", "mutator": "an ordinary honest-persist boundary write"},
-      {"kind": "cache", "lives_in": "at an I/O boundary", "mutator": "refresh-from-source"},
-      {"kind": "transient", "lives_in": "the chain manifest, in-memory", "mutator": "a link's return value"},
-      {"kind": "static_config", "lives_in": "process memory, frozen at startup", "mutator": "startup"},
-      {"kind": "dynamic_config", "lives_in": "an external flag store", "mutator": "the flag service"},
-      {"kind": "contended", "lives_in": "behind a queue", "mutator": "the queue's single consumer"}
+      {"kind": "individual_user",   "store": "manifest-declared regions of the DOM",                                        "mutator": "the user (any user-initiated action)"},
+      {"kind": "server_sse",        "store": "non-declared regions of the DOM (alerts/notifications)",                       "mutator": "the server / alert source (honest-alerts)"},
+      {"kind": "shared_session",    "store": "a shared store (scale-out)",                                                   "mutator": "the auth provider"},
+      {"kind": "persisted_domain",  "store": "the database",                                                                "mutator": "an ordinary boundary write (honest-persist insert/update/delete at the I/O boundary)"},
+      {"kind": "cache",             "store": "at / preferably across an I/O boundary",                                       "mutator": "refresh-from-source (only write)"},
+      {"kind": "transient_request", "store": "the chain (the manifest), in-memory",                                         "mutator": "a link's return value (functional threading)"},
+      {"kind": "static_config",     "store": "process memory, frozen at startup",                                           "mutator": "startup (then read-only)"},
+      {"kind": "dynamic_config",    "store": "an external flag store",                                                      "mutator": "the flag service (app only reads)"},
+      {"kind": "contended_writes",  "store": "on the other side of a queue",                                                "mutator": "the queue's single consumer"},
+      {"kind": "composed_value",    "store": "held by the orchestrator in memory, persisted when it must survive a restart", "mutator": "the orchestrator (it applies each pure function's return)"}
     ]}},
-    {"id": "value-mutator-user", "value_case": {"function": "mutator_of", "args": ["user"], "expected": {"ok": "the user"}}},
-    {"id": "value-mutator-contended", "value_case": {"function": "mutator_of", "args": ["contended"], "expected": {"ok": "the queue's single consumer"}}},
-    {"id": "value-mutator-unknown", "value_case": {"function": "mutator_of", "args": ["nope"], "expected": {"err": {"code": "unknown_state_kind", "message": "'nope' is not a declared kind of state", "category": "client", "results": [], "detail": "nope"}}}},
-    {"id": "value-law-honest-disjoint", "value_case": {"function": "second_mutator_legitimate", "args": [true, true], "expected": true}},
-    {"id": "value-law-not-disjoint", "value_case": {"function": "second_mutator_legitimate", "args": [true, false], "expected": false}},
-    {"id": "value-law-dishonest", "value_case": {"function": "second_mutator_legitimate", "args": [false, true], "expected": false}},
-    {"id": "value-law-neither", "value_case": {"function": "second_mutator_legitimate", "args": [false, false], "expected": false}},
-    {"id": "value-dom-declared", "value_case": {"function": "dom_region_kind", "args": [true, false], "expected": {"kind": "user", "mutator": "the user"}}},
-    {"id": "value-dom-declared-and-server", "value_case": {"function": "dom_region_kind", "args": [true, true], "expected": {"kind": "user", "mutator": "the user"}}},
-    {"id": "value-dom-server", "value_case": {"function": "dom_region_kind", "args": [false, true], "expected": {"kind": "server", "mutator": "the alert source (honest-alerts)"}}},
-    {"id": "value-dom-side-effect", "value_case": {"function": "dom_region_kind", "args": [false, false], "expected": {"kind": "side_effect", "mutator": null}}}
+
+    {"id": "value-mutator-individual-user",  "value_case": {"function": "mutator_of", "args": ["individual_user"],  "expected": "the user (any user-initiated action)"}},
+    {"id": "value-mutator-persisted-domain", "value_case": {"function": "mutator_of", "args": ["persisted_domain"], "expected": "an ordinary boundary write (honest-persist insert/update/delete at the I/O boundary)"}},
+    {"id": "value-mutator-contended-writes", "value_case": {"function": "mutator_of", "args": ["contended_writes"], "expected": "the queue's single consumer"}},
+    {"id": "value-mutator-composed-value",   "value_case": {"function": "mutator_of", "args": ["composed_value"],   "expected": "the orchestrator (it applies each pure function's return)"}},
+
+    {"id": "value-law-honest-disjoint", "value_case": {"function": "second_mutator_legitimate", "args": [true, true],   "expected": true}},
+    {"id": "value-law-not-disjoint",    "value_case": {"function": "second_mutator_legitimate", "args": [true, false],  "expected": false}},
+    {"id": "value-law-dishonest",       "value_case": {"function": "second_mutator_legitimate", "args": [false, true],  "expected": false}},
+    {"id": "value-law-neither",         "value_case": {"function": "second_mutator_legitimate", "args": [false, false], "expected": false}},
+
+    {"id": "value-names-one-exactly",   "value_case": {"function": "names_one_mutator", "args": [["the user (any user-initiated action)"]], "expected": true}},
+    {"id": "value-names-one-two",       "value_case": {"function": "names_one_mutator", "args": [["the flag service (app only reads)", "the auth provider"]], "expected": false}},
+    {"id": "value-names-one-none",      "value_case": {"function": "names_one_mutator", "args": [[]], "expected": false}},
+
+    {"id": "value-classify-declared", "value_case": {"function": "classify_dom_region", "args": ["manifest_declared"], "expected": "user_state"}},
+    {"id": "value-classify-server",   "value_case": {"function": "classify_dom_region", "args": ["server_driven"],     "expected": "server_state"}},
+    {"id": "value-classify-other",    "value_case": {"function": "classify_dom_region", "args": ["other"],             "expected": "side_effect"}},
+
+    {"id": "value-region-user",        "value_case": {"function": "user_state_region",   "args": [], "expected": "user_state"}},
+    {"id": "value-region-server",      "value_case": {"function": "server_state_region", "args": [], "expected": "server_state"}},
+    {"id": "value-region-side-effect", "value_case": {"function": "side_effect_region",  "args": [], "expected": "side_effect"}}
   ]
 }
