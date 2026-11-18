@@ -1394,22 +1394,25 @@ The rule reads the same named declaration as HC-R002 and runs under the same con
 
 The `.hd` names an absence as a type atom in a union: a return of `Node | NOTHING` says the answer is a `Node` or nothing, and a caller written from that card checks for the nothing before it reads the Node. A return of plain `Node` promises a `Node` every time. The host language has its own nothing: Python returns `None`, from an explicit `return None`, a bare `return`, or a function that falls off its end.
 
-This rule crosses the two. A function whose code can return the host nothing, while its card names no absence arm, hands a caller written from the card a `None` where the card promised the answer. The caller reads an attribute of it and fails on a later line that names neither function, the same shape as HC-R003's coroutine. A card that names an absence arm over code that never returns nothing is the opposite lie: the caller tests for an absence that cannot arrive.
+This rule crosses the two, and it fires only on a disagreement the source *proves*. Each declared function falls into one of three cases. A function that can provably return the host nothing — an explicit `return None`, a bare `return`, or a path that falls off the end — while its card names no absence arm, hands a caller written from the card a `None` where the card promised the answer; the caller reads an attribute of it and fails on a later line that names neither function, the same shape as HC-R003's coroutine. A function that provably never returns the host nothing — every path hands back a value the source shows is not `None` — while its card names an absence arm, tells the opposite lie: the caller tests for an absence that cannot arrive. Between the two sits the function the source cannot decide, because its answer leaves through an expression the checker does not resolve to present-or-absent: a field read like `return registry["provider"]`, a `dict.get(...)`, or a call whose result it does not follow. A pass-through like that can carry the host nothing or a value, so it contradicts neither card, and the rule stays silent rather than invent a disagreement it cannot show. honest-auth's `registered_provider` and honest-observe's `resolve_identity` are this case — each returns a declared `X | NOTHING` through a pass-through — and neither is a defect.
 
 ```
 FUNCTION check_HC_R004(source_tree, declaration):
     optional ← declared_optional(declaration)    // name -> true (card has a NOTHING arm) | false
     FOR EACH function IN source_tree.all_functions:
         IF function.name NOT IN optional: CONTINUE   // not a declared function of this module
-        IF code_returns_nothing(function) ≠ optional[function.name]:
+        absence ← code_absence(function)             // RETURNS_NOTHING | RETURNS_VALUE | INDETERMINATE
+        IF absence = INDETERMINATE: CONTINUE          // a pass-through contradicts neither card
+        IF (absence = RETURNS_NOTHING) ≠ optional[function.name]:
             EMIT error(HC-R004, function.location,
-                code_returns_nothing ? f"'{name}' can return None and its card names no absence arm. "
-                                       "Add '| NOTHING' to the return, or stop returning None."
-                                     : f"'{name}' is declared to return an absence and never returns None. "
-                                       "Remove the absence arm, or return None where the answer is absent.")
+                absence = RETURNS_NOTHING
+                    ? f"'{name}' can return None and its card names no absence arm. "
+                      "Add '| NOTHING' to the return, or stop returning None."
+                    : f"'{name}' is declared to return an absence and provably never returns None. "
+                      "Remove the absence arm, or return None where the answer is absent.")
 ```
 
-`code_returns_nothing` is decided from the source outright, like `is_async`: a function with an explicit `return None` or a bare `return` can answer nothing. The absence atoms the card may name are `NOTHING` and `Absent`, the same word a union uses for an `env` that may be missing. A function the declaration does not name is skipped, as in HC-R002 and HC-R003. The default, absent means the card promises an answer, is verified against the code rather than assumed (P15).
+`code_absence` is decided from the source, like `is_async`, but with three values rather than two. A function with an explicit `return None`, a bare `return`, or a path that falls off the end can answer the host nothing (`RETURNS_NOTHING`). A function whose every return hands back a value the source shows is not `None` — a constructed record, a literal — answers a value every time (`RETURNS_VALUE`). A function whose answer leaves through an expression the checker does not resolve — a subscript, a `.get`, an unfollowed call — is `INDETERMINATE`, and the rule skips it. The absence atoms the card may name are `NOTHING` and `Absent`, the same word a union uses for an `env` that may be missing, and the host writes that absence as its idiomatic null, Python's `None` (honest-type §5.6). A function the declaration does not name is skipped, as in HC-R002 and HC-R003. The default — an absent arm means the card promises an answer — is verified against the code rather than assumed (P15), and the rule reports only the disagreement the source proves.
 
 This is the fourth of the rules that tell an honest absence from a dishonest one. The other three are honest-design's, over the declaration alone: a parameter typed only `NOTHING`, which no caller can hand over, is refused; a pure function whose whole answer is `NOTHING`, which touched no world and kept no result, is refused; a pure function answering `X | NOTHING`, and a boundary answering bare `NOTHING` with no `raises` and no `note`, are each marked as a question for a person. This rule is the one no declaration can see alone, because it needs the code.
 

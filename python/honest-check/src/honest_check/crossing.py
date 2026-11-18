@@ -19,6 +19,17 @@ _ROLE_DECORATORS = {"link", "recognizer", "boundary", "helper", "orchestrator"}
 _CALL_TYPES = {"call", "call_expression"}
 _CODE_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".rb", ".go")
 
+# The three-valued reading of a function's absence behaviour (§HC-R004).
+_RETURNS_NOTHING = "RETURNS_NOTHING"
+_RETURNS_VALUE = "RETURNS_VALUE"
+_INDETERMINATE = "INDETERMINATE"
+# Return-value node types the source shows cannot be None: literals and constructors.
+_VALUE_TYPES = {
+    "integer", "float", "string", "concatenated_string", "true", "false",
+    "list", "dictionary", "set", "tuple", "list_comprehension",
+    "dictionary_comprehension", "set_comprehension", "lambda",
+}
+
 
 def _top_level_function_defs(ctx):
     top = ctx["root"].named_children
@@ -56,14 +67,32 @@ def _declares_absence(function):
     return any(part["name"] in absence for part in read_or(function, "ret", []))
 
 
-def _can_return_none(fdef):
-    returns = filter(lambda n: n.type == "return_statement", walk(fdef))
-    return any(_return_is_none(r) for r in returns)
+def _return_value_node(return_node):
+    return next(filter(lambda c: c.type != "return", return_node.children), None)
 
 
 def _return_is_none(return_node):
-    value = next(filter(lambda c: c.type != "return", return_node.children), None)
+    value = _return_value_node(return_node)
     return bool(value is None or value.type == "none")
+
+
+def _all_returns_value(returns):
+    return all(_return_value_node(r).type in _VALUE_TYPES for r in returns)
+
+
+def code_absence(fdef):
+    # Three-valued reading of whether the function can answer the host nothing
+    # (§HC-R004). A none/bare return or an end-fallthrough (zero returns) is
+    # RETURNS_NOTHING; returns that are all source-provable values are
+    # RETURNS_VALUE; a return whose value the checker cannot resolve (subscript,
+    # .get, call, ...) leaves the function INDETERMINATE and the rule skips it.
+    returns = list(filter(lambda n: n.type == "return_statement", walk(fdef)))
+    nothing = len(returns) == 0 or any(_return_is_none(r) for r in returns)
+    return pick(
+        nothing,
+        lambda: _RETURNS_NOTHING,
+        lambda: choose(_all_returns_value(returns), _RETURNS_VALUE, _INDETERMINATE),
+    )
 
 
 def _body_yields(fdef):
@@ -80,9 +109,11 @@ def _r003_one(function, entry):
 
 
 def _r004_one(function, entry):
-    disagree = _declares_absence(function) != _can_return_none(entry["fdef"])
+    absence = code_absence(entry["fdef"])
+    disagree = (absence == _RETURNS_NOTHING) != _declares_absence(function)
+    fire = absence != _INDETERMINATE and disagree
     return pick(
-        disagree,
+        fire,
         lambda: [diagnostic(entry["ctx"], "HC-R004", "error", "declaration and code disagree about absence", entry["fdef"])],
         lambda: [],
     )

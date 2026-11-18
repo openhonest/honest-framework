@@ -14,7 +14,11 @@ and pairs each with a clean case that agrees, so each rule's firing is a non-tri
   and `run` call `emit` (an orchestrator calling its terminus, allowed).
 - HC-R004: a declared function whose code can return the host nothing while its card names no
   absence arm. The .hd declares `find` returning a plain int; the firing code is
-  `def find(x): return None`, the clean code `def find(x): return x`.
+  `def find(x): return None`, the clean code `def find(x): return x`. Three more cases hold the
+  three-valued reading: `pick` and `look` each name an absence arm and hand their answer back
+  through a subscript and a `dict.get` (the `registered_provider` and `resolve_identity` shapes),
+  which the checker cannot resolve to present-or-absent, so it fires nothing; `must` names an
+  absence arm and provably returns a value every time, which fires the reverse direction.
 - HC-R005: a declared value-returning function whose body yields (a generator). The .hd declares
   `items` returning a value; the firing code is `def items(): yield 1`, the clean code
   `def items(): return 1`.
@@ -44,6 +48,18 @@ _HD_R004 = (
 _HD_R005 = (
     "module demo\n\n  layer correctness\n\n"
     '  fn items : () -> int note "its card answers with a value, not a stream"\n'
+)
+_HD_R004_OPT = (
+    "module demo\n\n  layer correctness\n\n"
+    '  fn pick : (d: dict<str, int>) -> int | NOTHING note "its card names an absence arm"\n'
+)
+_HD_R004_OPT_GET = (
+    "module demo\n\n  layer correctness\n\n"
+    '  fn look : (d: dict<str, int>, k: str) -> int | NOTHING note "its card names an absence arm"\n'
+)
+_HD_R004_OPT_VALUE = (
+    "module demo\n\n  layer correctness\n\n"
+    '  fn must : () -> int | NOTHING note "its card names an absence arm it never fills"\n'
 )
 _HD_REF005 = (
     "module demo\n\n  layer correctness\n\n"
@@ -108,6 +124,30 @@ _CASES = [
         "export": b"",
         "rule": "HC-R004",
         "must_be_empty": True,
+    },
+    {
+        "desc": "HC-R004 pass-through subscript: pick names an absence arm and returns d['k']; the checker cannot resolve the value, so it fires nothing (the registered_provider shape)",
+        "hd": _HD_R004_OPT,
+        "source": b'def pick(d):\n    return d["k"]\n',
+        "export": b"",
+        "rule": "HC-R004",
+        "must_be_empty": True,
+    },
+    {
+        "desc": "HC-R004 pass-through get: look names an absence arm and returns d.get(k); indeterminate, so no finding (the resolve_identity shape)",
+        "hd": _HD_R004_OPT_GET,
+        "source": b"def look(d, k):\n    return d.get(k)\n",
+        "export": b"",
+        "rule": "HC-R004",
+        "must_be_empty": True,
+    },
+    {
+        "desc": "HC-R004 reverse: must names an absence arm but provably returns a value every time",
+        "hd": _HD_R004_OPT_VALUE,
+        "source": b"def must():\n    return 1\n",
+        "export": b"",
+        "rule": "HC-R004",
+        "must_be_empty": False,
     },
     {
         "desc": "HC-R005: items yields while its card returns a value",
