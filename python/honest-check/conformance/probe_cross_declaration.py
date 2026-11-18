@@ -61,6 +61,10 @@ _HD_R004_OPT_VALUE = (
     "module demo\n\n  layer correctness\n\n"
     '  fn must : () -> int | NOTHING note "its card names an absence arm it never fills"\n'
 )
+_HD_R004_NESTED = (
+    "module demo\n\n  layer correctness\n\n"
+    '  fn gather : (x: int) -> list<str> note "a value card, no absence arm"\n'
+)
 _HD_REF005 = (
     "module demo\n\n  layer correctness\n\n"
     '  fn alpha : (x: int) -> int note "the one declared function"\n'
@@ -145,6 +149,22 @@ _CASES = [
         "desc": "HC-R004 reverse: must names an absence arm but provably returns a value every time",
         "hd": _HD_R004_OPT_VALUE,
         "source": b"def must():\n    return 1\n",
+        "export": b"",
+        "rule": "HC-R004",
+        "must_be_empty": False,
+    },
+    {
+        "desc": "HC-R004 nested def: gather returns a value and holds an inner helper that returns None; the nested return belongs to the inner function, not gather (the io_monitor shape)",
+        "hd": _HD_R004_NESTED,
+        "source": b"def gather(x):\n    out = []\n    def restore():\n        return None\n    restore()\n    return out\n",
+        "export": b"",
+        "rule": "HC-R004",
+        "must_be_empty": True,
+    },
+    {
+        "desc": "HC-R004 nested def guard: gather itself returns None with no absence arm while an inner helper returns a value; gather's own None still fires",
+        "hd": _HD_R004_NESTED,
+        "source": b"def gather(x):\n    def helper():\n        return []\n    helper()\n    return None\n",
         "export": b"",
         "rule": "HC-R004",
         "must_be_empty": False,

@@ -46,6 +46,15 @@ def _function_name(fdef):
     return _field(fdef, "name").text.decode("utf-8")
 
 
+def _own_body_nodes(node):
+    # A node's descendants within its own body, not crossing into a nested
+    # function: a return/yield inside a function defined within the declared one
+    # belongs to that inner function (§HC-R004, §HC-R005), so the walk stops at a
+    # function_definition the same way both rules draw the bound.
+    kids = list(filter(lambda c: c.type != "function_definition", node.children))
+    return kids + [deep for kid in kids for deep in _own_body_nodes(kid)]
+
+
 # ---- the declaration-crossing core (§2.1) -----------------------------------
 
 
@@ -86,7 +95,7 @@ def code_absence(fdef):
     # RETURNS_NOTHING; returns that are all source-provable values are
     # RETURNS_VALUE; a return whose value the checker cannot resolve (subscript,
     # .get, call, ...) leaves the function INDETERMINATE and the rule skips it.
-    returns = list(filter(lambda n: n.type == "return_statement", walk(fdef)))
+    returns = list(filter(lambda n: n.type == "return_statement", _own_body_nodes(fdef)))
     nothing = len(returns) == 0 or any(_return_is_none(r) for r in returns)
     return pick(
         nothing,
@@ -96,7 +105,7 @@ def code_absence(fdef):
 
 
 def _body_yields(fdef):
-    return any(n.type in {"yield", "yield_expression"} for n in walk(fdef))
+    return any(n.type in {"yield", "yield_expression"} for n in _own_body_nodes(fdef))
 
 
 def _r003_one(function, entry):
