@@ -1,115 +1,49 @@
-"""honest-observe conformance runner (sections 2, 3, 6).
+"""honest-observe conformance runner (core unit).
 
-Each case is data: a `build_event` case (envelope assembly/validation), a `matches` case
-(projection filtering), or an `emit` case (the boundary, driven with a stand-in runtime). The
-fold-based projection behaviour, which a data file cannot express, is in laws_ho.py.
+honest-observe's portable contract (suite.json) is value_cases over its data-pure functions whose
+whole output the feature scenario fixes -- extract_auth, extract_meta, build_event (the ok arm),
+matches, apply_projection -- checked centrally by value-check.py (honest-test section 8.6). apply_projection
+takes a fold Callable, so the value map exposes a fixture fold (count_fold) a value case can $ref.
+
+The I/O emit path (new_event_id, event_timestamp, next_sequence, append_event, run_emit, emit) and the
+pure functions whose whole output the one-line scenario does not fix (the Fault arms, the projection
+and metric handles, the hlc rules, the identity fold and resolve, request_canonical, event_log_schema)
+are carried by laws_ho.py, which drives emit against a REAL in-memory sqlite event log.
 
   uv run --package honest-observe python honest-observe/conformance/run_conformance.py
 """
 
-import asyncio
-import json
-import sys
-from pathlib import Path
-
 import honest_observe as _ho
-from honest_observe import build_event, matches, run_emit
 
 
 def _count_fold(state, event):
+    """A fixture fold a value case $refs to reach apply_projection, which takes a fold Callable. It
+    counts every event folded in -- state + 1 -- so the value case asserts a plain, non-circular
+    projection count. Fixture, not gated library code."""
     return state + 1
 
 
-# The value-oracle function map: the public functions, plus a fixture fold a value case can $ref to
-# reach apply_projection (which takes a fold callable). proof_run and value-check.py read this map.
+# The value-oracle function map proof_run and value-check.py read: the module's public callables, the
+# internal pure functions whose whole output a value case fixes (reached by invokes, so importable but
+# not in __all__ -- extract_auth, extract_meta, build_event, matches -- exposed by name exactly as
+# honest-auth exposes auth_fault and its outcome checkers), plus the fixture fold. A value case whose
+# function is absent from this map is silently skipped by value-check, the silent-miss P16 names, so the
+# map is closed over every function a suite.json case names rather than left to __all__ alone.
+_INTERNAL_VALUE_FUNCTIONS = ["observe_fault", "extract_auth", "extract_meta", "build_event", "matches"]
 _VALUE_FUNCTIONS = {
-    **{name: getattr(_ho, name) for name in _ho.__all__ if callable(getattr(_ho, name))},
+    **{name: getattr(_ho, name) for name in getattr(_ho, "__all__", []) if callable(getattr(_ho, name, None))},
+    **{name: getattr(_ho, name) for name in _INTERNAL_VALUE_FUNCTIONS},
     "count_fold": _count_fold,
 }
 
 
-def _check_build_event(case):
-    spec = case["build_event"]
-    result = build_event(**spec["args"])
-    if case["expect"] == "ok":
-        return "ok" in result and result["ok"] == case["expect_event"], f"got {result}"
-    return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"
-
-
-def _check_matches(case):
-    spec = case["matches"]
-    got = matches(spec["event"], **spec.get("filters", {}))
-    return got == case["expect"], f"got {got}"
-
-
-def _stand_ins(spec):
-    """Stand-in boundaries for run_emit (section 3): canned id, timestamp and sequence, and an
-    append that succeeds or fails per the case while recording what it was handed. Fixture - not
-    linted."""
-    appended = []
-
-    def _id():
-        return spec["event_id"]
-
-    def _ts():
-        return spec["timestamp"]
-
-    async def _seq(aggregate_id, conn):
-        return spec["sequence"]
-
-    async def _append(event, conn):
-        appended.append(event)
-        if spec.get("append_ok", True):
-            return {"ok": {}}
-        return {"err": {"code": "log_write_failed", "message": "boom", "category": "server", "detail": None}}
-
-    return appended, _id, _ts, _seq, _append
-
-
-def _check_emit(case):
-    spec = case["emit"]
-    _appended, _id, _ts, _seq, _append = _stand_ins(spec)
-    result = asyncio.run(run_emit(spec["event_type"], spec["aggregate_type"], spec["aggregate_id"], spec["payload"], spec["context"], spec["version"], None, _id, _ts, _seq, _append, spec.get("auth_fields", []), spec.get("meta_fields", [])))
-    if case["expect"] == "ok":
-        return "ok" in result and result["ok"]["event_id"] == case["expect_event_id"], f"got {result}"
-    return "err" in result and result["err"]["code"] == case["expect_code"], f"got {result}"
-
-
-_CHECKERS = {
-    "build_event": _check_build_event,
-    "matches": _check_matches,
-    "emit": _check_emit,
-}
-
-
-def _kind(case):
-    for kind in _CHECKERS:
-        if kind in case:
-            return kind
-    return "matches"
-
-
-def run(suite_path):
-    suite = json.loads(Path(suite_path).read_text(encoding="utf-8"))
-    passed = 0
-    failed = 0
-    for case in suite["cases"]:
-        if "value_case" in case:
-            continue  # value cases are checked centrally by value-check.py; a module cannot run the oracle on itself
-        ok, detail = _CHECKERS[_kind(case)](case)
-        if ok:
-            passed += 1
-        else:
-            failed += 1
-            print(f"FAIL {case['id']} [{_kind(case)}]: {detail}")
-    print(f"conformance: {passed} passed, {failed} failed, {passed + failed} total")
-    return 0 if failed == 0 else 1
+def run(_suite_path=None):
+    """No data cases to run here -- the portable cases are all value cases (checked by value-check.py);
+    the behavioural checks a data file cannot express are the laws in laws_ho.py."""
+    return 0
 
 
 if __name__ == "__main__":
     import laws_ho
 
-    default = str(Path(__file__).parent / "suite.json")
-    suite_status = run(sys.argv[1] if len(sys.argv) > 1 else default)
-    laws_status = laws_ho.run()
-    raise SystemExit(suite_status or laws_status)
+    raise SystemExit(run() or laws_ho.run())

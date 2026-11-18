@@ -1,1398 +1,706 @@
-"""honest-observe conformance: the generative proof (the behavioural circle).
+"""honest-observe generative laws: the I/O emit path driven against a REAL in-memory sqlite event
+log (never a mock of our own code), plus the structural invariants of the pure functions whose whole
+output the one-line feature scenario does not fix (so a whole-dict value_case would assert a shape the
+spec never pinned). The portable value_cases in suite.json carry the fully-fixed pure functions
+(extract_auth, extract_meta, build_event-ok, matches, apply_projection); these laws carry the rest.
 
-What a data file cannot express is proved here: the envelope's auth/meta attachment and
-validation branches, the auth/meta extraction, the projection filter predicate across every
-filter, the fold itself (a function), and the async emit boundary driven through a stand-in
-runtime. Each probe returns a list of failures; run() aggregates.
+A Fault here is a bare union arm: a dict with is_err True, code, message, detail, recognized by
+honest_type.is_fault off the reserved is_err tag. There is no ok/err envelope. emit, run_emit,
+append_event and build_event return Event | Fault (honest-observe.hd, Fault note).
+
+The emit readers new_event_id and event_timestamp read random and the clock, so they are
+non-deterministic: the laws assert STRUCTURAL invariants (a fresh id is a non-empty str, two reads
+differ; a timestamp is a non-empty str), never a fixed value.
 """
 
 import asyncio
+import sqlite3
 
-from honest_observe import apply_projection, build_event, extract_auth, extract_meta, matches, run_emit
+import honest_observe as HO
+from honest_type import is_fault
 
-# A complete, valid set of envelope arguments — probes vary one thing at a time off this base.
-_BASE = {
-    "event_type": "hf.chain.completed",
-    "event_version": "1.0",
-    "aggregate_type": "chain",
-    "aggregate_id": "create_user",
-    "payload": {"result": "ok"},
-    "event_id": "019x2k",
-    "timestamp": "2026-03-15T14:23:07.441832Z",
-    "sequence": 0,
+
+def _conn():
+    """A real in-memory sqlite connection: the integration boundary, not a mock. The event-log table
+    is created from the module's own declared schema manifest, so the laws never hardcode the coder's
+    columns -- event_log_schema() is the single declared shape honest-persist's migration would use."""
+    conn = sqlite3.connect(":memory:")
+    _create_log(conn)
+    return conn
+
+
+def _create_log(conn):
+    """Create the honest_event_log table from event_log_schema()'s manifest. The manifest names the
+    table and its columns; the laws read those names rather than assuming them, so the schema stays the
+    one declared shape (honest-observe.hd event_log_schema note, section 10)."""
+    manifest = HO.event_log_schema()
+    table = manifest["table"]
+    columns = ", ".join(f"{col} TEXT" for col in manifest["columns"])
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {table} ({columns})")
+    conn.commit()
+
+
+def _row_count(conn):
+    table = HO.event_log_schema()["table"]
+    return conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+
+
+_CONTEXT = {"auth": {"caller_id": "u1", "session_id": "s1"}, "meta": {"release": "r1"}}
+
+
+def _emit_args(event_type="order.placed", aggregate_id="ord-1", payload=None, context=None):
+    return (
+        event_type,
+        "order",
+        aggregate_id,
+        {"total": 10} if payload is None else payload,
+        _CONTEXT if context is None else context,
+        "1.0",
+    )
+
+
+# --- the impure readers (structural, non-deterministic) --------------------------------------------
+
+
+def _law_new_event_id():
+    bad = []
+    a = HO.new_event_id()
+    b = HO.new_event_id()
+    if not isinstance(a, str) or not a:
+        bad.append(f"new_event_id must return a fresh non-empty str: {a!r}")
+    if a == b:
+        bad.append("new_event_id must never reuse an id: two reads returned the same value")
+    return bad
+
+
+def _law_event_timestamp():
+    bad = []
+    ts = HO.event_timestamp()
+    if not isinstance(ts, str) or not ts:
+        bad.append(f"event_timestamp must return a non-empty ISO-8601 str: {ts!r}")
+    return bad
+
+
+def _law_next_sequence():
+    bad = []
+    conn = _conn()
+    # next_sequence is a pure read: it derives MAX(sequence)+1 from the log, so a fresh aggregate reads
+    # 0 and the value reflects what has been appended. Two bare reads with no append between are equal,
+    # not increasing; the per-aggregate increase across appends is what matters, and it holds here and in
+    # _law_run_emit_sequence_increases. It never writes (a reader does not write), so it is idempotent.
+    first = asyncio.run(HO.next_sequence("agg-A", conn))
+    if first != 0:
+        bad.append(f"next_sequence for a fresh aggregate must read 0 from the empty log: {first!r}")
+    again = asyncio.run(HO.next_sequence("agg-A", conn))
+    if again != first:
+        bad.append(f"next_sequence is a pure read: two reads with no append between must agree: {first} then {again}")
+    event = HO.build_event("t", "1.0", "agg", "agg-A", {}, {}, {}, "eid-seq", "2026-01-01T00:00:00.000000Z", first)
+    asyncio.run(HO.append_event(event, conn))
+    after = asyncio.run(HO.next_sequence("agg-A", conn))
+    if after != 1:
+        bad.append(f"after one append next_sequence must read 1 (MAX+1 within the aggregate): {after!r}")
+    other = asyncio.run(HO.next_sequence("agg-B", conn))
+    if other != 0:
+        bad.append(f"next_sequence counts independently per aggregate: agg-B must be 0, got {other!r}")
+    return bad
+
+
+# --- the write boundary and the emit path (real log) -----------------------------------------------
+
+
+def _law_append_event_appends_one():
+    bad = []
+    conn = _conn()
+    event = HO.build_event(
+        "order.placed", "1.0", "order", "ord-1", {"total": 10},
+        {"caller_id": "u1"}, {"release": "r1"}, "eid-1", "2026-01-01T00:00:00.000000Z", 1,
+    )
+    if is_fault(event):
+        bad.append(f"build_event on complete parts must return an Event, not a Fault: {event}")
+        return bad
+    before = _row_count(conn)
+    out = asyncio.run(HO.append_event(event, conn))
+    after = _row_count(conn)
+    if after - before != 1:
+        bad.append(f"append_event must append exactly one row: {before} -> {after}")
+    # append_event does only the write: it reports a WriteOutcome, never the Event and never a Fault.
+    if is_fault(out):
+        bad.append(f"append_event is a terminus boundary: it reports a WriteOutcome, it does not build a Fault: {out}")
+    elif out.get("ok") is not True:
+        bad.append(f"a clean write must report WriteOutcome ok true: {out}")
+    elif out.get("detail") != "":
+        bad.append(f"a clean write's WriteOutcome detail must be empty: {out.get('detail')!r}")
+    return bad
+
+
+def _law_append_event_failure_outcome():
+    bad = []
+    conn = _conn()
+    conn.close()  # a closed real connection makes the write fail at the boundary
+    event = HO.build_event(
+        "order.placed", "1.0", "order", "ord-1", {"total": 10},
+        {"caller_id": "u1"}, {"release": "r1"}, "eid-2", "2026-01-01T00:00:00.000000Z", 1,
+    )
+    out = asyncio.run(HO.append_event(event, conn))
+    # A failed write is a WriteOutcome ok false carrying the error detail, NOT a Fault: the boundary is
+    # a terminus and leaves fault construction to run_emit.
+    if is_fault(out):
+        bad.append(f"append_event must not build a Fault on failure; it reports a WriteOutcome: {out}")
+        return bad
+    if out.get("ok") is not False:
+        bad.append(f"a failed write must report WriteOutcome ok false: {out}")
+    if not out.get("detail"):
+        bad.append(f"a failed write's WriteOutcome must carry the error detail for run_emit to put in the fault: {out}")
+    return bad
+
+
+def _law_run_emit_append_failure_builds_fault():
+    bad = []
+    conn = _conn()
+    conn.execute("PRAGMA query_only = ON")  # reads (next_sequence) still work; only the append write fails
+    out = asyncio.run(HO.run_emit(*_emit_args(), conn))
+    # run_emit, the orchestrator, reads the failed WriteOutcome and builds the emit_failed Fault via
+    # observe_fault (a forward orchestrator -> pure call), since the boundary may not build it.
+    if not is_fault(out):
+        bad.append(f"run_emit must return a Fault when the append fails: {out}")
+    elif out.get("is_err") is not True:
+        bad.append(f"the emit_failed Fault must carry the reserved is_err tag true: {out}")
+    elif out.get("code") != "emit_failed":
+        bad.append(f"a failed append must make run_emit return code emit_failed: {out.get('code')!r}")
+    return bad
+
+
+def _law_run_emit_appends_and_returns_event():
+    bad = []
+    conn = _conn()
+    before = _row_count(conn)
+    out = asyncio.run(HO.run_emit(*_emit_args(), conn))
+    after = _row_count(conn)
+    if is_fault(out):
+        bad.append(f"run_emit on a complete event must return the appended Event: {out}")
+        return bad
+    if after - before != 1:
+        bad.append(f"run_emit must append exactly one complete envelope: {before} -> {after}")
+    for field in ("event_id", "event_type", "timestamp", "sequence", "aggregate_id", "payload", "auth", "meta"):
+        if field not in out:
+            bad.append(f"the appended envelope is missing required field {field}: {out}")
+    if out.get("event_type") != "order.placed":
+        bad.append(f"run_emit must carry the given event_type: {out.get('event_type')!r}")
+    if out.get("auth") != {"caller_id": "u1", "session_id": "s1"}:
+        bad.append(f"run_emit must attach the extracted auth partition verbatim: {out.get('auth')}")
+    if out.get("meta") != {"release": "r1"}:
+        bad.append(f"run_emit must attach the extracted meta partition verbatim: {out.get('meta')}")
+    return bad
+
+
+def _law_run_emit_sequence_increases():
+    bad = []
+    conn = _conn()
+    a = asyncio.run(HO.run_emit(*_emit_args(aggregate_id="ord-9"), conn))
+    b = asyncio.run(HO.run_emit(*_emit_args(aggregate_id="ord-9"), conn))
+    if is_fault(a) or is_fault(b):
+        bad.append(f"two emits into one aggregate must both succeed: {a}, {b}")
+        return bad
+    if not (isinstance(a.get("sequence"), int) and isinstance(b.get("sequence"), int)):
+        bad.append(f"the envelope sequence must be an int: {a.get('sequence')!r}, {b.get('sequence')!r}")
+    elif not b["sequence"] > a["sequence"]:
+        bad.append(f"sequence must increase within one aggregate_id: {a['sequence']} then {b['sequence']}")
+    return bad
+
+
+def _law_run_emit_empty_required_field_faults_and_writes_nothing():
+    bad = []
+    conn = _conn()
+    before = _row_count(conn)
+    out = asyncio.run(HO.run_emit(*_emit_args(event_type=""), conn))
+    after = _row_count(conn)
+    if not is_fault(out):
+        bad.append(f"an empty required field must make run_emit return a Fault: {out}")
+    elif out.get("is_err") is not True:
+        bad.append(f"the build Fault must carry is_err true: {out}")
+    elif out.get("code") != "empty_required_field":
+        bad.append(f"an empty required field must carry code empty_required_field: {out.get('code')!r}")
+    if after != before:
+        bad.append(f"run_emit must write nothing when build_event faults: {before} -> {after}")
+    return bad
+
+
+def _law_emit_delegates_to_run_emit():
+    bad = []
+    conn = _conn()
+    before = _row_count(conn)
+    out = asyncio.run(HO.emit(*_emit_args(), conn))
+    after = _row_count(conn)
+    if is_fault(out):
+        bad.append(f"emit on a complete event must return the appended Event: {out}")
+        return bad
+    if after - before != 1:
+        bad.append(f"emit is the one door: it must append exactly one envelope: {before} -> {after}")
+    if out.get("event_type") != "order.placed":
+        bad.append(f"emit must return the appended Event run_emit produced: {out}")
+    return bad
+
+
+# --- build_event's fault arm (only the code/is_err are fixed by the scenario) ----------------------
+
+
+def _law_build_event_empty_required_field():
+    bad = []
+    out = HO.build_event(
+        "", "1.0", "order", "ord-1", {"total": 10},
+        {"caller_id": "u1"}, {"release": "r1"}, "eid-1", "2026-01-01T00:00:00.000000Z", 1,
+    )
+    if not is_fault(out):
+        bad.append(f"build_event with an empty required field must return a Fault arm: {out}")
+        return bad
+    if out.get("is_err") is not True:
+        bad.append(f"the build Fault must carry the reserved is_err tag true: {out}")
+    if out.get("code") != "empty_required_field":
+        bad.append(f"the build Fault must carry code empty_required_field: {out.get('code')!r}")
+    # The detail names the empty field so emit can say which one, and the message names it too.
+    if out.get("detail") != {"fields": ["event_type"]}:
+        bad.append(f"the build Fault detail must name the empty required fields: {out.get('detail')}")
+    if "event_type" not in out.get("message", ""):
+        bad.append(f"the build Fault message must name the empty field: {out.get('message')!r}")
+    return bad
+
+
+def _law_observe_fault():
+    bad = []
+    # observe_fault is the single fault constructor; its whole record is pinned (a law, because mutation
+    # runs the laws, not the value cases): the reserved is_err tag true, and the code, message and detail
+    # carried through verbatim.
+    fault = HO.observe_fault("emit_failed", "the append failed; retry", {"error": "boom"})
+    expected = {"is_err": True, "code": "emit_failed", "message": "the append failed; retry", "detail": {"error": "boom"}}
+    if fault != expected:
+        bad.append(f"observe_fault must build exactly the fault record: got {fault}")
+    if not is_fault(fault):
+        bad.append(f"observe_fault's record must be recognized by is_fault: {fault}")
+    return bad
+
+
+# --- the projection-handle builders (only the declared handle fields are fixed) --------------------
+
+
+def _count_fold(state, event):
+    return state + 1
+
+
+def _law_declare_projection_handle():
+    bad = []
+    p = HO.declare_projection("open_orders", ["order.placed", "order.shipped"], _count_fold, 0)
+    if is_fault(p):
+        bad.append(f"declare_projection must return a Projection handle, not a Fault: {p}")
+        return bad
+    if p.get("projection_id") != "open_orders":
+        bad.append(f"the handle must carry projection_id: {p.get('projection_id')!r}")
+    if p.get("event_types") != ["order.placed", "order.shipped"]:
+        bad.append(f"the handle must carry event_types: {p.get('event_types')!r}")
+    # fold and initial_state are callables/seed, not stored in the serializable handle.
+    if "fold" in p:
+        bad.append("the Projection handle must not store the fold callable (it stays serializable)")
+    return bad
+
+
+def _law_build_snapshot_record():
+    bad = []
+    snap = HO.build_snapshot("open_orders", "eid-9", {"open": 3})
+    if is_fault(snap):
+        bad.append(f"build_snapshot must return a snapshot record, not a Fault: {snap}")
+        return bad
+    if snap.get("projection_id") != "open_orders":
+        bad.append(f"the snapshot must carry projection_id: {snap}")
+    if snap.get("snapshot_at") != "eid-9":
+        bad.append(f"the snapshot must carry the log position snapshot_at: {snap}")
+    if snap.get("state") != {"open": 3}:
+        bad.append(f"the snapshot must carry the folded state: {snap}")
+    return bad
+
+
+def _law_resume_equals_replay():
+    bad = []
+    events = [{"event_type": "order.placed"}, {"event_type": "order.cancelled"}, {"event_type": "order.placed"}]
+    # The filter lives in the Projection handle; apply_projection reads its event_types and invokes
+    # matches, so the fold is a plain counter and the order.cancelled event is excluded by the filter.
+    projection = {"projection_id": "p", "event_types": ["order.placed"]}
+
+    def _count(state, event):
+        return state + 1
+
+    full = HO.apply_projection(projection, events, _count, 0)  # filters to 2 placed, counts them
+    # A snapshot that folded the first two events (state 1) resumes over the tail (one placed) to 2.
+    snap = HO.build_snapshot("p", "eid-2", 1)
+    tail = [events[2]]
+    resumed = HO.resume_from_snapshot(projection, snap, tail, _count)
+    if full != 2:
+        bad.append(f"apply_projection must filter by the handle's event_types and count 2 placed events: {full}")
+    if resumed != 2:
+        bad.append(f"resume_from_snapshot must equal a full replay (2), not change the answer: {resumed}")
+    return bad
+
+
+# --- otel_signal (the scenario fixes that the kind follows the type, not the exact shape) ----------
+
+
+def _law_otel_signal_follows_type():
+    bad = []
+    # The whole signal is pinned per event type: the kind follows the dot-suffix through the declared
+    # mapping, and an unlisted suffix falls to the explicit span_event terminal (not a mapped kind).
+    # Multi-dot types check the suffix is the last segment. The attributes carry the type and id.
+    cases = [
+        ("hf.chain.started", "span_start"),
+        ("hf.classify.completed", "metric"),
+        ("hf.link.executed", "child_span"),
+        ("hf.persist.query", "db_span"),
+        ("hf.app.custom_thing", "span_event"),
+    ]
+    for event_type, kind in cases:
+        signal = HO.otel_signal({"event_type": event_type, "event_id": "id-" + event_type})
+        expected = {
+            "kind": kind,
+            "event_type": event_type,
+            "attributes": {"hf.event_type": event_type, "hf.event_id": "id-" + event_type},
+        }
+        if signal != expected:
+            bad.append(f"otel_signal for {event_type} must be exactly {expected}: got {signal}")
+    # An event with no id carries an empty hf.event_id, not a missing key.
+    no_id = HO.otel_signal({"event_type": "x.y"})
+    if no_id.get("attributes", {}).get("hf.event_id") != "":
+        bad.append(f"otel_signal must carry an empty hf.event_id when the event has none: {no_id}")
+    return bad
+
+
+# --- compute_metric (plain metric: the fold result is fixed; grouped shape is a gap) ---------------
+
+
+def _law_compute_metric_plain():
+    bad = []
+
+    def _count(state, event):
+        return state + 1
+
+    metric = {"name": "order_count", "event_types": ["order.placed"], "fold": _count, "initial": 0}
+    events = [{"event_type": "order.placed"}, {"event_type": "order.placed"}, {"event_type": "order.placed"}]
+    out = HO.compute_metric(metric, events)
+    if out != 3:
+        bad.append(f"compute_metric must fold the source events to one number for a plain metric: {out}")
+    return bad
+
+
+def _law_compute_metric_grouped():
+    bad = []
+
+    def _count(state, event):
+        return state + 1
+
+    # A grouped metric carries a group function; compute_metric folds each group separately and keeps
+    # only the events whose type is in event_types (the "other" event below is excluded, so a=2 not 3).
+    metric = {"name": "per_link", "event_types": ["link.executed"], "fold": _count, "initial": 0, "group": lambda event: event["link"]}
+    events = [
+        {"event_type": "link.executed", "link": "a"},
+        {"event_type": "link.executed", "link": "a"},
+        {"event_type": "link.executed", "link": "b"},
+        {"event_type": "other", "link": "a"},
+    ]
+    out = HO.compute_metric(metric, events)
+    if out != {"a": 2, "b": 1}:
+        bad.append(f"compute_metric grouped must map each group key to its value, filtering by event_types: {out}")
+    return bad
+
+
+# --- threshold_projection / evaluate_threshold (the ThresholdProjection record and the firing decision) ---
+
+
+def _law_threshold_projection_handle():
+    bad = []
+    t = HO.threshold_projection("t1", "fault_rate", {"gt": 0.1}, "5m", "10m", {"to": "ops"}, True)
+    if is_fault(t):
+        bad.append(f"threshold_projection must return a ThresholdProjection, not a Fault: {t}")
+        return bad
+    # Every field is fixed, so a dropped or swapped field is caught.
+    expected = {"projection_id": "t1", "metric": "fault_rate", "condition": {"gt": 0.1},
+                "window": "5m", "cooldown": "10m", "alert": {"to": "ops"}, "enabled": True}
+    for key, value in expected.items():
+        if t.get(key) != value:
+            bad.append(f"the ThresholdProjection must carry {key}={value!r}, got {t.get(key)!r}")
+    return bad
+
+
+def _count_fold_fixture(state, event):
+    return state + 1
+
+
+def _threshold(condition):
+    """A ThresholdProjection watching a plain count metric with the given condition."""
+    return HO.threshold_projection("p", "c", condition, "5m", "10m", {}, True)
+
+
+def _law_evaluate_threshold_plain():
+    bad = []
+    metric = {"name": "c", "event_types": ["x"], "fold": _count_fold_fixture, "initial": 0}
+    two = [{"event_type": "x"}, {"event_type": "x"}]  # the metric value is 2
+    # Each comparator on value 2, including the boundary that separates gt from ge and lt from le, and
+    # an operator the table does not name, which must resolve to the non-firing terminal, not a hit.
+    checks = [
+        ({"gt": 1}, True), ({"gt": 2}, False),
+        ({"ge": 2}, True), ({"ge": 3}, False),
+        ({"lt": 3}, True), ({"lt": 2}, False),
+        ({"le": 2}, True), ({"le": 1}, False),
+        ({"eq": 2}, True), ({"eq": 3}, False),
+        ({"unknown_op": 2}, False),
+    ]
+    for condition, expected in checks:
+        got = HO.evaluate_threshold(_threshold(condition), metric, two)
+        if got is not expected:
+            bad.append(f"evaluate_threshold plain {condition} on value 2 must be {expected}, got {got!r}")
+    return bad
+
+
+def _law_evaluate_threshold_grouped():
+    bad = []
+    metric = {"name": "per_link", "event_types": ["link.executed"], "fold": _count_fold_fixture,
+              "initial": 0, "group": lambda event: event["link"]}
+    events = [
+        {"event_type": "link.executed", "link": "a"},
+        {"event_type": "link.executed", "link": "a"},
+        {"event_type": "link.executed", "link": "b"},
+    ]
+    t = HO.threshold_projection("g", "per_link", {"gt": 1}, "5m", "10m", {}, True)
+    decision = HO.evaluate_threshold(t, metric, events)
+    if not isinstance(decision, dict) or set(decision) != {"fired", "firings"}:
+        bad.append(f"grouped evaluate_threshold must return exactly {{fired, firings}}: {decision}")
+        return bad
+    if decision["fired"] is not True:
+        bad.append(f"grouped fired must be True when any group crosses: {decision}")
+    firings = {f["group"]: f for f in decision["firings"]}
+    if set(firings) != {"a", "b"}:
+        bad.append(f"firings must carry one record per group: {decision}")
+        return bad
+    if firings["a"]["fired"] is not True or firings["a"]["value"] != 2:
+        bad.append(f"group a (value 2 gt 1) must fire: {firings['a']}")
+    if firings["b"]["fired"] is not False or firings["b"]["value"] != 1:
+        bad.append(f"group b (value 1 gt 1) must not fire: {firings['b']}")
+    return bad
+
+
+# --- hlc (the advance rules are fixed; the dict key names are a gap, so assert via read-back) -------
+
+
+def _law_hlc_send_rules():
+    bad = []
+    # Each outcome is pinned to the whole HLC dict, so the physical max, the reset-vs-increment of the
+    # logical counter, and the carried source are all caught.
+    # physical_now ahead: physical advances, logical resets to 0.
+    advanced = HO.hlc_send({"physical": 5, "logical": 3, "source": "a"}, 9)
+    if advanced != {"physical": 9, "logical": 0, "source": "a"}:
+        bad.append(f"hlc_send must advance physical and reset logical to 0: got {advanced}")
+    # tie (physical_now == local): physical stays, logical increments.
+    tied = HO.hlc_send({"physical": 9, "logical": 3, "source": "a"}, 9)
+    if tied != {"physical": 9, "logical": 4, "source": "a"}:
+        bad.append(f"hlc_send must keep physical and increment logical on a tie: got {tied}")
+    # physical_now behind local: physical stays local's, and that is not an advance, so logical increments.
+    behind = HO.hlc_send({"physical": 9, "logical": 3, "source": "a"}, 5)
+    if behind != {"physical": 9, "logical": 4, "source": "a"}:
+        bad.append(f"hlc_send must keep local physical and increment logical when physical_now is behind: got {behind}")
+    return bad
+
+
+def _law_hlc_receive_rules():
+    bad = []
+    # physical is the max of the three; the logical counter is read from the closed four-row table keyed
+    # by which clocks already held that winning physical. Each of the four rows is pinned to the whole
+    # resulting HLC dict, and the source is always the receiver's.
+    # neither held it (physical_now wins): logical starts at 0.
+    now_wins = HO.hlc_receive({"physical": 5, "logical": 2, "source": "a"}, {"physical": 7, "logical": 5, "source": "b"}, 9)
+    if now_wins != {"physical": 9, "logical": 0, "source": "a"}:
+        bad.append(f"hlc_receive: when physical_now wins, logical starts at 0: got {now_wins}")
+    # only local held it: one past local's logical.
+    local_wins = HO.hlc_receive({"physical": 9, "logical": 2, "source": "a"}, {"physical": 7, "logical": 5, "source": "b"}, 3)
+    if local_wins != {"physical": 9, "logical": 3, "source": "a"}:
+        bad.append(f"hlc_receive: when only local held the physical, logical is local+1: got {local_wins}")
+    # only incoming held it: one past incoming's logical.
+    incoming_wins = HO.hlc_receive({"physical": 7, "logical": 2, "source": "a"}, {"physical": 9, "logical": 5, "source": "b"}, 3)
+    if incoming_wins != {"physical": 9, "logical": 6, "source": "a"}:
+        bad.append(f"hlc_receive: when only incoming held the physical, logical is incoming+1: got {incoming_wins}")
+    # both held it: one past the larger logical.
+    both_held = HO.hlc_receive({"physical": 9, "logical": 2, "source": "a"}, {"physical": 9, "logical": 5, "source": "b"}, 3)
+    if both_held != {"physical": 9, "logical": 6, "source": "a"}:
+        bad.append(f"hlc_receive: when both held the physical, logical is max(local,incoming)+1: got {both_held}")
+    return bad
+
+
+# --- identity (the canonical id and the surfaced conflict are fixed; key format is a gap) ----------
+
+
+def _law_fold_identity_and_resolve():
+    bad = []
+    claim_a = {"event_type": "identity.claimed", "payload": {"external_system": "github", "external_id": "gh-1", "canonical_id": "c1"}}
+    bindings = HO.fold_identity_claims([claim_a])
+    if is_fault(bindings):
+        bad.append(f"fold_identity_claims is pure and returns bindings, not a fault: {bindings}")
+        return bad
+    # resolve_identity on the table fold_identity_claims produced returns the canonical id.
+    got = HO.resolve_identity("gh-1", "github", bindings)
+    if got != "c1":
+        bad.append(f"resolve_identity must return the canonical id for a bound external id: {got!r}")
+    # An unresolvable id is a bounded absence, NOTHING, never a fault.
+    absent = HO.resolve_identity("gh-unknown", "github", bindings)
+    if absent is not HO.NOTHING:
+        bad.append(f"an unresolvable id must return NOTHING, not {absent!r}")
+    if is_fault(absent):
+        bad.append("NOTHING must never be recognized by is_fault (disjoint from a Fault)")
+    return bad
+
+
+def _claim(canonical_id):
+    return {"event_type": "identity.claimed",
+            "payload": {"external_system": "github", "external_id": "gh-1", "canonical_id": canonical_id}}
+
+
+def _law_fold_identity_conflict_surfaced():
+    bad = []
+    # Every merge case is pinned to its exact folded value, so a dropped record key, a nested instead
+    # of flat candidate list, or a lost dedup is caught rather than hidden behind a loose "both ids
+    # appear somewhere" check.
+    fresh = HO.fold_identity_claims([_claim("c1")])
+    key = next(iter(fresh))
+    if fresh[key] != "c1":
+        bad.append(f"a first claim must bind the external id to its canonical id as a bare scalar: {fresh}")
+    # same: re-claiming the same canonical id leaves the binding unchanged, not a conflict.
+    same = HO.fold_identity_claims([_claim("c1"), _claim("c1")])
+    if same[key] != "c1":
+        bad.append(f"re-claiming the same canonical id must leave the binding unchanged: {same}")
+    # diverging: a differing second id turns the binding into a flat conflict record carrying both.
+    diverging = HO.fold_identity_claims([_claim("c1"), _claim("c2")])
+    if diverging[key] != {"conflict": True, "candidates": ["c1", "c2"]}:
+        bad.append(f"a differing claim must surface a flat conflict record carrying both ids: {diverging[key]}")
+    # conflicting: a third differing id appends to the standing conflict's candidates, flat not nested.
+    three = HO.fold_identity_claims([_claim("c1"), _claim("c2"), _claim("c3")])
+    if three[key] != {"conflict": True, "candidates": ["c1", "c2", "c3"]}:
+        bad.append(f"a third differing claim must append to the flat candidates list: {three[key]}")
+    # dedup: re-claiming an id already among the candidates must not duplicate it.
+    dedup = HO.fold_identity_claims([_claim("c1"), _claim("c2"), _claim("c2")])
+    if dedup[key] != {"conflict": True, "candidates": ["c1", "c2"]}:
+        bad.append(f"re-claiming a candidate already present must not duplicate it: {dedup[key]}")
+    # a conflicted binding is unresolved: resolve returns NOTHING, never one of the candidates.
+    if HO.resolve_identity("gh-1", "github", diverging) is not HO.NOTHING:
+        bad.append("resolve_identity on a conflicted binding must return NOTHING, not a candidate")
+    return bad
+
+
+# --- request_canonical (the join key is fixed; the full field layout is a gap) ---------------------
+
+
+def _law_request_canonical_keyed_by_request_id():
+    bad = []
+    event = HO.request_canonical(
+        "req-1", "GET", "/orders", 200, "u1", "s1", "place_order", 3, ["validate", "persist"],
+        5, 0, 2, 1000, "ok", "", "", 2000,
+    )
+    if is_fault(event):
+        bad.append(f"request_canonical is pure and returns an Event, not a fault: {event}")
+        return bad
+    # The whole dense event is pinned: it is the hf.request.completed envelope keyed by request_id (the
+    # join key), the auth partition carrying caller and session, and the payload colocating every HTTP,
+    # chain, intake, persistence and outcome fact. Pinning the whole value catches a dropped or renamed
+    # field key, a mis-keyed aggregate, or a wrong sequence.
+    expected = {
+        "event_id": "req-1",
+        "event_type": "hf.request.completed",
+        "event_version": "1.0",
+        "timestamp": "",
+        "sequence": 0,
+        "aggregate_type": "request",
+        "aggregate_id": "req-1",
+        "payload": {
+            "request_id": "req-1", "http_method": "GET", "http_path": "/orders", "http_status": 200,
+            "chain_name": "place_order", "link_count": 3, "link_sequence": ["validate", "persist"],
+            "token_count": 5, "rejection_count": 0, "query_count": 2, "query_duration_ns": 1000,
+            "result": "ok", "fault_code": "", "fault_category": "", "duration_ns": 2000,
+        },
+        "auth": {"caller_id": "u1", "session_id": "s1"},
+        "meta": {},
+    }
+    if event != expected:
+        bad.append(f"request_canonical must assemble the one declared canonical event exactly: got {event}")
+    return bad
+
+
+# --- event_log_schema (the table and the named indexes are fixed) ---------------------------------
+
+
+def _law_event_log_schema():
+    bad = []
+    manifest = HO.event_log_schema()
+    if is_fault(manifest):
+        bad.append(f"event_log_schema is pure and returns the manifest, not a fault: {manifest}")
+        return bad
+    # The whole manifest is a fixed declared shape, so every field is pinned exactly: the table name,
+    # the envelope columns in order, the four projection-filter indexes with their names and columns,
+    # and the append_only mark honest-persist reads to reject update and delete. Pinning the whole
+    # value is what lets a dropped column name, a renamed index, or a flipped append_only be caught.
+    expected = {
+        "table": "honest_event_log",
+        "columns": ["event_id", "event_type", "event_version", "timestamp", "sequence",
+                    "aggregate_type", "aggregate_id", "payload", "auth", "meta"],
+        "indexes": [
+            {"name": "ix_event_log_event_type", "columns": ["event_type"]},
+            {"name": "ix_event_log_aggregate", "columns": ["aggregate_type", "aggregate_id"]},
+            {"name": "ix_event_log_timestamp", "columns": ["timestamp"]},
+            {"name": "ix_event_log_aggregate_sequence", "columns": ["aggregate_id", "sequence"]},
+        ],
+        "append_only": True,
+    }
+    if manifest != expected:
+        bad.append(f"the event-log manifest must be the one declared shape exactly: got {manifest}")
+    return bad
+
+
+_LAWS = {
+    "new_event_id": _law_new_event_id,
+    "event_timestamp": _law_event_timestamp,
+    "next_sequence": _law_next_sequence,
+    "append_event_appends_one": _law_append_event_appends_one,
+    "append_event_failure_outcome": _law_append_event_failure_outcome,
+    "run_emit_appends_and_returns_event": _law_run_emit_appends_and_returns_event,
+    "run_emit_append_failure_builds_fault": _law_run_emit_append_failure_builds_fault,
+    "run_emit_sequence_increases": _law_run_emit_sequence_increases,
+    "run_emit_empty_required_field": _law_run_emit_empty_required_field_faults_and_writes_nothing,
+    "emit_delegates_to_run_emit": _law_emit_delegates_to_run_emit,
+    "build_event_empty_required_field": _law_build_event_empty_required_field,
+    "observe_fault": _law_observe_fault,
+    "declare_projection_handle": _law_declare_projection_handle,
+    "build_snapshot_record": _law_build_snapshot_record,
+    "resume_equals_replay": _law_resume_equals_replay,
+    "otel_signal_follows_type": _law_otel_signal_follows_type,
+    "compute_metric_plain": _law_compute_metric_plain,
+    "compute_metric_grouped": _law_compute_metric_grouped,
+    "threshold_projection_handle": _law_threshold_projection_handle,
+    "evaluate_threshold_plain": _law_evaluate_threshold_plain,
+    "evaluate_threshold_grouped": _law_evaluate_threshold_grouped,
+    "hlc_send_rules": _law_hlc_send_rules,
+    "hlc_receive_rules": _law_hlc_receive_rules,
+    "fold_identity_and_resolve": _law_fold_identity_and_resolve,
+    "fold_identity_conflict_surfaced": _law_fold_identity_conflict_surfaced,
+    "request_canonical_keyed_by_request_id": _law_request_canonical_keyed_by_request_id,
+    "event_log_schema": _law_event_log_schema,
 }
 
 
-def _probe_build_event():
-    """Envelope assembly + validation (§2): required-field check, and auth/meta attached only
-    when supplied. sequence=0 and an empty payload are valid (not treated as missing)."""
-    bad = []
-
-    # Valid, no auth/meta -> those keys are absent; sequence 0 is kept.
-    result = build_event(**_BASE)
-    if "ok" not in result:
-        bad.append(f"a complete event should be ok: {result}")
-    else:
-        event = result["ok"]
-        if "auth" in event or "meta" in event:
-            bad.append("auth/meta must be absent when not supplied")
-        if event["sequence"] != 0 or event["payload"] != {"result": "ok"}:
-            bad.append("sequence 0 / payload should be carried verbatim")
-
-    # auth supplied, meta not -> auth present, meta absent.
-    result = build_event(**_BASE, auth={"caller_id": "u1"})
-    if result["ok"].get("auth") != {"caller_id": "u1"} or "meta" in result["ok"]:
-        bad.append("auth should attach, meta should stay absent")
-
-    # both supplied.
-    result = build_event(**_BASE, auth={"caller_id": "u1"}, meta={"release": "r1"})
-    if result["ok"].get("meta") != {"release": "r1"}:
-        bad.append("meta should attach when supplied")
-
-    # empty required field (event_type) -> invalid_event naming it; the full fault is pinned.
-    result = build_event(**{**_BASE, "event_type": ""})
-    if result != {"err": {"is_err": True, "code": "invalid_event", "message": "Event is missing required field(s): ['event_type']", "category": "server", "results": [], "detail": {"missing": ["event_type"]}}}:
-        bad.append(f"an empty required field should fault invalid_event in full: {result}")
-
-    # an empty aggregate_id is also caught (a different required field).
-    if build_event(**{**_BASE, "aggregate_id": ""}).get("err", {}).get("code") != "invalid_event":
-        bad.append("an empty aggregate_id should fault")
-    return bad
-
-
-def _probe_extract():
-    """Auth/meta extraction (§2.2, §2.3): the configured fields present in context, or None."""
-    bad = []
-    context = {"caller_id": "u1", "session": "s1", "release": "r1", "other": "x"}
-
-    if extract_auth(context, ["caller_id", "session", "missing"]) != {"caller_id": "u1", "session": "s1"}:
-        bad.append("extract_auth should pull the present configured fields, in order")
-    if extract_auth(context, ["nope"]) is not None:
-        bad.append("extract_auth with no present field should be None")
-    if extract_meta(context, ["release", "absent"]) != {"release": "r1"}:
-        bad.append("extract_meta should pull the present configured fields")
-    if extract_meta(context, []) is not None:
-        bad.append("extract_meta with no fields should be None")
-    return bad
-
-
-def _probe_matches():
-    """The projection filter predicate (§6.1): each filter, the half-open time window, and the
-    all-pass case."""
-    bad = []
-    event = {"event_type": "a.b", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "2026-03-15T12:00:00Z"}
-
-    checks = [
-        ("no filters", matches(event), True),
-        ("type miss", matches(event, event_types=["x.y"]), False),
-        ("type hit + agg-type miss", matches(event, event_types=["a.b"], aggregate_type="user"), False),
-        ("agg-id miss", matches(event, aggregate_id="o2"), False),
-        ("before window", matches(event, from_ts="2026-03-16T00:00:00Z"), False),
-        ("at/after to (exclusive)", matches(event, to_ts="2026-03-15T12:00:00Z"), False),
-        ("all constraints pass", matches(event, event_types=["a.b"], aggregate_type="order", aggregate_id="o1", from_ts="2026-03-15T00:00:00Z", to_ts="2026-03-16T00:00:00Z"), True),
-    ]
-    for label, got, want in checks:
-        if got != want:
-            bad.append(f"matches({label}) should be {want}, got {got}")
-    return bad
-
-
-def _probe_projection():
-    """The fold over filtered events (§6): only matching events fold; an empty log yields the
-    initial state unchanged."""
-    bad = []
-    events = [
-        {"event_type": "click", "aggregate_type": "ui", "aggregate_id": "p1", "timestamp": "2026-01-01T00:00:00Z", "payload": {"n": 1}},
-        {"event_type": "click", "aggregate_type": "ui", "aggregate_id": "p1", "timestamp": "2026-01-02T00:00:00Z", "payload": {"n": 2}},
-        {"event_type": "view", "aggregate_type": "ui", "aggregate_id": "p1", "timestamp": "2026-01-03T00:00:00Z", "payload": {"n": 99}},
-    ]
-
-    def fold(state, event):
-        return {"sum": state["sum"] + event["payload"]["n"], "count": state["count"] + 1}
-
-    # Only the two click events fold; the view is filtered out.
-    result = apply_projection(events, fold, {"sum": 0, "count": 0}, event_types=["click"])
-    if result != {"sum": 3, "count": 2}:
-        bad.append(f"projection should fold only matching events: {result}")
-
-    # No filter -> every event folds.
-    if apply_projection(events, fold, {"sum": 0, "count": 0})["count"] != 3:
-        bad.append("an unfiltered projection should fold every event")
-
-    # from_ts excludes events strictly before it; an event AT from_ts is included (pins the < boundary).
-    from_boundary = apply_projection(events, fold, {"sum": 0, "count": 0}, from_ts="2026-01-02T00:00:00Z")
-    if from_boundary["count"] != 2:
-        bad.append(f"from_ts should include an event at the boundary (>= from_ts): {from_boundary}")
-
-    # Empty log -> initial state, untouched.
-    if apply_projection([], fold, {"sum": 0, "count": 0}) != {"sum": 0, "count": 0}:
-        bad.append("an empty log should return the initial state")
-    return bad
-
-
-def _stand_ins(append_ok=True):
-    """Stand-in boundaries for run_emit (§3): canned id, timestamp and sequence, and an append that
-    succeeds or fails, recording what it was handed. Each is a plain function a test hands in, not
-    an object."""
-    appended = []
-
-    def _id():
-        return "019x2k"
-
-    def _ts():
-        return "2026-03-15T14:23:07.441832Z"
-
-    async def _seq(aggregate_id, conn):
-        return 7
-
-    async def _append(event, conn):
-        appended.append(event)
-        if append_ok:
-            return {"ok": {}}
-        return {"err": {"is_err": True, "code": "log_write_failed", "message": "boom", "category": "server", "results": [], "detail": None}}
-
-    return appended, _id, _ts, _seq, _append
-
-
-def _probe_emit():
-    """The emit orchestration (§3): run_emit assembles the envelope with the handed-in boundaries
-    and appends it. Success returns the event_id and appends a complete envelope (id, version and
-    sequence from the boundaries, auth and meta from context); a malformed envelope returns its
-    validation fault and writes nothing; an append failure becomes emit_failed."""
-
-    async def _run():
-        bad = []
-        context = {"caller_id": "u1", "release": "r1", "other": "x"}
-
-        # Success: ok(event_id); the appended envelope carries the boundaries' values and the
-        # auth/meta pulled from context by the configured field names.
-        appended, _id, _ts, _seq, _append = _stand_ins()
-        result = await run_emit("hf.chain.completed", "chain", "c1", {"result": "ok"}, context, "1.0", None, _id, _ts, _seq, _append, ["caller_id"], ["release"])
-        if result != {"ok": {"event_id": "019x2k"}}:
-            bad.append(f"successful emit should return the event_id: {result}")
-        elif len(appended) != 1:
-            bad.append("a successful emit should append exactly one event")
-        else:
-            event = appended[0]
-            if event["event_version"] != "1.0" or event["sequence"] != 7 or event["event_type"] != "hf.chain.completed":
-                bad.append(f"appended envelope wrong: {event}")
-            if event.get("auth") != {"caller_id": "u1"} or event.get("meta") != {"release": "r1"}:
-                bad.append(f"emit should attach auth/meta from context: {event.get('auth')} {event.get('meta')}")
-
-        # No configured auth/meta fields -> those keys are absent on the appended event.
-        appended2, _id, _ts, _seq, _append = _stand_ins()
-        await run_emit("hf.chain.completed", "chain", "c1", {}, context, "1.0", None, _id, _ts, _seq, _append, [], [])
-        if "auth" in appended2[0] or "meta" in appended2[0]:
-            bad.append("with no configured fields, auth/meta must be absent")
-
-        # Malformed envelope (empty aggregate_id) -> validation fault, nothing appended.
-        appended3, _id, _ts, _seq, _append = _stand_ins()
-        bad_result = await run_emit("hf.chain.completed", "chain", "", {}, context, "1.0", None, _id, _ts, _seq, _append, [], [])
-        if bad_result.get("err", {}).get("code") != "invalid_event":
-            bad.append(f"an empty required field should return invalid_event: {bad_result}")
-        if appended3:
-            bad.append("a malformed envelope must not be appended")
-
-        # Append failure -> emit_failed wrapping the cause.
-        appended4, _id, _ts, _seq, _append = _stand_ins(append_ok=False)
-        failed = await run_emit("hf.chain.completed", "chain", "c1", {}, context, "1.0", None, _id, _ts, _seq, _append, [], [])
-        if failed != {"err": {"is_err": True, "code": "emit_failed", "message": "Failed to append event to the log", "category": "server", "results": [], "detail": {"cause": {"is_err": True, "code": "log_write_failed", "message": "boom", "category": "server", "results": [], "detail": None}}}}:
-            bad.append(f"an append failure should become emit_failed wrapping the cause in full: {failed}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_framework_events():
-    """The framework event catalogue (section 4.1-4.4): pure builders for chain, link, classification,
-    and state-machine events, each returning {event_type, aggregate_type, aggregate_id, payload}."""
-    from honest_observe import (
-        chain_completed,
-        chain_started,
-        classify_completed,
-        link_executed,
-        link_faulted,
-        state_rejected,
-        state_transitioned,
-    )
-
-    bad = []
-    # Each builder's full {event_type, aggregate_type, aggregate_id, payload} dict is pinned exactly, so
-    # every key and value (and the presence/absence of each optional field) is caught.
-    builders = [
-        (chain_started("checkout", 3, ["order_id", "items"]),
-         {"event_type": "hf.chain.started", "aggregate_type": "chain", "aggregate_id": "checkout", "payload": {"chain_name": "checkout", "link_count": 3, "input_types": ["order_id", "items"]}}),
-        (chain_completed("checkout", 3, 1500, "ok"),
-         {"event_type": "hf.chain.completed", "aggregate_type": "chain", "aggregate_id": "checkout", "payload": {"chain_name": "checkout", "duration_ns": 1500, "link_count": 3, "result": "ok"}}),
-        (chain_completed("checkout", 3, 1500, "err", fault_code="invalid_email", fault_category="client"),
-         {"event_type": "hf.chain.completed", "aggregate_type": "chain", "aggregate_id": "checkout", "payload": {"chain_name": "checkout", "duration_ns": 1500, "link_count": 3, "result": "err", "fault_code": "invalid_email", "fault_category": "client"}}),
-        (link_executed("validate", "checkout", 200, "ok", boundary=False, mutations=0, singletons=0, nondeterminism=False, io_calls=0),
-         {"event_type": "hf.link.executed", "aggregate_type": "link", "aggregate_id": "validate", "payload": {"link_name": "validate", "chain_name": "checkout", "duration_ns": 200, "result": "ok", "boundary": False, "mutations": 0, "singletons": 0, "nondeterminism": False, "io_calls": 0}}),
-        (link_executed("validate", "checkout", 200, "err", boundary=True, mutations=1, singletons=2, nondeterminism=True, io_calls=3, fault_code="bad"),
-         {"event_type": "hf.link.executed", "aggregate_type": "link", "aggregate_id": "validate", "payload": {"link_name": "validate", "chain_name": "checkout", "duration_ns": 200, "result": "err", "boundary": True, "mutations": 1, "singletons": 2, "nondeterminism": True, "io_calls": 3, "fault_code": "bad"}}),
-        (link_faulted("validate", "checkout", "invalid_email", "client", "Bad email"),
-         {"event_type": "hf.link.faulted", "aggregate_type": "link", "aggregate_id": "validate", "payload": {"link_name": "validate", "chain_name": "checkout", "fault_code": "invalid_email", "fault_category": "client", "fault_message": "Bad email"}}),
-        (link_faulted("validate", "checkout", "invalid_email", "client", "Bad email", input_manifest={"email": "x"}),
-         {"event_type": "hf.link.faulted", "aggregate_type": "link", "aggregate_id": "validate", "payload": {"link_name": "validate", "chain_name": "checkout", "fault_code": "invalid_email", "fault_category": "client", "fault_message": "Bad email", "input_manifest": {"email": "x"}}}),
-        (classify_completed("order_vocab", 5, 1, 300, {"unrecognized": 1}),
-         {"event_type": "hf.classify.completed", "aggregate_type": "classify", "aggregate_id": "order_vocab", "payload": {"vocabulary_name": "order_vocab", "token_count": 5, "rejection_count": 1, "duration_ns": 300, "rejection_reasons": {"unrecognized": 1}}}),
-        (state_transitioned("order_sm", "o1", "pending", "pay", "paid", 400),
-         {"event_type": "hf.state.transitioned", "aggregate_type": "state_machine", "aggregate_id": "order_sm:o1", "payload": {"machine_name": "order_sm", "entity_id": "o1", "from_state": "pending", "event": "pay", "to_state": "paid", "duration_ns": 400}}),
-        (state_rejected("order_sm", "o1", "paid", "pay", "no_transition"),
-         {"event_type": "hf.state.rejected", "aggregate_type": "state_machine", "aggregate_id": "order_sm:o1", "payload": {"machine_name": "order_sm", "entity_id": "o1", "current_state": "paid", "event": "pay", "fault_code": "no_transition"}}),
-    ]
-    for actual, expected in builders:
-        if actual != expected:
-            bad.append(f"framework event builder mismatch: got {actual}, expected {expected}")
-    return bad
-
-
-def _probe_canonical_app_events():
-    """The canonical request event (section 4.6) and application lifecycle events (section 4.7): pure
-    builders, with optional identity/chain/fault and release/traceback fields present only when set."""
-    from honest_observe import app_error, app_started, app_stopped, link_summary, request_canonical
-
-    bad = []
-    # Full-dict equality per builder, so every key/value and each optional field's presence is pinned.
-    builders = [
-        (link_summary("validate", 200, "ok"),
-         {"link_name": "validate", "duration_ns": 200, "result": "ok"}),
-        (link_summary("pay", 50, "err", fault_code="declined"),
-         {"link_name": "pay", "duration_ns": 50, "result": "err", "fault_code": "declined"}),
-        (request_canonical("req-1", "POST", "/api/orders", 200, 2, [link_summary("validate", 200, "ok")], 3, 0, 4, 9000, "ok", 12000, caller_id="u1", chain_name="checkout"),
-         {"event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": "req-1", "payload": {"http_method": "POST", "http_path": "/api/orders", "http_status": 200, "link_count": 2, "link_sequence": [{"link_name": "validate", "duration_ns": 200, "result": "ok"}], "token_count": 3, "rejection_count": 0, "query_count": 4, "query_duration_ns": 9000, "result": "ok", "duration_ns": 12000, "request_id": "req-1", "source": "server", "caller_id": "u1", "chain_name": "checkout"}}),
-        (request_canonical("req-2", "GET", "/x", 500, 0, [], 0, 0, 0, 0, "err", 5, fault_code="boom", fault_category="server"),
-         {"event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": "req-2", "payload": {"http_method": "GET", "http_path": "/x", "http_status": 500, "link_count": 0, "link_sequence": [], "token_count": 0, "rejection_count": 0, "query_count": 0, "query_duration_ns": 0, "result": "err", "duration_ns": 5, "request_id": "req-2", "source": "server", "fault_code": "boom", "fault_category": "server"}}),
-        (request_canonical("req-3", "PUT", "/y", 201, 1, [], 2, 0, 1, 100, "ok", 300, session_id="sess-9"),
-         {"event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": "req-3", "payload": {"http_method": "PUT", "http_path": "/y", "http_status": 201, "link_count": 1, "link_sequence": [], "token_count": 2, "rejection_count": 0, "query_count": 1, "query_duration_ns": 100, "result": "ok", "duration_ns": 300, "request_id": "req-3", "source": "server", "session_id": "sess-9"}}),
-        (app_started("shop", "production", 5, 12, 3, release="r1"),
-         {"event_type": "hf.app.started", "aggregate_type": "app", "aggregate_id": "shop", "payload": {"app_name": "shop", "environment": "production", "chains_loaded": 5, "links_loaded": 12, "vocabs_loaded": 3, "release": "r1"}}),
-        (app_started("shop", "dev", 1, 1, 1),
-         {"event_type": "hf.app.started", "aggregate_type": "app", "aggregate_id": "shop", "payload": {"app_name": "shop", "environment": "dev", "chains_loaded": 1, "links_loaded": 1, "vocabs_loaded": 1}}),
-        (app_stopped("shop", 60000, "graceful"),
-         {"event_type": "hf.app.stopped", "aggregate_type": "app", "aggregate_id": "shop", "payload": {"app_name": "shop", "uptime_ns": 60000, "reason": "graceful"}}),
-        (app_error("shop", "ValueError", "boom", traceback="tb", context="startup"),
-         {"event_type": "hf.app.error", "aggregate_type": "app", "aggregate_id": "shop", "payload": {"error_type": "ValueError", "message": "boom", "traceback": "tb", "context": "startup"}}),
-        (app_error("shop", "ValueError", "boom"),
-         {"event_type": "hf.app.error", "aggregate_type": "app", "aggregate_id": "shop", "payload": {"error_type": "ValueError", "message": "boom"}}),
-    ]
-    for actual, expected in builders:
-        if actual != expected:
-            bad.append(f"canonical/app event builder mismatch: got {actual}, expected {expected}")
-    return bad
-
-
-def _probe_event_log():
-    """The event-log table (section 10): observe owns the honest_event_log definition as pure data — the
-    persist-compatible schema (ten columns matching the envelope, four projection indexes) and the
-    append-only manifest that wraps it. observe never imports persist; persist applies this dict."""
-    from honest_observe import event_log_manifest, event_log_schema
-
-    bad = []
-    # The full schema dict is pinned exactly: ten columns in envelope order with their types and
-    # nullability (the seven framework fields plus the JSON payload NOT NULL, auth/meta nullable),
-    # the primary key, and the four projection indexes over their declared columns.
-    expected_table = {
-        "columns": {
-            "event_id": {"type": "text", "primary_key": True, "nullable": False},
-            "event_type": {"type": "text", "nullable": False},
-            "event_version": {"type": "text", "nullable": False},
-            "timestamp": {"type": "text", "nullable": False},
-            "sequence": {"type": "integer", "nullable": False},
-            "aggregate_type": {"type": "text", "nullable": False},
-            "aggregate_id": {"type": "text", "nullable": False},
-            "payload": {"type": "text", "nullable": False},
-            "auth": {"type": "text", "nullable": True},
-            "meta": {"type": "text", "nullable": True},
-        },
-        "primary_key": ["event_id"],
-        "indexes": {
-            "idx_event_type": {"columns": ["event_type"]},
-            "idx_aggregate": {"columns": ["aggregate_type", "aggregate_id"]},
-            "idx_timestamp": {"columns": ["timestamp"]},
-            "idx_sequence": {"columns": ["aggregate_id", "sequence"]},
-        },
-    }
-    schema = event_log_schema()
-    if schema != {"honest_event_log": expected_table}:
-        bad.append(f"event_log_schema wrong: {schema}")
-    if event_log_manifest() != {"table": "honest_event_log", "append_only": True, "schema": expected_table}:
-        bad.append(f"event_log_manifest wrong: {event_log_manifest()}")
-    return bad
-
-
-def _probe_snapshot():
-    """Snapshot projections (section 6.3): a snapshot record, the snapshot-interval decision, the
-    declared-projection API, and the resume that replays only the events after a snapshot onto its
-    state rather than from the beginning. All pure; persisting/loading the snapshot is the boundary's."""
-    from honest_observe import build_snapshot, declare_projection, resume_from_snapshot, should_snapshot
-
-    bad = []
-
-    # The snapshot record is exactly the three documented fields.
-    snap = build_snapshot("sub_summary", "2026-03-15T00:00:00Z", {"count": 1000})
-    if snap != {"projection_id": "sub_summary", "snapshot_at": "2026-03-15T00:00:00Z", "state": {"count": 1000}}:
-        bad.append(f"build_snapshot wrong: {snap}")
-
-    # should_snapshot: take one once the interval is reached; never when there is no interval.
-    if should_snapshot(1000, 1000) is not True or should_snapshot(1500, 1000) is not True:
-        bad.append("should_snapshot should fire at or past the interval")
-    if should_snapshot(999, 1000) is not False:
-        bad.append("should_snapshot should not fire below the interval")
-    if should_snapshot(1, 1) is not True:
-        bad.append("should_snapshot should fire at an interval of 1 (pins the > 0 positive-interval check)")
-    if should_snapshot(5000, None) is not False or should_snapshot(5000, 0) is not False:
-        bad.append("should_snapshot should never fire without a positive interval")
-
-    # A counting fold over the post-snapshot events.
-    def fold(state, event):
-        return {"count": state["count"] + 1}
-
-    events = [
-        {"event_type": "app.x", "aggregate_type": "a", "aggregate_id": "1", "timestamp": "2026-03-15T00:00:00Z"},  # at snapshot — already counted
-        {"event_type": "app.x", "aggregate_type": "a", "aggregate_id": "1", "timestamp": "2026-03-15T01:00:00Z"},  # after
-        {"event_type": "app.y", "aggregate_type": "a", "aggregate_id": "1", "timestamp": "2026-03-15T02:00:00Z"},  # after, filtered out
-    ]
-    # Resume from the snapshot: only strictly-later events fold, the type filter still applies, and the
-    # starting state is the snapshot's — so the count continues from 1000, not from zero.
-    resumed = resume_from_snapshot(snap, events, fold, event_types=["app.x"])
-    if resumed != {"count": 1001}:
-        bad.append(f"resume_from_snapshot should fold only later, matching events onto the snapshot state: {resumed}")
-    # No snapshot_at boundary skipped: an event exactly at snapshot_at is treated as already-included.
-    only_at = resume_from_snapshot(snap, [events[0]], fold)
-    if only_at != {"count": 1000}:
-        bad.append(f"an event at the snapshot position must not be re-folded: {only_at}")
-
-    # declare_projection bundles the config and fold; optional aggregate filters appear only when set.
-    declared = declare_projection("sub_summary", ["app.x"], fold, {"count": 0}, snapshot_interval=1000)
-    if declared["projection_id"] != "sub_summary" or declared["fold"] is not fold or declared["snapshot_interval"] != 1000:
-        bad.append(f"declare_projection should carry id/fold/interval: {declared}")
-    if "aggregate_type" in declared or "aggregate_id" in declared:
-        bad.append("declare_projection should omit unset aggregate filters")
-    scoped = declare_projection("p", ["e"], fold, {}, aggregate_type="order", aggregate_id="o1")
-    if scoped.get("aggregate_type") != "order" or scoped.get("aggregate_id") != "o1" or scoped["snapshot_interval"] is not None:
-        bad.append(f"declare_projection should carry set filters and a None default interval: {scoped}")
-    return bad
-
-
-def _probe_otel():
-    """The OTel export projection (section 7): the pure half of the exporter — map an hf.* event to its
-    OTel signal kind (§7.1) and its semantic-convention attributes (§7.2, §7.3). Running the export loop
-    against an injected SDK exporter is the boundary's, exactly as with the emit runtime."""
-    from honest_observe import otel_attributes, otel_signal, otel_signal_kind
-
-    bad = []
-
-    # The §7.1 signal-kind map; an event that is not a framework signal maps to None.
-    kinds = {
-        "hf.chain.started": "span_start",
-        "hf.chain.completed": "span_end",
-        "hf.link.executed": "child_span",
-        "hf.link.faulted": "span_event",
-        "hf.persist.query": "child_span",
-        "hf.classify.completed": "metric_counter",
-        "hf.state.transitioned": "span_event",
-    }
-    for event_type, kind in kinds.items():
-        if otel_signal_kind(event_type) != kind:
-            bad.append(f"otel_signal_kind({event_type}) should be {kind}: {otel_signal_kind(event_type)}")
-    if otel_signal_kind("app.order.placed") is not None:
-        bad.append("a non-framework event has no OTel signal kind")
-
-    # §7.3 hf.* attributes per event type, read from the payload.
-    chain_done = {"event_type": "hf.chain.completed", "payload": {"chain_name": "checkout", "link_count": 3, "result": "err", "fault_code": "declined"}}
-    if otel_attributes(chain_done) != {"hf.chain.name": "checkout", "hf.chain.link_count": 3, "hf.chain.fault_code": "declined"}:
-        bad.append(f"chain.completed attributes wrong: {otel_attributes(chain_done)}")
-    chain_ok = {"event_type": "hf.chain.completed", "payload": {"chain_name": "checkout", "link_count": 3, "result": "ok"}}
-    if otel_attributes(chain_ok) != {"hf.chain.name": "checkout", "hf.chain.link_count": 3}:
-        bad.append(f"a successful chain.completed should carry no fault code attribute: {otel_attributes(chain_ok)}")
-    chain_started = {"event_type": "hf.chain.started", "payload": {"chain_name": "checkout", "link_count": 3, "input_types": []}}
-    if otel_attributes(chain_started) != {"hf.chain.name": "checkout", "hf.chain.link_count": 3}:
-        bad.append(f"chain.started attributes should omit a fault code: {otel_attributes(chain_started)}")
-    link = {"event_type": "hf.link.executed", "payload": {"link_name": "validate", "chain_name": "checkout", "boundary": True, "mutations": 0, "singletons": 1, "nondeterminism": False, "io_calls": 2, "duration_ns": 9, "result": "ok"}}
-    if otel_attributes(link) != {"hf.link.name": "validate", "hf.link.boundary": True, "hf.link.mutations": 0, "hf.link.singletons": 1, "hf.link.nondeterminism": False, "hf.link.io_calls": 2}:
-        bad.append(f"link.executed attributes wrong: {otel_attributes(link)}")
-    faulted = {"event_type": "hf.link.faulted", "payload": {"link_name": "pay", "chain_name": "checkout", "fault_code": "declined", "fault_category": "client", "fault_message": "no"}}
-    if otel_attributes(faulted) != {"hf.link.name": "pay"}:
-        bad.append(f"link.faulted attributes wrong: {otel_attributes(faulted)}")
-    classify = {"event_type": "hf.classify.completed", "payload": {"vocabulary_name": "order_vocab", "token_count": 5, "rejection_count": 1, "duration_ns": 3, "rejection_reasons": {}}}
-    if otel_attributes(classify) != {"hf.vocabulary.name": "order_vocab", "hf.classify.rejection_count": 1}:
-        bad.append(f"classify attributes wrong: {otel_attributes(classify)}")
-    state = {"event_type": "hf.state.transitioned", "payload": {"machine_name": "order_sm", "entity_id": "o1", "from_state": "pending", "event": "pay", "to_state": "paid", "duration_ns": 4}}
-    if otel_attributes(state) != {"hf.state.machine": "order_sm", "hf.state.from": "pending", "hf.state.event": "pay", "hf.state.to": "paid"}:
-        bad.append(f"state attributes wrong: {otel_attributes(state)}")
-
-    # An event with no hf.* attribute builder (e.g. persist.query, mapped only by kind) yields no hf.* attrs.
-    persist_q = {"event_type": "hf.persist.query", "payload": {"sql": "SELECT 1"}}
-    if otel_attributes(persist_q) != {}:
-        bad.append(f"an event with no attribute builder yields no attributes: {otel_attributes(persist_q)}")
-
-    # §7.2 service.version is sourced from meta.release, and attaches across any event that carries it.
-    with_release = {"event_type": "hf.chain.started", "payload": {"chain_name": "c", "link_count": 1, "input_types": []}, "meta": {"release": "1.4.0"}}
-    if otel_attributes(with_release).get("service.version") != "1.4.0":
-        bad.append("service.version should come from meta.release")
-    if "service.version" in otel_attributes({"event_type": "hf.persist.query", "payload": {}, "meta": {"other": "x"}}):
-        bad.append("service.version should be absent when meta has no release")
-
-    # §7.3 hf.auth.* attributes come from the event's auth partition (when honest-auth is used): every
-    # field present maps, only the fields present map, and a no-auth event carries none.
-    with_auth = {"event_type": "hf.link.executed", "payload": link["payload"], "auth": {"caller_id": "u1", "data_owner_id": "o1", "factors_presented": ["pw"]}}
-    got_auth = {k: v for k, v in otel_attributes(with_auth).items() if k.startswith("hf.auth")}
-    if got_auth != {"hf.auth.caller_id": "u1", "hf.auth.data_owner_id": "o1", "hf.auth.factors_presented": ["pw"]}:
-        bad.append(f"the auth partition should map to hf.auth.* attributes: {got_auth}")
-    if {k for k in otel_attributes({**with_auth, "auth": {"caller_id": "u1"}}) if k.startswith("hf.auth")} != {"hf.auth.caller_id"}:
-        bad.append("only the auth fields present in the partition should map")
-    if any(k.startswith("hf.auth") for k in otel_attributes({**with_auth, "auth": None})):
-        bad.append("a no-auth event should carry no hf.auth.* attributes")
-
-    # otel_signal is the projection's output: kind plus attributes for one event.
-    sig = otel_signal(chain_done)
-    if sig != {"event_type": "hf.chain.completed", "kind": "span_end", "attributes": {"hf.chain.name": "checkout", "hf.chain.link_count": 3, "hf.chain.fault_code": "declined"}}:
-        bad.append(f"otel_signal wrong: {sig}")
-    return bad
-
-
-def _probe_browser():
-    """Browser instrumentation (section 8): the browser event envelope (§8.2) and the four automatic
-    browser event payloads (§8.4), as pure data contracts. The beacon and the ingest endpoint that
-    receives them are boundary I/O; the shapes here are what that endpoint validates and appends."""
-    from honest_observe import browser_classify, browser_request, browser_response, build_browser_event, dom_changed
-
-    bad = []
-
-    # §8.2 envelope: source is always "browser"; request_id attaches only when supplied; required
-    # fields are validated exactly as the server envelope is.
-    ok_event = build_browser_event("hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "sess-1", {"changed_keys": ["filters"]}, "uuid-v4-1", request_id="req_abc")
-    if "ok" not in ok_event:
-        bad.append(f"a complete browser event should be ok: {ok_event}")
-    else:
-        env = ok_event["ok"]
-        if env["source"] != "browser" or env["session_id"] != "sess-1" or env["request_id"] != "req_abc" or env["payload"] != {"changed_keys": ["filters"]}:
-            bad.append(f"browser envelope wrong: {env}")
-        if "aggregate_type" in env or "sequence" in env:
-            bad.append("a browser event has no aggregate or sequence fields")
-    no_req = build_browser_event("hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "sess-1", {}, "uuid-v4-2")
-    if "request_id" in no_req["ok"]:
-        bad.append("request_id must be absent when not supplied")
-    bad_event = build_browser_event("hf.dom.changed", "1.0", "2026-03-15T14:23:07.001Z", "", {}, "uuid-v4-3")
-    if bad_event != {"err": {"is_err": True, "code": "invalid_event", "message": "Browser event is missing required field(s): ['session_id']", "category": "client", "results": [], "detail": {"missing": ["session_id"]}}}:
-        bad.append(f"an empty required field (session_id) should fault invalid_event in full: {bad_event}")
-
-    # §8.4 the four automatic browser events.
-    classify = browser_classify("#row-1", "hf-format", ["currency", "usd"], {"format": "currency"}, 1200, request_id="req_abc")
-    if classify != {"event_type": "hf.browser.classify", "payload": {"element": "#row-1", "attribute": "hf-format", "tokens": ["currency", "usd"], "manifest": {"format": "currency"}, "duration_ns": 1200, "request_id": "req_abc"}}:
-        bad.append(f"browser_classify wrong: {classify}")
-    if "request_id" in browser_classify("#x", "hf-y", [], {}, 1)["payload"]:
-        bad.append("browser_classify should omit request_id when not supplied")
-
-    request = browser_request("POST", "/api/items", "change", "#content", ["filters", "page"], "req_abc")
-    if request != {"event_type": "hf.browser.request", "payload": {"method": "POST", "url": "/api/items", "trigger": "change", "target": "#content", "manifest_keys": ["filters", "page"], "request_id": "req_abc"}}:
-        bad.append(f"browser_request wrong: {request}")
-
-    response = browser_response("req_abc", 200, "#content-area", 163)
-    if response != {"event_type": "hf.browser.response", "payload": {"request_id": "req_abc", "status": 200, "swap_target": "#content-area", "duration_ms": 163}}:
-        bad.append(f"browser_response wrong: {response}")
-
-    changed = dom_changed(["filters"], {"filters": ["active"]}, request_id="req_abc")
-    if changed != {"event_type": "hf.dom.changed", "payload": {"changed_keys": ["filters"], "to": {"filters": ["active"]}, "request_id": "req_abc"}}:
-        bad.append(f"dom_changed wrong: {changed}")
-    if "request_id" in dom_changed(["x"], {"x": 2})["payload"]:
-        bad.append("dom_changed should omit request_id outside a request context")
-    return bad
-
-
-def _probe_tail():
-    """The tail line formatter (section 9.2): one event rendered as a structured time/source/type/fields
-    line. A pure projection — the CLI that streams the log and prints is the boundary; this is the format
-    it prints. Field rendering is dict-dispatched per event type, with an empty tail for an unmapped one."""
-    from honest_observe import format_tail_line
-
-    bad = []
-
-    link = {"event_type": "hf.link.executed", "source": "server", "timestamp": "2026-03-15T14:23:07.006Z", "payload": {"link_name": "validate_filters", "chain_name": "fetch_items", "result": "ok", "duration_ns": 800000}}
-    if format_tail_line(link) != "14:23:07.006 server  hf.link.executed  link=validate_filters chain=fetch_items result=ok duration=0.8ms":
-        bad.append(f"link tail line wrong: {format_tail_line(link)!r}")
-
-    # source defaults to "server" when absent (server events carry no source field); a browser event names its source.
-    canonical = {"event_type": "hf.request.canonical", "timestamp": "2026-03-15T14:23:07.023Z", "payload": {"http_method": "POST", "http_path": "/api/items", "http_status": 200, "duration_ns": 16000000}}
-    if format_tail_line(canonical) != "14:23:07.023 server  hf.request.canonical  method=POST path=/api/items status=200 duration=16.0ms":
-        bad.append(f"canonical tail line wrong: {format_tail_line(canonical)!r}")
-    resp = {"event_type": "hf.browser.response", "source": "browser", "timestamp": "2026-03-15T14:23:07.166Z", "payload": {"request_id": "req_abc", "status": 200, "swap_target": "#x", "duration_ms": 163}}
-    if format_tail_line(resp) != "14:23:07.166 browser hf.browser.response  status=200 duration=163ms req=req_abc":
-        bad.append(f"browser response tail line wrong: {format_tail_line(resp)!r}")
-
-    # Every mapped event type renders a non-empty field tail; cover each renderer.
-    cases = [
-        ({"event_type": "hf.chain.started", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"chain_name": "c", "link_count": 3}}, "chain=c links=3"),
-        ({"event_type": "hf.chain.completed", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"chain_name": "c", "result": "ok", "duration_ns": 16000000}}, "chain=c result=ok duration=16.0ms"),
-        ({"event_type": "hf.classify.completed", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"token_count": 3, "rejection_count": 0}}, "tokens=3 rejected=0"),
-        ({"event_type": "hf.state.transitioned", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"machine_name": "sm", "from_state": "a", "to_state": "b"}}, "machine=sm a->b"),
-        ({"event_type": "hf.browser.request", "source": "browser", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"method": "POST", "url": "/x"}}, "method=POST url=/x"),
-        ({"event_type": "hf.dom.changed", "source": "browser", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"changed_keys": ["filters"]}}, "keys=['filters']"),
-        ({"event_type": "hf.browser.classify", "source": "browser", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"element": "#r", "attribute": "hf-format"}}, "element=#r attribute=hf-format"),
-    ]
-    for event, tail in cases:
-        if not format_tail_line(event).endswith(tail):
-            bad.append(f"{event['event_type']} tail line should end with {tail!r}: {format_tail_line(event)!r}")
-
-    # An unmapped event type still renders time/source/type, with an empty field tail.
-    unmapped = {"event_type": "app.custom", "timestamp": "2026-01-01T00:00:00.000Z", "payload": {"x": 1}}
-    if format_tail_line(unmapped) != "00:00:00.000 server  app.custom  ":
-        bad.append(f"an unmapped event should render an empty field tail: {format_tail_line(unmapped)!r}")
-    return bad
-
-
-def _probe_inspect():
-    """The inspect trace (section 9.3): one request reconstructed from its request_id — server trace
-    from the canonical event's denormalized link_sequence, browser trace from the browser events that
-    carry the request_id, ordered BROWSER -> SERVER -> BROWSER, with a single-clock timing breakdown."""
-    from honest_observe import format_inspect
-    from honest_observe.devtools import _request_id_of
-
-    bad = []
-
-    # _request_id_of finds the id wherever present, and only where present.
-    if _request_id_of({"request_id": "r1", "payload": {}}) != "r1":
-        bad.append("_request_id_of should read the envelope request_id")
-    if _request_id_of({"payload": {"request_id": "r2"}}) != "r2":
-        bad.append("_request_id_of should fall back to the payload request_id")
-    if _request_id_of({"aggregate_type": "request", "aggregate_id": "r3", "payload": {}}) != "r3":
-        bad.append("_request_id_of should use the aggregate_id of a request event")
-    if _request_id_of({"aggregate_type": "link", "aggregate_id": "validate", "payload": {}}) is not None:
-        bad.append("_request_id_of should be None when no request_id is present")
-
-    canonical = {
-        "event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": "req_abc",
-        "timestamp": "2026-03-15T14:23:07.023Z",
-        "payload": {
-            "request_id": "req_abc", "http_method": "POST", "http_path": "/api/items", "http_status": 200,
-            "duration_ns": 16000000, "source": "server",
-            "link_sequence": [
-                {"link_name": "validate_filters", "duration_ns": 800000, "result": "ok"},
-                {"link_name": "build_query", "duration_ns": 400000, "result": "ok"},
-                {"link_name": "pay", "duration_ns": 300000, "result": "err", "fault_code": "declined"},
-            ],
-        },
-    }
-    dom_before = {"event_type": "hf.dom.changed", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.001Z", "payload": {"changed_keys": ["filters"]}}
-    req = {"event_type": "hf.browser.request", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.003Z", "payload": {"method": "POST", "url": "/api/items"}}
-    resp = {"event_type": "hf.browser.response", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.166Z", "payload": {"status": 200, "swap_target": "#content-area", "duration_ms": 163, "request_id": "req_abc"}}
-    classify = {"event_type": "hf.browser.classify", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.171Z", "payload": {"element": "#content-area", "attribute": "hf-format", "duration_ns": 3000000}}
-    foreign = {"event_type": "hf.dom.changed", "source": "browser", "request_id": "other", "timestamp": "2026-03-15T14:23:07.500Z", "payload": {"changed_keys": ["x"]}}
-    # A non-request event that merely shares the aggregate_id must NOT be picked as the canonical: the
-    # lookup needs aggregate_type == "request" AND aggregate_id == request_id (pins the `and`).
-    decoy = {"event_type": "hf.link.executed", "aggregate_type": "link", "aggregate_id": "req_abc", "timestamp": "2026-03-15T14:23:07.000Z", "payload": {"link_name": "x"}}
-
-    # The full trace is pinned exactly: every separator, the BROWSER -> SERVER -> BROWSER ordering,
-    # each browser detail line, the server link_sequence with the fault on the errored link, the
-    # foreign-request exclusion, the aggregate-id decoy exclusion, and the timing footer.
-    trace = format_inspect("req_abc", [decoy, dom_before, req, canonical, resp, classify, foreign])
-    expected_trace = (
-        "Request: req_abc\n"
-        "POST /api/items → 200  total: 166ms\n\n"
-        "BROWSER\n"
-        "  14:23:07.001  dom.changed  ['filters']\n"
-        "  14:23:07.003  browser.request  POST /api/items\n\n"
-        "SERVER\n"
-        "  link  validate_filters  ok  0.8ms\n"
-        "  link  build_query  ok  0.4ms\n"
-        "  link  pay  err  0.3ms  declined\n\n"
-        "BROWSER\n"
-        "  14:23:07.166  browser.response  200  #content-area  163ms\n"
-        "  14:23:07.171  browser.classify  #content-area  hf-format\n\n"
-        "Total: 166ms  (server: 16ms  network: 147ms  browser: 3ms)"
-    )
-    if trace != expected_trace:
-        bad.append(f"inspect trace wrong:\n{trace!r}\nexpected:\n{expected_trace!r}")
-
-    # A request with no browser side: server block alone, network and browser zero.
-    server_only = format_inspect("req_abc", [canonical])
-    if "BROWSER" in server_only or not server_only.endswith("Total: 16ms  (server: 16ms  network: 0ms  browser: 0ms)"):
-        bad.append(f"a server-only request should render the server block alone: {server_only}")
-
-    # A browser event at exactly the canonical timestamp belongs to the after section (>=) and appears
-    # exactly once — pinning the < / >= boundary of the before/after split.
-    at_canonical = {"event_type": "hf.dom.changed", "source": "browser", "request_id": "req_abc", "timestamp": "2026-03-15T14:23:07.023Z", "payload": {"changed_keys": ["edge"]}}
-    edge = format_inspect("req_abc", [canonical, at_canonical])
-    if edge.count("dom.changed  ['edge']") != 1 or edge.count("BROWSER") != 1:
-        bad.append(f"an event at the canonical timestamp should appear once, in the after section: {edge}")
-    return bad
-
-
-def _probe_query():
-    """The named-projection runner (section 9.4): resolve a projection by name from a registry and run
-    it over the events. An unknown name is a fault as data; a known one folds and returns ok(state)."""
-    from honest_observe import declare_projection, run_named_projection
-
-    bad = []
-
-    def count(state, event):
-        return {"n": state["n"] + 1}
-
-    registry = {"clicks": declare_projection("clicks", ["click"], count, {"n": 0})}
-    events = [
-        {"event_type": "click", "timestamp": "2026-01-01T00:00:00Z", "payload": {}},
-        {"event_type": "view", "timestamp": "2026-01-01T00:00:01Z", "payload": {}},
-        {"event_type": "click", "timestamp": "2026-01-01T00:00:02Z", "payload": {}},
-    ]
-    result = run_named_projection(registry, "clicks", events)
-    if result != {"ok": {"n": 2}}:
-        bad.append(f"a known projection should run its fold over the filtered events: {result}")
-
-    # A projection declaring an aggregate_id filter folds only that id; one declaring an aggregate_type
-    # filter folds only that type — so both the aggregate_type and aggregate_id the runner threads
-    # through are independently pinned.
-    by_id = {"p": declare_projection("p", None, lambda state, event: state + 1, 0, aggregate_id="o1")}
-    by_type = {"p": declare_projection("p", None, lambda state, event: state + 1, 0, aggregate_type="order")}
-    mixed_events = [
-        {"event_type": "x", "aggregate_type": "order", "aggregate_id": "o1", "timestamp": "t", "payload": {}},
-        {"event_type": "x", "aggregate_type": "refund", "aggregate_id": "o1", "timestamp": "t", "payload": {}},
-        {"event_type": "x", "aggregate_type": "order", "aggregate_id": "o2", "timestamp": "t", "payload": {}},
-    ]
-    if run_named_projection(by_id, "p", mixed_events) != {"ok": 2}:
-        bad.append(f"an aggregate_id filter should fold only that id: {run_named_projection(by_id, 'p', mixed_events)}")
-    if run_named_projection(by_type, "p", mixed_events) != {"ok": 2}:
-        bad.append(f"an aggregate_type filter should fold only that type: {run_named_projection(by_type, 'p', mixed_events)}")
-
-    # An unknown name is a full fault as data — code, message, category, and detail all pinned.
-    missing = run_named_projection(registry, "nope", events)
-    if missing != {"err": {"is_err": True, "code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "results": [], "detail": {"name": "nope"}}}:
-        bad.append(f"an unknown projection name should be a complete fault as data: {missing}")
-    return bad
-
-
-def _probe_cli():
-    """The honest-observe CLI (sections 9.2-9.4): `tail` streams filtered events, `inspect` renders one
-    request's execution trace, `query` runs a named projection. parse_window turns a --since window into
-    seconds; since_cutoff turns (now, window) into an ISO cutoff in the canonical event format;
-    tail_matches is the pure per-event filter (each flag narrows by one field, an absent field never
-    matches its filter); main dispatches the three commands over an injected log reader, clock, registry,
-    and emit, returning an exit code (0 ok, 1 when a client fault is surfaced as data)."""
-    from honest_observe import declare_projection, format_tail_line, parse_window, since_cutoff, tail_matches
-    from honest_observe.cli import main
-
-    bad = []
-
-    # parse_window: a whole number followed by a unit, in seconds.
-    for spec, secs in (("30s", 30), ("5m", 300), ("1h", 3600), ("24h", 86400), ("2d", 172800)):
-        if parse_window(spec) != secs:
-            bad.append(f"parse_window({spec!r}) should be {secs}, got {parse_window(spec)}")
-
-    # since_cutoff: now minus the window, formatted like the event timestamps it is compared against.
-    if since_cutoff("2026-03-15T14:23:07.006Z", "5m") != "2026-03-15T14:18:07.006Z":
-        bad.append(f"since_cutoff 5m wrong: {since_cutoff('2026-03-15T14:23:07.006Z', '5m')}")
-
-    # tail_matches: each flag narrows by one field; an event missing that field never matches the filter.
-    link = {"event_type": "hf.link.executed", "source": "server", "timestamp": "2026-03-15T14:23:07.006Z", "payload": {"link_name": "validate_filters", "chain_name": "fetch_items", "result": "ok", "duration_ns": 800000}}
-    resp = {"event_type": "hf.browser.response", "source": "browser", "timestamp": "2026-03-15T14:23:07.166Z", "payload": {"request_id": "req_abc", "status": 200, "swap_target": "#x", "duration_ms": 163}}
-    bare = {"event_type": "hf.chain.started", "timestamp": "2026-03-15T14:23:07.006Z", "payload": {"chain_name": "c", "link_count": 1}}
-    checks = [
-        (tail_matches(link, chain="fetch_items"), True, "chain matches the payload chain_name"),
-        (tail_matches(link, chain="other"), False, "chain excludes a different chain"),
-        (tail_matches(resp, chain="fetch_items"), False, "an event with no chain_name never matches --chain"),
-        (tail_matches(link, source="server"), True, "source matches an explicit server source"),
-        (tail_matches(link, source="browser"), False, "source excludes a different source"),
-        (tail_matches(resp, source="browser"), True, "source matches a browser event's own source field"),
-        (tail_matches(bare, source="server"), True, "an event with no source field defaults to server"),
-        (tail_matches(bare, source="browser"), False, "the server default does not match a browser filter"),
-        (tail_matches(resp, request="req_abc"), True, "request matches the request id"),
-        (tail_matches(link, request="req_abc"), False, "an event with no request id never matches --request"),
-        (tail_matches(link, event_type="hf.link.executed"), True, "event matches the type"),
-        (tail_matches(link, event_type="hf.chain.started"), False, "event excludes a different type"),
-        (tail_matches(link, since="2026-03-15T14:00:00.000Z"), True, "since keeps an event after the cutoff"),
-        (tail_matches(link, since="2026-03-15T14:23:07.006Z"), True, "since keeps an event exactly at the cutoff"),
-        (tail_matches(link, since="2026-03-15T15:00:00.000Z"), False, "since drops an event before the cutoff"),
-    ]
-    for got, want, why in checks:
-        if got != want:
-            bad.append(f"tail_matches: {why} (got {got})")
-
-    # main tail: with --chain, only the matching link line is emitted; exit 0.
-    lines = []
-    code = main(["tail", "--chain", "fetch_items"], lambda: [link, resp], lambda: "2026-03-15T14:30:00.000Z", {}, lines.append)
-    if code != 0 or lines != [format_tail_line(link)]:
-        bad.append(f"tail --chain should print only the matching link line: code={code} lines={lines}")
-
-    canonical = {
-        "event_type": "hf.request.canonical", "aggregate_type": "request", "aggregate_id": "req_abc",
-        "timestamp": "2026-03-15T14:23:07.023Z",
-        "payload": {"request_id": "req_abc", "http_method": "POST", "http_path": "/api/items", "http_status": 200, "duration_ns": 16000000, "source": "server", "link_sequence": []},
-    }
-
-    # main inspect: a known request renders its trace; exit 0.
-    seen = []
-    code = main(["inspect", "req_abc"], lambda: [canonical], lambda: "t", {}, seen.append)
-    if code != 0 or len(seen) != 1 or not seen[0].startswith("Request: req_abc"):
-        bad.append(f"inspect should render the request trace: code={code} out={seen}")
-
-    # main inspect: an unknown request is a client fault surfaced as data; exit 1.
-    miss = []
-    code = main(["inspect", "nope"], lambda: [canonical], lambda: "t", {}, miss.append)
-    if code != 1 or not miss or "nope" not in miss[0]:
-        bad.append(f"inspect of an unknown request should surface a fault and exit 1: code={code} out={miss}")
-
-    # main query: a known projection folds and prints ok(state); an unknown name exits 1.
-    registry = {"clicks": declare_projection("clicks", ["click"], lambda s, e: {"n": s["n"] + 1}, {"n": 0})}
-    click_events = [{"event_type": "click", "timestamp": "2026-01-01T00:00:00Z", "payload": {}}]
-    out = []
-    code = main(["query", "clicks"], lambda: click_events, lambda: "t", registry, out.append)
-    if code != 0 or out != ["{'n': 1}"]:
-        bad.append(f"query of a known projection should print its folded state: code={code} out={out}")
-    err = []
-    code = main(["query", "nope"], lambda: click_events, lambda: "t", registry, err.append)
-    if code != 1 or not err or "nope" not in err[0]:
-        bad.append(f"query of an unknown projection should surface a fault and exit 1: code={code} out={err}")
-
-    # main tail --since: the clock minus the window drops the older event and keeps the newer one.
-    old = {"event_type": "hf.chain.started", "source": "server", "timestamp": "2026-03-15T14:00:00.000Z", "payload": {"chain_name": "c", "link_count": 1}}
-    new = {"event_type": "hf.chain.started", "source": "server", "timestamp": "2026-03-15T14:29:00.000Z", "payload": {"chain_name": "c", "link_count": 1}}
-    kept = []
-    code = main(["tail", "--since", "5m"], lambda: [old, new], lambda: "2026-03-15T14:30:00.000Z", {}, kept.append)
-    if code != 0 or kept != [format_tail_line(new)]:
-        bad.append(f"tail --since 5m should keep only the event inside the window: code={code} lines={kept}")
-
-    # main query --since: only events at or after the cutoff reach the fold. An event exactly at the
-    # cutoff is kept (pins >= against >), and the older event is dropped rather than the newer (pins the
-    # filter against its negation): with a 5m window at 14:30 the cutoff is 14:25, so the 14:25 and 14:29
-    # events fold and the 14:20 one does not — a count of two.
-    at_cut = {"event_type": "hf.chain.started", "source": "server", "timestamp": "2026-03-15T14:25:00.000Z", "payload": {"chain_name": "c", "link_count": 1}}
-    older = {"event_type": "hf.chain.started", "source": "server", "timestamp": "2026-03-15T14:20:00.000Z", "payload": {"chain_name": "c", "link_count": 1}}
-    windowed = []
-    code = main(["query", "starts", "--since", "5m"], lambda: [older, at_cut, new], lambda: "2026-03-15T14:30:00.000Z",
-                {"starts": declare_projection("starts", ["hf.chain.started"], lambda s, e: {"n": s["n"] + 1}, {"n": 0})}, windowed.append)
-    if code != 0 or windowed != ["{'n': 2}"]:
-        bad.append(f"query --since should fold only the events at or after the cutoff: code={code} out={windowed}")
-
-    # main query --bucket: one line per non-empty bucket, in ascending time order, folded independently.
-    span = [
-        {"event_type": "hit", "timestamp": "2026-03-15T14:23:10.000Z", "payload": {}},
-        {"event_type": "hit", "timestamp": "2026-03-15T14:23:40.000Z", "payload": {}},
-        {"event_type": "hit", "timestamp": "2026-03-15T14:24:05.000Z", "payload": {}},
-    ]
-    buckets = []
-    code = main(["query", "hits", "--bucket", "1m"], lambda: span, lambda: "t",
-                {"hits": declare_projection("hits", ["hit"], lambda s, e: {"n": s["n"] + 1}, {"n": 0})}, buckets.append)
-    if code != 0 or buckets != ["2026-03-15T14:23:00Z {'n': 2}", "2026-03-15T14:24:00Z {'n': 1}"]:
-        bad.append(f"query --bucket should fold each minute independently: code={code} out={buckets}")
-    miss_bucket = []
-    code = main(["query", "nope", "--bucket", "1m"], lambda: span, lambda: "t", {}, miss_bucket.append)
-    if code != 1 or not miss_bucket or "nope" not in miss_bucket[0]:
-        bad.append(f"query --bucket of an unknown projection should surface a fault and exit 1: {miss_bucket}")
-
-    # run_bucketed_projection's own unknown-name fault is pinned directly (the CLI surfaces only its
-    # message, so its code, category, and detail need their own oracle).
-    from honest_observe import run_bucketed_projection
-
-    unknown = run_bucketed_projection({}, "nope", span, 60)
-    if unknown != {"err": {"is_err": True, "code": "unknown_projection", "message": "No projection named 'nope' in the registry", "category": "client", "results": [], "detail": {"name": "nope"}}}:
-        bad.append(f"run_bucketed_projection should surface a complete unknown_projection fault: {unknown}")
-
-    # main with no subcommand is an argparse usage error (exit 2) that names the program (required=True,
-    # prog="honest-observe"); --help prints the program description and each subcommand's help text.
-    import asyncio
-    import contextlib
-    import io
-    import re
-
-    err_buf = io.StringIO()
-    try:
-        with contextlib.redirect_stderr(err_buf):
-            main([], lambda: [], lambda: "t", {}, lambda line: None)
-        bad.append("main with no subcommand should exit via argparse")
-    except SystemExit as exc:
-        if exc.code != 2 or "honest-observe" not in err_buf.getvalue():
-            bad.append(f"no subcommand should be a usage error naming the program: code={exc.code} err={err_buf.getvalue()!r}")
-    help_buf = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(help_buf):
-            main(["--help"], lambda: [], lambda: "t", {}, lambda line: None)
-        bad.append("--help should exit")
-    except SystemExit:
-        pass
-    for fragment in (
-        "Read the event log and present it (section 9).",
-        "stream the log as structured lines (section 9.2)",
-        "render one request's execution trace (section 9.3)",
-        "run a named projection over the log (section 9.4)",
-    ):
-        if fragment not in help_buf.getvalue():
-            bad.append(f"--help should document {fragment!r}")
-
-    # read_event_log deserializes honest_event_log rows (section 10) back into events through a connection;
-    # _entry materializes the log and runs the CLI over it, printing to stdout.
-    from honest_observe.cli import _entry, _now, read_event_log
-
-    # Two rows pin the nullable-column handling: the first carries both auth and meta (each parsed into the
-    # event), the second carries neither (both dropped) — so emptying either "auth" or "meta" in the loop,
-    # or flipping its is-not-None guard, changes the result.
-    rows = [
-        {
-            "event_id": "e1", "event_type": "hf.link.executed", "event_version": "1",
-            "timestamp": "2026-03-15T14:23:07.006Z", "sequence": 1, "aggregate_type": "link", "aggregate_id": "validate",
-            "payload": '{"link_name": "validate", "chain_name": "fetch_items", "result": "ok", "duration_ns": 800000}',
-            "auth": '{"user_id": "u1"}', "meta": '{"tenant": "t1"}',
-        },
-        {
-            "event_id": "e2", "event_type": "hf.chain.started", "event_version": "1",
-            "timestamp": "2026-03-15T14:23:08.000Z", "sequence": 2, "aggregate_type": "chain", "aggregate_id": "fetch_items",
-            "payload": '{"chain_name": "fetch_items", "link_count": 2}', "auth": None, "meta": None,
-        },
-    ]
-
-    class _RowsConn:
-        def __init__(self, rows):
-            self.rows = rows
-            self.sql = None
-
-        async def execute(self, sql, params):
-            self.sql = sql
-            return {"rows": self.rows, "rowcount": len(self.rows)}
-
-    conn = _RowsConn(rows)
-    loaded = asyncio.run(read_event_log(conn))
-    expected_events = [
-        {
-            "event_type": "hf.link.executed", "event_version": "1", "timestamp": "2026-03-15T14:23:07.006Z",
-            "sequence": 1, "aggregate_type": "link", "aggregate_id": "validate", "event_id": "e1",
-            "payload": {"link_name": "validate", "chain_name": "fetch_items", "result": "ok", "duration_ns": 800000},
-            "auth": {"user_id": "u1"}, "meta": {"tenant": "t1"},
-        },
-        {
-            "event_type": "hf.chain.started", "event_version": "1", "timestamp": "2026-03-15T14:23:08.000Z",
-            "sequence": 2, "aggregate_type": "chain", "aggregate_id": "fetch_items", "event_id": "e2",
-            "payload": {"chain_name": "fetch_items", "link_count": 2},
-        },
-    ]
-    if loaded != expected_events:
-        bad.append(f"read_event_log should deserialize rows, parsing auth/meta and dropping them when null: {loaded}")
-    if "honest_event_log" not in conn.sql or "sequence" not in conn.sql:
-        bad.append(f"read_event_log should select honest_event_log ordered by sequence: {conn.sql}")
-
-    # _now is the wall clock formatted like the event log: an ISO timestamp to millisecond precision, Z.
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", _now()):
-        bad.append(f"_now should be an ISO millisecond timestamp with a Z suffix: {_now()!r}")
-
-    out_buf = io.StringIO()
-    with contextlib.redirect_stdout(out_buf):
-        code = _entry(["tail", "--chain", "fetch_items"], _RowsConn(rows), {})
-    if code != 0 or out_buf.getvalue() != format_tail_line(expected_events[0]) + "\n" + format_tail_line(expected_events[1]) + "\n":
-        bad.append(f"_entry should read the log and print the matching tail lines: code={code} out={out_buf.getvalue()!r}")
-
-    # _entry uses the real wall clock for --since; the 2026-03-15 row is always older than a 5m window,
-    # so it is dropped and nothing prints — exercising the clock while staying deterministic.
-    aged_buf = io.StringIO()
-    with contextlib.redirect_stdout(aged_buf):
-        code = _entry(["tail", "--since", "5m"], _RowsConn(rows), {})
-    if code != 0 or aged_buf.getvalue() != "":
-        bad.append(f"_entry --since should drop an event older than the window: code={code} out={aged_buf.getvalue()!r}")
-    return bad
-
-
-def _probe_config():
-    """The configuration loader and its toggle resolvers (section 11, section 9.5-9.6). load_config turns a
-    parsed honest-observe.toml (a dict) into a fully-defaulted, validated configuration as data: ok(config)
-    for a well-formed table, err(invalid_config) for a bad auth provider or a custom provider with no
-    fields. The resolvers are pure functions of that config: development mode is an override layer that
-    forces classify events on and lets the manifest, traceback, and auto-tail conveniences follow their own
-    [development] sub-toggles, with everything reading its base framework_events toggle in production."""
-    import os
-    import tempfile
-
-    from honest_observe import (
-        development_mode,
-        framework_event_enabled,
-        development_subtoggle,
-        load_config,
-        read_config,
-    )
-
-    bad = []
-
-    # An empty table is the all-defaults configuration: every section present and every documented key at
-    # its default. Pinned as one whole-config oracle so every default value and key is fixed.
-    defaults = load_config({})
-    expected_defaults = {
-        "event_log": {"table": "honest_event_log", "db_id": "primary", "retention_days": 365},
-        "auth": {"provider": "honest-auth", "fields": []},
-        "framework_events": {"chain_events": True, "link_events": True, "persist_events": True, "migration_events": True, "pool_events": True, "state_events": True, "classify_events": False},
-        "otel": {"enabled": False, "service": "", "environment": "production"},
-        "snapshots": {"enabled": True, "default_interval": 1000, "storage_table": "honest_projection_snapshots"},
-        "development": {"enabled": False, "auto_tail": False, "manifests": False, "tracebacks": False},
-    }
-    if defaults != {"ok": expected_defaults}:
-        bad.append(f"an empty config table should be the all-defaults configuration: {defaults}")
-
-    # Supplied values override the defaults, section by section, leaving unmentioned keys at their default.
-    merged = load_config({"event_log": {"db_id": "reporting"}, "framework_events": {"classify_events": True}})
-    if "err" in merged or merged["ok"]["event_log"]["db_id"] != "reporting" or merged["ok"]["event_log"]["table"] != "honest_event_log" or merged["ok"]["framework_events"]["classify_events"] is not True:
-        bad.append(f"supplied values should override only the keys given: {merged}")
-
-    # Validation, as data: a bad provider and a custom provider without fields both fault; custom with a
-    # non-empty fields list is accepted.
-    badprov = load_config({"auth": {"provider": "nope"}})
-    if badprov != {"err": {"is_err": True, "code": "invalid_config", "message": "auth.provider must be one of honest-auth, custom, none; got 'nope'", "category": "client", "results": [], "detail": {"provider": "nope"}}}:
-        bad.append(f"an unrecognised auth provider should be a complete invalid_config fault: {badprov}")
-    nofields = load_config({"auth": {"provider": "custom"}})
-    if nofields != {"err": {"is_err": True, "code": "invalid_config", "message": "auth.provider 'custom' requires a non-empty fields list", "category": "client", "results": [], "detail": {"provider": "custom"}}}:
-        bad.append(f"a custom provider with no fields should be a complete invalid_config fault: {nofields}")
-    withfields = load_config({"auth": {"provider": "custom", "fields": ["user_id"]}})
-    if "ok" not in withfields or withfields["ok"]["auth"]["fields"] != ["user_id"]:
-        bad.append(f"a custom provider with fields should be accepted: {withfields}")
-    # 'none' is a valid provider too — pins every entry of the provider vocabulary.
-    if "ok" not in load_config({"auth": {"provider": "none"}}):
-        bad.append("auth.provider 'none' should be accepted")
-
-    prod = load_config({})["ok"]
-    dev = load_config({"development": {"enabled": True, "manifests": True, "tracebacks": True, "auto_tail": True}})["ok"]
-    dev_bare = load_config({"development": {"enabled": True}})["ok"]
-
-    # development_mode reads the switch.
-    if development_mode(prod) is not False or development_mode(dev) is not True:
-        bad.append("development_mode should read development.enabled")
-
-    # framework_event_enabled: base toggle in production; classify is forced on in development; a
-    # base-on kind stays on either way; a base-off kind other than classify stays off in development.
-    resolver_checks = [
-        (framework_event_enabled(prod, "link"), True, "link on by base toggle"),
-        (framework_event_enabled(prod, "classify"), False, "classify off in production"),
-        (framework_event_enabled(dev_bare, "classify"), True, "classify forced on in development"),
-        (framework_event_enabled(dev_bare, "link"), True, "link stays on in development"),
-        (framework_event_enabled(load_config({"framework_events": {"link_events": False}})["ok"], "link"), False, "link off when its base toggle is off"),
-    ]
-    for got, want, why in resolver_checks:
-        if got != want:
-            bad.append(f"framework_event_enabled: {why} (got {got})")
-
-    # The three conveniences: false in production; in development each follows its own sub-toggle, so dev
-    # mode with the sub-toggle off still reads false.
-    convenience_checks = [
-        (development_subtoggle(prod, "manifests"), False, "manifests off in production"),
-        (development_subtoggle(dev, "manifests"), True, "manifests on with dev + sub-toggle"),
-        (development_subtoggle(dev_bare, "manifests"), False, "manifests off when dev on but sub-toggle off"),
-        (development_subtoggle(prod, "tracebacks"), False, "tracebacks off in production"),
-        (development_subtoggle(dev, "tracebacks"), True, "tracebacks on with dev + sub-toggle"),
-        (development_subtoggle(dev_bare, "tracebacks"), False, "tracebacks off when dev on but sub-toggle off"),
-        (development_subtoggle(prod, "auto_tail"), False, "auto_tail off in production"),
-        (development_subtoggle(dev, "auto_tail"), True, "auto_tail on with dev + sub-toggle"),
-        (development_subtoggle(dev_bare, "auto_tail"), False, "auto_tail off when dev on but sub-toggle off"),
-    ]
-    for got, want, why in convenience_checks:
-        if got != want:
-            bad.append(f"convenience resolver: {why} (got {got})")
-
-    # read_config is the boundary: it reads and parses the file, then load_config. A present file yields its
-    # values; a missing file is the all-defaults configuration.
-    handle, path = tempfile.mkstemp(suffix=".toml")
-    try:
-        with os.fdopen(handle, "w") as fh:
-            fh.write('[event_log]\ndb_id = "reporting"\n\n[development]\nenabled = true\nmanifests = true\n')
-        loaded = read_config(path)
-        if "err" in loaded or loaded["ok"]["event_log"]["db_id"] != "reporting" or development_subtoggle(loaded["ok"], "manifests") is not True:
-            bad.append(f"read_config should read and load the file: {loaded}")
-    finally:
-        os.remove(path)
-    missing = read_config(path)
-    if "err" in missing or missing["ok"] != load_config({})["ok"]:
-        bad.append(f"read_config of a missing file should be the all-defaults configuration: {missing}")
-    return bad
-
-
-def _probe_threshold_engine():
-    """The threshold metric engine (section 8b): a metric is a fold plus a value over the log
-    (custom_metric / compute_metric), and a condition is the threshold-crossing decision
-    (condition_met). All pure; sending the alert, storing the rule, and the cooldown are other modules."""
-    from honest_observe import compute_metric, condition_met, custom_metric
-
-    bad = []
-
-    # condition_met is the threshold comparator (section 8b.4 ConditionSpec operator/value).
-    checks = [
-        ("gt over", condition_met(0.06, {"operator": "gt", "value": 0.05}), True),
-        ("gt under", condition_met(0.04, {"operator": "gt", "value": 0.05}), False),
-        ("gt equal", condition_met(5, {"operator": "gt", "value": 5}), False),     # strict: not >=
-        ("lt under", condition_met(3, {"operator": "lt", "value": 5}), True),
-        ("lt over", condition_met(7, {"operator": "lt", "value": 5}), False),
-        ("lt equal", condition_met(5, {"operator": "lt", "value": 5}), False),     # strict: not <=
-        ("gte equal", condition_met(5, {"operator": "gte", "value": 5}), True),
-        ("gte under", condition_met(4, {"operator": "gte", "value": 5}), False),
-        ("lte equal", condition_met(5, {"operator": "lte", "value": 5}), True),
-        ("lte over", condition_met(6, {"operator": "lte", "value": 5}), False),
-    ]
-    for label, got, want in checks:
-        if got != want:
-            bad.append(f"condition_met({label}) should be {want}, got {got}")
-
-    # A metric is a fold accumulating state plus a value extracting the number (the section 8b.5 pattern).
-    def fold(state, event):
-        return {"total": state["total"] + 1, "failed": state["failed"] + (1 if event["payload"]["result"] == "failure" else 0)}
-
-    def value(state):
-        return state["failed"] / state["total"] if state["total"] else 0.0
-
-    metric = custom_metric("payment.failure_rate", ["app.payment.api_called"], fold, value, {"total": 0, "failed": 0})
-    if metric["name"] != "payment.failure_rate" or metric["fold"] is not fold or metric["value"] is not value:
-        bad.append(f"custom_metric should carry the name, fold, and value: {metric}")
-
-    events = [
-        {"event_type": "app.payment.api_called", "timestamp": "2026-01-01T00:00:00Z", "payload": {"result": "success"}},
-        {"event_type": "app.payment.api_called", "timestamp": "2026-01-01T00:00:01Z", "payload": {"result": "failure"}},
-        {"event_type": "app.payment.api_called", "timestamp": "2026-01-01T00:00:02Z", "payload": {"result": "success"}},
-        {"event_type": "app.other", "timestamp": "2026-01-01T00:00:03Z", "payload": {}},
-    ]
-    # compute_metric folds only the metric's event types, then extracts the value: one failure in three.
-    if compute_metric(metric, events) != 1 / 3:
-        bad.append(f"compute_metric should fold the metric's events and extract the value: {compute_metric(metric, events)}")
-    # Empty log: the value function's empty-state path (no division by zero).
-    if compute_metric(metric, []) != 0.0:
-        bad.append("compute_metric over an empty log should return the metric's empty value")
-    return bad
-
-
-def _probe_builtin_metrics():
-    """The built-in threshold metrics (section 8b.3): ready-made metrics over the framework's own events,
-    each a fold and a value the engine runs. Covers the self-contained metrics over observe-owned events,
-    including the per-link metrics grouped by link; the persist-sourced metrics are deferred (see
-    thresholds.py)."""
-    from honest_observe import builtin_metrics, compute_metric
-    from honest_observe.thresholds import _percentile
-
-    bad = []
-
-    # Percentile by nearest rank: empty is zero, a single value is itself, p99 of 1..100 is 99.
-    if _percentile([], 99) != 0:
-        bad.append("the percentile of no values should be zero")
-    if _percentile([42], 99) != 42:
-        bad.append("the percentile of one value should be that value")
-    if _percentile(list(range(1, 101)), 99) != 99:
-        bad.append(f"p99 of 1..100 should be 99: {_percentile(list(range(1, 101)), 99)}")
-    if _percentile(list(range(1, 101)), 98) != 98 or _percentile(list(range(1, 101)), 100) != 100:
-        bad.append("p98 of 1..100 should be 98 and p100 should be 100 (pins the percentile arithmetic)")
-    if _percentile(list(range(1, 102)), 100) != 101:
-        bad.append(f"p100 of 1..101 should be 101 (pins the p/100 rank divisor): {_percentile(list(range(1, 102)), 100)}")
-
-    metrics = builtin_metrics()
-    # Every built-in metric's internal name matches its registry key (pins the name argument).
-    for key, metric_decl in metrics.items():
-        if metric_decl["name"] != key:
-            bad.append(f"built-in metric {key!r} should carry its own name: {metric_decl['name']!r}")
-    canonical = [
-        {"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:00Z", "payload": {"result": "ok", "duration_ns": 100}},
-        {"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:01Z", "payload": {"result": "err", "duration_ns": 300}},
-    ]
-    if compute_metric(metrics["request.error_rate"], canonical) != 0.5:
-        bad.append(f"request.error_rate should be the err fraction: {compute_metric(metrics['request.error_rate'], canonical)}")
-    if compute_metric(metrics["request.rate_per_minute"], canonical) != 2:
-        bad.append("request.rate_per_minute should count the requests")
-    if compute_metric(metrics["request.p99_duration_ns"], canonical) != 300:
-        bad.append("request.p99_duration_ns should be the 99th-percentile duration")
-    # Over 100 distinct durations the metric's hardcoded 99th percentile is pinned (a 2-sample input
-    # cannot distinguish p98/p99/p100).
-    hundred = [{"event_type": "hf.request.canonical", "timestamp": "t", "payload": {"result": "ok", "duration_ns": n}} for n in range(1, 101)]
-    if compute_metric(metrics["request.p99_duration_ns"], hundred) != 99:
-        bad.append(f"request.p99_duration_ns over 1..100 should be 99: {compute_metric(metrics['request.p99_duration_ns'], hundred)}")
-    hundred_ms = [{"event_type": "hf.browser.response", "timestamp": "t", "payload": {"duration_ms": n}} for n in range(1, 101)]
-    if compute_metric(metrics["browser.response.p99_duration_ms"], hundred_ms) != 99:
-        bad.append(f"browser.response.p99_duration_ms over 1..100 should be 99: {compute_metric(metrics['browser.response.p99_duration_ms'], hundred_ms)}")
-    # The empty-log path of the rate value (the no-division branch).
-    if compute_metric(metrics["request.error_rate"], []) != 0.0:
-        bad.append("request.error_rate over an empty log should be zero")
-
-    classify = [
-        {"event_type": "hf.classify.completed", "timestamp": "2026-01-01T00:00:00Z", "payload": {"token_count": 7, "rejection_count": 1}},
-        {"event_type": "hf.classify.completed", "timestamp": "2026-01-01T00:00:01Z", "payload": {"token_count": 3, "rejection_count": 1}},
-    ]
-    if compute_metric(metrics["classify.rejection_rate"], classify) != 0.2:
-        bad.append(f"classify.rejection_rate should be rejected over tokens: {compute_metric(metrics['classify.rejection_rate'], classify)}")
-    if compute_metric(metrics["classify.rejection_rate"], []) != 0.0:
-        bad.append("classify.rejection_rate over an empty log should be zero")
-
-    links = [
-        {"event_type": "hf.link.executed", "timestamp": "2026-01-01T00:00:00Z", "payload": {"mutations": 1, "nondeterminism": True}},
-        {"event_type": "hf.link.executed", "timestamp": "2026-01-01T00:00:01Z", "payload": {"mutations": 2, "nondeterminism": False}},
-        {"event_type": "hf.link.executed", "timestamp": "2026-01-01T00:00:02Z", "payload": {"mutations": 0, "nondeterminism": True}},
-    ]
-    if compute_metric(metrics["honesty.mutation_count"], links) != 3:
-        bad.append("honesty.mutation_count should sum the mutations")
-    # Two nondeterministic, one deterministic — distinguishes counting the True case from the False case.
-    if compute_metric(metrics["honesty.nondeterminism_count"], links) != 2:
-        bad.append(f"honesty.nondeterminism_count should count the nondeterministic links: {compute_metric(metrics['honesty.nondeterminism_count'], links)}")
-
-    responses = [
-        {"event_type": "hf.browser.response", "timestamp": "2026-01-01T00:00:00Z", "payload": {"duration_ms": 100}},
-        {"event_type": "hf.browser.response", "timestamp": "2026-01-01T00:00:01Z", "payload": {"duration_ms": 200}},
-    ]
-    if compute_metric(metrics["browser.response.p99_duration_ms"], responses) != 200:
-        bad.append("browser.response.p99_duration_ms should be the 99th-percentile round trip")
-
-    # The per-link metrics are grouped by link_name: one value per link (section 8b.3), and an empty log
-    # is an empty mapping.
-    link_exec = [
-        {"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "validate", "result": "ok", "duration_ns": 10}},
-        {"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "charge", "result": "err", "duration_ns": 50}},
-        {"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "charge", "result": "ok", "duration_ns": 40}},
-    ]
-    if compute_metric(metrics["link.fault_rate"], link_exec) != {"validate": 0.0, "charge": 0.5}:
-        bad.append(f"link.fault_rate should be the fault fraction per link: {compute_metric(metrics['link.fault_rate'], link_exec)}")
-    if compute_metric(metrics["link.p99_duration_ns"], link_exec) != {"validate": 10, "charge": 50}:
-        bad.append(f"link.p99_duration_ns should be the 99th-percentile duration per link: {compute_metric(metrics['link.p99_duration_ns'], link_exec)}")
-    # One link with 100 distinct durations pins its 99th percentile at 99 (a 2-sample group cannot).
-    hundred_link = [{"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "slow", "result": "ok", "duration_ns": n}} for n in range(1, 101)]
-    if compute_metric(metrics["link.p99_duration_ns"], hundred_link) != {"slow": 99}:
-        bad.append(f"link.p99_duration_ns over 1..100 for one link should be 99: {compute_metric(metrics['link.p99_duration_ns'], hundred_link)}")
-    if compute_metric(metrics["link.fault_rate"], []) != {}:
-        bad.append("a grouped metric over an empty log should be an empty mapping")
-    return bad
-
-
-def _probe_threshold_projection():
-    """The threshold projection (section 8b.2) and its firing decision: declare what to watch and the
-    line to cross (threshold_projection), then decide whether it fires now (evaluate_threshold). Pure;
-    the cooldown timing, the alert send, and the remediation chain are the boundary's."""
-    from honest_observe import builtin_metrics, evaluate_threshold, threshold_projection
-
-    bad = []
-
-    alert = {"message_type": "hf.alert.high_error_rate", "recipient": {"type": "role", "id": "on_call"}, "dom_surface": "banner"}
-    declared = threshold_projection("high_error_rate", "request.error_rate", {"operator": "gt", "value": 0.05}, "5m", "10m", alert, remediation="investigate", enabled=True)
-    if declared != {
-        "projection_id": "high_error_rate", "metric": "request.error_rate", "condition": {"operator": "gt", "value": 0.05},
-        "window": "5m", "cooldown": "10m", "alert": alert, "enabled": True, "remediation": "investigate",
-    }:
-        bad.append(f"threshold_projection full shape wrong: {declared}")
-    if "remediation" in threshold_projection("p", "m", {"operator": "gt", "value": 1}, "1m", "1m", alert):
-        bad.append("threshold_projection should omit remediation when not supplied")
-    # enabled defaults to True, so a projection declared without it still evaluates and can fire.
-    if threshold_projection("p", "m", {"operator": "gt", "value": 1}, "1m", "1m", alert)["enabled"] is not True:
-        bad.append("threshold_projection enabled should default to True")
-
-    metric = builtin_metrics()["request.error_rate"]
-    over = [
-        {"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:00Z", "payload": {"result": "err", "duration_ns": 1}},
-        {"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:01Z", "payload": {"result": "ok", "duration_ns": 1}},
-    ]
-    fired = evaluate_threshold(declared, metric, over)
-    if fired != {"fired": True, "value": 0.5}:
-        bad.append(f"an enabled threshold over its line should fire with the value: {fired}")
-
-    under = [{"event_type": "hf.request.canonical", "timestamp": "2026-01-01T00:00:00Z", "payload": {"result": "ok", "duration_ns": 1}}]
-    if evaluate_threshold(declared, metric, under) != {"fired": False, "value": 0.0}:
-        bad.append("an enabled threshold under its line should not fire")
-
-    disabled = threshold_projection("off", "request.error_rate", {"operator": "gt", "value": 0.05}, "5m", "10m", alert, enabled=False)
-    if evaluate_threshold(disabled, metric, over) != {"fired": False, "value": None}:
-        bad.append("a disabled threshold never fires and reports no value")
-
-    # A threshold declared on a grouped (per-link) metric fires per link: one {group, fired, value} per
-    # link, and `fired` is true when any link crosses the line (section 8b, per-link firing).
-    per_link = threshold_projection("link_faults", "link.fault_rate", {"operator": "gt", "value": 0.25}, "5m", "10m", alert)
-    link_metric = builtin_metrics()["link.fault_rate"]
-    link_events = [
-        {"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "ok_link", "result": "ok", "duration_ns": 1}},
-        {"event_type": "hf.link.executed", "timestamp": "t", "payload": {"link_name": "bad_link", "result": "err", "duration_ns": 1}},
-    ]
-    if evaluate_threshold(per_link, link_metric, link_events) != {"fired": True, "firings": [{"group": "ok_link", "fired": False, "value": 0.0}, {"group": "bad_link", "fired": True, "value": 1.0}]}:
-        bad.append(f"a per-link threshold should fire per link over the line: {evaluate_threshold(per_link, link_metric, link_events)}")
-    calm = evaluate_threshold(per_link, link_metric, link_events[:1])
-    if calm["fired"] or calm["firings"] != [{"group": "ok_link", "fired": False, "value": 0.0}]:
-        bad.append(f"a per-link threshold with no link over the line should not fire: {calm}")
-    return bad
-
-
-def _probe_rejection():
-    """External-ingest rejections (section 8c.5): a raw event that fails translation or identity
-    resolution becomes a rejection record — data, not an exception — and the honest_rejection_log is the
-    append-only table it lands in (section 8c.7), observe's to define as data, persist's to apply."""
-    from honest_observe import rejection, rejection_log_manifest, rejection_log_schema
-
-    bad = []
-
-    record = rejection("stripe", "unrecognized_shape", {"missing": "amount"}, {"id": "evt_1"}, "1.0", "rej-uuid-1", "2026-03-15T14:23:07Z")
-    if record != {
-        "rejection_id": "rej-uuid-1", "received_at": "2026-03-15T14:23:07Z", "source": "stripe",
-        "reason_code": "unrecognized_shape", "reason_detail": {"missing": "amount"},
-        "raw_event": {"id": "evt_1"}, "translator_version": "1.0",
-    }:
-        bad.append(f"rejection record wrong: {record}")
-
-    # The full schema dict is pinned exactly: every column definition (type, nullable, primary_key),
-    # the primary key, and all three forensic indexes with their columns.
-    expected_table = {
-        "columns": {
-            "rejection_id": {"type": "text", "primary_key": True, "nullable": False},
-            "received_at": {"type": "text", "nullable": False},
-            "source": {"type": "text", "nullable": False},
-            "reason_code": {"type": "text", "nullable": False},
-            "reason_detail": {"type": "text", "nullable": False},
-            "raw_event": {"type": "text", "nullable": False},
-            "translator_version": {"type": "text", "nullable": False},
-        },
-        "primary_key": ["rejection_id"],
-        "indexes": {"idx_source": {"columns": ["source"]}, "idx_reason": {"columns": ["reason_code"]}, "idx_received": {"columns": ["received_at"]}},
-    }
-    schema = rejection_log_schema()
-    if schema != {"honest_rejection_log": expected_table}:
-        bad.append(f"rejection_log_schema wrong: {schema}")
-    if rejection_log_manifest() != {"table": "honest_rejection_log", "append_only": True, "schema": expected_table}:
-        bad.append(f"rejection_log_manifest wrong: {rejection_log_manifest()}")
-    return bad
-
-
-def _probe_hlc():
-    """Hybrid Logical Clocks (section 8c.2): a causal total order across sources that do not share a
-    clock. Pure — the physical clock is read at the boundary and passed in. hlc_send advances on a local
-    event, hlc_receive merges an incoming clock, hlc_compare gives the total order."""
-    from honest_observe import hlc_compare, hlc_receive, hlc_send
-
-    bad = []
-
-    # Send: when the wall clock has advanced, take it and reset the logical counter; when it has not,
-    # keep the physical time and increment the logical counter (so same-millisecond events still order).
-    if hlc_send({"physical": 10, "logical": 5, "source": "a"}, 20) != {"physical": 20, "logical": 0, "source": "a"}:
-        bad.append("hlc_send should take an advanced wall clock and reset logical")
-    if hlc_send({"physical": 10, "logical": 5, "source": "a"}, 8) != {"physical": 10, "logical": 6, "source": "a"}:
-        bad.append("hlc_send should keep physical and increment logical when the clock did not advance")
-
-    # Receive: new physical is the max of local, incoming, and the wall clock; the logical counter is
-    # chosen by which of those the max came from (canonical HLC receive).
-    if hlc_receive({"physical": 10, "logical": 2, "source": "a"}, {"physical": 10, "logical": 3, "source": "b"}, 5) != {"physical": 10, "logical": 4, "source": "a"}:
-        bad.append("hlc_receive with local==incoming should take max logical + 1")
-    if hlc_receive({"physical": 10, "logical": 2, "source": "a"}, {"physical": 8, "logical": 9, "source": "b"}, 7) != {"physical": 10, "logical": 3, "source": "a"}:
-        bad.append("hlc_receive when local physical wins should increment the local logical")
-    if hlc_receive({"physical": 8, "logical": 2, "source": "a"}, {"physical": 10, "logical": 9, "source": "b"}, 7) != {"physical": 10, "logical": 10, "source": "a"}:
-        bad.append("hlc_receive when incoming physical wins should increment the incoming logical")
-    if hlc_receive({"physical": 8, "logical": 2, "source": "a"}, {"physical": 9, "logical": 9, "source": "b"}, 20) != {"physical": 20, "logical": 0, "source": "a"}:
-        bad.append("hlc_receive when the wall clock wins should reset logical")
-
-    # Compare: by physical, then logical, then source id; the receiver keeps its own source.
-    order = [
-        ({"physical": 10, "logical": 0, "source": "a"}, {"physical": 20, "logical": 0, "source": "a"}, -1),
-        ({"physical": 20, "logical": 0, "source": "a"}, {"physical": 10, "logical": 0, "source": "a"}, 1),
-        ({"physical": 10, "logical": 1, "source": "a"}, {"physical": 10, "logical": 2, "source": "a"}, -1),
-        ({"physical": 10, "logical": 2, "source": "a"}, {"physical": 10, "logical": 2, "source": "b"}, -1),
-        ({"physical": 10, "logical": 2, "source": "a"}, {"physical": 10, "logical": 2, "source": "a"}, 0),
-    ]
-    for a, b, want in order:
-        if hlc_compare(a, b) != want:
-            bad.append(f"hlc_compare({a}, {b}) should be {want}, got {hlc_compare(a, b)}")
-    return bad
-
-
-def _probe_identity():
-    """Identity binding (section 8c.3): the same entity has different ids in different systems. Claims
-    are events; bindings are a projection of claims; resolution is a lookup. All pure. A conflicting
-    claim is data for adjudication, not a silent overwrite; an unresolvable id becomes an event."""
-    from honest_observe import fold_identity_claims, identity_claimed, identity_unknown, resolve_identity
-
-    bad = []
-
-    claim = identity_claimed("user-42", "stripe", "cus_Nx3a9c", "webhook_signature_verified", "system:stripe_translator")
-    if claim != {"event_type": "identity.claimed", "payload": {"canonical_id": "user-42", "external_system": "stripe", "external_id": "cus_Nx3a9c", "evidence": "webhook_signature_verified", "asserted_by": "system:stripe_translator"}}:
-        bad.append(f"identity_claimed wrong: {claim}")
-
-    if identity_unknown("cus_unknown", "stripe") != {"event_type": "identity.unknown", "payload": {"external_id": "cus_unknown", "source": "stripe"}}:
-        bad.append(f"identity_unknown wrong: {identity_unknown('cus_unknown', 'stripe')}")
-
-    # The binding projection folds claims into a lookup keyed by system then external id. A repeated
-    # claim to the same canonical id is harmless; a claim to a different one is a conflict for adjudication.
-    events = [
-        identity_claimed("user-42", "stripe", "cus_Nx3a9c", "sig", "translator"),
-        identity_claimed("user-7", "salesforce", "U000123", "api", "translator"),
-        identity_claimed("user-42", "stripe", "cus_Nx3a9c", "sig", "translator"),
-        identity_claimed("user-99", "stripe", "cus_Nx3a9c", "sig", "other"),
-        {"event_type": "other.event", "payload": {}},
-    ]
-    folded = fold_identity_claims(events)
-    if folded["bindings"] != {"stripe": {"cus_Nx3a9c": "user-42"}, "salesforce": {"U000123": "user-7"}}:
-        bad.append(f"fold_identity_claims bindings wrong: {folded['bindings']}")
-    if folded["conflicts"] != [{"external_system": "stripe", "external_id": "cus_Nx3a9c", "existing": "user-42", "claimed": "user-99"}]:
-        bad.append(f"a conflicting claim should be recorded for adjudication, not overwrite: {folded['conflicts']}")
-
-    # Resolution is a lookup against the bindings; an unknown external id resolves to None.
-    bindings = folded["bindings"]
-    if resolve_identity("cus_Nx3a9c", "stripe", bindings) != "user-42":
-        bad.append("resolve_identity should map a known external id to its canonical id")
-    if resolve_identity("cus_missing", "stripe", bindings) is not None:
-        bad.append("resolve_identity should be None for an unknown external id")
-    if resolve_identity("anything", "unknown_source", bindings) is not None:
-        bad.append("resolve_identity should be None for an unknown source")
-    return bad
-
-
-class _StandInConn:
-    """A stand-in honest-persist connection for the boundary probe: execute returns canned rows and
-    begin/commit/rollback are no-ops, so the real boundaries run without a database. Fixture."""
-
-    def __init__(self, rows=None):
-        self._rows = rows or []
-
-    async def execute(self, sql, params=None):
-        return {"rows": list(self._rows), "rowcount": len(self._rows)}
-
-    async def begin(self):
-        return None
-
-    async def commit(self):
-        return None
-
-    async def rollback(self):
-        return None
-
-
-def _probe_boundaries():
-    """The owned boundaries (§3): the id and timestamp readers, the sequence read and the append write
-    through honest-persist, and the emit door end to end, driven by a stand-in connection."""
-    from honest_observe import boundaries, emit
-
-    bad = []
-    if not isinstance(boundaries.new_event_id(), str):
-        bad.append("new_event_id returns a string id")
-    if not isinstance(boundaries.event_timestamp(), str):
-        bad.append("event_timestamp returns an ISO-8601 timestamp string")
-    conn = _StandInConn(rows=[{"event_id": "e1"}, {"event_id": "e2"}])
-    seq = asyncio.run(boundaries.next_sequence("agg", conn))
-    if seq != 2:
-        bad.append(f"next_sequence returns the count of the aggregate's events in the log: {seq}")
-    appended = asyncio.run(boundaries.append_event({"event_id": "e3"}, conn))
-    if "ok" not in appended:
-        bad.append(f"append_event writes the event and returns the persist result: {appended}")
-    result = asyncio.run(emit("hf.chain.completed", "chain", "c1", {"r": "ok"}, {}, "1.0", conn, [], []))
-    if "ok" not in result or "event_id" not in result["ok"]:
-        bad.append(f"emit assembles and appends through the module's own boundaries: {result}")
-    return bad
-
-
 def run():
-    probes = {
-        "boundaries": _probe_boundaries(),
-        "build_event": _probe_build_event(),
-        "extract": _probe_extract(),
-        "matches": _probe_matches(),
-        "projection": _probe_projection(),
-        "emit": _probe_emit(),
-        "framework_events": _probe_framework_events(),
-        "canonical_app_events": _probe_canonical_app_events(),
-        "event_log": _probe_event_log(),
-        "snapshot": _probe_snapshot(),
-        "otel": _probe_otel(),
-        "browser": _probe_browser(),
-        "tail": _probe_tail(),
-        "inspect": _probe_inspect(),
-        "query": _probe_query(),
-        "cli": _probe_cli(),
-        "config": _probe_config(),
-        "threshold_engine": _probe_threshold_engine(),
-        "builtin_metrics": _probe_builtin_metrics(),
-        "threshold_projection": _probe_threshold_projection(),
-        "rejection": _probe_rejection(),
-        "hlc": _probe_hlc(),
-        "identity": _probe_identity(),
-    }
-    violations = [(name, messages) for name, messages in probes.items() if messages]
-    for name, messages in violations:
-        print(f"FAIL HO-probe [{name}]: {messages}")
-    passed = sum(1 for messages in probes.values() if not messages)
-    print(f"HO laws: {passed} passed, {len(violations)} failed, {len(probes)} total")
-    return 0 if not violations else 1
+    failed = {}
+    for name, law in _LAWS.items():
+        try:
+            msgs = law()
+        except Exception as exc:
+            msgs = [f"law raised {type(exc).__name__}: {exc}"]
+        if msgs:
+            failed[name] = msgs
+    passed = len(_LAWS) - len(failed)
+    for name, msgs in failed.items():
+        print(f"FAIL HO-law [{name}]: {msgs}")
+    print(f"HO laws: {passed} passed, {len(failed)} failed, {len(_LAWS)} total")
+    return 0 if not failed else 1
 
 
 if __name__ == "__main__":
