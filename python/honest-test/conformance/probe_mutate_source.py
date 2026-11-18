@@ -11,7 +11,9 @@ by shape — a Fault is the honest-test record carrying problem and remedy, a ba
 union with no envelope.
 """
 
-from honest_test import mutate_source
+from honest_parse import walk
+
+from honest_test import mutate_source, parse_source
 
 _MUTATION_KINDS = {
     "comparison_swap",
@@ -62,6 +64,18 @@ def probe_mutate_source():
         bad.append("mutate_source did not produce a number_shift of the literal '10'")
     elif shifts[0].get("replacement") not in ("11", "9"):
         bad.append(f"the '10' number_shift replaces with {shifts[0].get('replacement')!r}, expected '11' or '9'")
+
+    # Every mutant's location must be a valid splice coordinate: a span key the harness
+    # builds over the parse tree, mapping back to the node whose text is the mutant's
+    # original (spec §9.6, the mutant location is the tree-sitter node's span).
+    tree = parse_source(source)
+    spans = {f"{n.start_point}-{n.end_point}": n.text.decode("utf-8") for n in walk(tree)}
+    for m in mutants:
+        location = m.get("location")
+        if location not in spans:
+            bad.append(f"mutant location {location!r} is not a span key the harness can splice at; original {m.get('original')!r}")
+        elif spans[location] != m.get("original"):
+            bad.append(f"mutant location {location!r} maps to {spans[location]!r}, not the mutant's original {m.get('original')!r}")
 
     # Unparseable source yields a Fault, never a mutant list.
     broken = mutate_source("def ((((\n")

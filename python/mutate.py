@@ -342,6 +342,7 @@ def _mutants(module, only=None):
     splices each into the source here. A file that does not parse comes back as a Fault, which is
     surfaced and the file skipped. `only` (a filename substring) narrows to one file for fast iteration."""
     mutants = []
+    unspliced = []
     for path in _src_files(module, only):
         source = path.read_text(encoding="utf-8")
         relpath, fqmn = str(path.relative_to(ROOT)), _fqmn(path, module)
@@ -353,12 +354,13 @@ def _mutants(module, only=None):
         source_bytes = source.encode("utf-8")
         for change in changes:
             mutated = _apply(source_bytes, spans, change)
-            if mutated is None:
-                continue
             label = f"{relpath}:{change['change_kind']} {change['original']}->{change['replacement']}@{change['location']}"
+            if mutated is None:
+                unspliced.append({"operator": change["change_kind"], "label": label})
+                continue
             mutants.append({"fqmn": fqmn, "path": str(path), "source": mutated,
                             "operator": change["change_kind"], "label": label})
-    return mutants
+    return mutants, unspliced
 
 
 def _adequacy(mutants, survivors, undecided, declared):
@@ -405,7 +407,7 @@ def _run_module(module, only=None):
     runs past the deadline (one no in-worker signal could stop) has its worker SIGKILLed and replaced,
     and is counted as caught. A surviving mutant is one whose worker reported the suite still passing.
     `only` (a filename substring) narrows mutation to one source file for fast iteration."""
-    mutants = _mutants(module, only)
+    mutants, unspliced = _mutants(module, only)
     pending = list(reversed(mutants))  # pop() from the end
     workers = [_Worker(module) for _ in range(min(_WORKERS, len(mutants) or 1))]
     survivors = []
@@ -453,7 +455,9 @@ def _run_module(module, only=None):
             time.sleep(0.002)
     for worker in workers:
         worker.stop()
-    return _adequacy(mutants, survivors, undecided, _set_aside(module))
+    report = _adequacy(mutants, survivors, undecided, _set_aside(module))
+    report["unspliced"] = unspliced
+    return report
 
 
 def main(modules):
@@ -490,6 +494,15 @@ def main(modules):
             standing = "declared" if stalled["declared"] else "UNDECLARED — this is what fails the gate"
             print(f"  UNDECIDED {stalled['operator']}  {stalled['label']}\n"
                   f"              {stalled['reason']}; {standing}")
+        if report["unspliced"]:
+            print(f"mutate: honest-{module} — {len(report['unspliced'])} of "
+                  f"{report['total'] + len(report['unspliced'])} mutants could not be spliced into the source. "
+                  f"mutate_source generated them but the harness could not place them, so the stamped location "
+                  f"and the span lookup disagree — a harness fault, not a suite fault. The gate cannot measure "
+                  f"what it cannot splice, so this is a hard failure.", file=sys.stderr)
+            for miss in report["unspliced"]:
+                print(f"  UNSPLICED {miss['operator']}  {miss['label']}", file=sys.stderr)
+            status = 1
         if not report["adequate"]:
             status = 1
     if status == 0:
