@@ -10,10 +10,11 @@ one, so is_err is set in exactly one place.
 
 from typing import Callable, TypedDict
 
-# The empty tuple is the bounded absence a lookup yields when no provider is registered (§3.2). It
-# carries no is_err tag, so honest-type's is_fault never recognizes it, keeping the absence disjoint
-# from a Fault; and it is immutable, so a shared NOTHING can never be mutated into something else.
-NOTHING = ()
+# None is the framework's idiomatic null for a declared absence (honest-type-architecture.md §5.6,
+# the Language Mapping table) — the same NOTHING = None that honest-test and honest-check define. It is
+# the bounded absence a lookup yields when no provider is registered (§3.2); it carries no is_err tag,
+# so honest-type's is_fault never recognizes it, keeping the absence disjoint from a Fault.
+NOTHING = None
 
 # The code authenticate stamps on a token that fails actor_recognizer, before resolve_actor runs
 # (§2.2, §2.4). _expect_recognizer_reject keys on it to tell a recognizer reject from a resolution

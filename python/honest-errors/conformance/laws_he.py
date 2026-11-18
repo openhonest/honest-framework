@@ -8,7 +8,7 @@ case-insensitive severity marker, the no-mutation guarantee of the cadence-state
 once-not-twice rule, and the advance composition.
 
 The representation contract these laws fix, which honest_errors implements:
-  NOTHING          the absent sentinel; an optional field holds a value or NOTHING (never bare None).
+  NOTHING          the absent sentinel; an optional field holds a value or NOTHING, which is `None`, the framework's idiomatic null (honest-type-architecture.md §5.6).
   ResponseSpec     {"mode": "returned" | "acknowledged"}
   Duration         {"kind": "once" | "period", "period": {"seconds": int} | NOTHING}
   Timing           {"kind": "immediate" | "scheduled", "scheduled": {"at": str} | NOTHING}

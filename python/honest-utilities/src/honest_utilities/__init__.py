@@ -8,8 +8,9 @@ naming every missing-required or uncoercible variable together.
 
 Fault is honest-type's shape across the seam: built with honest_type.fault, carried as a bare union
 `X | Fault` recognized by shape — a record carrying a "code" — never raised and never wrapped in an
-ok/err envelope. NOTHING is the explicit absence sentinel, the empty tuple, defined locally so this
-foundation-layer module depends on nothing above honest-type.
+ok/err envelope. NOTHING is the explicit absence sentinel, the framework's idiomatic null `None`
+(honest-type §5.6, the same `NOTHING = None` honest-test, honest-check, honest-auth and honest-errors
+define), defined locally so this foundation-layer module depends on nothing above honest-type.
 
 If-free by construction (P01, P16). Every branch is a bool (or closed word) key into a dict literal
 of thunks, read by subscript and invoked — `{True: a, False: b}[cond]()` for a two-row choice, or a
@@ -29,10 +30,13 @@ from typing import Any, Callable, TypedDict
 from honest_type import fault
 
 # ---------------------------------------------------------------------------
-# The absence sentinel. An optional field holds a value or NOTHING.
+# The absence sentinel. An optional field holds a value or NOTHING, which is
+# the framework's idiomatic null `None` (honest-type §5.6). A declared Nothing
+# reads the same across honest-test, honest-check, honest-auth and honest-errors,
+# each of which defines `NOTHING = None`.
 # ---------------------------------------------------------------------------
 
-NOTHING: Any = ()
+NOTHING = None
 
 # ---------------------------------------------------------------------------
 # The closed target-type vocabulary (Appendix B).
