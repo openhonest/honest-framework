@@ -30,6 +30,7 @@ Feature: honest-observe - generated, one scenario per function (24 total)
     When append_event is called
     Then it appends the one built envelope to the append-only event log through the injected connection conn and returns a WriteOutcome
     And on a clean write the WriteOutcome is ok true with empty detail, and on a failed write it is ok false carrying the error detail
+    And the map columns payload, auth and meta are stored as JSON through json.dumps, not str(), so each lands as valid JSON that round-trips to its map
     And it does only the write and builds no Fault, because a boundary is a terminus and leaves fault construction to the orchestrator
     And it is awaited because the append is I/O, and it never raises
     And it issues no update or delete, the log being append-only

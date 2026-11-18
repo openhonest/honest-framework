@@ -14,6 +14,7 @@ differ; a timestamp is a non-empty str), never a fixed value.
 """
 
 import asyncio
+import json
 import sqlite3
 
 import honest_observe as HO
@@ -130,6 +131,40 @@ def _law_append_event_appends_one():
         bad.append(f"a clean write must report WriteOutcome ok true: {out}")
     elif out.get("detail") != "":
         bad.append(f"a clean write's WriteOutcome detail must be empty: {out.get('detail')!r}")
+    return bad
+
+
+def _law_append_event_serializes_maps_as_json():
+    bad = []
+    conn = _conn()
+    table = HO.event_log_schema()["table"]
+    # Non-trivial maps for the three map columns (payload, auth, meta), each carrying nested structure
+    # so the stored form is unambiguous: json.dumps double-quotes and nests, str() of a dict single-
+    # quotes. Reading the stored cells back is what pins the serialization append_event must use.
+    payload = {"total": 10, "items": ["a", "b"]}
+    auth = {"caller_id": "u1", "roles": ["admin", "ops"]}
+    meta = {"release": "r1", "flags": {"beta": True}}
+    event = HO.build_event(
+        "order.placed", "1.0", "order", "ord-json", payload, auth, meta,
+        "eid-json", "2026-01-01T00:00:00.000000Z", 0,
+    )
+    if is_fault(event):
+        bad.append(f"build_event on complete parts must return an Event: {event}")
+        return bad
+    asyncio.run(HO.append_event(event, conn))
+    row = conn.execute(f"SELECT payload, auth, meta FROM {table} WHERE event_id = ?", ("eid-json",)).fetchone()
+    if row is None:
+        bad.append("append_event must store the event so its map columns can be read back")
+        return bad
+    for stored, name, value in zip(row, ("payload", "auth", "meta"), (payload, auth, meta)):
+        # The map column must land as JSON (json.dumps), not str(): the stored cell equals the json.dumps
+        # form exactly, and loads back to the original dict. Under str() the cell is single-quoted and is
+        # not valid JSON, so both checks fail and a mutant dropping a column from _JSON_COLUMNS is caught.
+        if stored != json.dumps(value):
+            bad.append(f"the {name} map column must be stored as JSON (json.dumps), not str(): got {stored!r}")
+            continue
+        if json.loads(stored) != value:
+            bad.append(f"the stored {name} JSON must round-trip to the original map: {stored!r}")
     return bad
 
 
@@ -661,6 +696,7 @@ _LAWS = {
     "event_timestamp": _law_event_timestamp,
     "next_sequence": _law_next_sequence,
     "append_event_appends_one": _law_append_event_appends_one,
+    "append_event_serializes_maps_as_json": _law_append_event_serializes_maps_as_json,
     "append_event_failure_outcome": _law_append_event_failure_outcome,
     "run_emit_appends_and_returns_event": _law_run_emit_appends_and_returns_event,
     "run_emit_append_failure_builds_fault": _law_run_emit_append_failure_builds_fault,
