@@ -11,6 +11,16 @@
 set -uo pipefail
 root=$(git rev-parse --show-toplevel)
 
+# The parser gate, above the staged-file filter because nothing a commit stages tells you whether
+# the installed .hd parser still reads what the repository has already committed. uv rebuilds the
+# compiled binding from whatever generated parser sits on disk, so an overwrite of
+# python/tree-sitter-honest-hd that stages nothing narrows the dialect the whole repository can
+# parse. That happened on 2026-11-18: eleven committed declarations began failing at their own
+# line, each accusing itself, and both gates that guard the grammar missed it because both fire
+# only on a staged grammar.js. This one runs on every commit.
+echo "parser gate (installed parser reads every committed declaration)…"
+uv run --project "$root/python/honest-design" python "$root/python/parser-check.py" || exit 1
+
 staged=$(git diff --cached --name-only --diff-filter=ACM)
 py=$(printf '%s\n' "$staged" | grep -E '^python/.*\.py$' || true)
 feat=$(printf '%s\n' "$staged" | grep -E '\.feature$' || true)
