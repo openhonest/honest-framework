@@ -407,11 +407,70 @@ def _roled_names(entries, declaration):
     return declared | decorated
 
 
-def _call_graph(entries):
+# A dispatch table is a node in the reach graph, keyed by its own name under this
+# prefix. A ':' cannot occur in a Python identifier, so a table node never collides
+# with a function node (§HC-R001, P16).
+_DISPATCH_NODE = "dispatch:"
+
+
+def _referenced_names_in(ctx, fdef):
+    identifiers = filter(lambda n: n.type == "identifier", walk(fdef))
+    return set(n.text.decode("utf-8") for n in identifiers)
+
+
+def _module_level_assignments(ctx):
+    top = ctx["root"].named_children
+    statements = filter(lambda s: s.type == "expression_statement", top)
+    inner = map(lambda s: next(iter(s.named_children), None), statements)
+    return filter(lambda a: a is not None and a.type == "assignment", inner)
+
+
+def _dict_function_values(dict_node, names):
+    # The function-name values a dict literal dispatches to: each pair value that is
+    # a bare identifier naming a known top-level function. A lambda or spread value
+    # names no function and contributes nothing.
+    pairs = filter(lambda c: c.type == "pair", dict_node.named_children)
+    values = map(lambda p: _field(p, "value"), pairs)
+    idents = filter(lambda v: v is not None and v.type == "identifier", values)
+    return set(v.text.decode("utf-8") for v in idents) & names
+
+
+def _dispatch_tables(sources, names):
+    # Each module-scope name bound to a dict literal, mapped to the subset of its
+    # values that name known functions (§HC-R001, P16). The table is reached when a
+    # reachable function references its name (see _call_graph); reaching it reaches
+    # the function-name values it dispatches to. A dict nothing references never
+    # becomes reachable, so its values stay orphans.
+    tables = {}
+    for source in sources:
+        ctx = build_context(source["text"], source["path"], {})
+        for assignment in _module_level_assignments(ctx):
+            left = _field(assignment, "left")
+            right = _field(assignment, "right")
+            named = bool(
+                left is not None and left.type == "identifier"
+                and right is not None and right.type == "dictionary"
+            )
+            name = pick(named, lambda: left.text.decode("utf-8"), lambda: None)
+            values = pick(named, lambda: _dict_function_values(right, names), lambda: set())
+            tables.update(pick(
+                name is not None and len(values) > 0,
+                lambda: {name: read_or(tables, name, set()) | values},
+                lambda: {},
+            ))
+    return tables
+
+
+def _call_graph(entries, tables):
     names = set(e["name"] for e in entries)
+    table_names = set(tables)
     graph = {}
     for entry in entries:
-        graph[entry["name"]] = _called_names_in(entry["ctx"], entry["fdef"]) & names
+        called = _called_names_in(entry["ctx"], entry["fdef"]) & names
+        referenced = _referenced_names_in(entry["ctx"], entry["fdef"]) & table_names
+        graph[entry["name"]] = called | set(_DISPATCH_NODE + t for t in referenced)
+    for table_name, values in tables.items():
+        graph[_DISPATCH_NODE + table_name] = values
     return graph
 
 
@@ -426,8 +485,9 @@ def _reachable(roots, graph):
     return seen
 
 
-def _emit_orphans(entries, roled):
-    reachable = _reachable(roled, _call_graph(entries))
+def _emit_orphans(sources, entries, roled):
+    tables = _dispatch_tables(sources, set(e["name"] for e in entries))
+    reachable = _reachable(roled, _call_graph(entries, tables))
     orphans = filter(lambda e: e["name"] not in reachable, entries)
     return [
         diagnostic(e["ctx"], "HC-R001", "error", "orphan function: no role, not reachable", e["fdef"])
@@ -438,10 +498,13 @@ def _emit_orphans(entries, roled):
 def check_roles(sources, declaration):
     """Run the whole-program orphan rule HC-R001: a top-level function neither roled
     nor reachable from the roled set is an orphan; with no roles adopted the rule
-    stands down (§HC-R001)."""
+    stands down (§HC-R001). Reachability follows a dispatch table: a reachable
+    function that references a module-scope dispatch dict by name reaches the
+    function-name values that dict dispatches to, so a handler invoked only through
+    the table is reached, not orphaned (§HC-R001, P16)."""
     entries = _role_entries(sources)
     roled = _roled_names(entries, declaration)
-    return pick(len(roled) == 0, lambda: [], lambda: _emit_orphans(entries, roled))
+    return pick(len(roled) == 0, lambda: [], lambda: _emit_orphans(sources, entries, roled))
 
 
 # ---- the whole-program auth core (§HC-A001, §HC-A002) -----------------------
