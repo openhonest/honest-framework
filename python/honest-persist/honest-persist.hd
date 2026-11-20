@@ -1,60 +1,588 @@
-# honest-persist declared in .hd — schema-first persistence. Schema diff, query builders, and
-# validation are pure; execute/apply/transaction and the pool touch the database at the boundary.
 
 module honest-persist
 
   layer data
 
-  # The surface, closed: every side of the world a boundary here touches, and no other.
-  inputs = { "database" }
-  outputs = { "database" }
+  note "schema-first, pure-function persistence: a schema is data, a migration is a pure diff of what-you-have against what-you-want, and a query is data run at one I/O boundary. honest-persist drives sqlite, postgresql and turso behind one declaration, holds no session and no identity map, and hands the caller data, never a connection. Ported from declaro-persistum; the conflict retry is a driven generator (honest-persist spec 7.7)."
 
-  type Schema = {
-    tables: list<any>
-  }
+  env HONEST_PERSIST_CREW_SIZE : int | Absent
 
-  type Operation = {
-    op: str
-    table: str
-    details: dict<str, any>
-  }
+  env HONEST_PERSIST_CONNECTIONS : int | Absent
 
-  type DiffResult = {
-    operations: list<Operation>
-    execution_order: list<int>
-    ambiguities: list<any>
-  }
+  inputs = { "process" : "the asyncio loop this module hands work to, and the host's live model classes", "database" : "what a database says it holds", "database:given" : "the channel from the primary, inbound; a database at an address the caller gave", "clock" : "the wall clock", "signal" : "the platform's shutdown", "random" : "where a ticket comes from; two writes in one process must never share one", "file:given" : "whether a copy of a database is already on this machine, at a path the caller gave" }
+  outputs = { "process" : "the asyncio loop: drainers started and stopped, writes deposited, outcomes posted", "database" : "statements, and the connection they run on", "database:given" : "the channel to the primary, outbound; a database at an address the caller gave", "signal" : "the process's one handler", "stderr" : "what an operator reads afterwards; handed to the host's logging, which decides where it lands", "honest-observe" : "the honest-observe event log; query_run_statement emits each hf.persist.query event through the honest-observe.emit seam from inside execute (spec 8.5), a one-way coupling, persist to observe, best-effort and a no-op when observe is off", "file:given" : "the folder a copy needs before the driver will put one in it, at a path the caller gave" }
 
-  type Query = {
-    table: str
-    op: str
-    params: dict<str, any>
-  }
+  store registered = lifecycle_register "the databases that asked to replicate at exit"
 
-  fn diff : (current: Schema, target: Schema, decisions: dict<str, any>) -> DiffResult
+  type Fault = { is_err: bool
+                 code: str
+                 message: str
+                 category: FaultCategory
+                 results: list<any>
+                 detail: dict<str, any> } note "honest-type's canonical bare-union fault (honest-type sections 12-13), imported from honest-type and built field for field here. `is_err` is the reserved tag that makes the fault space disjoint from every value, so is_fault tells a fault from a success without reading anything contentful. `code` and `message` say what went wrong in a word and a sentence; `category` is honest-persist's retry class of the failure, one of FaultCategory, because the class decides whether another attempt can help. `results` is [] except on an accumulated validate-all fault. `detail` carries the enumerable facts a test or caller reads without parsing the message: the schemes a target could have named, the column a model does not declare, the driver's own text." note "honest-persist overloads honest-type's `category`, which elsewhere names who is responsible (client or server), to carry the four retry classes instead; worth_retrying reads it to decide a retry. A failure is returned up every caller to the boundary, never raised, except where a raise must stop the process (session_open)."
 
-  fn validate_schema : (schema: Schema) -> list<any>
+  set fault_categories = { "conflict" : "two writers wrote one row; try again", "refused" : "the request itself is wrong; change it", "budget_spent" : "retried as many times as allowed", "cut_short" : "the process was killed before the work finished" } note "the retry class of a failure, because the class decides whether to try again: only `conflict` is worth another attempt, a `refused` request fails identically however often it runs, `budget_spent` is contention exhaustion, and `cut_short` is a process killed mid-work"
+  vocabulary FaultCategory = { fault_categories } note "which retry class this failure is"
 
-  fn to_sql : (operation: Operation, dialect: str) -> str | NOTHING note "the DDL for an operation, or nothing when no renderer covers its type"
+  # A LOOKUP THAT MATCHED NOTHING IS NOT A FAULT. Several functions here read a
+  # table by a key a caller supplied, and a key no row holds is a different
+  # failure from the four categories above: no retry can help it, and the one
+  # thing the caller needs is the list of keys there are. honest-type settles the
+  # same question with its own `Rejection` beside its `Fault`; this is persistum's
+  # counterpart, kept under declaro's name `NoMatch` so it does not collide with
+  # honest-type's `Rejection`. `type Fault` above is unchanged by it.
+  set lookup_tables = { "grammars" : "the four spellings a question may be written in", "method_names" : "the method names one spelling gives each part of a question", "asking_words" : "the eighteen words a question may ask for, the twelve readings and the six writings", "operators" : "the fifteen ways a narrowing compares", "engines" : "the three engines this package ships a row for" } note "every table in this package read by a key a caller supplied, so every table a caller can miss; a sixth table is one more line here"
+  vocabulary LookupTable = { lookup_tables } note "which table was read and had no row for the key"
 
-  fn select : (table: str, columns: list<str>, where: dict<str, any>) -> Query
+  set no_match_reasons = { "no_row_for_the_key" : "a key arrived and the table holds no row under it", "no_key_to_look_up" : "nothing in what the caller wrote names a key, so no row could be read" } note "the two ways a lookup comes back with nothing; which table was read is a field of its own, so the reason never repeats it"
+  vocabulary NoMatchReason = { no_match_reasons } note "why this lookup matched nothing"
 
-  fn insert : (table: str, values: dict<str, any>) -> Query
+  type NoMatch = { table: LookupTable
+                   looked_for: list<str>
+                   rows: list<str>
+                   reason: NoMatchReason
+                   detail: str } note "a lookup that matched nothing, a different failure from a Fault and answered differently: a Fault says in sentences what went wrong and what to do, and carries its enumerable facts in its own `detail`; this says in data that no row matched and is never retryable whatever its driver says." note "`table` is which of the five tables was read. `looked_for` is the key or keys that arrived and no row holds: one key for a single lookup, more where a comparison named several words the operators table does not hold. `rows` is every key that table does hold, the list the caller has to choose from, carried as data so a caller can print, offer or search it rather than parse it out of a sentence. `reason` says whether a key arrived and missed or no key arrived at all. `detail` is the caller's own writing the key was read out of, quoted so they can find it." note "it is kept apart from Fault even though Fault now carries a `detail` of its own: a Fault's category can say try again and no retry ever reaches a key no row holds, so folding a miss into a conflict-categorised Fault would spend a whole retry budget writing nothing. The record is the whole answer and the retry path never consults a category it does not have." note "the boundaries a scenario has to hit: a key that arrived and missed, where `looked_for` names that one key and `rows` names every key the table holds; a narrowing naming several words the operators table does not hold, where `looked_for` names each of them; nothing naming a key at all, which is `no_key_to_look_up` with `looked_for` empty; and a miss in the engines table, where the key is an engine word rather than something a caller spelled and `rows` is the three engines this package ships."
 
-  fn update : (table: str, values: dict<str, any>, where: dict<str, any>) -> Query
+  type Value = str | int | float | bool | NOTHING note "a value a caller passed, bound by the driver and never pasted into text"
+  type Row = dict<str, Value> note "one row, as column names to values"
+  type Rows = list<Row> note "the rows a driver handed back"
 
-  fn delete : (table: str, where: dict<str, any>) -> Query
+  type Connection = handle note "what statements run on: reads and writes to the local file, held and never read"
+  type Channel = handle note "the one line to the primary, pushed and pulled along, held and never read"
+  type Waiter = handle note "where one caller's outcome is put; awaited once, never read"
+  type Doorbell = handle note "how a sleeping drainer is told there is work, or told to stop"
+  type Drainer = handle note "one running worker, held so a crew can be stopped"
+  type Turn = handle note "one pass of a drainer's loop, handed to the crew because a boundary starts what it is given and never decides what that is"
 
-  fn checked_select : (schema: Schema, table: str, columns: list<str>, where: dict<str, any>) -> Query
+  type Narrowing = dict<str, AskedValue> note "a caller's narrowing as they wrote it: a bare value, a named operator, or `or` and `not` holding more of the same"
+  type AskedValue = Value | Row | Rows | Condition | Narrowing | list<Narrowing> | list<str> | list<Value> | dict<str, Direction> note "what may stand beside a key once a reader has lifted it out of the writing"
+  type MethodNames = dict<str, str> note "one way of writing's method name for each field, over a real parse; `filter` is Django's word for the narrowing and `filter_by` is SQLAlchemy's"
+  type Asked = dict<str, AskedValue> note "the parts one reader lifted out of one way of writing, in the library's own words; four readers make this and one builder turns it into a declaration"
+  type Written = str note "the question as the caller typed it, in one of the four spellings; punctuation and shape differ, so the text itself says which. It is honest-persist application code in one of the four query grammars this package recognizes, handed in as text and never a word the caller added to say which grammar it is"
 
-  boundary_in fn execute : (query: Query, conn: any) -> list<any> awaited side_effect reads "database"
+  type Database = { target: str
+                    engine: Engine
+                    connections: list<Connection>
+                    writers: list<Connection>
+                    channel: Channel | NOTHING
+                    crew: Crew
+                    shutdown: Shutdown } note "what opening gives you, and what every later call reads"
 
-  boundary_out fn apply : (diff_result: DiffResult, target: Schema, conn: any, dialect: str) -> any awaited side_effect writes "database"
+  type Declared = { models: list<Model>
+                    views: list<View>
+                    dropping_tables: list<str>
+                    dropping_views: list<str> } note "the models and views the code declares, with the tables and views the host declared it is dropping"
 
-  boundary_out fn transaction : (writes: list<Query>, conn: any) -> any awaited side_effect writes "database"
+  type Model = { name: str
+                 table: str
+                 columns: list<Column>
+                 dropping: list<str>
+                 indexes: list<Index>
+                 constraints: list<Constraint> } note "your description of one table, which is the only description there is; `name` is the model name and `table` is the table name, because a live schema read back from a database names it by the table"
 
-  orchestrator fn migrate : (schema: Schema, conn: any, dialect: str) -> any awaited invokes inspect, expand_schema, validate_checks, diff, apply
+  # --- the schema, which is the models and nothing else --------------------
 
-  reader fn inspect : (conn: any, dialect: str) -> Schema awaited side_effect reads "database"
+  set deletion_rules = { "refuse", "cascade", "set_null" } note "what happens to a child row when its parent is deleted"
+  vocabulary OnDelete = { deletion_rules } note "refuse the delete, delete the child too, or empty the column"
 
-  boundary_in fn open_pool : (db_id: str, connect: Callable, classify: Callable, close: Callable, size: int) -> any awaited side_effect reads "database"
+  type Reference = { table: str
+                     column: str
+                     on_delete: OnDelete } note "where a foreign key points and what a delete does to the child"
+
+  set declared_types = { "text", "integer", "float", "decimal", "boolean", "bytes", "date", "time", "datetime", "uuid", "json" } note "what a column may hold, in words no engine uses"
+  vocabulary DeclaredType = { declared_types } note "what one column holds"
+
+  type Column = { name: str
+                  declared_type: DeclaredType
+                  renamed_from: str | NOTHING
+                  references: Reference | NOTHING } note "one column: what it is called, what it holds, what it was called before, and where it points"
+
+  type Field = { renamed_from: str | NOTHING
+                 references: Reference | NOTHING } note "the two facts about one column that its annotation cannot carry, said beside the column rather than at the top of the class, because a rename written anywhere else names that column a second time and two namings drift"
+
+  type Index = { name: str
+                 columns: list<str>
+                 unique: bool } note "a declared promise about speed"
+
+  set constraint_kinds = { "check" : "a rule the value must satisfy", "primary_key" : "the column that names the row", "unique" : "no two rows share it", "length" : "how long the value may be", "not_null" : "the column must hold something", "default" : "what goes in when a write names no value" } note "every rule you can declare about a column or a table; a new one is one more line here"
+  vocabulary ConstraintKind = { constraint_kinds } note "which kind of rule this is"
+
+  type Constraint = { name: str
+                      kind: ConstraintKind
+                      columns: list<str>
+                      rule: Condition
+                      value: Value } note "one declared rule, over a column or a whole table, as data rather than a string; `rule` is what a check reads and `value` is the number a length allows or the value a default writes"
+
+  type Table = { name: str
+                 columns: list<Column>
+                 indexes: list<Index>
+                 constraints: list<Constraint> } note "one table's columns, indexes and rules"
+
+  set freshnesses = { "always current", "current when read", "refreshed when asked" } note "how fresh a materialized view must be, in requirements rather than mechanisms"
+  vocabulary Freshness = { freshnesses } note "how stale a materialized view may be"
+
+  type View = { name: str
+                declaration: Declaration
+                freshness: Freshness | NOTHING
+                cadence: Cadence | NOTHING
+                attempts_allowed: int | NOTHING } note "a declared query with a name; it holds a declaration, never a SELECT." note "`freshness` says how fresh the host needs it and `cadence` says how often to run the refresh, and the two are different questions on purpose: the freshnesses are requirements, and a period in seconds is a mechanism. A view with no freshness is a plain view and carries no cadence. A view asking to be refreshed on a schedule carries both the cadence and an allowance of how many failed refreshes to accept"
+
+  type Schema = { tables: list<Table>
+                  views: list<View> } note "every table and view, live or declared"
+
+  type Inspecting = { tables: Statement
+                      columns: Statement
+                      indexes: Statement
+                      constraints: Statement
+                      views: Statement
+                      materialized_views: Statement
+                      types: dict<str, DeclaredType> } note "the six questions one engine answers about itself and its own word for each thing a column can hold, so reading a schema back names no engine." note "the sixth question asks which of this database's tables are materialized views, because the answer differs by engine in a way the other five cannot carry: PostgreSQL keeps a materialized view in pg_matviews and in neither of the lists the tables and views questions read; SQLite and Turso have no materialized view, so there one is an ordinary table this package built and has to recognise by reading a table of its own." note "it is also what stops a migration destroying one: a table in the live schema that no model declares is planned for a drop, so a built materialized view read as a plain table would be dropped on the next migration; read as a view it survives"
+
+  # WHAT THE DIFFER EMITS. Each operation says whether carrying it out destroys
+  # something, derived from the models rather than asked for.
+  set operation_kinds = { "create_table", "drop_table", "add_column", "drop_column", "alter_column", "rename_column", "rename_table", "create_index", "drop_index", "create_view", "drop_view", "refresh_view", "insert_enum_values", "remove_enum_values" } note "every schema change the differ can emit"
+  vocabulary OperationKind = { operation_kinds } note "which schema change this is"
+
+  type Carrying = { columns: bool
+                    indexes: bool
+                    constraints: bool
+                    copying: bool
+                    values: bool
+                    renamed_to: bool
+                    view: bool } note "which fields one kind of change fills; adding a kind of change is one more line in this table"
+
+  type Operation = { kind: OperationKind
+                     table: str
+                     column: str | NOTHING
+                     columns: list<Column>
+                     indexes: list<Index>
+                     constraints: list<Constraint>
+                     copying: list<str>
+                     values: list<Value>
+                     renamed_to: str | NOTHING
+                     view: View | NOTHING
+                     destroys: bool } note "one schema change, every field it may fill named, and whether it destroys anything"
+
+  type Plan = { operations: list<Operation>
+                destroys: list<str> } note "the operations a migration would run, in order, and what each destructive one would lose"
+
+  set migration_modes = { "all_or_nothing" : "every operation lands or none does", "per_operation" : "each one lands on its own" } note "how far back a failed migration rolls on this engine"
+  vocabulary MigrationMode = { migration_modes } note "how far back a failed migration rolls"
+
+  type Report = { plan: Plan
+                  applied: int } note "what a migration actually did"
+
+  type Spelling = { statements: list<str>
+                    rebuilds: bool
+                    commits_between: bool } note "how one engine writes one schema change: the statements it takes, whether it gets there by rebuilding the table, and whether each statement has to be committed on its own rather than wrapped in one transaction"
+
+  set features = { "materialized_view", "check_constraint", "partial_index", "enum", "range_type" } note "the things the three engines disagree about"
+  vocabulary Feature = { features } note "which engine capability is in question"
+
+  type Capability = { native: bool
+                      built_from: str } note "what an engine offers natively, and what builds it where it does not"
+
+  # CARRIED ACROSS THE SEAM FROM honest-utilities (Appendix C). A materialized
+  # view on an engine that has none is an ordinary table something reruns and
+  # rewrites, and the thing that wakes that work up is a scheduler this package
+  # does not own: honest-persist CALLS schedule/run_schedules, it declares no
+  # scheduler of its own. honest-utilities owns the shapes below; they are written
+  # out again here because the grammar has no cross-file type import, and only the
+  # shapes this file names in a signature are redeclared.
+  type Cadence = { interval_seconds: float
+                   deadline_seconds: float | NOTHING } note "carried across the seam from honest-utilities (Appendix C): how often a refresh runs, and how long one may run before the scheduler records that it overran. Both are numbers a host fills, because a word for a period would be this package inventing a vocabulary the scheduler would then have to read"
+
+  set disposition_kinds = { "continue" : "run again at the cadence", "retry_after" : "run again after a delay this rule worked out, ignoring the cadence", "stop" : "run no more" } note "what a scheduler does after one run, and the three are the scheduler's own, not ours"
+  vocabulary DispositionKind = { disposition_kinds } note "which of the three the rule chose"
+
+  type Disposition = { kind: DispositionKind
+                       delay: float | NOTHING } note "carried across the seam from honest-utilities (Appendix C): what the scheduler does after one run. `delay` carries the seconds `retry_after` asks for and is NOTHING for the other two"
+
+  type Attempt = { consecutive_faults: int
+                   attempted: int
+                   overran: bool } note "carried across the seam from honest-utilities (Appendix C): what the scheduler has counted so far. It is handed over so a rule deciding what to do next counts nothing itself: a rule that cannot see the number of tries cannot say when the allowance is gone without keeping a tally of its own"
+
+  type ScheduleSpec = { key: str
+                        work: Callable
+                        cadence: Cadence
+                        decide: Callable } note "carried across the seam from honest-utilities (Appendix C): one unit of work to run on a cadence. `key` names it so a report says which one, and `work` and `decide` are Callable because they are functions this package writes and hands over; a handle is for a value a boundary gave us and this is the other direction"
+
+  set engines = { "sqlite" : "a bare path, or a sqlite scheme", "postgresql" : "a postgresql or postgres scheme", "turso" : "a libsql scheme, or a path with a primary" } note "the three engines, and what in a target names each"
+  vocabulary Engine = { engines } note "which engine a database is on, decided once at open"
+
+  set shutdowns = { "exit_immediately" : "stop, and anything only local is gone", "replicate_then_exit" : "push until the cloud has it, then stop" } note "what happens to your data at exit; no default, because none is safe"
+  vocabulary Shutdown = { shutdowns } note "which shutdown policy a caller chose"
+
+  type Declaration = { model: str
+                       wanted: Wanted
+                       columns: list<str>
+                       condition: Condition
+                       order: dict<str, Direction>
+                       grouping: list<str>
+                       having: Condition
+                       paging: dict<str, int> | NOTHING
+                       rows: Rows | NOTHING
+                       shaping: Shaping
+                       across: list<Join> | NOTHING } note "one question or write, engine-free; what four grammars produce"
+
+  type Join = { model: str
+                by_column: str
+                to_column: str
+                condition: Condition } note "a path to another model, worked out from its foreign key"
+
+  set readings = { "all", "one", "first", "page", "distinct", "exists", "count", "sum", "average", "smallest", "largest", "count_distinct" } note "the twelve askings that run now and answer now; the read half of the fork"
+  set writings = { "add", "change", "change_all", "remove", "remove_all", "replace" } note "the six askings that are deposited and drained later; the write half of the fork"
+  vocabulary Wanted = { readings, writings } note "what a question asks for, reading or writing"
+
+  set operators = { "eq", "ne", "lt", "lte", "gt", "gte", "in", "not_in", "between", "like", "contains", "startswith", "endswith", "is_null", "is_not_null" } note "the fifteen ways to narrow, named as keys"
+  vocabulary Operator = { operators } note "which comparison a condition makes"
+
+  type Comparison = { operator: Operator
+                      value: Value | list<Value>
+                      ignore_case: bool } note "one comparison: an operator, the value or values bound to it, and whether case matters"
+  type Condition = { each: dict<str, Comparison>
+                     any_of: list<Condition>
+                     none_of: list<Condition> } note "how a question narrows, as data in every grammar"
+
+  set value_shapes = { "one" : "one value beside the symbol", "list" : "a list of them", "range" : "two, a floor and a ceiling", "pattern" : "one value wrapped in a pattern", "none" : "no value at all" } note "how many values a comparison puts beside its symbol"
+  vocabulary ValueShape = { value_shapes } note "how many values this comparison takes"
+
+  type Comparing = { symbol: str
+                     shape: ValueShape
+                     wraps: str
+                     ignoring_case: str } note "how one engine writes one comparison: the symbol, how many values go beside it, the pattern a value is wrapped in, and what it says instead when case does not matter"
+
+  set directions = { "ascending", "descending" } note "which way an order sorts"
+  vocabulary Direction = { directions } note "ascending or descending"
+
+  set grammars = { "pseudo_sql", "django", "prisma", "sqlalchemy" } note "the four ways to phrase one question"
+  vocabulary Grammar = { grammars } note "which grammar spelled this question, read off the text rather than named by the caller"
+
+  type Statement = { text: str
+                     parameters: dict<str, Value> } note "a statement for one engine, and the values kept beside it"
+
+  set parameter_styles = { "named", "positional" } note "how a driver wants the values handed to it"
+  vocabulary ParameterStyle = { parameter_styles } note "named or positional"
+
+  type Transacting = { begin: str
+                       parameters: ParameterStyle
+                       commits: bool } note "what one engine needs around a write: the statement that opens it, how values go in, and whether there is a commit"
+
+  type Answer = Rows | list<Instance> | int | bool | NOTHING note "what a caller gets back: rows, your own objects, a number, true or false, or NOTHING"
+  type Instance = handle note "one of your own model objects, built from a row and handed straight back; nothing in here ever reads one"
+
+  set shapings = { "dictionaries" : "column name to value, which is what a partial row can be", "objects" : "your model, built from a whole row" } note "what shape a caller wants its rows back in"
+  vocabulary Shaping = { shapings } note "which shape the caller asked its rows back in"
+
+  type Ticket = str note "one caller's claim on one deposited write"
+
+  type Receipt = { id: str
+                   ok: bool
+                   touched: int
+                   attempts: int
+                   failure: Fault | NOTHING } note "what a write did, and how many rows it touched; `attempts` is how many tries it took, counting the first apart from the rest, and `failure` is the Fault it ended on or NOTHING"
+  type Crew = { arrivals: list<Ticket>
+                writes: dict<Ticket, Statement>
+                waiting: dict<Ticket, Waiter>
+                arrived: Doorbell
+                stop: Doorbell
+                drainers: list<Drainer>
+                size: int } note "N drainers, each holding one connection for its life, over the writes that have arrived"
+
+  type Draining = { db: Database
+                    writer: Connection
+                    stop: Doorbell
+                    idle: float } note "what one drainer holds for its whole life: the database, the one connection it writes on, its stop and how long it sleeps"
+
+  # --- the conflict retry as a driven generator (spec 7.7) -----------------
+  # Adam's ruling: the retry around lifecycle_catch_up is a pure generator that
+  # yields one decision at a time, driven by the orchestrator, which performs each
+  # real write against the boundary between yields. The schedule lives in the pure
+  # function; the real attempts live in the orchestrator; neither holds the other.
+  type WriteOutcome = int | Fault note "what one real write attempt handed back once a driver was actually asked: the rows it affected, or a driver Fault whose category says whether another attempt can win. A write whose engine had no driver at all is a NoMatch, settled before a driver is asked, so it never reaches the schedule"
+
+  type RetryPolicy = { retryable: list<str>
+                       bound: int
+                       verified_at_contention: int } note "one engine's conflict-retry declaration, as data (spec 7.7). `retryable` is the driver rejections that mean two writers raced for one row on this engine, read into the `conflict` category rather than classified by scanning driver text at the boundary. `bound` is how many attempts the boundary makes before it stops and types the failure as contention; the number lives here, never as a literal in a loop, because under heavy contention it is the bound, not the engine, that decides how many writes land. `verified_at_contention` is the level of concurrent contention at which `bound` was measured to land every write, so an operator can check the number against the traffic actually arriving; without it the bound is a preference rather than a claim that can be shown false"
+
+  set retry_dispositions = { "run" : "perform attempt number `attempt` now, after waiting `delay` seconds", "landed" : "the write succeeded; stop, there is nothing to retry", "give_up_contention" : "a conflict kept losing the race and the bound is reached; stop and type the failure as contention, never the caller's error (spec 7.7)", "give_up_logical" : "the failure is a logical one the caller owns, a constraint violation that fails identically however many times it runs; stop and surface it, never retry (spec 7.7)" } note "what the driver of the retry schedule does after one step"
+  vocabulary RetryDisposition = { retry_dispositions } note "which of the four the schedule chose for this step"
+
+  type RetryStep = { attempt: int
+                     delay: float
+                     disposition: RetryDisposition } note "one step the retry schedule yields. `disposition` says what the driver of the schedule does next; `attempt` is which attempt the step concerns, counted from one so first-attempt success is distinguishable from eventual success; `delay` is the backoff in seconds to wait before a `run`, zero on the first attempt and for every non-`run` disposition"
+
+  type Connecting = { target: str
+                      shutdown: Shutdown
+                      primary: str | NOTHING
+                      token: str | NOTHING
+                      connections_asked: int | NOTHING
+                      crew_asked: int | NOTHING
+                      engine: Engine
+                      copy_was_here: bool
+                      settings: dict<str, Value>
+                      permitted: int
+                      crew_size: int
+                      writers: list<Connection>
+                      connections: list<Connection>
+                      channel: Channel | NOTHING
+                      declared: Declared
+                      live: Schema
+                      wanted_schema: Schema
+                      needs_migration: bool
+                      migration: Report
+                      database: Database } note "what session_connect carries while it opens a database. `copy_was_here` is the disk's answer from before anything opened, because opening a connection makes the file: turso's connect leaves a database at a path that held nothing a moment earlier, so the same question asked later always answers yes"
+
+  type Planning = { target: str
+                    engine: Engine
+                    connection: Connection
+                    declared: Declared
+                    live: Schema
+                    wanted_schema: Schema
+                    needs_migration: bool
+                    plan: Plan } note "what migration_compare carries while it works out what a migration would change, step by step in the order it fills them." note "`target` is the string the caller handed in, naming the database and nothing else; `engine_of` reads the engine off it. `engine` is which of the three that turned out to be. `connection` is the one connection this comparison asks the driver for and closes again, held and never read. `declared` is what the host's own models say. `live` is what the database says it holds. `wanted_schema` is `live`'s counterpart built from `declared`. `needs_migration` is whether they differ at all. `plan` is the answer: the operations in the order they would run, and what each destructive one would lose." note "it carries no Database, no crew and no channel, because nothing here is opened for a caller to keep: the comparison borrows a connection, reads, and gives it back"
+
+  type Looking = { target: str
+                   engine: Engine
+                   connection: Connection
+                   live: Schema } note "what schema_read_live carries while it asks a database what it holds." note "`target` is the caller's database string, read the same way Planning.target is; `engine` is what engine_of named from it; `connection` is the one connection this read borrows and closes, held and never read; `live` is the schema that came back, the current state and never the desired state." note "it carries nothing about the models on purpose: what a database holds is a different question from what it should hold, and a record carrying both would invite one answer to correct the other"
+
+  type ShuttingDown = { databases: list<Database>
+                        started_at: float
+                        attempts: int } note "what shutdown carries: when it began and how many pushes it has made"
+
+  type CatchingUp = { db: Database
+                      writer: Connection
+                      statement: Statement | NOTHING
+                      writer_waiting: bool
+                      attempts: int } note "what a free turn carries, including whether a writer was waiting and how many attempts the current write has made, counted from one so first-attempt success is told from eventual success"
+
+  type Answering = { db: Database
+                     model: Model
+                     grammar: Grammar
+                     written: Written
+                     declaration: Declaration
+                     statement: Statement
+                     ticket: Ticket
+                     receipt: Receipt
+                     rows: Rows
+                     answer: Answer } note "what answering a question carries, step by step in order"
+
+  # --- column 1: input I/O, and there are eight ways in -------------------
+
+  boundary_in fn session_open : (target: str, shutdown: Shutdown, primary: str | NOTHING, token: str | NOTHING) -> Database awaited side_effect reads "env:HONEST_PERSIST_CREW_SIZE" side_effect reads "env:HONEST_PERSIST_CONNECTIONS" invokes session_connect raises could_not_open note "opens a database for a caller; the target says which engine, so nobody names one." note "the one door here that raises, and it raises so a server cannot start on a database that would not open: a caller handed a fault at boot can ignore it and serve requests against nothing, and the worst of those is a change that would destroy data nobody declared, which has to stop the deploy rather than be reported to it." note "THIS IS THE ONE DOOR A NoMatch DOES NOT COME BACK THROUGH AS A VALUE. session_connect carries one out to here, and `could_not_open` is what it leaves on; what that raise carries is the record. The reason is the reason this door raises at all: the caller is a host at boot, a value handed to a host at boot can be ignored, and a process that served requests against a database whose declared views could not be spelled is exactly the harm above. Every other door answers a waiting caller, which is why query_ask and lifecycle_turn hand the record back as a value and this one does not."
+
+  boundary_in fn query_ask : (db: Database, model: Model, written: Written) -> Answer | Fault | NoMatch awaited invokes query_answer note "takes a question or a declared write, as the caller wrote it, and answers with rows, your own objects, a number, true or false, or NOTHING." note "it arrives as text in whichever of the four spellings the caller finds familiar, and the library reads which one it is; a word from the caller would be the same fact kept twice, and the four look nothing alike." note "THREE RETURN SHAPES. The Answer is the reply. The Fault is the driver's answer and its category decides whether to try again. The NoMatch is the library's answer to a question it could not read: the caller's own text, the key read out of it, and every key that table holds, as data rather than prose, and it also says the database was not touched, so the host knows nothing happened and has nothing to undo. A host retries on a Fault and corrects on a NoMatch, and never loops on a misspelling."
+
+  boundary_in fn lifecycle_stop : () -> NOTHING | Fault awaited side_effect reads "signal" invokes lifecycle_shut_down note "receives the platform's shutdown signal and hands the shutdown off; answers NOTHING when the drain finished or a Fault when it could not"
+
+  reader fn clock_read : () -> float side_effect reads "clock" note "asks the clock what time it is"
+
+  reader fn copy_on_disk : (target: str) -> bool side_effect reads "file:given" note "whether a copy of the database is already there; the calling program cannot know, so the library looks." note "it takes the target a caller wrote and reads the path out of it, which session_open_connection and session_open_channel also do inside themselves: an output boundary is a terminus and cannot invoke a card, so that reading is written in each place that needs it. session_connect asks before it opens anything, because opening makes the file"
+
+  boundary_in fn lifecycle_turn : (draining: Draining) -> NOTHING | Fault | NoMatch awaited invokes lifecycle_catch_up note "one drainer's turn, which arrives because that drainer woke." note "the three return shapes are the three outcomes of a turn, told apart without reading anything: NOTHING means the turn did its work, a Fault means a driver was asked and answered badly, and a NoMatch means no driver was asked at all because the engine word has no driver. What the crew runtime holds on a NoMatch is a turn that ran nothing and the list of engines there is a driver for, so it can stop this drainer and say which engine word has no driver rather than wake the same drainer into the same miss."
+
+  # THREE DOORS THAT ANSWER A QUESTION AND CHANGE NOTHING. Each exists because a
+  # command has to ask this library something no door answered: diff asks what a
+  # migration would change, snapshot asks what the database holds now, and generate
+  # asks what the host declared. Opening the database answers none of them, because
+  # session_connect applies the migration in the same call. None declares a side: a
+  # host that imports a name and calls it is named on an entry, never in a side_effect.
+
+  boundary_in fn migration_plan : (target: str) -> Plan | Fault awaited invokes migration_compare note "says what a migration would change, and changes nothing." note "`target` is the string that names the database, the same string session_open takes and the only thing this door takes: a bare path or a sqlite scheme for SQLite, a postgresql or postgres scheme for PostgreSQL, a libsql scheme for Turso. The caller never names an engine." note "it answers with a Plan: `operations` in the order they would run, each carrying the fields its kind fills and whether carrying it out destroys anything, and `destroys` naming what would be lost. A database already matching the models answers a plan with no operations, which is an answer and not a failure." note "a failure comes back as a value and is never raised: the target naming no engine, the driver refusing a connection, an inspection question failing, a model claiming a name the library or an engine owns, a change that could be a rename or a drop and an add, and a plan that would destroy something no model asked to lose." note "it opens one connection and closes it again, runs no statement against the schema, and on a replicated database opens no channel and neither pushes nor pulls, so a schema change that has not reached this copy is not in this plan. It is awaited because the connection and the inspection are." note "A TABLE IN THE DATABASE THAT NO MODEL DECLARES IS REFUSED, NOT LEFT OUT: the models are the desired state, so difference turns a live-only table into a drop_table, name_what_destroys marks it destroying, and refuse_undeclared_loss stops a plan that would lose a table no model named among Declared.dropping_tables. A host that did name it gets the drop in the plan. One table never reaches the question: a table whose name an engine keeps for itself is left out of the live schema by how_to_inspect." note "the boundaries a scenario has to hit: a database that already matches; a database missing one column; a column gone and another arrived with no field(renamed_from=...) to tell a rename from a drop and an add; a drop no model declared; a target naming no engine; an empty database; a database holding a table the models do not declare and nothing declaring it as dropping, which is a fault naming that table; and the same database with that table declared as dropping, which is a plan carrying the drop"
+
+  boundary_in fn schema_live : (target: str) -> Schema | Fault awaited invokes schema_read_live note "answers with what the database holds right now." note "`target` is the caller's database string, read exactly as migration_plan reads it; the engine comes off the target and the caller names none." note "it answers with a Schema: every table with its columns, indexes and declared rules, and every view. The models are not consulted and cannot be, so what comes back is the current state and never the desired state, which is why it is a separate question from migration_plan." note "a failure comes back as a value: the target naming no engine, the driver refusing a connection, or one of the six questions an engine answers about itself failing. It is awaited because the connection and the inspection are, and it opens one connection and closes it and writes nothing." note "the boundaries a scenario has to hit: a database with nothing in it, which answers an empty schema rather than a fault; a database holding a table an engine keeps for itself, which is left out; a materialized view an engine builds out of a table, which reads back as a view; a replicated copy, where the answer is this machine's copy because no channel is opened; a target naming no engine, refused before the driver is asked, so nothing was opened; a driver that refuses the connection; and one of the six questions failing part way through, where the connection already open is closed before the fault goes back"
+
+  boundary_in fn schema_declared : () -> Declared | Fault invokes schema_say_declared note "answers with the models and views the host declared." note "it takes nothing: the host declared its models by importing its own modules and calling `field` in their class bodies long before this door is reached, so the declaration is already in the code and schema_read_declared is what reads it." note "it answers with a Declared: the models, the views, and the tables and views the host declared as dropping. A failure comes back as a value when a model claims a name the library or an engine owns, named so the host can rename it, the same refusal session_connect makes, made here so a host hears it from this door rather than first from an open." note "it is the one door of the three that touches no database and opens no connection, and it is not awaited." note "the boundaries a scenario has to hit: a host that declared no models at all, which answers an empty Declared; a host declaring a model whose table name the library owns; and a host declaring a view, carried beside the models rather than instead of them"
+
+  boundary_in fn view_refreshes : (db: Database) -> list<ScheduleSpec> | Fault invokes schema_say_refreshes note "answers with one schedule declaration per view the host asked to have refreshed, and runs none of them." note "a materialized view on an engine that has none is an ordinary table something has to rerun and rewrite, and nothing in this package wakes that work up: the refresh work is mostly here, and the scheduler comes from honest-utilities. So this door hands out what to schedule and the host that owns the process and its loop runs them." note "it takes the open database, because a schedule declaration carries the work to run, running a refresh writes rows, and a write goes through the handle session_open gave the host; the views themselves come from the host's own class bodies, which is why schema_declared takes nothing." note "it answers with one ScheduleSpec per view whose freshness is `refreshed when asked`, and only those: `always current` is never stale and `current when read` is refreshed on the read, so neither waits for a clock. A host that declared no such view gets an empty list, which is an answer and not a failure. It is not awaited and opens no connection; the work each spec carries is awaited when the scheduler runs it." note "the boundaries a scenario has to hit: a view asking to be refreshed and carrying a cadence, one spec whose key names that view; a view asking to be refreshed and carrying no cadence, a refusal naming it, because asking to be refreshed without saying how often is a schedule nobody can run; views with the other two freshnesses, an empty list; only plain views, an empty list; nothing declared, an empty list and not a fault; and a view whose name the library or an engine owns, refused and named"
+
+  # --- column 2: one orchestrator per door --------------------------------
+
+  orchestrator fn session_connect : (connecting: Connecting) -> Connecting | Fault | NoMatch awaited side_effect writes "store:registered" invokes engine_of, copy_on_disk, refuse_unusable_settings, permitted_connections, session_open_connection, crew_size, session_open_writer, session_open_channel, crew_make, crew_start, replicates, lifecycle_install_handler, lifecycle_register, channel_push, channel_pull, schema_read_declared, refuse_owned_names, schema_from_declared, schema_inspect, migration_needed, difference, name_what_is_ambiguous, order_operations, name_what_destroys, what_an_operation_carries, refuse_undeclared_loss, how_to_migrate, how_to_inspect, capability_of, mechanism_for, spell_operation, how_to_write, query_run_statement, query_run_together, session_close_connection, log_write note "works out the engine, connects, and builds the handle everything downstream reads." note "the NoMatch spell_operation answers travels out through this return as it stands, the only one of this path's calls that can hand one over, and it arrives while the migration is being spelled rather than run: a miss in one of this package's own tables, reached from the host's declared views and from nothing a database said. Carried as itself it stops the open at the first attempt and hands up the list of words a view may name, rather than being retried as a conflict." note "it asks the disk whether a copy is already there, so filling one is a thing it chose rather than assumed; a warm copy pulled again costs a round trip to the primary for nothing." note "on a replicated database it pushes before it pulls, and refuses the open if the push did not land, because the live schema it reads afterwards is the local copy and a pull replays unpushed local changes on top of it. That push is the first call on the channel, so it also proves the channel reaches a primary at all, and on an empty copy it is what fills it."
+
+  orchestrator fn query_answer : (asking: Answering) -> Answering | Fault | NoMatch awaited invokes grammar_of, methods_of, asked_from_written, declaration_from_asked, refuse_undeclared_columns, refuse_some_columns_as_an_object, join_between, compile_statement, travels_together, query_run_statement, query_run_together, crew_deposit, crew_release_ticket, refusal_reaches_caller, answer_from_rows, answer_from_receipt, log_write note "turns a caller's question into rows or a number, waiting on the crew when it is a write." note "four cards on this path can answer a NoMatch and this return carries each out as it stands: grammar_of when the text marks no spelling, asked_from_written when it calls a method no spelling gives a part of a question, declaration_from_asked when it asks for a word that is not one of the eighteen, and compile_statement when the compiler or the comparison table has no row for what the declaration holds. All four are settled before a statement reaches a driver and before a write is deposited, so the question ran nothing: no row read, no write deposited, no ticket taken, nothing to undo." note "that is why a NoMatch comes back rather than being raised and never becomes a Fault: the caller is waiting on an answer, and the words this library does hold arrive as a list rather than inside a sentence, so a caller can show them, offer the nearest, or pick again. A Fault's category can say try again; a misspelling never improves on a retry."
+
+  # ONE ORCHESTRATOR EACH, AND THE RULES LEAVE NO OTHER SHAPE. One orchestrator may
+  # serve many doors, but these three answer with three different types, so a shared
+  # one would carry a plan, a live schema and a host's declarations at once and
+  # something would have to tell it which job to run — a tagged union and a return
+  # decided at run time by a word. And none reuses session_connect, which applies
+  # the migration it computed in the same call, the one thing migration_plan must not do.
+
+  orchestrator fn migration_compare : (planning: Planning) -> Planning | Fault awaited invokes engine_of, session_open_connection, how_to_inspect, schema_inspect, schema_read_declared, refuse_owned_names, schema_from_declared, migration_needed, difference, name_what_is_ambiguous, order_operations, name_what_destroys, what_an_operation_carries, refuse_undeclared_loss, session_close_connection note "works out what a migration would change and stops there." note "it reads the engine off the target, borrows one connection, reads the live schema with the questions that engine answers about itself, reads the host's models, builds the schema those models want, and compares the two; then it orders the operations their dependencies allow, marks which lose data, refuses a loss no model asked for, closes the connection and hands the plan back." note "it is the sequence session_connect runs, stopping where that one starts writing: query_run_statement and query_run_together are not on this path, which is what makes the answer a plan rather than a migration. It asks for one connection rather than a pool, and closes it on the way out and on every refusal, because a caller who never received the handle cannot have written through it." note "a plan that would destroy something no model asked to lose comes back as a fault rather than a plan, which is the point of asking before applying. IT WRITES NOTHING TO THE LOG, because a caller is waiting on every outcome and nothing was changed for an operator to read about afterwards." note "the boundaries a scenario has to hit: a database behind its models, where the plan names every change and not one reached the database; a target naming its engine off the string; a table pointed at and a table that points at it, neither in the database, where order_operations plans the pointed-at one first; a change the engine can only make by rebuilding the table, where that operation says it destroys something; a loss no model asked for, a fault rather than a plan; a model claiming a name the library or an engine owns, refused with the borrowed connection closed; a refusal after the connection was already open, closed before the fault goes back; a live schema already matching, where migration_needed answers no; and a successful answer, where exactly one connection was asked for and nothing kept"
+
+  orchestrator fn schema_read_live : (looking: Looking) -> Looking | Fault awaited invokes engine_of, session_open_connection, how_to_inspect, schema_inspect, session_close_connection note "asks one database what it holds and hands the answer back." note "it reads the engine off the target, borrows one connection, asks that engine the six questions it answers about itself, builds the schema out of the answers, closes the connection and returns. Its calls are a subset of migration_compare's and it is a different orchestrator because its answer is a different one: nothing here reads a model, builds a wanted schema or works out a difference, so no model can refuse a reading of what is already there." note "it closes the connection on the way out and on every refusal, and writes nothing to the log, for the same reasons migration_compare does." note "the boundaries a scenario has to hit: a database behind its models, where the answer is what the database holds and no difference was worked out; a database holding a table no model declares, which is in the answer because no model is read here; a database holding nothing, an empty schema rather than a fault; a target naming its engine; an answer that comes back, where exactly one connection was borrowed and closed; and a refusal after the connection was open, closed before the fault goes back"
+
+  orchestrator fn schema_say_declared : () -> Declared | Fault invokes schema_read_declared, refuse_owned_names note "reads what the host declared, refuses a name that is not the host's to claim, and hands the models back." note "it takes nothing and carries no record, because the only value on this path is the one it answers with. It is the one orchestrator here that is not awaited: reading the host's own declarations waits for nothing. refuse_owned_names is on this path so a model claiming a name the library or an engine owns is refused when the host asks what it declared, rather than first at the next open. IT WRITES NOTHING TO THE LOG." note "the boundaries a scenario has to hit: a host that declared models and views, which come back together with the tables and views it declared as dropping; a host declaring a model whose table name the library or an engine owns, refused and named; a host that declared nothing at all, an empty Declared rather than a fault; and any run, where nothing was awaited and no connection was opened"
+
+  orchestrator fn schema_say_refreshes : (db: Database) -> list<ScheduleSpec> | Fault invokes schema_read_declared, refuse_owned_names, refreshes_from_declared note "reads what the host declared, refuses a name that is not the host's to claim, and hands back what to schedule." note "it takes the open database and carries no record. The handle is what makes the work callables possible: it pairs each view refreshes_from_declared picked with the work that rewrites its table through that handle, and with what_to_do_after_a_refresh closed over the allowance the host wrote on that view, so what the scheduler receives still takes two arguments." note "IT DOES NOT CALL what_to_do_after_a_refresh: it puts the rule into a schedule declaration and the scheduler calls it, on an outcome and a count that only exist once a refresh has run, which is why the entry naming that callsite is how it is reached. It is not awaited and opens nothing; refuse_owned_names is on this path for the same reason it is on schema_say_declared's. IT WRITES NOTHING TO THE LOG."
+
+  orchestrator fn lifecycle_shut_down : (shutting_down: ShuttingDown) -> ShuttingDown | Fault awaited side_effect reads "store:registered" invokes crew_stop, replicates, clock_read, channel_push, next_wait, progress_line, session_close_connection, log_write note "gets every local commit to the primary before the process dies: stops the crew, and for each replicating database pushes until the cloud has it, backing off between pushes by next_wait and writing a progress line, then closes connections. It answers NOTHING-bearing ShuttingDown on success or a Fault when a push could not land in time"
+
+  orchestrator fn lifecycle_catch_up : (catching_up: CatchingUp) -> CatchingUp | Fault | NoMatch awaited invokes crew_wait_for_work, writer_waiting, next_in_order, how_to_write, how_to_retry, crew_run_write, retry_schedule, clock_read, receipt_for, crew_post_receipt, replicates, channel_push, channel_pull, log_write note "spends a free turn running what the crew holds, then syncing if nobody is writing. THIS IS WHERE THE DRIVEN RETRY LIVES, and it owns the real attempts while retry_schedule owns the schedule." note "it waits for work, takes the next write in arrival order, and asks how_to_retry for this engine's retry policy and how_to_write for how the engine wants the write wrapped. Then it drives the schedule: it performs the real write against crew_run_write, hands the outcome and the attempt number to retry_schedule, and reads the RetryStep back. On `run` it waits the step's delay and writes again; on `landed` it stops with the count touched; on `give_up_contention` it stops and builds a Fault categorised `budget_spent`, which is contention and never the caller's error; on `give_up_logical` it stops and surfaces the driver's Fault as it stands. Because every attempt is a real call the orchestrator makes between yields, a test counts the attempts and injects a boundary failure at each gap, which declaro's self-retrying loop hid." note "crew_run_write answers a NoMatch when the engine word it was handed has no driver at all. That is settled before any write is put to a driver, so retry_schedule never sees it: the orchestrator propagates it through this return as it stands, carrying the list of engines there is a driver for, because no retry reaches a missing driver row. worth_retrying and budget_spent are never consulted for it, because the record carries no category to consult." note "the caller who deposited the write is parked on a waiter and reads a Receipt, whose `failure` names a Fault or nothing, so the record leaving this card goes up to this drainer's own door and not to that caller."
+
+  # --- column 3: output I/O, and there are the ways out -------------------
+
+  boundary_out fn session_open_connection : (target: str, engine: Engine, connections: int) -> Connection | Fault awaited side_effect reads_writes "database" note "asks the driver for a connection"
+
+  boundary_out fn query_run_statement : (connection: Connection, engine: Engine, statement: Statement) -> Rows | int | Fault awaited side_effect reads_writes "database" side_effect writes "honest-observe.emit" note "runs one statement on the connection it is handed, and on no other, and answers the rows a read returned or the count a write touched." note "this is execute, the one I/O boundary spec 8.5 instruments: after every statement it emits hf.persist.query through the honest-observe.emit seam — db_id and table, the operation, the row count, the duration in nanoseconds, a hash of the sql, and the request id that joins it to the canonical event — carrying the full sql only in development. The emission is best-effort: a failure to emit is logged to stderr and swallowed, and never fails the query, and it is a no-op when observe_queries is off"
+
+  reader fn channel_pull : (channel: Channel) -> NOTHING | Fault awaited side_effect reads "database:given" note "brings down what the primary has and this copy does not"
+  boundary_out fn channel_push : (channel: Channel) -> NOTHING | Fault awaited side_effect writes "database:given" note "sends local commits to the primary." note "on a new channel it is the first call, so it does three things at once: it proves the driver built its sync half, it sends whatever is local, and on an empty copy it brings the primary's whole schema down"
+
+  boundary_out fn session_close_connection : (connection: Connection) -> NOTHING | Fault awaited side_effect writes "database" note "closes one connection." note "two callers: shutdown, once it has pushed; and session_connect and migration_compare, when a step refuses after connections were already opened, because a caller who never received the handle cannot have written through them, so closing loses nothing and leaving them open leaks a thread for the life of the process"
+
+  boundary_out fn session_open_writer : (target: str, engine: Engine) -> Connection | Fault awaited side_effect reads_writes "database" note "opens one drainer's connection, held for its life" note "a turso writer also has MVCC turned on here, once, before it is handed back: it runs PRAGMA journal_mode = 'mvcc' and reads the cursor, because turso enables multi-version concurrency per connection and an unread pragma does nothing. Without it the writer's BEGIN CONCURRENT is refused outright, with the engine saying concurrent transaction mode is only supported when MVCC is enabled. This is the write mode only, separate from master-to-slave replication, which is the channel's own connection and lifecycle; the two do not touch. sqlite and postgresql need no such step and are handed back as opened."
+
+  boundary_out fn session_open_channel : (target: str, primary: str, token: str) -> Channel | Fault awaited side_effect writes "file:given" note "opens the one line to the primary, held for the life of the database." note "it makes the folder first, because the driver takes a path and will not make the directory around it, and the open makes the file. It reaches no primary and proves nothing: the driver builds its sync half on the first push or pull, so a channel to a primary that does not exist is the same object as a live one until then, which is why a dead primary is refused at channel_push and not here"
+
+  boundary_out fn crew_make : () -> Crew side_effect writes "process" note "builds a crew with nobody in it yet, and the doorbell a drainer sleeps on"
+
+  boundary_out fn crew_start : (db: Database, turn: Turn) -> Crew | Fault awaited side_effect writes "process" note "hands one drainer per writer to the runtime, each running the turn it was given, and keeps them so they can be stopped"
+
+  boundary_out fn crew_stop : (crew: Crew) -> NOTHING | Fault awaited side_effect writes "process" note "stops every drainer and waits for each to put its connection down"
+
+  boundary_out fn query_run_together : (writer: Connection, engine: Engine, statements: list<Statement>, transacting: Transacting) -> int | Fault awaited side_effect writes "database" note "runs several writes as one transaction on one writer, the only rollback there is; answers the rows affected or a Fault naming which write failed, rolling the whole transaction back"
+
+  boundary_out fn crew_run_write : (writer: Connection, engine: Engine, statement: Statement, transacting: Transacting) -> WriteOutcome | NoMatch awaited side_effect writes "database" note "runs one write the way the engine needs it, reading the words off the record it is handed, and answers a WriteOutcome: the rows it affected, or the driver's Fault when the write itself was asked and refused. That WriteOutcome is exactly what the retry schedule above is driven with." note "an engine with no driver row behind it answers a NoMatch before any write is put to a driver: `table` is `engines`, `looked_for` that engine word, `rows` the three engines there is a driver for, `reason` `no_row_for_the_key`. What the driver then says about the write itself is a Fault, because a conflict is worth another attempt and a missing row never is. This is the boundary that classifies a driver rejection into the `conflict` category using this engine's declared retryable set (spec 7.7), so the schedule above it never reads driver text"
+
+  boundary_out fn crew_deposit : (crew: Crew, statement: Statement) -> Ticket | Fault side_effect writes "process" side_effect reads "random" note "hands a write to the crew, leaves a waiter, rings the doorbell and takes a ticket"
+
+  boundary_out fn lifecycle_install_handler : () -> NOTHING | Fault side_effect writes "signal" note "installs the signal handler, chaining to whatever was already there"
+
+  boundary_out fn crew_release_ticket : (crew: Crew, ticket: Ticket) -> Receipt | Fault awaited side_effect reads_writes "process" note "awaits this caller's own waiter and takes its ticket off the crew"
+
+  boundary_out fn crew_post_receipt : (crew: Crew, ticket: Ticket, receipt: Receipt) -> NOTHING | Fault side_effect writes "process" side_effect writes "stderr" note "hands a write's outcome to the waiter its caller is parked on"
+
+  boundary_out fn crew_wait_for_work : (draining: Draining) -> NOTHING | Fault awaited side_effect reads_writes "process" note "sleeps until a write arrives, the crew stops, or the idle limit runs out"
+
+  reader fn schema_read_declared : () -> Declared | Fault side_effect reads "process" note "asks the code which models and views it declares." note "it is also where whatever `field` built enters, because a host calls that in its own class body and the answer sits in the model this reads"
+
+  reader fn schema_inspect : (connection: Connection, engine: Engine, inspecting: Inspecting) -> Schema | Fault awaited side_effect reads "database" note "asks a database the six questions and builds what it holds out of the answers"
+
+  boundary_out fn log_write : (event: dict<str, Value>) -> NOTHING side_effect writes "stderr" note "writes a line an operator reads afterwards; a failure never travels here"
+
+  # --- the pure core -------------------------------------------------------
+
+  fn engine_of : (target: str) -> Engine | Fault note "reads a target and names one of three engines, opening nothing: a bare path or a sqlite scheme is sqlite, a postgresql or postgres scheme is postgresql, a libsql scheme is turso." note "a scheme no engine ships a row for comes back as a refused Fault, carrying in `detail` the schemes that would have worked and the one that arrived, so a caller reads the list without parsing the message"
+
+  fn refuse_unusable_settings : (engine: Engine, settings: dict<str, Value>) -> dict<str, Value> | Fault note "refuses a setting the detected engine cannot use, rather than ignoring it"
+
+  fn crew_size : (asked: int | NOTHING) -> int | Fault note "settles how many drainers run, from what the deployment asked for; NOTHING means the deployment named none and a default is settled here"
+
+  fn permitted_connections : (asked: int | NOTHING) -> int | Fault note "settles how many connections this database opens, from what the deployment asked for; NOTHING means the deployment named none"
+
+  fn compile_statement : (declaration: Declaration, engine: Engine) -> Statement | Fault | NoMatch invokes how_to_compare note "compiles a declaration into a statement for one engine, values kept out." note "an asking word the renderers table holds no row for answers a NoMatch: `table` is `asking_words`, `looked_for` that word, `rows` the eighteen words there are. A declaration short of what its word needs is still a Fault, because the word was found and the parts beside it were missing. The NoMatch how_to_compare answers travels out through this return as it stands."
+
+  fn refuse_undeclared_columns : (model: Model, declaration: Declaration) -> NOTHING | Fault note "refuses a column no model declares, naming the model and its columns"
+
+  fn refuse_some_columns_as_an_object : (declaration: Declaration) -> NOTHING | Fault note "refuses a question that asks for some columns and for your own model at once, naming both words"
+
+  fn travels_together : (declaration: Declaration) -> bool note "answers whether these writes have to land together"
+
+  fn answer_from_receipt : (receipt: Receipt) -> Answer | Fault note "turns what the drainer did into the count a caller reads"
+
+  fn answer_from_rows : (model: Model, rows: Rows, declaration: Declaration) -> Answer | Fault note "shapes driver rows the way the caller asked: your own objects, plain rows, a number, true or false, or NOTHING"
+
+  fn condition_from_narrowing : (narrowing: AskedValue) -> Condition | Fault | NoMatch note "turns what a caller wrote into the condition this library holds: a bare value means eq, `or` and `not` become `any_of` and `none_of`." note "a word inside a comparison the operators table holds no row for answers a NoMatch: `table` is `operators`, `looked_for` every word in that comparison the table does not hold, `rows` the fifteen operators, `detail` the comparison as the caller wrote it. A comparison naming the wrong number of operators is still a Fault, because nothing was looked up: one operator and one value is the shape, and two or none is refused on its count."
+
+  fn methods_of : (grammar: Grammar) -> MethodNames note "the method names one way of writing uses, one row per way; adding a fifth is one more row"
+
+  fn asked_from_written : (written: Written, methods: MethodNames) -> Asked | Fault | NoMatch note "reads the writing and lifts the parts out: a model, then either a chain of calls or one call carrying named parts, with the method names telling which part is which." note "what a part carries is fixed by the part and never the call: `select` is a list of column names whether the caller wrote one or five, a write word carries the rows or the narrowing its change needs, and a page carries two numbers or is refused. One call may give more than one part: a change is the asking word, the narrowing it lands on and the values it writes. A row is a narrowing, which is why remove(person) needs no primary key." note "a method name no spelling gives any part of a question answers a NoMatch: `table` is `method_names`, `looked_for` the method called, `rows` every method a question may carry, `detail` the question as typed. A part in the wrong shape is still a Fault, because the method name was found and what it carried was wrong."
+
+  fn declaration_from_asked : (asked: Asked) -> Declaration | Fault | NoMatch invokes condition_from_narrowing note "turns the parts a reader lifted into the one declaration all four ways of writing build; the shared work, and the only place a missing part is told no." note "an asking word no row holds answers a NoMatch: `table` is `asking_words`, `looked_for` the word asked for, `rows` the eighteen words there are. A part the declaration cannot do without and nobody named is still a Fault, one per missing part, because nothing was looked up. The NoMatch condition_from_narrowing answers travels out through this return as it stands."
+
+  fn grammar_of : (written: Written) -> Grammar | NoMatch note "which way of writing this is, read off the punctuation and shape: `.objects.` is Django, `.query.` is SQLAlchemy, find_many( is Prisma, a bare method on the model is the library's own." note "a question marking no spelling answers a NoMatch rather than a Fault: `table` is `grammars`, `rows` the four spellings, `reason` `no_key_to_look_up` because nothing in the text named one and `looked_for` is empty, `detail` the question as typed. Reading four markers off a text either finds one or finds none, and finding none is a missed row, not one of the Fault categories: a caller holding their own text and the four spellings there are can write the question again."
+
+  fn replicates : (db: Database) -> bool note "answers whether this database replicates, derived from whether it holds a channel"
+
+  fn next_wait : (attempt: int) -> float note "the backoff delay in seconds before one retry attempt, worked out from the attempt number alone so the schedule stays pure: a deterministic progression a test reads without a clock, zero before the first attempt and rising with each one. Invoked by retry_schedule for the conflict retry and by lifecycle_shut_down for its push backoff; it holds no clock and no ticket, which is why it is pure"
+
+  fn progress_line : (db: Database, elapsed: float, done: bool) -> dict<str, Value> note "builds a shutdown log line naming the database and the time elapsed"
+
+  fn writer_waiting : (crew: Crew) -> bool note "answers whether a writer is waiting for the connection"
+
+  fn next_in_order : (crew: Crew) -> Ticket | NOTHING note "answers whose write is next, in arrival order; taking it out is the boundary's work"
+
+  fn worth_retrying : (fault: Fault) -> bool note "answers whether a failure is worth another attempt, asked of its category: only a conflict is, because two writers wrote one row so trying again may win it, while a refused request, a spent budget and a killed process never improve on a retry"
+
+  fn budget_spent : (attempts: int, budget: int) -> bool note "answers whether the retry budget is gone: true when the attempts made have reached the budget allowed, so a budget of three is spent at the third attempt"
+
+  fn how_to_retry : (engine: Engine) -> RetryPolicy note "reads the per-engine retry table and hands back that engine's conflict-retry declaration: which driver rejections mean contention on it, how many attempts the bound allows, and the contention level the bound was verified at (spec 7.7). It is the retry counterpart of how_to_write and how_to_inspect, and it exists so the retryable set and the bound are data an operator reads, never conditionals over driver message text scattered through the boundary"
+
+  fn retry_schedule : (policy: RetryPolicy, outcome: WriteOutcome, attempt: int) -> RetryStep invokes worth_retrying, budget_spent, next_wait note "the pure generator that owns the conflict-retry schedule for one write. It is driven: lifecycle_catch_up performs the real write against crew_run_write, hands the outcome and the attempt number back here, and this yields the next RetryStep. The attempts and the backoff live here; the real writes live in the orchestrator; neither holds the other, which is the whole of Adam's ruling." note "it makes one decision from the outcome. A success — an int — yields `landed`. A Fault worth_retrying calls a conflict yields `run` again with the next attempt number and next_wait's backoff delay, unless budget_spent says the bound in `policy` is reached, in which case it yields `give_up_contention` and the failure is typed as contention rather than the caller's error. A Fault worth_retrying calls not a conflict — a constraint violation the caller owns — yields `give_up_logical` at once and is never retried." note "the first attempt is counted apart from the rest, from one, because first-attempt success degrades first under rising contention while eventual success still reads as perfect, so the first is the leading indicator an operator watches (spec 7.7). Because the schedule is a pure value driven step by step, a test counts the attempts and injects a boundary failure at each gap."
+
+  fn refusal_reaches_caller : (fault: Fault) -> bool note "decides whether a fault is raised or comes back as a receipt"
+
+  fn lifecycle_register : (db: Database) -> NOTHING | Fault note "adds a replicating database to the list shutdown works through; its answer is kept in the `registered` store, which is the list lifecycle_shut_down reads at exit"
+
+  fn receipt_for : (ticket: Ticket, touched: int, failure: NOTHING | Fault, attempts: int) -> Receipt note "builds the receipt a caller reads for its write, carrying how many rows it touched and how many attempts it took"
+
+  # --- what the schema half reaches ---------------------------------------
+
+  fn field : (renamed_from: str | NOTHING, references: Reference | NOTHING) -> Field note "what a host says about one column that its annotation cannot: what it was renamed from, and where it points." note "a host writes it as the column's assignment, so the answer has to be something the model system accepts there: it carries the pair in the field's extra and schema_read_declared reads it back, which is the only way Column.renamed_from and Column.references are ever anything but the named absence. Without it a rename reads as a drop and an add, name_what_is_ambiguous stops the open, and nothing the host can write resolves it. Neither argument has a default, because a column that forgot to say where it points and a column that points nowhere are different facts and only the host knows which"
+
+  fn refuse_owned_names : (declared: Declared) -> NOTHING | Fault note "refuses a model that claims a name the library or an engine owns"
+
+  fn schema_from_declared : (declared: Declared) -> Schema | Fault note "builds the target schema from what the code declares, and from nothing else: each model becomes a table named by its `table`, and the declared views carry over unchanged; an empty declaration builds an empty schema, which is an answer and not a failure"
+
+  fn refuse_undeclared_loss : (plan: Plan, declared: Declared) -> Plan | Fault note "stops a migration that would destroy something no model asked to lose, naming the table and what to declare to allow it"
+
+  fn migration_needed : (live: Schema, target: Schema) -> bool note "answers whether the database still has to be brought up to the models: a live schema already matching the wanted one needs no migration, and any difference needs one"
+
+  fn difference : (live: Schema, target: Schema) -> list<Operation> note "works out which operations turn the live schema into the target"
+
+  fn name_what_is_ambiguous : (operations: list<Operation>, declared: Declared) -> list<Operation> | Fault note "stops on a change that could be a rename or a drop and an add, naming the columns"
+
+  fn order_operations : (operations: list<Operation>) -> list<Operation> | Fault note "puts the operations in an order their dependencies allow; a cycle is a fault"
+
+  fn name_what_destroys : (operations: list<Operation>) -> Plan note "marks which operations lose data and names what each would lose"
+
+  fn capability_of : (engine: Engine, feature: Feature) -> Capability note "answers whether an engine does this natively, and what builds it if not"
+
+  fn how_to_write : (engine: Engine) -> Transacting note "reads the writers table and hands back what one engine needs around a write"
+
+  fn how_to_migrate : (engine: Engine) -> MigrationMode note "reads the facts table and hands back how far back a failed migration rolls"
+
+  fn how_to_inspect : (engine: Engine) -> Inspecting note "reads the inspectors table and hands back the six questions this engine answers about itself." note "the sixth question asks which tables are materialized views, and each engine's row answers it its own way: PostgreSQL reads pg_matviews, SQLite and Turso read a table this package owns. The tables question leaves out the tables the engine keeps for itself, because the models may not declare one and a live schema that holds one plans a drop for it"
+
+  fn how_to_spell : (kind: OperationKind, engine: Engine, replicating: bool) -> Spelling | Fault note "reads the generators table and hands back how this engine writes this change." note "whether the database replicates is part of the question, because a statement that runs on the local copy is not one that reaches the primary: a push carries create table, add column, drop column and ordinary rows, and carries neither rename column nor rename table, each of which runs locally, reports success and sends nothing. So a rename on a replicated database is spelled add, copy and drop, each committed on its own"
+
+  fn what_an_operation_carries : (kind: OperationKind) -> Carrying note "reads the operations table and hands back which fields this kind of change fills"
+
+  fn how_to_compare : (operator: Operator, engine: Engine) -> Comparing | NoMatch note "reads the operators table and hands back how this engine writes this comparison." note "both ways this table can miss answer a NoMatch, differing by which table the record names: an engine the package ships no row for is `table` `engines`, `looked_for` that engine word, `rows` the three engines; an operator the table holds no row for under this engine is `table` `operators`, `looked_for` that operator, `rows` the operators that do have a row. `reason` is `no_row_for_the_key` in both. It names no Fault at all: both its arguments are vocabularies, so no malformed value can arrive and there is nothing to refuse on shape, count or a missing part — the only two ways it can fail are the two misses"
+
+  fn spell_operation : (operation: Operation, engine: Engine, replicating: bool) -> list<Statement> | Fault | NoMatch invokes how_to_spell, spell_view note "turns one schema change into the statements that carry it out; a replicated database is handed a different spelling for the same change, so the answer is what reaches the primary rather than what runs on the copy." note "the NoMatch spell_view answers travels out through this return as it stands, because a create_view is one of the changes this spells and spelling it means compiling the view's own declaration. A Fault on this card means something else and keeps meaning it: that the change itself cannot be carried out on this engine, a fact about the engine and not about anything the host wrote"
+
+  # --- what a question across models reaches -------------------------------
+
+  fn join_between : (near: Model, far: Model, condition: Condition) -> Join | Fault note "works out the join from the foreign key the model already declared"
+
+  # --- what a declared view reaches ---------------------------------------
+
+  fn spell_view : (view: View, engine: Engine) -> Statement | Fault | NoMatch invokes compile_statement note "writes the SELECT a declared view stands for." note "the NoMatch compile_statement answers travels out through this return as it stands. A view holds a declaration and never a SELECT, so writing one out compiles it through the same card a caller's question goes through, and a view whose declaration names an asking word or an operator no row holds misses exactly the table a question would. What a caller is holding then is the word the host's own view named and every word that would have worked, as data"
+
+  fn mechanism_for : (freshness: Freshness, engine: Engine, capability: Capability) -> list<Operation> | Fault note "picks the mechanism that gives a materialized view the freshness asked for"
+
+  fn refreshes_from_declared : (declared: Declared) -> list<View> | Fault note "picks out the views that asked to be refreshed on a clock, and refuses one that asked without saying how often." note "it keeps only the views whose freshness is `refreshed when asked`, the one freshness of the three a clock answers, and it refuses one that asks to be refreshed and names no cadence or no allowance: a requirement with no period is a schedule nobody can run, and a number invented here would be this package deciding how stale the host's data may be, or how many failures to accept, quietly. It answers views rather than schedule declarations, because a ScheduleSpec carries work that writes to a database and a pure function cannot hold an open connection; schema_say_refreshes is what turns each view into a schedule declaration"
+
+  fn what_to_do_after_a_refresh : (written: int | Fault, attempt: Attempt, attempts_allowed: int) -> Disposition invokes worth_retrying, budget_spent note "reads one refresh's outcome and says whether to run again or stop; the rule the scheduler calls and never reads into." note "it is this package's because the fault categories are, and it asks the two cards that already know them rather than reading a category itself: worth_retrying answers that only a conflict is worth another go, and budget_spent answers whether the tries are gone. `attempt` is handed in rather than counted here, which keeps it pure. `attempts_allowed` is the host's number, read off the view it declared, so what the scheduler is handed still takes two arguments." note "IT NEVER ANSWERS retry_after: a refresh already has its cadence as the spacing, so a conflict worth another go is answered `continue` and tried again on the next tick. Answering retry_after would mean minting a delay, and this rule holds no clock to mint one with. attempt.overran changes nothing it answers, because the scheduler never starts a second run while the first is still going"
+
+  # EVERY WAY THE WORLD GETS IN, NAMED. This is a library, so nothing routes to it
+  # and no framework registers it; the world arrives when a host imports a name and
+  # calls it, or when the platform does. Seven of these are the doors. `field` is
+  # not a door: a host calls it while its own class body runs, long before a door is
+  # reached, and the answer sits in the model until schema_read_declared reads it.
+  # They are written down because the explorer's check for a pure function nothing
+  # can start only runs on a module that declares a world arrival.
+  entry "import:honest_persist.session_open" -> session_open
+  entry "import:honest_persist.query_ask" -> query_ask
+  entry "import:honest_persist.field" -> field
+  entry "import:honest_persist.migration_plan" -> migration_plan
+  entry "import:honest_persist.schema_live" -> schema_live
+  entry "import:honest_persist.schema_declared" -> schema_declared
+  entry "import:honest_persist.view_refreshes" -> view_refreshes
+  entry "schedule:decide" -> what_to_do_after_a_refresh
+  entry "signal:SIGTERM" -> lifecycle_stop
+  entry "crew:a drainer woke" -> lifecycle_turn
