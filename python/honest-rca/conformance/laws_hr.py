@@ -14,8 +14,10 @@ from honest_rca import (
     attest,
     bound,
     causal_graph,
+    diagnose,
     evidence_hash,
     evidence_set,
+    run_rca,
     signal_edges,
     terminus_is_design_root,
     trace,
@@ -215,6 +217,65 @@ def law_terminus_is_design_root_iff_category():
     return out
 
 
+def law_run_rca_sequences_the_pure_steps():
+    """§1.5, §3-§7: the orchestrator runs the pure steps in order and returns exactly the attestation a
+    caller composing the pure functions by hand would get. run_rca(symptom, items, method, judgments,
+    poka_yoke) sequences evidence_set -> causal_graph -> trace -> attest, and when the attestation is
+    well-formed it returns that attestation."""
+    out = []
+    items = [_item("a", flows_to=["b"]), _item("b", flows_to=["c"]), _item("c")]
+    method = {"version": "v1", "signals": ["dataflow"], "traversal": "u"}
+    symptom = {"id": "s", "description": "d", "site": "c"}
+
+    e = evidence_set(items)
+    graph = causal_graph(e, method, [])
+    chain = trace(graph, symptom)
+    by_hand = attest(symptom, e, method, graph, chain, "")
+
+    produced = run_rca(symptom, items, method, [], "")
+    if produced != by_hand:
+        out.append(f"run_rca result != the hand-composed attestation; run_rca gave {produced!r}")
+    if run_rca(symptom, items, method, [], "") != produced:
+        out.append("run_rca is not reproducible for a fixed E and M")
+    return out
+
+
+def law_run_rca_returns_faults_for_a_malformed_attestation():
+    """§7, §9: when the run yields an attestation validate_attestation refuses, the orchestrator returns
+    the list of faults as data, never a half-formed attestation and never a raise. A Method with no
+    version makes the attestation carry an empty method_version, which validate_attestation names
+    missing_method_version."""
+    out = []
+    items = [_item("a", flows_to=["c"]), _item("c")]
+    method = {"version": "", "signals": ["dataflow"], "traversal": "u"}
+    symptom = {"id": "s", "description": "d", "site": "c"}
+
+    result = run_rca(symptom, items, method, [], "")
+    if not isinstance(result, list):
+        out.append(f"run_rca on a malformed run returned {type(result).__name__}, expected a list of faults")
+    else:
+        codes = sorted(f["code"] for f in result)
+        if "missing_method_version" not in codes:
+            out.append(f"run_rca faults = {codes}, expected to include missing_method_version")
+    return out
+
+
+def law_diagnose_delegates_to_run_rca():
+    """§1.3, §1.5: the door does no work of its own — it hands the host's already-assembled inputs to
+    run_rca and returns what run_rca returns, for a well-formed run and for a malformed one alike."""
+    out = []
+    items = [_item("a", flows_to=["b"]), _item("b", flows_to=["c"]), _item("c")]
+    method = {"version": "v1", "signals": ["dataflow"], "traversal": "u"}
+    symptom = {"id": "s", "description": "d", "site": "c"}
+    if diagnose(symptom, items, method, [], "") != run_rca(symptom, items, method, [], ""):
+        out.append("diagnose did not return exactly what run_rca returns for a well-formed run")
+
+    bad_method = {"version": "", "signals": ["dataflow"], "traversal": "u"}
+    if diagnose(symptom, items, bad_method, [], "") != run_rca(symptom, items, bad_method, [], ""):
+        out.append("diagnose did not return exactly what run_rca returns for a malformed run")
+    return out
+
+
 _LAWS = (
     law_evidence_hash_order_independent_and_change_sensitive,
     law_each_deterministic_signal_grounds_its_own_relation,
@@ -225,6 +286,9 @@ _LAWS = (
     law_fixed_evidence_and_method_reproduce_the_attestation,
     law_attestation_carries_no_positive_root_claim,
     law_terminus_is_design_root_iff_category,
+    law_run_rca_sequences_the_pure_steps,
+    law_run_rca_returns_faults_for_a_malformed_attestation,
+    law_diagnose_delegates_to_run_rca,
 )
 
 

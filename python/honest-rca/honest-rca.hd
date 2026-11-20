@@ -2,33 +2,38 @@
 # finds the root cause of a failure without lying about having found it: it never claims "X is the
 # root" (a positive, unfalsifiable claim), only the honest negative — under a stated evidence set and
 # a stated method, the causal chain terminates at X, and no upstream factor was identified (spec §1,
-# §1.1). Given a precise Symptom, a bounded EvidenceSet, and a versioned Method, it builds a causal
-# graph from the evidence's recorded relations, traces the graph upstream to a fixpoint, and emits a
-# bounded-completeness Attestation naming the terminus, the evidence hash, the method version, the
-# judgment edges it relied on, and the computed Bound — what may lie outside the evidence or be
-# invisible to the method (spec §1.1, §2). The poka-yoke: a root-cause claim is representable only as
-# an Attestation, and an Attestation is well-formed only when it carries all of these; a positive,
-# unbounded claim has no representation, and validate_attestation refuses an incomplete one (spec
-# §1.2, §7).
+# §1.1). A caller assembles the RCA request at the edge — a precise Symptom a person described, the
+# bounded list of EvidenceItems already read from honest-observe, honest-parse/check and version
+# history, a versioned Method, the supplied judgment edges, and the poka-yoke reference — and hands it
+# to the diagnose door. honest-rca builds a causal graph from the evidence's recorded relations,
+# traces the graph upstream to a fixpoint, emits a bounded-completeness Attestation naming the
+# terminus, the evidence hash, the method version, the judgment edges it relied on, and the computed
+# Bound — what may lie outside the evidence or be invisible to the method — and runs its own guard
+# over that Attestation before returning it (spec §1.1, §2, §7). The poka-yoke: a root-cause claim is
+# representable only as an Attestation, an Attestation is well-formed only when it carries all of
+# these, and the diagnose door refuses to hand back one that validate_attestation finds incomplete, so
+# a positive, unbounded claim has no representation (spec §1.2, §7).
 #
-# honest-rca is a PURE LEAF. Its decision core imports nothing at runtime; the evidence arrives as
-# data assembled at the boundary (honest-observe, honest-parse/check, and history are read at the edge
-# into EvidenceItem records), and every decision function is pure over it — it touches no file, clock,
-# network or environment (spec §1.5, §11). It has no boundary of its own, no door, reader, sink or
-# orchestrator; the world reaches its pure functions by import from a sibling, exactly like
-# honest-errors (spec §1.3, §1.5). Faults are data: validate_attestation returns a list of faults and
-# nothing raises (spec §7, §9). honest-rca depends only on honest-type, whose Fault it references by
-# name and does not redeclare (spec §7, §1.3).
+# honest-rca does NO I/O and reads no world. It is pure per §1.5: the diagnose door RECEIVES the
+# already-assembled request as arguments and reads no file, clock, network or environment; the caller
+# did the collecting (reading observe's log, running blame, loading config is boundary I/O that lives
+# at the edge, not here) (spec §1.5, §3, §11). The door is the entrance that produces the Symptom, the
+# EvidenceItems and the Method for the pure pipeline, which is why every decision function can be a
+# pure function of what it was handed — exactly the shape honest-errors' capture door takes (spec §1.3,
+# §1.5). Faults are data: run_rca returns the guard's faults as a list and nothing raises (spec
+# §7, §9). honest-rca depends only on honest-type, whose Fault it references by name and does not
+# redeclare (spec §7, §1.3).
 # Architecture: ../../specs/02-code-quality/honest-rca-architecture.md
 
 module honest-rca
 
   layer correctness
 
-  note "The apophatic root-cause solver: a bounded evidence set, a versioned method, deterministic causal edges, a fixpoint traversal to a terminus, and an attestation of the negative — no positive 'X is the root' claim, and no I/O (spec §1, §1.1, §1.5)."
+  note "The apophatic root-cause solver: a caller hands the diagnose door a bounded evidence set, a precise symptom, a versioned method and the judgment edges; honest-rca grounds deterministic causal edges, traces upstream to a terminus, attests the negative — no positive 'X is the root' claim — and refuses any attestation its own guard finds incomplete. It reads no world; the request arrives as arguments (spec §1, §1.1, §1.5, §7)."
 
-  # No boundary, so no I/O surface. The world arrives only through the import entries at the foot of
-  # the file: a sibling module or the host imports a public function (spec §1.3, §1.5, §11).
+  # honest-rca touches no outside resource: no file, clock, network or environment. The diagnose door
+  # receives the whole RCA request as arguments (a caller is not a resource the module reads), so both
+  # surface lists are empty and present — a declared empty surface, never an open one (spec §1.5, §3).
   inputs  = { }
   outputs = { }
 
@@ -147,23 +152,30 @@ module honest-rca
 
   fn bound : (evidence: EvidenceSet, graph: CausalGraph) -> Bound note "derives the stated limit from fact, never asserted (spec §7.1). evidence is the EvidenceSet searched. graph is the CausalGraph built over it. It returns a Bound whose outside_evidence is the set of item ids the evidence's relations reference but that are not themselves items in E (a cause may lie in one of them), and whose invisible_to_method is the set of referenced edges that no enabled signal grounded (a cause may hide in a signal M did not run) (spec §2, §7.1). The bound is always returned, even when both lists are empty — an empty bound is stated, not omitted — and it is what makes the claim honest and checkable, exactly the discipline a positive 'X is the root' hides (spec §7.1, §12). It is pure and raises nothing (spec §1.5)."
 
-  fn attest : (symptom: Symptom, evidence: EvidenceSet, method: Method, graph: CausalGraph, chain: list<str>, poka_yoke: str) -> Attestation invokes terminus, bound note "assembles the negative claim (spec §7). symptom is the traced failure. evidence is the EvidenceSet, whose hash it reads into evidence_hash. method is the Method, whose version it reads into method_version. graph is the CausalGraph, from which it reads the marked (judgment) edges the chain relied on. chain is the traced path trace returned. poka_yoke is the poka-yoke reference the caller supplies for a design-root terminus (the empty string for an ordinary one). It calls terminus(chain) for the terminus id and bound(evidence, graph) for the Bound, copies the terminus item's category (empty for an ordinary terminus, the named category for a design root), and copies the supplied poka_yoke; it assembles all of these into an Attestation (spec §2, §7, §8). It reads no world and raises nothing — a construction failure is caught by validate_attestation, not by a raise here (spec §1.5, §7)."
+  fn attest : (symptom: Symptom, evidence: EvidenceSet, method: Method, graph: CausalGraph, chain: list<str>, poka_yoke: str) -> Attestation invokes terminus, bound, terminus_is_design_root note "assembles the negative claim (spec §7). symptom is the traced failure. evidence is the EvidenceSet, whose hash it reads into evidence_hash and whose items it looks the terminus item up in. method is the Method, whose version it reads into method_version. graph is the CausalGraph, from which it reads the marked (judgment) edges the chain relied on. chain is the traced path trace returned. poka_yoke is the poka-yoke reference the caller supplies for a design-root terminus (the empty string for an ordinary one). It calls terminus(chain) for the terminus id, looks the matching EvidenceItem up in evidence, classifies it with terminus_is_design_root, and calls bound(evidence, graph) for the Bound; it copies the terminus item's category (empty for an ordinary terminus, the named category for a design root) and the supplied poka_yoke, and assembles all of these into an Attestation (spec §2, §7, §8). It reads no world and raises nothing — a construction failure is caught by validate_attestation, not by a raise here (spec §1.5, §7)."
 
   fn validate_attestation : (attestation: Attestation) -> list<Fault> note "the poka-yoke guard: the runtime check that an attestation is a well-formed bounded-completeness statement (spec §7, §9). attestation is the Attestation to check. It returns a list of honest-type Fault values, one for each missing element, and an empty list for a real RCA (spec §7). It returns a missing_evidence_hash fault when the evidence hash is empty, a missing_method_version fault when the method version is empty, a missing_terminus fault when there is no terminus, a missing_bound fault when the bound is absent (an empty bound is present and valid; an absent bound is not), and a missing_poka_yoke fault when the terminus is a design root — the attestation carries a non-empty category — but no poka_yoke is named (spec §7, §8). An attestation that omits its bound, its evidence, or its method is fake RCA and cannot pass; there is no positive-claim shape to validate, because the fake claim is simply unrepresentable as a valid Attestation (spec §7). It is pure and returns its faults as data, never raising — the completeness of a produced value is a runtime property, which is why the guard lives here and not in honest-check's static surface (spec §7, §9)."
 
-  fn terminus_is_design_root : (item: EvidenceItem) -> bool note "tells whether a terminus item is a design root rather than an instance (spec §8). item is the terminus EvidenceItem. It returns true exactly when the item carries a non-empty category — that is, when the terminus is a design decision (a missing invariant, an unowned mutation, an unbounded input, a bug category) rather than a single instance (spec §8). When it holds, the honest fix is the poka-yoke that makes the category unrepresentable, and the attestation must name both the category and the poka-yoke; validate_attestation enforces the poka_yoke half (spec §8). This is the methodology's rule made structural — a fix that cannot name the category it eliminates has not reached a design root (spec §8). It is a pure predicate: it reads no world and raises nothing (spec §1.5)."
+  fn terminus_is_design_root : (item: EvidenceItem) -> bool note "tells whether a terminus item is a design root rather than an instance (spec §8). item is the terminus EvidenceItem — the item at the end of the traced chain, which attest looks up from the evidence by the terminus id. It returns true exactly when the item carries a non-empty category — that is, when the terminus is a design decision (a missing invariant, an unowned mutation, an unbounded input, a bug category) rather than a single instance (spec §8). When it holds, the honest fix is the poka-yoke that makes the category unrepresentable, and the attestation must name both the category and the poka-yoke; validate_attestation enforces the poka_yoke half (spec §8). This is the methodology's rule made structural — a fix that cannot name the category it eliminates has not reached a design root (spec §8). attest invokes it to classify the terminus item before copying its category into the Attestation. It is a pure predicate: it reads no world and raises nothing (spec §1.5)."
 
-  # The world arrives here. honest-rca is a pure leaf with no boundary, so each public function is
-  # reached by a sibling module or the host importing it (spec §1.3, §1.5, §11). The four relation
-  # detectors are internal: they are reached through the by_signal dispatch table, not imported, so
-  # they carry no entry. Each entry names the import so the entry-check reads every entrance.
-  entry "import honest_rca" -> evidence_hash
-  entry "import honest_rca" -> evidence_set
-  entry "import honest_rca" -> signal_edges
-  entry "import honest_rca" -> causal_graph
-  entry "import honest_rca" -> trace
-  entry "import honest_rca" -> terminus
-  entry "import honest_rca" -> bound
-  entry "import honest_rca" -> attest
-  entry "import honest_rca" -> validate_attestation
-  entry "import honest_rca" -> terminus_is_design_root
+  # ----------------------------------------------------------------------------------------
+  # The arrival (spec §1.3, §1.5, §3, §6, §7). The diagnose door receives the assembled RCA request
+  # and hands it to the one run_rca orchestrator, which drives the pure pipeline — stamp the
+  # evidence set, build the causal graph, trace to the terminus, attest the negative — and runs
+  # validate_attestation as the final poka-yoke gate. The door is the entrance that produces the
+  # Symptom, the EvidenceItems and the Method for every pure function on the path, which is what lets
+  # those functions stay pure over what they are handed. The door reads no world: the request is its
+  # arguments, not a file, clock, network or environment it opens (spec §1.5, §3). Same receive-from-
+  # caller shape as honest-errors' capture door.
+  # ----------------------------------------------------------------------------------------
+
+  orchestrator fn run_rca : (symptom: Symptom, items: list<EvidenceItem>, method: Method, judgments: list<CausalEdge>, poka_yoke: str) -> Attestation | list<Fault> invokes evidence_set, causal_graph, trace, attest, validate_attestation note "the orchestrator the diagnose door forwards the assembled RCA request to (spec §6, §7). symptom is the precise failure to trace, kept separate from any guess at its cause. items is the bounded list of EvidenceItems the caller already read from honest-observe, honest-parse/check and version history — reading them is boundary I/O the caller did, never this orchestrator (spec §1.5, §3). method is the versioned Method whose enabled signals scope the graph. judgments is the list of supplied marked edges (marked true), each a link no deterministic signal can settle, added to the graph only when judgment is enabled in method. poka_yoke is the poka-yoke reference the caller supplies for a design-root terminus — the empty string for an ordinary one. It drives the pure pipeline in order: evidence_set(items) stamps the hashed EvidenceSet; causal_graph(evidence, method, judgments) grounds each enabled signal's edges and adds the enabled judgments; trace(graph, symptom) follows the graph upstream to the fixpoint chain; attest(symptom, evidence, method, graph, chain, poka_yoke) assembles the bounded-completeness Attestation; validate_attestation(attestation) runs the poka-yoke guard over it. When the guard returns faults — a design-root terminus the caller named no poka_yoke for, or any missing element of a well-formed statement — run_rca returns that list of Faults and does NOT hand back a malformed attestation, which is §1.2's poka-yoke made operational at the output: a positive, unbounded claim has no representation. Otherwise it returns the well-formed Attestation. It reads no world and raises nothing; a failure comes back as the returned faults (spec §1.5, §6, §7, §9)."
+
+  boundary_in fn diagnose : (symptom: Symptom, items: list<EvidenceItem>, method: Method, judgments: list<CausalEdge>, poka_yoke: str) -> Attestation | list<Fault> invokes run_rca note "the door a caller calls to hand honest-rca an assembled RCA request (spec §6, §7). honest-rca owns this door; the caller owns the collecting that precedes it — describing the Symptom and reading the EvidenceItems from honest-observe, honest-parse/check and version history is boundary I/O done before the call, never here (spec §1.5, §3). symptom is the precise failure; items is the bounded list of already-read EvidenceItems; method is the versioned Method; judgments is the supplied marked edges; poka_yoke is the poka-yoke reference for a design-root terminus, the empty string for an ordinary one. The door does no logic: it reads no file, clock, network or environment and forwards the whole request to run_rca, which drives the pipeline and returns the result. It returns the well-formed Attestation, or the list of Faults its guard raised for an incomplete one. It never raises — honest-rca returns a fault as data and the caller decides what to do with it (spec §7, §9)."
+
+  chain diagnosing = diagnose -> run_rca note "the diagnosis path: the caller-facing door hands the assembled RCA request to the one orchestrator, which drives evidence_set → causal_graph → trace → attest and the validate_attestation gate, and returns the Attestation or the guard's faults (spec §6, §7)."
+
+  # The caller reaches diagnose by importing honest_rca and calling it; the entry names that callsite
+  # so the entry-check reads the entrance. Every other function is internal: the world reaches them
+  # only through the diagnose door and the run_rca orchestrator, so none carries an entry.
+  entry "import honest_rca" -> diagnose
