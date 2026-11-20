@@ -29,7 +29,7 @@ def event_timestamp():
 @link(boundary=True)
 async def next_sequence(aggregate_id, conn):
     """The next per-aggregate sequence number: the count of that aggregate's events in the log."""
-    rows = await honest_persist.execute(honest_persist.select("events", ["event_id"], {"aggregate_id": aggregate_id}), conn)
+    rows = await honest_persist.execute(honest_persist.select("events", ["event_id"], {"aggregate_id": aggregate_id}, None, None, None, None), conn)
     return len(rows)
 
 

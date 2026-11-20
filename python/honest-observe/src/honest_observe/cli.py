@@ -127,7 +127,7 @@ def _deserialize(row: dict) -> dict:
 async def read_event_log(conn) -> list:
     """Read the whole honest_event_log (section 10) in log order through honest-persist. I/O: builds a
     pure select, runs it on the connection, and deserializes each row back into an event."""
-    rows = await execute(select("honest_event_log", order_by=["sequence"]), conn)  # honest: ignore HC-ST001: the CLI's read boundary onto the honest-persist event log (section 10) — a select, not a domain-state mutation
+    rows = await execute(select("honest_event_log", None, None, ["sequence"], None, None, None), conn)  # honest: ignore HC-ST001: the CLI's read boundary onto the honest-persist event log (section 10) — a select, not a domain-state mutation
     return [_deserialize(row) for row in rows]
 
 

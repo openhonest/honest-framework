@@ -42,19 +42,19 @@ def new_resume_token():
 @link(boundary=True)
 async def read_routes(conn):
     """Read the routing table from honest-persist (section 5)."""
-    return await honest_persist.execute(honest_persist.select("alert_routes", ["*"], {}), conn)
+    return await honest_persist.execute(honest_persist.select("alert_routes", ["*"], {}, None, None, None, None), conn)
 
 
 @link(boundary=True)
 async def read_pending(conn):
     """Read the due pending delivery records from honest-persist (section 6.2)."""
-    return await honest_persist.execute(honest_persist.select("alert_deliveries", ["*"], {"status": "pending"}), conn)
+    return await honest_persist.execute(honest_persist.select("alert_deliveries", ["*"], {"status": "pending"}, None, None, None, None), conn)
 
 
 @link(boundary=True)
 async def read_events(conn, actor_ref):
     """Read the events addressed to an actor from honest-observe (section 4)."""
-    return await honest_persist.execute(honest_persist.select("events", ["*"], {"aggregate_type": "alert"}), conn)
+    return await honest_persist.execute(honest_persist.select("events", ["*"], {"aggregate_type": "alert"}, None, None, None, None), conn)
 
 
 @link(boundary=True)
@@ -64,7 +64,7 @@ async def await_reply(conn, message_id, timeout_seconds):
     waited = 0
     step = 1
     while waited <= (timeout_seconds or 0):
-        rows = await honest_persist.execute(honest_persist.select("events", ["*"], {"aggregate_id": message_id, "event_type": "alert.replied"}), conn)
+        rows = await honest_persist.execute(honest_persist.select("events", ["*"], {"aggregate_id": message_id, "event_type": "alert.replied"}, None, None, None, None), conn)
         if rows:
             payload = rows[0]["payload"]
             return {"option_id": payload["option_id"], "actor_id": payload["actor_id"], "reply_payload": payload["reply_payload"]}
