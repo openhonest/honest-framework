@@ -320,6 +320,33 @@ def travels_together(declaration):
     return declaration["wanted"] in WRITINGS and len(declaration["rows"] or ()) > 1
 
 
+# --- refuse_a_read: the deposit door stays write-only (declaration refuse_a_read, spec 8.6) -----------
+def _a_write_is_deferrable(_declaration):
+    return NOTHING
+
+
+def _a_read_cannot_be_deposited(declaration):
+    word = declaration["wanted"]
+    return refused(
+        "read_cannot_be_deposited",
+        f"`{word}` is a reading, and the asynchronous deposit door takes only writings "
+        f"{sorted(WRITINGS)}; the write queue holds a write as data to defer and drain, and a read "
+        f"answers now with nothing to hold, so send it to query_ask instead",
+        {"wanted": word, "writings": sorted(WRITINGS)},
+    )
+
+
+_WRITE_OR_READ = {True: _a_write_is_deferrable, False: _a_read_cannot_be_deposited}
+
+
+def refuse_a_read(declaration):
+    """Refuse a declaration whose asking word is a reading rather than a writing, so the asynchronous
+    deposit door stays write-only (declaration refuse_a_read, spec 8.6). A writing word passes as NOTHING;
+    a reading word is the refused retry class, because a read fails identically however often it runs and
+    the caller must change it, not retry it."""
+    return _WRITE_OR_READ[declaration["wanted"] in WRITINGS](declaration)
+
+
 # --- the answer shapers (declaration answer_from_rows, answer_from_receipt) ---------------------------
 def _rows_of_the_model(_model, rows, _declaration):
     """all / distinct / page / the groups: the rows as they came, dictionaries."""

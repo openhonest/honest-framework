@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from honest_persist._util import _pick, _read_or
 from honest_persist.io import log_write
-from honest_persist.types import refused
+from honest_persist.types import no_match, refused
 
 NOTHING = None
 
@@ -70,6 +70,32 @@ async def crew_release_ticket(crew, ticket):
     """Await this caller's own waiter and take its ticket off the crew (declaration crew_release_ticket).
     A ticket the crew does not hold is refused at once, because no outcome for it is ever posted."""
     return await _CREW_KNOWS_IT[ticket in crew["waiting"]](crew, ticket)
+
+
+# --- refuse_an_unknown_ticket (declaration, spec 8.6) ------------------------------------------------
+def _tickets_held_by(crew):
+    """Every ticket the crew is holding: the keys of the writes that arrived and the waiters parked on
+    them. Only dict keys are read, never a Waiter handle, which is why this is pure."""
+    return sorted(set(crew["writes"]) | set(crew["waiting"]))
+
+
+def _crew_holds_it(_crew, _ticket):
+    return NOTHING
+
+
+def _crew_does_not_hold_it(crew, ticket):
+    return no_match("tickets", [ticket], _tickets_held_by(crew), "no_row_for_the_key", ticket)
+
+
+_CREW_HOLDS = {True: _crew_holds_it, False: _crew_does_not_hold_it}
+
+
+def refuse_an_unknown_ticket(crew, ticket):
+    """Refuse a ticket the crew is not holding, so the collect door waits on nothing it cannot answer
+    (declaration refuse_an_unknown_ticket, spec 8.6). NOTHING when the crew holds it, a NoMatch naming
+    the tickets table, the ticket looked for, and every ticket the crew does hold when it does not. The
+    same unknown ticket misses identically, so it is never retryable."""
+    return _CREW_HOLDS[ticket in crew["writes"] or ticket in crew["waiting"]](crew, ticket)
 
 
 # --- crew_post_receipt (declaration) -----------------------------------------------------------------

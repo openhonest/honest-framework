@@ -54,6 +54,7 @@ from honest_persist.query import (
     grammar_of,
     join_between,
     methods_of,
+    refuse_a_read,
     refuse_some_columns_as_an_object,
     refuse_undeclared_columns,
     travels_together,
@@ -86,12 +87,15 @@ from honest_persist.crew import (
     crew_wait_for_work,
     lifecycle_install_handler,
     lifecycle_register,
+    refuse_an_unknown_ticket,
 )
 from honest_persist.orchestrators import (
     lifecycle_catch_up,
     lifecycle_shut_down,
     migration_compare,
     query_answer,
+    query_prepare_deposit,
+    query_redeem_ticket,
     schema_read_live,
     schema_say_declared,
     schema_say_refreshes,
@@ -102,6 +106,8 @@ from honest_persist.doors import (
     lifecycle_turn,
     migration_plan,
     query_ask,
+    query_collect,
+    query_deposit,
     schema_declared,
     schema_live,
     session_open,
@@ -136,11 +142,12 @@ from honest_persist.types import (
 
 __all__ = [
     # input I/O doors
-    "session_open", "query_ask", "lifecycle_stop", "clock_read", "copy_on_disk", "lifecycle_turn",
-    "migration_plan", "schema_live", "schema_declared", "view_refreshes",
+    "session_open", "query_ask", "query_deposit", "query_collect", "lifecycle_stop", "clock_read",
+    "copy_on_disk", "lifecycle_turn", "migration_plan", "schema_live", "schema_declared", "view_refreshes",
     # orchestrators
-    "session_connect", "query_answer", "migration_compare", "schema_read_live", "schema_say_declared",
-    "schema_say_refreshes", "lifecycle_shut_down", "lifecycle_catch_up",
+    "session_connect", "query_answer", "query_prepare_deposit", "query_redeem_ticket", "migration_compare",
+    "schema_read_live", "schema_say_declared", "schema_say_refreshes", "lifecycle_shut_down",
+    "lifecycle_catch_up",
     # output I/O
     "session_open_connection", "query_run_statement", "channel_pull", "channel_push",
     "session_close_connection", "session_open_writer", "session_open_channel", "crew_make",
@@ -149,7 +156,8 @@ __all__ = [
     "schema_read_declared", "schema_inspect", "log_write",
     # pure core
     "engine_of", "refuse_unusable_settings", "crew_size", "permitted_connections", "compile_statement",
-    "refuse_undeclared_columns", "refuse_some_columns_as_an_object", "travels_together",
+    "refuse_undeclared_columns", "refuse_some_columns_as_an_object", "refuse_a_read",
+    "refuse_an_unknown_ticket", "travels_together",
     "answer_from_receipt", "answer_from_rows", "condition_from_narrowing", "methods_of",
     "asked_from_written", "declaration_from_asked", "grammar_of", "replicates", "next_wait",
     "progress_line", "writer_waiting", "next_in_order", "worth_retrying", "budget_spent", "how_to_retry",

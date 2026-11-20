@@ -1,4 +1,4 @@
-Feature: honest-persist — generated, one scenario per function (97 total)
+Feature: honest-persist — generated, one scenario per function (103 total)
 
   Scenario: session_open opens a database for a caller and raises if it will not open
     Given target: str and shutdown: Shutdown and primary: str | NOTHING and token: str | NOTHING
@@ -603,3 +603,62 @@ Feature: honest-persist — generated, one scenario per function (97 total)
     And it awaits conn.begin(), runs each write the way execute_many does on this one connection, collects each write's rows-affected count in arrival order, awaits conn.commit() and answers the list of counts
     And on a driver error it catches, awaits conn.rollback(), and answers a Fault instead of the list, the one sanctioned catch at this boundary, because a transaction cannot roll back without first seeing the failure
     And the success value is the bare list of per-write counts and the failure is the module's own bare-union Fault, not spec 7.5's ok/err envelope: the Fault's code is write_failed and its detail carries failed_at, the index of the write that failed, and message, the driver's text
+
+  Scenario: query_deposit takes a declared write, hands it to the crew, and returns a ticket at once
+    Given db: Database and model: Model and written: Written
+    When query_deposit is called
+    Then it takes a declared write as the caller wrote it, hands it to the crew, and returns a Ticket at once — a claim on a write held as data, not a finished write (spec 8.6) — answering Ticket | Fault | NoMatch, invoking query_prepare_deposit, and it is not awaited
+    And it takes exactly what query_ask takes, the open database, the host's model for the table the write touches, and the write as text in one of the four grammars, and it runs the same read, column-check and compile query_ask runs before a write is deposited, so a write that cannot be read or compiled is refused here and nothing is handed to the crew
+    And it is write-only: a reading word is refused as a Fault having deposited nothing, because the write queue holds writes as data to defer and drain and a read has nothing to defer
+    And not awaited is the promise made structural: the door returns the moment the crew takes the statement and leaves a waiter, without waiting on the write to run, which trades certainty now for the caller's time back
+    And the Ticket is the claim returned at once, which the caller later hands to query_collect
+    And the Fault is a write the library read but refused — a reading word on a write-only door, a column no model declares, a declaration short of a part its asking word needs — and nothing was deposited, so there is nothing to collect and nothing to undo
+    And the NoMatch is a write the library could not read at all — text marking no grammar, a method no grammar gives a part, an asking word that is not one of the eighteen, a comparison operator no row holds — carried as the caller's own text, the key read out of it, and every key that table holds, and it too deposited nothing
+
+  Scenario: query_collect redeems a ticket and answers with what the write did
+    Given db: Database and ticket: Ticket
+    When query_collect is called
+    Then it redeems a ticket query_deposit handed back and answers with what the write did — the same reply query_ask gives a synchronous write, a count, or a Fault (spec 8.6) — answering Answer | Fault | NoMatch, awaited, invoking query_redeem_ticket
+    And it takes the open database whose crew is holding the write and the ticket the caller took from query_deposit, waits on that ticket's own outcome through the crew, and shapes the recorded receipt into the answer
+    And the Answer is what the write did, a count, the same shape query_ask returns for a durable write
+    And the Fault is the failure the write itself ended on — a constraint the caller's value broke, or contention that spent the retry bound (spec 7.7) — carried out of the receipt as it stands
+    And the NoMatch is a ticket no crew holds: table tickets, looked_for that ticket, rows the tickets the crew is holding, reason no_row_for_the_key, refused before anything is awaited because redeeming a claim that was never deposited waits on nothing and a retry of the same unknown ticket misses identically
+    And failure is per ticket: one ticket's Fault stands on its own while the others a caller deposited are collected or still running
+
+  Scenario: query_prepare_deposit reads, checks and compiles a write, deposits it, and carries back the ticket
+    Given depositing: Depositing
+    When query_prepare_deposit is called
+    Then it reads a caller's write, checks it, compiles it, deposits it to the crew and carries back the ticket the crew handed over — the asynchronous half of what query_answer does for a write, stopping the instant the write is held as data (spec 8.6) — answering Depositing | Fault | NoMatch, and it is not awaited
+    And it invokes grammar_of, methods_of, asked_from_written, declaration_from_asked, refuse_a_read, refuse_undeclared_columns, refuse_some_columns_as_an_object, compile_statement and crew_deposit
+    And it runs the same prefix query_answer runs on a write: grammar_of names the spelling, methods_of and asked_from_written lift the parts out, declaration_from_asked turns them into the one engine-free declaration, refuse_undeclared_columns and refuse_some_columns_as_an_object check the columns against the model, and compile_statement renders the statement for this database's engine read off depositing.db
+    And on the success path, a clean write, refuse_a_read passes a writing word and it hands the statement to crew_deposit, which leaves a waiter, rings the doorbell and returns a Ticket at once, and that Ticket is what this orchestrator carries back for the door to return
+    And on the refuse-a-read path, refuse_a_read stops a declaration whose asking word is a reading rather than a writing with a Fault, because the write queue holds writes and a read cannot be deposited
+    And on the undeclared-column path, refuse_undeclared_columns refuses a column no model declares with a Fault, and on the columns-as-object path, refuse_some_columns_as_an_object refuses asking for some columns and your own model at once with a Fault
+    And on the would-not-compile path, the NoMatch grammar_of, asked_from_written, declaration_from_asked or compile_statement answers travels out through this return as it stands — text marking no grammar, a method no grammar gives, an asking word not one of the eighteen, a comparison operator no row holds
+    And in every refusal nothing was deposited: no waiter left, no ticket taken, nothing to collect or undo
+    And travels_together and query_run_together are not on this path, because it carries one write to one ticket and no more; the application composes several writes into a unit by depositing each and collecting the tickets it chose
+
+  Scenario: query_redeem_ticket redeems a ticket against the crew, waits on the outcome, and shapes the receipt
+    Given collecting: Collecting
+    When query_redeem_ticket is called
+    Then it redeems a ticket against the crew holding its write, waits on that write's outcome, and shapes the receipt into the answer the caller reads (spec 8.6), answering Collecting | Fault | NoMatch, awaited, invoking refuse_an_unknown_ticket, crew_release_ticket and answer_from_receipt
+    And on the unknown-ticket path, refuse_an_unknown_ticket checks the crew is holding this ticket and a ticket no crew holds is a NoMatch carried straight back, because waiting on a claim that was never deposited waits on nothing
+    And on the success path, a known ticket, it awaits crew_release_ticket, which takes this caller's own waiter and hands back the Receipt the drainer recorded — the rows touched, the attempts it took, and the Fault it ended on or nothing — then answer_from_receipt turns that receipt into the count a caller reads, or surfaces the Fault the write ended on
+    And the Fault answer_from_receipt surfaces — a constraint the caller's value broke, or contention that spent the retry bound (spec 7.7) — travels out through this return as it stands
+    And it is awaited because crew_release_ticket is: waiting on the ticket's outcome is the one thing it does
+    And failure is per ticket: the Fault on one ticket is the whole answer for that ticket and says nothing about the others a caller deposited
+
+  Scenario: refuse_a_read refuses a reading word and passes a write
+    Given declaration: Declaration
+    When refuse_a_read is called
+    Then it refuses a declaration whose asking word is a reading rather than a writing, so the asynchronous deposit door stays write-only (spec 8.6), answering NOTHING | Fault
+    And it reads declaration.wanted, one of the eighteen asking words, answering NOTHING when it is one of the six writings (add, change, change_all, remove, remove_all, replace) and a refused Fault when it is one of the twelve readings
+    And the Fault is the refused retry class, naming the reading word that arrived and that this door takes only writings, so the caller sends a read to query_ask instead, because the write queue holds a write as data to defer while a read answers now and has nothing to hold, a request that is wrong in itself and fails identically however often it runs
+
+  Scenario: refuse_an_unknown_ticket passes a ticket the crew holds and refuses one it does not
+    Given crew: Crew and ticket: Ticket
+    When refuse_an_unknown_ticket is called
+    Then it refuses a ticket the crew is not holding, so the collect door waits on nothing it cannot answer (spec 8.6), answering NOTHING | NoMatch
+    And it reads whether the ticket is among the tickets the crew holds — the keys of its writes and waiting, the writes that arrived and the waiters parked on them — answering NOTHING when the crew holds it and a NoMatch when it does not
+    And the NoMatch names tickets as the table, the ticket as looked_for, every ticket the crew is holding as rows, and no_row_for_the_key as the reason, and that same miss against a crew holding no tickets at all leaves rows empty
+    And it reads only the dict keys and never a Waiter handle, which is why it is pure, and the same unknown ticket misses identically so it is never retryable

@@ -162,12 +162,12 @@ def _postgres_profile():
 # Every function the declaration names (honest-persist.hd), in declaration order. The surface sweep
 # reads this list; a function added to the .hd is added here so the sweep stays the full inventory.
 ALL_FUNCTIONS = [
-    # column 1: input I/O — the eight ways in
-    "session_open", "query_ask", "lifecycle_stop", "clock_read", "copy_on_disk", "lifecycle_turn",
-    "migration_plan", "schema_live", "schema_declared", "view_refreshes",
+    # column 1: input I/O — the ways in
+    "session_open", "query_ask", "query_deposit", "query_collect", "lifecycle_stop", "clock_read",
+    "copy_on_disk", "lifecycle_turn", "migration_plan", "schema_live", "schema_declared", "view_refreshes",
     # column 2: one orchestrator per door
-    "session_connect", "query_answer", "migration_compare", "schema_read_live", "schema_say_declared",
-    "schema_say_refreshes", "lifecycle_shut_down", "lifecycle_catch_up",
+    "session_connect", "query_answer", "query_prepare_deposit", "query_redeem_ticket", "migration_compare",
+    "schema_read_live", "schema_say_declared", "schema_say_refreshes", "lifecycle_shut_down", "lifecycle_catch_up",
     # column 3: output I/O
     "session_open_connection", "query_run_statement", "channel_pull", "channel_push",
     "session_close_connection", "session_open_writer", "session_open_channel", "crew_make",
@@ -176,7 +176,8 @@ ALL_FUNCTIONS = [
     "schema_read_declared", "schema_inspect", "log_write",
     # the pure core
     "engine_of", "refuse_unusable_settings", "crew_size", "permitted_connections", "compile_statement",
-    "refuse_undeclared_columns", "refuse_some_columns_as_an_object", "travels_together",
+    "refuse_undeclared_columns", "refuse_some_columns_as_an_object", "refuse_a_read",
+    "refuse_an_unknown_ticket", "travels_together",
     "answer_from_receipt", "answer_from_rows", "condition_from_narrowing", "methods_of",
     "asked_from_written", "declaration_from_asked", "grammar_of", "replicates", "next_wait",
     "progress_line", "writer_waiting", "next_in_order", "worth_retrying", "budget_spent", "how_to_retry",
@@ -3577,6 +3578,95 @@ def _probe_query_transaction():
 # The runner.
 # ---------------------------------------------------------------------------
 
+def _probe_async_write():
+    """The asynchronous write path of spec 8.6, exposed as two caller doors. query_deposit hands a
+    declared write to the crew and returns a Ticket at once, not awaited to durability; query_collect
+    redeems the ticket, waits on the outcome, and answers with what the write did. A read handed to
+    query_deposit is refused, because a read has nothing to defer (refuse_a_read); a ticket no crew holds
+    handed to query_collect reads back a NoMatch, the database untouched (refuse_an_unknown_ticket). The
+    two pure guards are pinned on both branches directly, and the two doors run end to end against a real
+    opened sqlite database (declaration query_deposit, query_collect, query_prepare_deposit,
+    query_redeem_ticket, refuse_a_read, refuse_an_unknown_ticket)."""
+
+    async def _run():
+        bad = []
+
+        # The two pure guards, each on both branches. crew_deposit leaves a waiter on the running loop,
+        # so the held-ticket case runs inside this async body.
+        guards = ("refuse_a_read", "refuse_an_unknown_ticket", "crew_make", "crew_deposit")
+        missing = [n for n in guards if getattr(hp, n, None) is None]
+        if missing:
+            bad.extend(f"not built: {n}" for n in missing)
+        else:
+            refuse_a_read = hp.refuse_a_read
+            on_read = refuse_a_read(_declaration())  # wanted "all": a read has nothing to defer
+            if not hp.is_fault(on_read):
+                bad.append(f"refuse_a_read should refuse a reading word as a Fault: {on_read}")
+            on_write = refuse_a_read(_declaration(wanted="add", rows=[{"id": 1, "name": "a"}]))
+            if on_write is not None:
+                bad.append(f"refuse_a_read should pass a write as NOTHING: {on_write}")
+            refuse_unknown = hp.refuse_an_unknown_ticket
+            crew = hp.crew_make()
+            miss = refuse_unknown(crew, "f" * 32)
+            if not (isinstance(miss, dict) and "reason" in miss):
+                bad.append(f"refuse_an_unknown_ticket should answer a NoMatch for a ticket not held: {miss}")
+            held = hp.crew_deposit(crew, {"text": "INSERT INTO users (id) VALUES (1)", "parameters": {}})
+            if not isinstance(held, str):
+                bad.append(f"crew_deposit should return a Ticket for the held-ticket guard case: {held}")
+            elif refuse_unknown(crew, held) is not None:
+                bad.append(f"refuse_an_unknown_ticket should pass a held ticket as NOTHING: {refuse_unknown(crew, held)}")
+
+        # The two doors, end to end against a real sqlite database.
+        doors = ("session_open", "session_open_connection", "query_run_statement",
+                 "session_close_connection", "query_deposit", "query_collect")
+        missing_doors = [n for n in doors if getattr(hp, n, None) is None]
+        if missing_doors:
+            bad.extend(f"not built: {n}" for n in missing_doors)
+            return bad
+
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "async.db")
+            pool = await hp.session_open_connection(target, "sqlite", 1)
+            if hp.is_fault(pool):
+                bad.append(f"the async-write law could not open a connection: {pool}")
+                return bad
+            await hp.query_run_statement(pool, "sqlite", {"text": "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)", "parameters": {}})
+            await hp.session_close_connection(pool)
+
+            db = await hp.session_open(target, "exit_immediately", None, None)
+            if hp.is_fault(db):
+                bad.append(f"session_open failed before the async-write law: {db}")
+                return bad
+
+            # A. A declared write comes back as a Ticket at once, not an Answer. Collecting it answers what
+            #    the write did, and the row is durable on disk.
+            ticket = hp.query_deposit(db, _READ_MODEL, 'User.rows({"id": 5, "name": "e"}).add')
+            if isinstance(ticket, dict) or not isinstance(ticket, str) or ticket == "":
+                bad.append(f"query_deposit of a declared write should return a Ticket at once, not an Answer or a refusal: {ticket!r}")
+            else:
+                answer = await hp.query_collect(db, ticket)
+                if isinstance(answer, dict) and ("reason" in answer or hp.is_fault(answer)):
+                    bad.append(f"query_collect of a held ticket should answer what the write did: {answer}")
+                conn = sqlite3.connect(target)
+                row = conn.execute("SELECT name FROM users WHERE id=5").fetchall()
+                conn.close()
+                if row != [("e",)]:
+                    bad.append(f"after query_collect the deposited write should be durable on disk, got {row}")
+
+            # B. A read handed to the deposit door is refused: nothing to defer, nothing deposited.
+            refused = hp.query_deposit(db, _READ_MODEL, "User.where(id=5).all")
+            if not hp.is_fault(refused):
+                bad.append(f"query_deposit of a read should be refused as a Fault: {refused}")
+
+            # C. Collecting a ticket the crew never held reads back a NoMatch as data.
+            no_ticket = await hp.query_collect(db, "f" * 32)
+            if not (isinstance(no_ticket, dict) and "reason" in no_ticket):
+                bad.append(f"query_collect of an unknown ticket should read back a NoMatch as data: {no_ticket}")
+        return bad
+
+    return asyncio.run(_run())
+
+
 _PROBES = [
     _probe_surface,
     _probe_engine_of,
@@ -3629,6 +3719,7 @@ _PROBES = [
     _probe_query_execute,
     _probe_query_select_options,
     _probe_query_transaction,
+    _probe_async_write,
     # The probes that define host pydantic models run last and clean up after themselves, so their
     # declared models never reach another law's schema read.
     _probe_migration_on_open,

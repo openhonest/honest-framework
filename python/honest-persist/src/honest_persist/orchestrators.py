@@ -13,14 +13,17 @@ import asyncio
 
 from honest_persist._util import _pick
 from honest_persist.crew import (
+    crew_deposit,
     crew_make,
     crew_post_receipt,
+    crew_release_ticket,
     crew_start,
     crew_stop,
     crew_wait_for_work,
     lifecycle_install_handler,
     lifecycle_register,
     read_registered,
+    refuse_an_unknown_ticket,
 )
 from honest_persist.engines import (
     how_to_inspect,
@@ -50,6 +53,7 @@ from honest_persist.query import (
     declaration_from_asked,
     grammar_of,
     methods_of,
+    refuse_a_read,
     refuse_some_columns_as_an_object,
     refuse_undeclared_columns,
     travels_together,
@@ -572,6 +576,91 @@ async def _read_ok(read):
 
 
 _WHETHER_READ_REFUSED = {True: _read_refused, False: _read_ok}
+
+
+# --- query_prepare_deposit (declaration, spec 8.6) --------------------------------------------------
+# The asynchronous half of what query_answer does for a write: it runs the same read, column-check and
+# compile prefix, adds refuse_a_read so the deposit door stays write-only, and ends at crew_deposit,
+# carrying back the ticket the crew hands over the instant the statement is held as data. It is not
+# awaited: every card here answers without awaiting, so nothing waits on the write to run.
+def _d_read(depositing):
+    """Read the spelling and build the declaration; a NoMatch or Fault at any of the grammar cards is the
+    answer, settled before a statement is compiled and before anything is deposited."""
+    grammar = grammar_of(depositing["written"])
+    return _pick(_is_refusal(grammar), lambda: grammar, lambda: _d_lift(depositing, grammar))
+
+
+def _d_lift(depositing, grammar):
+    asked = asked_from_written(depositing["written"], methods_of(grammar))
+    return _pick(_is_refusal(asked), lambda: asked, lambda: _d_build(depositing, asked))
+
+
+def _d_build(depositing, asked):
+    built = declaration_from_asked(asked)
+    return _pick(_is_refusal(built), lambda: built,
+                 lambda: {**depositing, "declaration": {**built, "model": depositing["model"]["table"]}})
+
+
+def _d_check(read):
+    """refuse_a_read first, so a reading word is refused before the columns are read, then the two model
+    checks; the first refusal is the answer and nothing is deposited."""
+    declaration = read["declaration"]
+    refusals = list(filter(_is_refusal, [refuse_a_read(declaration),
+                                         refuse_undeclared_columns(read["model"], declaration),
+                                         refuse_some_columns_as_an_object(declaration)]))
+    return _pick(refusals != [], lambda: refusals[0], lambda: _d_compile(read))
+
+
+def _d_compile(read):
+    statement = compile_statement(read["declaration"], read["db"]["engine"])
+    return _pick(_is_refusal(statement), lambda: statement, lambda: _d_deposit(read, statement))
+
+
+def _d_deposit(read, statement):
+    ticket = crew_deposit(read["db"]["crew"], statement)
+    return _pick(is_fault(ticket), lambda: ticket,
+                 lambda: {**read, "statement": statement, "ticket": ticket})
+
+
+def query_prepare_deposit(depositing):
+    """Read a caller's write, check it, compile it, deposit it to the crew and carry back the ticket the
+    crew handed over (declaration query_prepare_deposit, spec 8.6). The asynchronous half of what
+    query_answer does for a write, stopping the instant the write is held as data; it is not awaited. A
+    NoMatch from a grammar card or a Fault from refuse_a_read or a column check travels out as it stands,
+    and in every refusal nothing was deposited."""
+    read = _d_read(depositing)
+    return _pick(_is_refusal(read), lambda: read, lambda: _d_check(read))
+
+
+# --- query_redeem_ticket (declaration, spec 8.6) ----------------------------------------------------
+# Redeem a ticket against the crew holding its write, wait on that write's outcome, and shape the receipt
+# into the answer the caller reads. A ticket no crew holds is a NoMatch carried straight back, refused
+# before anything is awaited, because waiting on a claim that was never deposited waits on nothing.
+async def _ticket_unknown(_collecting, miss):
+    return miss
+
+
+async def _ticket_known(collecting, _miss):
+    receipt = await crew_release_ticket(collecting["db"]["crew"], collecting["ticket"])
+    return _redeemed(collecting, receipt)
+
+
+_WHETHER_TICKET_KNOWN = {True: _ticket_unknown, False: _ticket_known}
+
+
+def _redeemed(collecting, receipt):
+    return _pick(is_fault(receipt), lambda: receipt,
+                 lambda: {**collecting, "receipt": receipt, "answer": answer_from_receipt(receipt)})
+
+
+async def query_redeem_ticket(collecting):
+    """Redeem a ticket against the crew holding its write, wait on that write's outcome, and shape the
+    receipt into the answer (declaration query_redeem_ticket, spec 8.6). It is awaited because
+    crew_release_ticket is: waiting on the ticket's outcome is the one thing it does. A ticket no crew
+    holds is a NoMatch carried straight back before anything is awaited; the Fault answer_from_receipt
+    surfaces travels out through the Collecting record's answer."""
+    miss = refuse_an_unknown_ticket(collecting["db"]["crew"], collecting["ticket"])
+    return await _WHETHER_TICKET_KNOWN[is_no_match(miss)](collecting, miss)
 
 
 # --- migration_compare, schema_read_live (declaration) ----------------------------------------------

@@ -16,6 +16,8 @@ from honest_persist.orchestrators import (
     lifecycle_shut_down,
     migration_compare,
     query_answer,
+    query_prepare_deposit,
+    query_redeem_ticket,
     schema_read_live,
     schema_say_declared,
     schema_say_refreshes,
@@ -138,6 +140,65 @@ async def query_ask(db, model, written):
                         f"{type(raised).__name__}: {raised}", "refused", [], {})
         log_write({"event": "question_raised", "level": "error", "why": stopped["message"]})
         return stopped
+
+
+# --- query_deposit, query_collect: the asynchronous write path (declaration, spec 8.6) --------------
+# query_deposit is not awaited: the whole deposit path is synchronous, so it is a plain def (honest-check
+# HC-R003 reads the declaration's non-awaited promise against the absence of `async def`). crew_deposit
+# leaves a waiter and returns a ticket at once, running nothing, and the read → column-check → compile
+# prefix is pure sync functions — nothing on this path awaits. An async host calls it without `await`,
+# and crew_deposit's create_future finds the running loop the caller is already inside (spec 8.6).
+def _depositing(db, model, written):
+    return {"db": db, "model": model, "written": written, "declaration": NOTHING,
+            "statement": NOTHING, "ticket": ""}
+
+
+def _the_ticket_inside(prepared):
+    return prepared["ticket"]
+
+
+def _the_deposit_refusal(prepared):
+    return prepared
+
+
+_WHAT_DEPOSIT_CAME_BACK = {True: _the_deposit_refusal, False: _the_ticket_inside}
+
+
+def query_deposit(db, model, written):
+    """Take a declared write, as the caller wrote it, hand it to the crew, and return a ticket at once — a
+    claim on a write held as data, not a finished write (declaration query_deposit, spec 8.6). It runs the
+    same read, column-check and compile query_ask runs, then refuse_a_read keeps it write-only; a write
+    that cannot be read or compiled is refused here and nothing is handed to the crew. Three return
+    shapes: the Ticket returned at once, a Fault the library read but refused, a NoMatch it could not
+    read. It is not awaited: the deposit is synchronous, so the door returns the moment the crew takes the
+    statement and leaves a waiter, without waiting on the write to run."""
+    prepared = query_prepare_deposit(_depositing(db, model, written))
+    return _WHAT_DEPOSIT_CAME_BACK[_is_refusal(prepared)](prepared)
+
+
+def _collecting(db, ticket):
+    return {"db": db, "ticket": ticket, "receipt": NOTHING, "answer": NOTHING}
+
+
+def _the_collect_answer(redeemed):
+    return redeemed["answer"]
+
+
+def _the_collect_refusal(redeemed):
+    return redeemed
+
+
+_WHAT_COLLECT_CAME_BACK = {True: _the_collect_refusal, False: _the_collect_answer}
+
+
+async def query_collect(db, ticket):
+    """Redeem a ticket query_deposit handed back and answer with what the write did: the same reply
+    query_ask gives a synchronous write — a count — or a Fault (declaration query_collect, spec 8.6). It
+    waits on the ticket's own outcome through the crew and shapes the receipt. Three return shapes: the
+    Answer, the Fault the write ended on, and a NoMatch for a ticket no crew holds, refused before
+    anything is awaited. Failure is per ticket: one ticket's Fault stands on its own."""
+    redeemed = await query_redeem_ticket(_collecting(db, ticket))
+    return _WHAT_COLLECT_CAME_BACK[_is_refusal(redeemed)](redeemed)
 
 
 # --- lifecycle_stop, lifecycle_turn (declaration) ---------------------------------------------------
