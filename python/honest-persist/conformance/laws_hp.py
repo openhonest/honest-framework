@@ -3321,6 +3321,189 @@ def _probe_observe_emit_swallowed():
         honest_observe.emit = real_emit
 
 
+class _SqliteQueryConnection:
+    """A duck-typed §7 connection over a real sqlite3 database: `await execute(sql, params)` answers
+    {rows, rowcount}, and begin/commit/rollback drive a transaction. This is the adopter-supplied
+    connection the §7 layer runs on (spec §7.4, §8.1.1 — a real driver, not a mock); the sqlite
+    connection is opened in autocommit mode so a single execute persists and a transaction is explicit."""
+
+    def __init__(self, path):
+        self._raw = sqlite3.connect(path, isolation_level=None)
+
+    async def execute(self, sql, params):
+        cursor = self._raw.execute(sql, params or {})
+        rows = _pick(cursor.description is None, lambda: [],
+                     lambda: [dict(zip([c[0] for c in cursor.description], row)) for row in cursor.fetchall()])
+        return {"rows": rows, "rowcount": cursor.rowcount}
+
+    async def begin(self):
+        self._raw.execute("BEGIN")
+
+    async def commit(self):
+        self._raw.execute("COMMIT")
+
+    async def rollback(self):
+        self._raw.execute("ROLLBACK")
+
+    def close(self):
+        self._raw.close()
+
+
+def _probe_query_builders():
+    """The §7 query builders are pure functions that return a Query — plain data, no I/O (spec §7.1, §7.2):
+    select, insert, update, delete and raw each answer a dict carrying the SQL text and the named
+    parameters, and none performs any I/O. The parameters a write carries are the values it was handed."""
+    for name in ("select", "insert", "update", "delete", "raw"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (query builders)"]
+    select = _need("select"); insert = _need("insert"); update = _need("update")
+    delete = _need("delete"); raw = _need("raw")
+    bad = []
+    for label, query in (
+        ("select", select("users", ["id", "email"], {"status": "active"}, None, None, None, None)),
+        ("insert", insert("users", {"id": 1, "email": "a@b.c"})),
+        ("update", update("users", {"email": "x@y.z"}, {"id": 1})),
+        ("delete", delete("users", {"id": 1})),
+        ("raw", raw("SELECT 1", None)),
+    ):
+        if not (isinstance(query, dict) and isinstance(query.get("sql"), str) and isinstance(query.get("params"), dict)):
+            bad.append(f"{label} should build a Query with sql text and a params dict: {query}")
+    # The values a write carries must be present in its params, so the driver binds them.
+    written = insert("users", {"id": 7, "email": "z@z.z"})
+    if 7 not in written["params"].values() or "z@z.z" not in written["params"].values():
+        bad.append(f"insert should carry the row's values in the Query params: {written}")
+    return bad
+
+
+def _probe_query_execute():
+    """The §7 execute family runs a built Query on a real sqlite connection and answers plain data (spec
+    §7.4): execute reads the rows, execute_one the first row or NOTHING, execute_scalar the first cell or
+    NOTHING, execute_many the rows affected. A row written by insert is read back by select, updated, and
+    deleted, each count confirmed, with no ORM and no model instances — plain dicts throughout."""
+    for name in ("select", "insert", "update", "delete", "execute", "execute_one", "execute_scalar", "execute_many"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (query execute)"]
+    select = _need("select"); insert = _need("insert"); update = _need("update")
+    delete = _need("delete"); execute = _need("execute"); execute_one = _need("execute_one")
+    execute_scalar = _need("execute_scalar"); execute_many = _need("execute_many")
+
+    async def _run(d):
+        bad = []
+        conn = _SqliteQueryConnection(os.path.join(d, "q.db"))
+        await conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT)", {})
+        wrote = await execute_many(insert("widgets", {"id": 1, "name": "alpha"}), conn)
+        if wrote != 1:
+            bad.append(f"execute_many of an insert should answer 1 row affected: {wrote}")
+        rows = await execute(select("widgets", ["id", "name"], {"id": 1}, None, None, None, None), conn)
+        if not (isinstance(rows, list) and rows and rows[0].get("name") == "alpha"):
+            bad.append(f"execute of a select should read the row back as a plain dict: {rows}")
+        one = await execute_one(select("widgets", ["id", "name"], {"id": 1}, None, None, None, None), conn)
+        if not (isinstance(one, dict) and one.get("id") == 1):
+            bad.append(f"execute_one should read the single row: {one}")
+        missing = await execute_one(select("widgets", ["id"], {"id": 999}, None, None, None, None), conn)
+        if missing is not None:
+            bad.append(f"execute_one with no rows should answer NOTHING: {missing}")
+        scalar = await execute_scalar(select("widgets", ["name"], {"id": 1}, None, None, None, None), conn)
+        if scalar != "alpha":
+            bad.append(f"execute_scalar should answer the first cell: {scalar}")
+        changed = await execute_many(update("widgets", {"name": "beta"}, {"id": 1}), conn)
+        if changed != 1:
+            bad.append(f"execute_many of an update should answer 1 row affected: {changed}")
+        removed = await execute_many(delete("widgets", {"id": 1}), conn)
+        if removed != 1:
+            bad.append(f"execute_many of a delete should answer 1 row affected: {removed}")
+        conn.close()
+        return bad
+
+    with tempfile.TemporaryDirectory() as d:
+        return asyncio.run(_run(d))
+
+
+def _probe_query_select_options():
+    """select carries the optional clauses the basic round-trip does not reach (spec §7.2): an order,
+    ascending and the descending `-` prefix, a limit and an offset that page the result, and a join that
+    reads a second table. execute_scalar answers NOTHING when the query matches nothing. Run on a real
+    sqlite connection."""
+    for name in ("select", "insert", "execute", "execute_scalar", "execute_many"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (select options)"]
+    select = _need("select"); insert = _need("insert"); execute = _need("execute")
+    execute_scalar = _need("execute_scalar"); execute_many = _need("execute_many")
+
+    async def _run(d):
+        bad = []
+        conn = _SqliteQueryConnection(os.path.join(d, "opt.db"))
+        await conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT)", {})
+        await conn.execute("CREATE TABLE tags (wid INTEGER, tag TEXT)", {})
+        for wid, nm in ((1, "a"), (2, "b"), (3, "c")):
+            await execute_many(insert("widgets", {"id": wid, "name": nm}), conn)
+        await execute_many(insert("tags", {"wid": 1, "tag": "x"}), conn)
+
+        ascending = await execute(select("widgets", ["id"], None, ["id"], None, None, None), conn)
+        if [row["id"] for row in ascending] != [1, 2, 3]:
+            bad.append(f"an ascending order_by should sort ascending: {ascending}")
+        # The descending `-` prefix, paged by a limit and offset over the reversed order.
+        paged = await execute(select("widgets", ["id"], None, ["-id"], 2, 1, None), conn)
+        if [row["id"] for row in paged] != [2, 1]:
+            bad.append(f"a descending order_by with limit and offset should page the reverse order: {paged}")
+        joined = await execute(select("widgets", ["widgets.id", "tags.tag"], {"id": 1}, None, None, None,
+                                      [{"table": "tags", "on": "tags.wid = widgets.id"}]), conn)
+        if not (joined and joined[0].get("tag") == "x"):
+            bad.append(f"a join should read the joined row: {joined}")
+        empty = await execute_scalar(select("widgets", ["name"], {"id": 999}, None, None, None, None), conn)
+        if empty is not None:
+            bad.append(f"execute_scalar with no matching row should answer NOTHING: {empty}")
+        conn.close()
+        return bad
+
+    with tempfile.TemporaryDirectory() as d:
+        return asyncio.run(_run(d))
+
+
+def _probe_query_transaction():
+    """A §7 transaction runs several writes all-or-nothing on one connection (spec §7.5): on success it
+    answers each write's rows-affected count in order and every write commits; on a failing write it rolls
+    back, answers a write_failed Fault naming the index, and leaves nothing behind for another reader."""
+    for name in ("insert", "transaction", "execute"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (query transaction)"]
+    insert = _need("insert"); transaction = _need("transaction"); execute = _need("execute")
+    select = _need("select")
+
+    async def _run(d):
+        bad = []
+        conn = _SqliteQueryConnection(os.path.join(d, "t.db"))
+        await conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT)", {})
+        landed = await transaction([insert("widgets", {"id": 1, "name": "a"}),
+                                    insert("widgets", {"id": 2, "name": "b"})], conn)
+        if not (isinstance(landed, list) and landed == [1, 1]):
+            bad.append(f"a transaction of two inserts should answer each write's count: {landed}")
+        count = await execute(select("widgets", ["id"], None, None, None, None, None), conn)
+        if len(count) != 2:
+            bad.append(f"both writes of a successful transaction should commit: {count}")
+        # A failing write (a duplicate primary key) rolls the whole transaction back.
+        refused = await transaction([insert("widgets", {"id": 3, "name": "c"}),
+                                     insert("widgets", {"id": 1, "name": "dup"})], conn)
+        if not (hp.is_fault(refused) and refused.get("code") == "write_failed"):
+            bad.append(f"a transaction with a failing write should answer a write_failed Fault: {refused}")
+        after = await execute(select("widgets", ["id"], None, None, None, None, None), conn)
+        if len(after) != 2:
+            bad.append(f"a rolled-back transaction must leave no row behind; rows now {len(after)}")
+        conn.close()
+        return bad
+
+    with tempfile.TemporaryDirectory() as d:
+        return asyncio.run(_run(d))
+
+
 # ---------------------------------------------------------------------------
 # The runner.
 # ---------------------------------------------------------------------------
@@ -3372,6 +3555,10 @@ _PROBES = [
     _probe_replication_orchestration,
     _probe_sync_turn,
     _probe_observe_emit_swallowed,
+    _probe_query_builders,
+    _probe_query_execute,
+    _probe_query_select_options,
+    _probe_query_transaction,
     # The probes that define host pydantic models run last and clean up after themselves, so their
     # declared models never reach another law's schema read.
     _probe_migration_on_open,

@@ -107,6 +107,18 @@ from honest_persist.doors import (
     session_open,
     view_refreshes,
 )
+from honest_persist.query_layer import (
+    delete,
+    execute,
+    execute_many,
+    execute_one,
+    execute_scalar,
+    insert,
+    raw,
+    select,
+    transaction,
+    update,
+)
 from honest_persist.types import (
     ENGINES,
     FAULT_CATEGORIES,
@@ -145,6 +157,9 @@ __all__ = [
     "how_to_compare", "spell_operation",
     # across models, declared view
     "join_between", "spell_view", "mechanism_for", "refreshes_from_declared", "what_to_do_after_a_refresh",
+    # query layer (spec 7)
+    "select", "insert", "update", "delete", "raw",
+    "execute", "execute_one", "execute_scalar", "execute_many", "transaction",
     # infrastructure
     "Fault", "fault", "is_fault", "refused", "no_match", "is_no_match", "ENGINES", "FAULT_CATEGORIES",
 ]

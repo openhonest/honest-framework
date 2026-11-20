@@ -1,4 +1,4 @@
-Feature: honest-persist — generated, one scenario per function (87 total)
+Feature: honest-persist — generated, one scenario per function (97 total)
 
   Scenario: session_open opens a database for a caller and raises if it will not open
     Given target: str and shutdown: Shutdown and primary: str | NOTHING and token: str | NOTHING
@@ -533,3 +533,73 @@ Feature: honest-persist — generated, one scenario per function (87 total)
     And it asks worth_retrying, which answers that only a conflict is worth another go, and budget_spent, which answers whether the tries are gone, rather than reading a category itself
     And attempt is handed in rather than counted here, which keeps it pure, and attempts_allowed is the host's number read off the view it declared
     And it never answers retry_after, because a refresh already has its cadence as the spacing, so a conflict worth another go is answered continue and tried again on the next tick, and attempt.overran changes nothing it answers
+
+  Scenario: select builds a SELECT Query from names
+    Given table: str and columns: list<str> | NOTHING and where: dict<str, Value> | NOTHING and order_by: list<str> | NOTHING and limit: int | NOTHING and offset: int | NOTHING and joins: list<QueryJoin> | NOTHING
+    When select is called
+    Then it builds a SELECT Query from names and does no I/O, returning a Query of parameterized SQL with every value carried in the Query's named params
+    And table is the table read; columns is the column names wanted, or NOTHING for all of them, and a single * in the list is the all-columns wildcard; where is a map of column name to the Value it must equal, or NOTHING for no filter, and an empty map is also no filter
+    And order_by is the column names to sort by, each optionally prefixed - for descending, or NOTHING; limit and offset are the row cap and the start offset, or NOTHING for neither; joins is the tables joined in, each a QueryJoin of a table name and a raw ON expression, or NOTHING
+    And every optional part is an explicit NOTHING when absent, never a language default, so a caller that named nothing and a caller that chose nothing read the same
+
+  Scenario: insert builds an INSERT Query
+    Given table: str and values: dict<str, Value>
+    When insert is called
+    Then it builds an INSERT Query and does no I/O, returning a Query of parameterized SQL with every value carried in the Query's named params
+    And table is the table written and values is the map of column name to the Value to write into it
+
+  Scenario: update builds an UPDATE Query
+    Given table: str and values: dict<str, Value> and where: dict<str, Value>
+    When update is called
+    Then it builds an UPDATE Query and does no I/O, returning a Query of parameterized SQL with every value carried in the Query's named params
+    And table is the table written, values is the map of column name to the Value to set, and where is the map of column name to the Value a row must equal to be updated; an empty where map updates every row
+
+  Scenario: delete builds a DELETE Query
+    Given table: str and where: dict<str, Value>
+    When delete is called
+    Then it builds a DELETE Query and does no I/O, returning a Query of parameterized SQL with every value carried in the Query's named params
+    And table is the table written and where is the map of column name to the Value a row must equal to be deleted; an empty where map deletes every row
+
+  Scenario: raw builds a Query from SQL the caller wrote
+    Given sql: str and params: dict<str, Value> | NOTHING
+    When raw is called
+    Then it builds a Query from SQL the caller wrote and does no I/O, returning a Query
+    And sql is the raw SQL text and params is the named parameters to bind, or NOTHING when the SQL carries none
+    And it is the one builder that carries no column names to check, the boundary raw draws between the checked and unchecked building of spec 7.3
+
+  Scenario: execute runs a query on the caller's connection and answers the rows
+    Given query: Query and conn: QueryConnection
+    When execute is called
+    Then it runs a query on the connection the caller handed in and answers the Rows it returned, awaited, reading and writing database
+    And it awaits conn.execute(query.sql, query.params), which answers {rows, rowcount}, and hands back rows, each a plain dict and never a model instance: no ORM, no lazy loading, no identity map
+    And it opens no connection and closes none; the connection is the caller's, resolved and supplied by persist's routing outside this layer
+    And it does not catch: a driver error propagates to honest-type's catch_at_boundary, so this return carries rows and never a Fault
+
+  Scenario: execute_one runs a query and answers its first row or NOTHING
+    Given query: Query and conn: QueryConnection
+    When execute_one is called
+    Then it runs a query and answers its first row, or NOTHING when the query returned no rows, awaited, reading and writing database
+    And it awaits conn.execute exactly as execute does and takes the first of rows; NOTHING is the host language's null for an empty result
+    And it does not catch: a driver error propagates to honest-type's catch_at_boundary, so this return carries a row or NOTHING and never a Fault
+
+  Scenario: execute_scalar runs a query and answers the first cell or NOTHING
+    Given query: Query and conn: QueryConnection
+    When execute_scalar is called
+    Then it runs a query and answers the first column of its first row, or NOTHING when there were no rows, awaited, reading and writing database
+    And the scalar is one cell, a Value, the same bound value a Row holds; NOTHING stands for no rows, which a cell that is itself null cannot be told apart from
+    And it does not catch: a driver error propagates to honest-type's catch_at_boundary, so this return carries a Value or NOTHING and never a Fault
+
+  Scenario: execute_many runs a write query and answers the rowcount
+    Given query: Query and conn: QueryConnection
+    When execute_many is called
+    Then it runs a write query and answers the rowcount the driver reported, the number of rows affected, awaited, reading and writing database
+    And it awaits conn.execute and hands back rowcount
+    And it does not catch: a driver error propagates to honest-type's catch_at_boundary, so this return carries a count and never a Fault
+
+  Scenario: transaction runs several writes as one all-or-nothing step
+    Given writes: list<Query> and conn: QueryConnection
+    When transaction is called
+    Then it runs several writes as one all-or-nothing step on the connection the caller handed in, so either every write commits or none does, answering list<int> | Fault, awaited, writing database
+    And it awaits conn.begin(), runs each write the way execute_many does on this one connection, collects each write's rows-affected count in arrival order, awaits conn.commit() and answers the list of counts
+    And on a driver error it catches, awaits conn.rollback(), and answers a Fault instead of the list, the one sanctioned catch at this boundary, because a transaction cannot roll back without first seeing the failure
+    And the success value is the bare list of per-write counts and the failure is the module's own bare-union Fault, not spec 7.5's ok/err envelope: the Fault's code is write_failed and its detail carries failed_at, the index of the write that failed, and message, the driver's text
