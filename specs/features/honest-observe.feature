@@ -1,465 +1,201 @@
-Feature: honest-observe — event envelope, recording, and projection
-  One scenario per function. honest-test's auto-generation proves every case;
-  each scenario names the single behaviour that proof stands on, and the count of
-  scenarios is the module's directly-counted function-point size.
-
-  Scenario: build_event assembles a validated envelope
-    Given the type, version, aggregate, payload, id, time, and sequence of an event
-    When build_event assembles them
-    Then it yields an event carrying every field
-    But if any required field is empty it yields an "invalid_event" fault
-
-  Scenario: extract_auth selects the configured authentication fields from a context
-    Given a context and a list of authentication field names
-    When extract_auth reads them
-    Then it returns just those names that are present, in order
-    But if none are present it returns nothing
-
-  Scenario: extract_meta selects the configured metadata fields from a context
-    Given a context and a list of metadata field names
-    When extract_meta reads them
-    Then it returns just those names that are present
-    But if none are present it returns nothing
-
-  Scenario: emit records one event
-    Given an event to record and somewhere to append it
-    When emit records the event
-    Then it appends a complete envelope and returns the recorded event's id
-    But if a required field is empty it returns the validation fault and appends nothing
-    And if appending fails it returns an "emit_failed" fault
-
-  Scenario: apply_projection folds the matching events into a view
-    Given a list of events, a fold, a starting view, and optional filters
-    When apply_projection runs
-    Then it folds only the events that pass the filters into the view
-
-  Scenario: matches decides whether an event passes a projection's filters
-    Given an event and filters for type, aggregate, and a time window
-    When matches checks it
-    Then it passes only when every filter that is set is satisfied
-    And the time window includes its start and excludes its end
-
-  Scenario: chain_started builds the chain-started event
-    Given a chain name, link count, and input types
-    When chain_started builds the event
-    Then it returns the hf.chain.started event for the chain with its link count and input types
-
-  Scenario: chain_completed builds the chain-completed event
-    Given a chain name, link count, duration, and result
-    When chain_completed builds the event
-    Then it returns the hf.chain.completed event, carrying the fault code and category only when the chain finished in error
-
-  Scenario: link_executed builds the link-executed event
-    Given a link's name, chain, duration, result, boundary flag, and honesty measurements
-    When link_executed builds the event
-    Then it returns the hf.link.executed event with the mutation, singleton, nondeterminism, and io-call measurements, and the fault code only on error
-
-  Scenario: link_faulted builds the link-faulted event
-    Given a link's name, chain, fault code, category, and message
-    When link_faulted builds the event
-    Then it returns the hf.link.faulted event, including the input manifest only when supplied
-
-  Scenario: classify_completed builds the classification event
-    Given a vocabulary name, token and rejection counts, duration, and reason histogram
-    When classify_completed builds the event
-    Then it returns the hf.classify.completed event for the vocabulary with its counts and rejection reasons
-
-  Scenario: state_transitioned builds the state-transition event
-    Given a machine, entity, from and to states, event, and duration
-    When state_transitioned builds the event
-    Then it returns the hf.state.transitioned event keyed by machine and entity with the transition
-
-  Scenario: state_rejected builds the state-rejection event
-    Given a machine, entity, current state, event, and fault code
-    When state_rejected builds the event
-    Then it returns the hf.state.rejected event keyed by machine and entity with the fault code
-
-  Scenario: link_summary builds one link's entry for a canonical request
-    Given a link's name, duration, and result
-    When link_summary builds the entry
-    Then it returns the link summary, including the fault code only on error
-
-  Scenario: request_canonical builds the canonical request event
-    Given the HTTP, identity, chain, classification, persistence, outcome, and timing facts of a request
-    When request_canonical builds the event
-    Then it returns the hf.request.canonical event keyed by request id, with source server and the optional identity, chain, and fault fields present only when supplied
-
-  Scenario: app_started builds the application-started event
-    Given an app name, environment, and loaded counts
-    When app_started builds the event
-    Then it returns the hf.app.started event for the app, including the release only when supplied
-
-  Scenario: app_stopped builds the application-stopped event
-    Given an app name, uptime, and reason
-    When app_stopped builds the event
-    Then it returns the hf.app.stopped event with the uptime and reason
-
-  Scenario: app_error builds the application-error event
-    Given an app name, error type, and message
-    When app_error builds the event
-    Then it returns the hf.app.error event, including the traceback and context only when supplied
-
-  Scenario: event_log_schema is the honest_event_log persist table
-    Given the event envelope shape
-    When event_log_schema builds the table
-    Then it returns a one-table persist schema whose columns mirror the envelope, with event_id the primary key, the framework fields NOT NULL, the auth and meta partitions nullable, and the four projection indexes
-
-  Scenario: event_log_manifest declares the table append-only
-    Given the event-log table
-    When event_log_manifest wraps it
-    Then it returns the honest_event_log manifest with append_only true and the embedded schema
-
-  Scenario: build_snapshot records a projection's state at a log position
-    Given a projection id, a log position, and the folded state
-    When build_snapshot records them
-    Then it returns a snapshot with the projection id, the position it covers, and the state
-
-  Scenario: should_snapshot fires only when the interval is reached
-    Given an event count since the last snapshot and a snapshot interval
-    When should_snapshot decides
-    Then it is true once the count reaches a positive interval, and never when there is no interval
-
-  Scenario: declare_projection bundles the projection config and fold
-    Given a projection id, filters, fold, initial state, and snapshot interval
-    When declare_projection bundles them
-    Then it returns a declaration carrying the id, fold, and interval, with the aggregate filters present only when set
-
-  Scenario: resume_from_snapshot replays only the events after the snapshot
-    Given a snapshot and the events around its position
-    When resume_from_snapshot replays from it
-    Then it folds only the strictly-later matching events onto the snapshot state, leaving the position's own event already counted
-
-  Scenario: otel_signal_kind maps an hf event to its OTel signal kind
-    Given an hf framework event type
-    When otel_signal_kind maps it
-    Then it returns the OTel signal kind for a framework event and None for any other
-
-  Scenario: _auth_attrs maps an event's auth partition to hf.auth attributes
-    Given an event's auth partition
-    When _auth_attrs reads it
-    Then it returns the caller, data owner, and factors-presented as hf.auth attributes, each only when its field is present
-
-  Scenario: otel_attributes derives the OTel semantic-convention attributes
-    Given an hf event with a payload, optional auth partition, and optional meta release
-    When otel_attributes derives them
-    Then it returns the hf attributes its event type contributes, the hf.auth attributes from its auth partition, and service version from meta release, and nothing for an event with no attribute builder
-
-  Scenario: otel_signal is the projection output for one event
-    Given an hf event
-    When otel_signal projects it
-    Then it returns the event type, OTel signal kind, and attributes as one signal
-
-  Scenario: _chain_started_attrs builds the chain-started span attributes
-    Given a chain-started payload
-    When _chain_started_attrs reads it
-    Then it returns the hf chain name and link count
-
-  Scenario: _chain_completed_attrs builds the chain-completed span attributes
-    Given a chain-completed payload
-    When _chain_completed_attrs reads it
-    Then it returns the hf chain name and link count, with the fault code only when the chain errored
-
-  Scenario: _link_executed_attrs builds the link span attributes
-    Given a link-executed payload
-    When _link_executed_attrs reads it
-    Then it returns the hf link name, boundary flag, and the mutation, singleton, nondeterminism, and io-call measurements
-
-  Scenario: _link_faulted_attrs builds the faulted-link span attributes
-    Given a link-faulted payload
-    When _link_faulted_attrs reads it
-    Then it returns the hf link name
-
-  Scenario: _classify_attrs builds the classification metric attributes
-    Given a classify-completed payload
-    When _classify_attrs reads it
-    Then it returns the hf vocabulary name and rejection count
-
-  Scenario: _state_attrs builds the state-transition span-event attributes
-    Given a state-transitioned payload
-    When _state_attrs reads it
-    Then it returns the hf state machine, from state, event, and to state
-
-  Scenario: build_browser_event assembles a validated browser envelope
-    Given a browser event type, version, timestamp, session, payload, and event id
-    When build_browser_event assembles them
-    Then it returns an ok browser event with source browser and the request id only when supplied, or an invalid_event fault naming any empty required field
-
-  Scenario: browser_classify builds the attribute-classification event payload
-    Given an element, attribute, tokens, manifest, and duration
-    When browser_classify builds the payload
-    Then it returns the hf.browser.classify event with the request id only within a request context
-
-  Scenario: browser_request builds the HTMX-request event payload
-    Given an HTMX method, url, trigger, target, manifest keys, and request id
-    When browser_request builds the payload
-    Then it returns the hf.browser.request event carrying the request id it sent
-
-  Scenario: browser_response builds the HTMX-response event payload
-    Given a request id, status, swap target, and round-trip duration
-    When browser_response builds the payload
-    Then it returns the hf.browser.response event joined to its request by request id
-
-  Scenario: dom_changed builds the manifest-state-change event payload
-    Given the changed keys with their new values only
-    When dom_changed builds the payload
-    Then it returns the hf.dom.changed event carrying the new values, with the request id only within a request context
-
-  Scenario: format_tail_line renders one event as a structured tail line
-    Given a logged event
-    When format_tail_line renders it
-    Then it returns the clock time, source defaulting to server, event type, and the event-type-specific field tail
-
-  Scenario: _ms renders a nanosecond duration in milliseconds
-    Given a duration in nanoseconds
-    When _ms renders it
-    Then it returns the millisecond display string to one decimal place
-
-  Scenario: _short_time takes the clock portion of a timestamp
-    Given an ISO timestamp
-    When _short_time takes its clock portion
-    Then it returns the time to millisecond precision
-
-  Scenario: _tail_fields renders the field tail for an event type
-    Given an event with a mapped or unmapped type
-    When _tail_fields renders it
-    Then it returns the event-type-specific key=value fields, or empty for an unmapped type
-
-  Scenario: format_inspect reconstructs a request's execution trace
-    Given a request id and the request's correlated events
-    When format_inspect reconstructs the trace
-    Then it returns the header, the browser and server blocks ordered by timestamp, and the single-clock timing breakdown
-
-  Scenario: _request_id_of finds the request id wherever it is present
-    Given an event that may carry a request id in its envelope, payload, or aggregate id
-    When _request_id_of reads it
-    Then it returns the request id where present, and None where none is
-
-  Scenario: _browser_line renders one browser event for the trace
-    Given a browser event
-    When _browser_line renders it
-    Then it returns the clock time, abbreviated event type, and the event detail
-
-  Scenario: _server_lines renders the server section from the canonical link sequence
-    Given a canonical event payload with its link sequence
-    When _server_lines renders the section
-    Then it returns one line per link with name, result, duration, and the fault code on an errored link
-
-  Scenario: _inspect_breakdown attributes the elapsed time across the tiers
-    Given a canonical payload and the browser events
-    When _inspect_breakdown attributes the time
-    Then it returns server from the canonical duration, network from the round trip minus server, browser from the browser-local durations, and their sum
-
-  Scenario: _whole_ms renders a millisecond quantity as whole milliseconds
-    Given a millisecond quantity
-    When _whole_ms renders it
-    Then it returns the rounded whole-millisecond display string
-
-  Scenario: run_named_projection resolves and runs a projection by name
-    Given a projection registry, a name, and the events
-    When run_named_projection runs it
-    Then it returns ok of the folded state for a known name, or an unknown_projection fault for one not registered
-
-  Scenario: custom_metric declares a metric as a fold and a value over the log
-    Given a name, event types, fold, value, and initial state
-    When custom_metric declares the metric
-    Then it returns a declaration carrying the events it folds, the fold, the value, and the initial state
-
-  Scenario: compute_metric computes a metric's current value over the log
-    Given a metric and the events
-    When compute_metric runs it
-    Then it folds the metric's events from the initial state and extracts the value
-
-  Scenario: condition_met decides whether a value crosses a threshold
-    Given a metric value and a condition operator and bound
-    When condition_met decides
-    Then it returns whether the value crosses the bound under the operator
-
-  Scenario: builtin_metrics provides the ready-made threshold metrics by name
-    Given the framework's own events
-    When builtin_metrics is asked for the metrics
-    Then it returns the self-contained built-in metrics over observe's events, each a fold and a value
-
-  Scenario: _percentile takes the nearest-rank percentile of a list
-    Given a list of numbers and a percentile
-    When _percentile takes it
-    Then it returns the nearest-rank value, and zero for no values
-
-  Scenario: threshold_projection declares what to watch and the line to cross
-    Given a metric name, condition, window, cooldown, alert, and optional remediation
-    When threshold_projection declares it
-    Then it returns the declaration carrying them, with the remediation present only when supplied
-
-  Scenario: evaluate_threshold decides whether a threshold fires now
-    Given a threshold projection, its metric, and the events
-    When evaluate_threshold decides
-    Then an enabled projection fires with its value when the condition is crossed, and a disabled one never fires
-
-  Scenario: rejection records a raw event that failed translation
-    Given a source, reason, raw event, translator version, rejection id, and received-at time
-    When rejection records them
-    Then it returns the rejection record preserving the raw event verbatim with its source and reason
-
-  Scenario: rejection_log_schema is the honest_rejection_log persist table
-    Given the rejection record shape
-    When rejection_log_schema builds the table
-    Then it returns a one-table persist schema with rejection_id the primary key and forensic indexes by source, reason, and time
-
-  Scenario: rejection_log_manifest declares the table append-only
-    Given the rejection-log table
-    When rejection_log_manifest wraps it
-    Then it returns the honest_rejection_log manifest with append_only true and the embedded schema
-
-  Scenario: hlc_send advances a hybrid logical clock on a local event
-    Given a local clock and the wall-clock physical time
-    When hlc_send advances it
-    Then it takes the later physical time, resetting the logical counter when the clock advanced and incrementing it otherwise
-
-  Scenario: hlc_receive merges an incoming clock into the local one
-    Given a local clock, an incoming clock, and the wall-clock time
-    When hlc_receive merges them
-    Then the new physical time is the max of the three, the logical counter follows whichever the max came from, and the source stays local
-
-  Scenario: hlc_compare gives the total order on hybrid logical clocks
-    Given two hybrid logical clocks
-    When hlc_compare orders them
-    Then it compares by physical time, then logical counter, then source identifier
-
-  Scenario: identity_claimed records a mapping from an external id to a canonical id
-    Given a canonical id, external system, external id, evidence, and who asserted it
-    When identity_claimed records the claim
-    Then it returns the identity.claimed event carrying the mapping and its evidence
-
-  Scenario: identity_unknown records an unresolvable external id
-    Given an external id and its source
-    When identity_unknown records it
-    Then it returns the identity.unknown event for the id and source
-
-  Scenario: fold_identity_claims projects claims into a binding lookup
-    Given a log of identity claims
-    When fold_identity_claims projects them
-    Then it returns the bindings keyed by system and external id, with a differing claim recorded as a conflict rather than overwriting
-
-  Scenario: resolve_identity maps an external id to its canonical id
-    Given an external id, its source, and the bindings
-    When resolve_identity looks it up
-    Then it returns the canonical id where bound, and None for an unknown source or id
-
-  Scenario: parse_window reads a since window into seconds
-    Given a window spec of a whole number and a unit letter
-    When parse_window reads it
-    Then it returns the window as a number of seconds
-
-  Scenario: since_cutoff turns a window into a comparable cutoff
-    Given the current time and a window spec
-    When since_cutoff subtracts the window
-    Then it returns the cutoff formatted like the event timestamps, to millisecond precision with a Z
-
-  Scenario: tail_matches decides whether an event passes the tail filters
-    Given an event and the source, event type, chain, request, and since filters
-    When tail_matches applies them
-    Then it returns whether every set filter matches, treating an absent field as a non-match
-
-  Scenario: _fold_declared folds events through a declared projection
-    Given a declared projection and the events
-    When _fold_declared runs it
-    Then it returns the state folded through the projection's fold and filters
-
-  Scenario: _bucket_start finds the bucket a timestamp falls in
-    Given a timestamp and a bucket window in seconds
-    When _bucket_start floors the timestamp to the window
-    Then it returns the bucket start to whole seconds with a Z
-
-  Scenario: run_bucketed_projection runs a projection per time bucket
-    Given a registry, a name, the events, and a bucket window
-    When run_bucketed_projection folds each bucket independently
-    Then it returns ok of the ascending bucket-and-state pairs, or an unknown_projection fault for an unregistered name
-
-  Scenario: _cmd_tail prints the events that pass the filters
-    Given the tail arguments, a log reader, a clock, and emit
-    When _cmd_tail streams the log
-    Then it emits a structured line for each event that passes the filters and returns zero
-
-  Scenario: _cmd_inspect renders one request's trace
-    Given a request id, a log reader, and emit
-    When _cmd_inspect looks it up
-    Then it emits the request's execution trace and returns zero, or a fault and one when no such request exists
-
-  Scenario: _cmd_query runs a named projection over the log
-    Given a projection name, optional since and bucket, a log reader, a registry, and emit
-    When _cmd_query runs it
-    Then it emits the folded state (bucketed when asked) and returns zero, or the fault message and one for an unknown name
-
-  Scenario: _parser builds the argument grammar for the three commands
-    Given the tail, inspect, and query command surface
-    When _parser is built
-    Then it returns an argument parser that requires one of the three subcommands with their flags
-
-  Scenario: main dispatches a CLI invocation to its command
-    Given the argument vector and the injected reader, clock, registry, and emit
-    When main parses and dispatches it
-    Then it returns the chosen command's exit code
-
-  Scenario: _deserialize turns a log row back into an event
-    Given one honest_event_log row with JSON text columns
-    When _deserialize parses it
-    Then it returns the event with payload parsed and auth or meta parsed only when present
-
-  Scenario: read_event_log reads the event log through a connection
-    Given a database connection
-    When read_event_log selects the log in order
-    Then it returns every honest_event_log row deserialized into an event
-
-  Scenario: _now reads the wall clock in the event-log format
-    Given the current moment
-    When _now reads it
-    Then it returns an ISO timestamp to millisecond precision with a Z
-
-  Scenario: _entry reads the log and runs the CLI over it
-    Given the argument vector, a connection, and a projection registry
-    When _entry materializes the log and dispatches
-    Then it runs the CLI over the events with the wall clock and stdout, returning the exit code
-
-  Scenario: load_config turns a parsed settings table into a validated configuration
-    Given a parsed honest-observe.toml as a dict
-    When load_config merges it over the defaults and validates it
-    Then it returns ok of the fully-defaulted config, or an invalid_config fault for a bad auth provider or a custom provider with no fields
-
-  Scenario: _merged_section lays supplied values over one section's defaults
-    Given a section name and the raw table
-    When _merged_section merges them
-    Then it returns the section's documented keys with supplied values overriding the defaults
-
-  Scenario: _read_text reads and parses the settings file
-    Given a path to a settings file
-    When _read_text reads it
-    Then it returns the parsed table, or the empty table when the file is absent
-
-  Scenario: read_config reads and loads the settings file
-    Given a path to a settings file
-    When read_config reads and loads it
-    Then it returns the loaded configuration, defaulting a missing file to all defaults
-
-  Scenario: development_mode reads the development switch
-    Given a loaded configuration
-    When development_mode reads it
-    Then it returns whether the development section is enabled
-
-  Scenario: framework_event_enabled decides whether an event kind is emitted
-    Given a configuration and an event kind
-    When framework_event_enabled reads it
-    Then it returns the kind's base toggle, except that development mode forces classify events on
-
-  Scenario: include_manifests decides whether payloads carry manifest values
-    Given a loaded configuration
-    When include_manifests reads it
-    Then it returns true only in development mode with the manifests sub-toggle set
-
-  Scenario: include_tracebacks decides whether error payloads carry tracebacks
-    Given a loaded configuration
-    When include_tracebacks reads it
-    Then it returns true only in development mode with the tracebacks sub-toggle set
-
-  Scenario: auto_tail decides whether tail auto-streams
-    Given a loaded configuration
-    When auto_tail reads it
-    Then it returns true only in development mode with the auto_tail sub-toggle set
+Feature: honest-observe - generated, one scenario per function (24 total)
+  The function-point measure for honest-observe: exactly one scenario per declared
+  function, the scenario subject being the function name. 24 functions, 24 scenarios.
+
+  Scenario: new_event_id
+    Given no parameters
+    When new_event_id is called
+    Then it reads the random source and nothing else
+    And it returns a fresh UUID v7 event id as a str, time-ordered so the log sorts by creation without a separate column
+    But it never reuses an id
+    And it raises no fault, being a reader of the world rather than a pure function
+
+  Scenario: event_timestamp
+    Given no parameters
+    When event_timestamp is called
+    Then it reads the clock and nothing else
+    And it returns the current wall-clock time as an ISO-8601 microsecond UTC str, the event's timestamp
+    But it raises no fault, being a reader of the world rather than a pure function
+
+  Scenario: next_sequence
+    Given aggregate_id: str and conn: any
+    When next_sequence is called
+    Then it reads the event log through the injected database connection conn for the next per-aggregate sequence number
+    And it returns an int counter that is unique and increasing within one aggregate_id, fixing order within the aggregate without a global lock
+    And it is awaited because the read is I/O
+    But conn is never read by any pure function, only held and passed to the boundary
+
+  Scenario: append_event
+    Given event: Event and conn: any
+    When append_event is called
+    Then it appends the one built envelope to the append-only event log through the injected connection conn and returns a WriteOutcome
+    And on a clean write the WriteOutcome is ok true with empty detail, and on a failed write it is ok false carrying the error detail
+    And the map columns payload, auth and meta are stored as JSON through json.dumps, not str(), so each lands as valid JSON that round-trips to its map
+    And it does only the write and builds no Fault, because a boundary is a terminus and leaves fault construction to the orchestrator
+    And it is awaited because the append is I/O, and it never raises
+    And it issues no update or delete, the log being append-only
+
+  Scenario: run_emit
+    Given event_type: str and aggregate_type: str and aggregate_id: str and payload: dict and context: dict and event_version: str and conn: any
+    When run_emit is called
+    Then it is the single mutator of the event value, invoking its own readers new_event_id, event_timestamp and next_sequence to pull the three impure parts
+    And it invokes extract_auth and extract_meta to pull the auth and meta partitions from context
+    And it hands all parts to build_event, which assembles and validates one immutable envelope, and applies each return into the one value without any pure function mutating
+    And on a build_event Fault (an empty required field) it returns the Fault without writing
+    And otherwise it appends through append_event, reads the WriteOutcome, and returns the event on a clean write or builds the emit_failed Fault via observe_fault on a failed one
+    And it is awaited because next_sequence and append_event are I/O
+    But it returns Event | Fault so the fault bubbles to the door by return, never a swallowed log line
+
+  Scenario: emit
+    Given event_type: str and aggregate_type: str and aggregate_id: str and payload: dict and context: dict and event_version: str and conn: any
+    When emit is called
+    Then it is the one door that writes an event to the log, called from inside an application chain link declared at the boundary
+    And it hands its input to run_emit and returns what run_emit returns, the appended Event or a Fault
+    And it is awaited because run_emit is
+    But it returns Event | Fault rather than raising, because the calling link decides whether a failed emit stops its chain
+    And nothing inside the module calls it, the world calling in here
+
+  Scenario: extract_auth
+    Given context: dict
+    When extract_auth is called
+    Then it pulls the auth partition out of the current manifest at the context's auth key for attachment to the envelope
+    And it returns that block as a dict, carried verbatim and copied without inspecting a field
+    But it is pure, a map read with no world and no fault
+
+  Scenario: extract_meta
+    Given context: dict
+    When extract_meta is called
+    Then it pulls the optional application-metadata partition out of the current manifest at the context's meta key
+    And it returns that open map as a dict, carried verbatim and never read by the framework
+    But it is pure, a map read with no world and no fault
+
+  Scenario: build_event
+    Given event_type: str and event_version: str and aggregate_type: str and aggregate_id: str and payload: dict and auth: dict and meta: dict and event_id: str and timestamp: str and sequence: int
+    When build_event is called
+    Then it assembles one immutable Event envelope from its already-computed parts and validates it, being the one place the envelope is built
+    And it returns the Event
+    But when a required field is empty it returns a Fault with code empty_required_field as a bare union arm (Event | Fault), never raising
+    And it is a pure constructor, the impure parts event_id, timestamp and sequence and the extracted auth and meta passed in, so it runs without a clock, a random source or a database
+
+  Scenario: observe_fault
+    Given code: str and message: str and detail: dict
+    When observe_fault is called
+    Then it builds one observe Fault record from its parts, the single place honest-observe assembles a fault
+    And it sets the reserved is_err tag true and returns the Fault, recognized by is_fault, never raised and never wrapped in an ok/err envelope
+    And build_event invokes it for an empty required field and run_emit invokes it for a failed append
+    But it is pure, reading no world
+
+  Scenario: request_canonical
+    Given request_id: str and http_method: str and http_path: str and http_status: int and caller_id: str and session_id: str and chain_name: str and link_count: int and link_sequence: list and token_count: int and rejection_count: int and query_count: int and query_duration_ns: int and result: str and fault_code: str and fault_category: str and duration_ns: int
+    When request_canonical is called
+    Then it assembles the one dense canonical request Event emitted last for every request, colocating all request telemetry in one record so an operational question needs no join
+    And it folds the facts already gathered for the request into one Event keyed by request_id, the join key with the browser events
+    But it is pure, folding facts in hand, reading no world and returning no fault
+
+  Scenario: matches
+    Given event: Event and event_types: list
+    When matches is called
+    Then it returns true when the event's type is one of the requested event_types, being the one place the event-type filter is decided
+    And it returns a bool
+    But it is pure, a membership test with no world and no fault
+
+  Scenario: apply_projection
+    Given projection: Projection and events: list and fold: Callable and initial_state: any
+    When apply_projection is called
+    Then it reads the projection handle's event_types and invokes matches to keep only the events the projection filters to, then folds them in order into a derived read model
+    And the filter lives in the one Projection handle and is not copied into a loose argument beside it
+    And fold is the pure (state, event) -> state accumulator and initial_state its seed, returning new state each step
+    And it returns the folded state as any, the only read path over the raw log, reached by import
+    But it is pure, no I/O and no mutation, so a projection cannot drift from the log
+
+  Scenario: declare_projection
+    Given projection_id: str and event_types: list and fold: Callable and initial_state: any
+    When declare_projection is called
+    Then it declares a named projection, returning the flat Projection handle registered under projection_id over the given event_types
+    And fold and initial_state are named here and passed to apply_projection at run time, so they are not stored in the serializable handle
+    But it is pure, building a record, reading no world and returning no fault, reached by import
+
+  Scenario: build_snapshot
+    Given projection_id: str and snapshot_at: str and state: any
+    When build_snapshot is called
+    Then it builds a projection snapshot, packaging projection_id, the log position snapshot_at it covers, and the folded state at that position into a snapshot record
+    And it returns that snapshot as any, so a projection over millions of events need not replay from the beginning every time
+    But it is pure, reading no world and returning no fault, reached by import
+
+  Scenario: resume_from_snapshot
+    Given projection: Projection and snapshot: any and events: list and fold: Callable
+    When resume_from_snapshot is called
+    Then it reads the projection handle's event_types and invokes matches to keep only the filtered events in the log tail, folding them onto the snapshot's prior state with the same pure accumulator fold
+    And it returns the resumed state as any, equal to a full replay, so a snapshot cannot change the answer
+    But it is pure, no I/O and no mutation, reached by import
+
+  Scenario: otel_signal
+    Given event: Event
+    When otel_signal is called
+    Then it projects one event to its OpenTelemetry signal (a trace span, child span, span event or metric) as pure data carrying the standard and hf.* semantic-convention attributes
+    And the signal kind follows the event type as a mapping read from the event, not a branch ladder
+    And it returns the signal value as any, reached by import
+    But it emits no signal itself, shipping being boundary I/O through an injected exporter, so observe never imports the OTel SDK
+    And it is pure, an Event in and a signal value out, no world and no fault
+
+  Scenario: compute_metric
+    Given metric: Metric and events: list
+    When compute_metric is called
+    Then it computes the metric's value by folding its source events, the metric's own fold, value and group functions passed in with it
+    And for a plain metric it returns one number and for a grouped metric it returns a mapping of group key to value, so a per-group threshold can test each group
+    And it returns the value as any, reached by import and invoked by evaluate_threshold
+    But it is pure, events in and value out, no world and no fault
+
+  Scenario: threshold_projection
+    Given projection_id: str and metric: str and condition: any and window: str and cooldown: str and alert: any and enabled: bool
+    When threshold_projection is called
+    Then it declares a threshold projection that watches the named metric and fires alert when condition is crossed over window, with cooldown the minimum time between firings and enabled the operator toggle
+    And it returns a ThresholdProjection record carrying projection_id, metric, condition, window, cooldown, alert and enabled
+    And the return is a ThresholdProjection, not a Projection, whose two fields cannot carry a firing decision's terms
+    But it is pure, building a record, reading no world and returning no fault, reached by import
+
+  Scenario: evaluate_threshold
+    Given threshold: ThresholdProjection and metric: Metric and events: list
+    When evaluate_threshold is called
+    Then it reads the ThresholdProjection's condition, invokes compute_metric on the Metric handle to get the value, and tests the condition
+    And for a plain metric the decision is whether the one value crossed, and for a grouped metric it returns { fired, firings } where fired is true when any group crossed and firings carries one { group, fired, value } record per group
+    And it returns the decision as any, the send to honest-alerts being a separate boundary the caller runs, reached by import
+    But it is pure, events in and decision out, no world and no fault
+
+  Scenario: hlc_send
+    Given local: dict and physical_now: int
+    When hlc_send is called
+    Then it advances a hybrid logical clock for a send, giving a total order across sources that respects causality without a synchronized wall clock
+    And it sets physical to the max of physical_now and local's physical, and increments the logical counter when physical did not advance so same-millisecond events still order
+    And it returns the new HLC as a dict
+    But it is pure, two values in and the new HLC out, no world (physical_now is passed, not read) and no fault
+
+  Scenario: hlc_receive
+    Given local: dict and incoming: dict and physical_now: int
+    When hlc_receive is called
+    Then it advances a hybrid logical clock on receiving an event from another source, so one source keeps its order and events across sources interleave by physical time
+    And it advances physical to the max of the three physicals and sets the logical counter so causality is preserved, breaking ties by source id
+    And it returns the new HLC as a dict
+    But it is pure, three values in and the new HLC out, no world and no fault
+
+  Scenario: fold_identity_claims
+    Given events: list
+    When fold_identity_claims is called
+    Then it folds the identity.claimed events into the identity binding table, a projection mapping (external_system, external_id) to a canonical id
+    And it reduces each append-only claim into a lookup and returns the bindings as a dict
+    And a conflict, two claims mapping one external id to different canonical ids, is surfaced in the result for human adjudication, not silently resolved
+    But it is pure, events in and bindings out, no world and no fault, reading the log slice it is handed, reached by import
+
+  Scenario: resolve_identity
+    Given external_id: str and source: str and bindings: dict
+    When resolve_identity is called
+    Then it resolves one external_id in a source to its canonical id by looking it up in the bindings table that fold_identity_claims produced, returning the canonical id as a str
+    But an unresolvable id is a bounded absence, not a failure: it returns NOTHING, which carries no is_err tag and is never recognized by is_fault, keeping it disjoint from a Fault
+    And it is pure, a table lookup with no world, reached by import
+
+  Scenario: event_log_schema
+    Given no parameters
+    When event_log_schema is called
+    Then it returns the honest_event_log table manifest as data, the append-only event-log schema honest-persist enforces, with update and delete rejected against the table
+    And it names the columns of the envelope and the indexes the common projection filters need: by event type, by aggregate, by timestamp, and by aggregate-and-sequence
+    But it is pure, taking no argument because the schema is fixed, reading no world and returning no fault, reached by import so honest-persist's migration can create the table from one declared shape

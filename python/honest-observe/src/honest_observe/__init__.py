@@ -1,120 +1,50 @@
-"""honest-observe - event-sourced observability.
+"""honest-observe - event-sourced observability (core unit): one append-only event log written by one
+emit boundary and read back only through pure projections (honest-observe.hd, section 1).
 
-One append-only event log; projections are pure folds over it. Implemented: the event envelope
-(section 2), the emit boundary (section 3), and projections (section 6). emit reaches the outside
-world — id, clock, sequence, and the log writer — only through an injected runtime, so observe is
-stored by persist without importing it. The log storage itself is the runtime's concern.
+__all__ is the public import surface -- the functions the declaration gives an import or call entry.
+The internal emit-path and pure helpers (run_emit, the readers, the write boundary, the partition
+extractors, build_event, matches) are importable module attributes the laws and value map reference,
+but are not part of the public surface, so they are left out of __all__.
 """
 
-from honest_observe.browser import browser_classify, browser_request, browser_response, build_browser_event, dom_changed
-from honest_observe.config import (
-    development_mode,
-    development_subtoggle,
-    framework_event_enabled,
-    load_config,
-    read_config,
+from honest_observe.types import NOTHING, Event, Fault, Metric, Projection, observe_fault
+from honest_observe.events import build_event, extract_auth, extract_meta
+from honest_observe.emit import (
+    append_event,
+    emit,
+    event_timestamp,
+    new_event_id,
+    next_sequence,
+    run_emit,
 )
-from honest_observe.devtools import (
-    format_inspect,
-    format_tail_line,
-    parse_window,
-    run_bucketed_projection,
-    run_named_projection,
-    since_cutoff,
-    tail_matches,
+from honest_observe.schema import event_log_schema
+from honest_observe.canonical import request_canonical
+from honest_observe.projections import (
+    apply_projection,
+    build_snapshot,
+    declare_projection,
+    matches,
+    resume_from_snapshot,
 )
-from honest_observe.emit import emit, run_emit
-from honest_observe.event_log import event_log_manifest, event_log_schema
-from honest_observe.hlc import hlc_compare, hlc_receive, hlc_send
-from honest_observe.ingest import (
-    fold_identity_claims,
-    identity_claimed,
-    identity_unknown,
-    rejection,
-    rejection_log_manifest,
-    rejection_log_schema,
-    resolve_identity,
-)
-from honest_observe.events import Event, build_event, extract_auth, extract_meta
-from honest_observe.framework_events import (
-    app_error,
-    app_started,
-    app_stopped,
-    chain_completed,
-    chain_started,
-    classify_completed,
-    link_executed,
-    link_faulted,
-    link_summary,
-    request_canonical,
-    state_rejected,
-    state_transitioned,
-)
-from honest_observe.otel import otel_attributes, otel_signal, otel_signal_kind
-from honest_observe.projections import apply_projection, matches
-from honest_observe.snapshot import build_snapshot, declare_projection, resume_from_snapshot, should_snapshot
-from honest_observe.thresholds import builtin_metrics, compute_metric, condition_met, custom_metric, evaluate_threshold, threshold_projection
+from honest_observe.otel import otel_signal
+from honest_observe.thresholds import compute_metric, evaluate_threshold, threshold_projection
+from honest_observe.hlc import hlc_receive, hlc_send
+from honest_observe.identity import fold_identity_claims, resolve_identity
 
 __all__ = [
-    "load_config",
-    "read_config",
-    "development_mode",
-    "development_subtoggle",
-    "framework_event_enabled",
-    "Event",
-    "build_event",
-    "extract_auth",
-    "extract_meta",
     "emit",
-    "apply_projection",
-    "matches",
-    "chain_started",
-    "chain_completed",
-    "link_executed",
-    "link_faulted",
-    "classify_completed",
-    "state_transitioned",
-    "state_rejected",
-    "link_summary",
     "request_canonical",
-    "app_started",
-    "app_stopped",
-    "app_error",
-    "event_log_schema",
-    "event_log_manifest",
-    "build_snapshot",
-    "should_snapshot",
+    "apply_projection",
     "declare_projection",
+    "build_snapshot",
     "resume_from_snapshot",
-    "otel_signal_kind",
-    "otel_attributes",
     "otel_signal",
-    "build_browser_event",
-    "browser_classify",
-    "browser_request",
-    "browser_response",
-    "dom_changed",
-    "format_tail_line",
-    "format_inspect",
-    "parse_window",
-    "since_cutoff",
-    "tail_matches",
-    "run_named_projection",
-    "run_bucketed_projection",
-    "custom_metric",
     "compute_metric",
-    "condition_met",
-    "builtin_metrics",
     "threshold_projection",
     "evaluate_threshold",
-    "rejection",
-    "rejection_log_schema",
-    "rejection_log_manifest",
     "hlc_send",
     "hlc_receive",
-    "hlc_compare",
-    "identity_claimed",
-    "identity_unknown",
     "fold_identity_claims",
     "resolve_identity",
+    "event_log_schema",
 ]
