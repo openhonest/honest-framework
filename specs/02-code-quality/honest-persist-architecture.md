@@ -1049,6 +1049,13 @@ write_queue config:
 
 **Failure handling:** After 6 hours without successful write, the supervisor emits a `hf.persist.queue_stalled` event to honest-observe and raises the fault to the application. Writes are never silently discarded.
 
+**The caller's two doors.** The application reaches the asynchronous path through the two acts this section already names: *deposit* and *collect*. Deposit takes a write exactly as the synchronous door takes it, hands it to the queue, and returns the ticket at once. It never waits for the write to become durable, and that is the whole of its promise. Collect takes a ticket and returns that write's outcome, waiting only on the one ticket. The synchronous door returns the outcome directly; the asynchronous pair splits the same work into a deposit that returns a ticket and a collect that returns the outcome, so the ticket the application holds between them is the unit it composes its atomicity from.
+
+Two shapes follow, and neither is a separate rule:
+
+- **Only a write is deposited.** A read has nothing to defer and nothing to drain. Handing a read to deposit is a refused request, not a queued one, and the queue is left as it was.
+- **An unredeemable ticket is a per-ticket miss.** Collecting a ticket the queue does not hold — one never deposited, or one already collected — is answered as data that names the miss, never as a write failure. Failure is per ticket, and a ticket that names no write never had an outcome to fail.
+
 ### 8.7 Migration Events
 
 `apply()` is an I/O boundary. Every DDL operation it executes emits `hf.persist.migration`. Schema history becomes part of the unified event log: queryable, replayable, auditable.
