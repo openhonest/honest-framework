@@ -108,6 +108,10 @@ from honest_persist.doors import (
     view_refreshes,
 )
 from honest_persist.query_layer import (
+    checked_delete,
+    checked_insert,
+    checked_select,
+    checked_update,
     delete,
     execute,
     execute_many,
@@ -159,6 +163,7 @@ __all__ = [
     "join_between", "spell_view", "mechanism_for", "refreshes_from_declared", "what_to_do_after_a_refresh",
     # query layer (spec 7)
     "select", "insert", "update", "delete", "raw",
+    "checked_select", "checked_insert", "checked_update", "checked_delete",
     "execute", "execute_one", "execute_scalar", "execute_many", "transaction",
     # infrastructure
     "Fault", "fault", "is_fault", "refused", "no_match", "is_no_match", "ENGINES", "FAULT_CATEGORIES",

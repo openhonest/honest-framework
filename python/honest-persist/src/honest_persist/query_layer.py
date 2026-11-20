@@ -79,6 +79,138 @@ def raw(sql, params):
     return {"sql": sql, "params": params or {}}
 
 
+# --- the schema-checked builders (spec §7.3): a pure name-check, then the raw builder ------------------
+# Each takes the declared Schema first, checks every name the query uses against it, and either returns
+# the module's bare-union Fault or defers to its raw §7.2 sibling, so checked and raw never diverge. The
+# check is pure: it reads the declared tables and columns, touches no connection and does no I/O (P03).
+
+def checked_select(schema, table, columns, where, order_by, limit, offset, joins):
+    """Build a SELECT Query exactly as select does, after checking every name against the declared schema
+    (declaration checked_select, spec §7.3). The table and every join's table must be declared, and the
+    selected columns, the where keys and the order_by keys (its `-` prefix stripped, its `*` skipped) must
+    be declared columns of the table; else a bare-union unknown_table or unknown_column Fault. On success
+    it returns exactly the Query select builds from the same arguments."""
+    problem = _check(schema, [table] + _join_tables(joins), _select_names(columns, where, order_by), table)
+    return _pick(is_fault(problem),
+                 lambda: problem,
+                 lambda: select(table, columns, where, order_by, limit, offset, joins))
+
+
+def checked_insert(schema, table, values):
+    """Build an INSERT Query exactly as insert does, after checking its names (declaration checked_insert,
+    spec §7.3): the table must be declared and every key of values a declared column, else a bare-union
+    unknown_table or unknown_column Fault. On success it returns exactly the Query insert builds."""
+    problem = _check(schema, [table], _keys(values), table)
+    return _pick(is_fault(problem), lambda: problem, lambda: insert(table, values))
+
+
+def checked_update(schema, table, values, where):
+    """Build an UPDATE Query exactly as update does, after checking its names (declaration checked_update,
+    spec §7.3): the table must be declared and every key of values and of where a declared column, else a
+    bare-union unknown_table or unknown_column Fault. On success it returns exactly update's Query."""
+    problem = _check(schema, [table], _keys(values) + _keys(where), table)
+    return _pick(is_fault(problem), lambda: problem, lambda: update(table, values, where))
+
+
+def checked_delete(schema, table, where):
+    """Build a DELETE Query exactly as delete does, after checking its names (declaration checked_delete,
+    spec §7.3): the table must be declared and every key of where a declared column, else a bare-union
+    unknown_table or unknown_column Fault. On success it returns exactly the Query delete builds."""
+    problem = _check(schema, [table], _keys(where), table)
+    return _pick(is_fault(problem), lambda: problem, lambda: delete(table, where))
+
+
+# --- the name-check, shared by all four builders (spec §7.3): tables exist, columns are declared -------
+
+def _check(schema, tables, column_names, column_table):
+    """A Fault when any of `tables` is not a declared table (unknown_table, naming the first one missing)
+    or any of `column_names` is not a declared column of `column_table` (unknown_column), else NOTHING.
+    Table existence is read before columns, so a query against a table no schema holds is unknown_table
+    rather than a column miss against a table that is not there."""
+    missing_tables = list(filter(lambda name: _table_named(schema, name) is NOTHING, tables))
+    return _pick(bool(missing_tables),
+                 lambda: _unknown_table(missing_tables[0]),
+                 lambda: _check_columns(schema, column_table, column_names))
+
+
+def _check_columns(schema, table, column_names):
+    """A Fault when any of `column_names` is not a declared column of the (already-confirmed) `table`,
+    else NOTHING. The fault's detail carries the table, the names not found, and the columns the table
+    declares, so a caller reads the mismatch as data (P25)."""
+    declared = _declared_columns(_table_named(schema, table))
+    missing = list(filter(lambda name: name not in declared, column_names))
+    return _pick(bool(missing),
+                 lambda: _unknown_column(table, missing, declared),
+                 lambda: NOTHING)
+
+
+def _table_named(schema, name):
+    """The declared Table named `name`, or NOTHING when the schema holds no such table."""
+    matches = list(filter(lambda t: t["name"] == name, schema["tables"]))
+    return _pick(bool(matches), lambda: matches[0], lambda: NOTHING)
+
+
+def _declared_columns(table):
+    """The names of the columns the table declares."""
+    return [column["name"] for column in table["columns"]]
+
+
+def _join_tables(joins):
+    """The table each join reads, so a join's named table is checked for existence the same as the main
+    table; a NOTHING joins means no joins, hence no further tables to check (declaration checked_select)."""
+    return [join["table"] for join in (joins or [])]
+
+
+def _select_names(columns, where, order_by):
+    """Every column name a SELECT uses that must be declared: the selected columns (the `*` wildcard
+    skipped, NOTHING meaning all columns and so nothing to check), the where keys, and the order_by keys
+    with their leading `-` descending marker stripped before checking (declaration checked_select)."""
+    return _columns_named(columns) + _keys(where) + _order_names(order_by)
+
+
+def _columns_named(columns):
+    """The selected column names to check: NOTHING means all columns (nothing to check) and the `*`
+    wildcard is skipped, the two parts §7.3 recognises and does not column-check."""
+    return list(filter(lambda column: column != "*", columns or []))
+
+
+def _order_names(order_by):
+    """The order_by column names to check, each with its leading `-` descending marker stripped first."""
+    return [_strip_descending(column) for column in (order_by or [])]
+
+
+def _strip_descending(column):
+    """A `-`-prefixed order_by key names its column descending; the name to check is that key without the
+    marker (declaration checked_select, mirroring _order_term's own `-` reading)."""
+    return _pick(column.startswith("-"), lambda: column[1:], lambda: column)
+
+
+def _keys(mapping):
+    """The keys of a (possibly NOTHING) column-to-value map, as the column names to check."""
+    return list((mapping or {}).keys())
+
+
+def _unknown_table(table):
+    """The bare-union Fault for a table no schema declares (declaration checked_select, spec §7.3): name a
+    declared table instead, the one named here is not one."""
+    return refused(
+        "unknown_table",
+        f"table {table!r} is not a declared table; name a table the schema declares instead",
+        {"table": table},
+    )
+
+
+def _unknown_column(table, columns, declared):
+    """The bare-union Fault for columns no table declares (declaration checked_select, spec §7.3): name
+    columns the table declares instead. The detail carries the offending columns and the declared ones so
+    a caller reads the mismatch as data (P25)."""
+    return refused(
+        "unknown_column",
+        f"columns {columns} are not declared on table {table!r}; name columns it declares instead: {declared}",
+        {"table": table, "columns": columns, "declared": declared},
+    )
+
+
 # --- the clause builders the SELECT assembles, each if-free --------------------------------------------
 
 def _where(where):

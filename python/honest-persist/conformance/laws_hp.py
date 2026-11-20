@@ -3423,6 +3423,75 @@ def _probe_query_execute():
         return asyncio.run(_run(d))
 
 
+def _probe_checked_builders():
+    """The §7.3 schema-checked builders validate the names a query uses against the DECLARED schema — a
+    pure check needing no connection (spec §7.3): on success each returns exactly the Query its raw
+    counterpart produces; an undeclared table is an unknown_table Fault and an undeclared column an
+    unknown_column Fault, across the selected columns, the WHERE keys, the ORDER BY keys and the
+    INSERT/UPDATE value keys. The `*` wildcard, an ORDER BY `-` prefix and all-columns (NOTHING) are not
+    column-checked."""
+    for name in ("checked_select", "checked_insert", "checked_update", "checked_delete",
+                 "select", "insert", "update", "delete"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (checked builders)"]
+    checked_select = _need("checked_select"); checked_insert = _need("checked_insert")
+    checked_update = _need("checked_update"); checked_delete = _need("checked_delete")
+    select = _need("select"); insert = _need("insert"); update = _need("update"); delete = _need("delete")
+    schema = {"tables": [{"name": "users",
+                          "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None},
+                                      {"name": "email", "declared_type": "text", "renamed_from": None, "references": None}],
+                          "indexes": [], "constraints": []},
+                         {"name": "posts",
+                          "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None},
+                                      {"name": "author", "declared_type": "integer", "renamed_from": None, "references": None}],
+                          "indexes": [], "constraints": []}], "views": []}
+    bad = []
+    # On success the checked builder returns exactly the raw builder's Query.
+    if checked_select(schema, "users", ["id", "email"], {"id": 1}, None, None, None, None) != select("users", ["id", "email"], {"id": 1}, None, None, None, None):
+        bad.append("checked_select should return exactly the raw select's Query on success")
+    if checked_insert(schema, "users", {"id": 1, "email": "a@b.c"}) != insert("users", {"id": 1, "email": "a@b.c"}):
+        bad.append("checked_insert should return exactly the raw insert's Query on success")
+    if checked_update(schema, "users", {"email": "x"}, {"id": 1}) != update("users", {"email": "x"}, {"id": 1}):
+        bad.append("checked_update should return exactly the raw update's Query on success")
+    if checked_delete(schema, "users", {"id": 1}) != delete("users", {"id": 1}):
+        bad.append("checked_delete should return exactly the raw delete's Query on success")
+    # An undeclared table is unknown_table; an undeclared column is unknown_column, everywhere a name is used.
+    bad_table = checked_select(schema, "nope", ["id"], None, None, None, None, None)
+    if not (hp.is_fault(bad_table) and bad_table.get("code") == "unknown_table"):
+        bad.append(f"an undeclared table should be an unknown_table Fault: {bad_table}")
+    bad_col = checked_select(schema, "users", ["nosuch"], None, None, None, None, None)
+    if not (hp.is_fault(bad_col) and bad_col.get("code") == "unknown_column"):
+        bad.append(f"an undeclared selected column should be an unknown_column Fault: {bad_col}")
+    if not hp.is_fault(checked_select(schema, "users", ["id"], {"nosuch": 1}, None, None, None, None)):
+        bad.append("checked_select should check the WHERE keys")
+    if not hp.is_fault(checked_select(schema, "users", ["id"], None, ["nosuch"], None, None, None)):
+        bad.append("checked_select should check the ORDER BY keys")
+    if not hp.is_fault(checked_insert(schema, "users", {"nosuch": 1})):
+        bad.append("checked_insert should check the value keys")
+    if not hp.is_fault(checked_update(schema, "users", {"nosuch": 1}, {"id": 1})):
+        bad.append("checked_update should check the value keys")
+    if not hp.is_fault(checked_delete(schema, "users", {"nosuch": 1})):
+        bad.append("checked_delete should check the WHERE keys")
+    # The * wildcard, all-columns (NOTHING), and an ORDER BY `-` prefix on a declared column are not refused.
+    if hp.is_fault(checked_select(schema, "users", ["*"], None, None, None, None, None)):
+        bad.append("checked_select should not column-check the * wildcard")
+    if hp.is_fault(checked_select(schema, "users", None, None, ["-id"], None, None, None)):
+        bad.append("checked_select should pass all-columns and a `-`-prefixed declared ORDER BY column")
+    # A join's table is checked for existence; its ON expression is raw SQL and is not column-checked.
+    # (All-columns is used so the check turns only on the join table, not on qualified column names.)
+    good_join = checked_select(schema, "users", None, None, None, None, None,
+                               [{"table": "posts", "on": "posts.author = users.id"}])
+    if hp.is_fault(good_join):
+        bad.append(f"a join to a declared table should pass, its ON left as raw SQL: {good_join}")
+    bad_join = checked_select(schema, "users", None, None, None, None, None,
+                              [{"table": "nope", "on": "nope.x = users.id"}])
+    if not (hp.is_fault(bad_join) and bad_join.get("code") == "unknown_table"):
+        bad.append(f"a join to an undeclared table should be an unknown_table Fault: {bad_join}")
+    return bad
+
+
 def _probe_query_select_options():
     """select carries the optional clauses the basic round-trip does not reach (spec §7.2): an order,
     ascending and the descending `-` prefix, a limit and an offset that page the result, and a join that
@@ -3556,6 +3625,7 @@ _PROBES = [
     _probe_sync_turn,
     _probe_observe_emit_swallowed,
     _probe_query_builders,
+    _probe_checked_builders,
     _probe_query_execute,
     _probe_query_select_options,
     _probe_query_transaction,
