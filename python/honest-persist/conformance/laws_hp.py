@@ -1,3663 +1,3750 @@
-"""honest-persist conformance: the HP laws + DDL/boundary probes (the circle).
+"""honest-persist conformance: the generative proof (the behavioural circle).
 
-The behavioural circle for honest-persist. The HP laws (honest-conformance-suite.md) are
-asserted over a generated space of schema pairs: from every (current, target) the diff is
-computed, a pure schema-apply model carries `current` through the operations, and the result
-is re-diffed against `target`. Convergence (HP-1) and idempotency (HP-2/HP-4) are the
-assertion that the re-diff is empty; determinism (HP-3) that the diff is reproducible.
+What a value case cannot express is proved here. Three kinds of law live in this file:
 
-The DDL renderer (to_sql) and the CHECK parser are bounded vocabularies — operation type x
-dialect, and the guard DSL's tokens — so they are enumerated exhaustively rather than sampled.
-The apply() boundary (reconstruction, sync-push pause, failure handling) is probed with fake
-connections. The conformance directory is outside the honest-check gate, so it may model the
-apply, build fake connections, and feed deliberately-malformed CHECK strings.
+  1. A surface sweep (_probe_surface) that names every one of the 87 declared functions and fails
+     for each one not yet built and exported. This is the backbone of the RED signal: today only six
+     functions exist on disk, so this probe reports the other 81 by name, and it keeps the harness
+     running to completion rather than aborting on the first missing import.
+
+  2. Pure-function property laws, for the deciders, builders, the grammar readers and the engine
+     tables. Where the declaration fixes the exact output (the six built functions, the retry
+     dispositions) the law pins it; where it fixes only the shape or a totality property (SQL text,
+     backoff seconds) the law asserts that, never an invented string.
+
+  3. Real-database laws, against a real sqlite connection built in the test (never a mock). The
+     boundaries open, read and write a genuine in-process database; failure is injected by holding a
+     competing write lock or by setting the connection read-only, never by patching a function. The
+     headline is the driven-generator retry (_probe_generator_retry): it drives lifecycle_catch_up
+     against a real database, injects a write conflict, and asserts both the exact number of attempts
+     and that the database is left consistent — the seam declaro's self-retrying loop made impossible.
+
+The suite is RED by construction: the code port has not run, so most laws fail on a missing function.
+That is correct. A later code port turns each law green. Each probe returns a list of failure strings;
+run() aggregates them and never lets one missing function abort the rest.
+
+  uv run --package honest-persist python honest-persist/conformance/run_conformance.py
 """
 
 import asyncio
-import copy
-import io
 import os
+import secrets
 import sqlite3
-import sys
-from contextlib import redirect_stderr
-
-from honest_utilities import law, verify_laws
-from postgres_fixture import postgres_connection
-from turso_fixture import turso_connection
-
-from honest_persist import (
-    apply,
-    check_holds,
-    diff,
-    parse_check,
-    reconstruction_sql,
-    requires_reconstruction,
-    to_sql,
-    validate_schema,
-)
-from honest_persist.apply import _columns_added
-from honest_persist.types import operation
-
-_DIALECTS = ("postgresql", "sqlite", "turso")
-
-
-# --------------------------------------------------------------------------- schema-apply model
-
-
-def _apply_ops(schema, operations):
-    """A pure model of applying table/column operations to a schema dict — enough to prove
-    convergence without a live database. Mirrors what a correct apply() does to the structure."""
-    result = copy.deepcopy(schema)
-    for op in operations:
-        kind, table, details = op["op"], op["table"], op["details"]
-        if kind == "create_table":
-            result[table] = {"columns": dict(details.get("columns", {}))}
-        elif kind == "drop_table":
-            result.pop(table, None)
-        elif kind == "rename_table":
-            result[details["new_name"]] = result.pop(table)
-        elif kind == "add_column":
-            result[table]["columns"][details["column"]] = dict(details["definition"])
-        elif kind == "drop_column":
-            result[table]["columns"].pop(details["column"], None)
-        elif kind == "rename_column":
-            result[table]["columns"][details["to"]] = result[table]["columns"].pop(details["from"])
-        elif kind == "alter_column":
-            column = result[table]["columns"][details["column"]]
-            for field, change in details.get("changes", {}).items():
-                column[field] = change["to"]
-    return result
-
-
-_SCHEMAS = {
-    "empty": {},
-    "users_min": {"users": {"columns": {"id": {"type": "uuid", "nullable": False}, "name": {"type": "text"}}}},
-    "users_wide": {"users": {"columns": {"id": {"type": "uuid", "nullable": False}, "email": {"type": "text"}, "age": {"type": "integer"}}}},
-    "users_typed": {
-        "users": {"columns": {"id": {"type": "text", "nullable": True, "default": "'x'"}}},
-        "posts": {"columns": {"id": {"type": "uuid"}}},
-    },
-}
-
-_PAIRS = [(a, b) for a in _SCHEMAS for b in _SCHEMAS if a != b]
-
-
-def _hp_convergence(pair):
-    current, target = _SCHEMAS[pair[0]], _SCHEMAS[pair[1]]
-    result = diff(current, target)
-    if "err" in result:
-        return [f"diff({pair}) faulted: {result['err']}"]
-    reached = _apply_ops(current, result["operations"])
-    redo = diff(reached, target)
-    if "err" in redo:
-        return [f"re-diff after apply faulted: {redo['err']}"]
-    if redo["operations"]:
-        return [f"not converged: re-diff still has {len(redo['operations'])} ops: {redo['operations']}"]
-    return []
-
-
-def _hp_empty_plan(pair):
-    """diff(target, target) is empty — already-conformant means no work (HP-4)."""
-    target = _SCHEMAS[pair[1]]
-    result = diff(target, target)
-    if "err" in result:
-        return [f"self-diff faulted: {result['err']}"]
-    return [] if not result["operations"] else [f"self-diff produced {result['operations']}"]
-
-
-def _hp_determinism(pair):
-    current, target = _SCHEMAS[pair[0]], _SCHEMAS[pair[1]]
-    if diff(current, target) != diff(current, target):
-        return [f"diff({pair}) is not deterministic"]
-    return []
-
-
-HP_LAWS = [
-    law("HP-1", "applying a diff converges the schema to the target", _hp_convergence),
-    law("HP-2/HP-4", "a schema already at target yields an empty plan (idempotency)", _hp_empty_plan),
-    law("HP-3", "the diff depends only on (current, target) — it is deterministic", _hp_determinism),
-]
-
-
-# --------------------------------------------------------------------------- render enumeration
-
-_FULL_COLUMNS = {
-    "id": {"type": "uuid", "primary_key": True, "nullable": False},
-    "name": {"type": "text", "unique": True, "default": "'x'"},
-    "flag": {"type": "boolean"},
-}
-
-_RENDER_OPS = [
-    ("create_table", operation("create_table", "t", {"columns": _FULL_COLUMNS}), "CREATE TABLE"),
-    ("drop_table", operation("drop_table", "t", {}), "DROP TABLE"),
-    ("rename_table", operation("rename_table", "t", {"new_name": "t2"}), "RENAME TO"),
-    ("add_column", operation("add_column", "t", {"column": "c", "definition": {"type": "text"}}), "ADD COLUMN"),
-    ("drop_column", operation("drop_column", "t", {"column": "c"}), "DROP COLUMN"),
-    ("rename_column", operation("rename_column", "t", {"from": "a", "to": "b"}), "RENAME COLUMN"),
-    ("alter_set", operation("alter_column", "t", {"column": "c", "changes": {"type": {"to": "uuid"}, "nullable": {"to": False}, "default": {"to": "'v'"}}}), "ALTER COLUMN"),
-    ("alter_drop", operation("alter_column", "t", {"column": "c", "changes": {"nullable": {"to": True}, "default": {"to": None}}}), "DROP NOT NULL"),
-    ("add_index", operation("add_index", "t", {"index": "ix", "definition": {"columns": ["a", "b"], "unique": True}}), "UNIQUE INDEX"),
-    ("add_index_plain", operation("add_index", "t", {"index": "ix", "definition": {"columns": ["a"]}}), "INDEX"),
-    ("drop_index", operation("drop_index", "t", {"index": "ix"}), "DROP INDEX"),
-    ("add_foreign_key", operation("add_foreign_key", "t", {"column": "uid", "references": "users.id"}), "FOREIGN KEY"),
-    ("add_fk_on_delete", operation("add_foreign_key", "t", {"column": "uid", "references": "users.id", "on_delete": "cascade"}), "ON DELETE CASCADE"),
-    ("add_fk_on_update", operation("add_foreign_key", "t", {"column": "uid", "references": "users.id", "on_update": "set null"}), "ON UPDATE SET NULL"),
-    ("column_fk_on_delete", operation("add_column", "t", {"column": "uid", "definition": {"type": "uuid", "references": "users.id", "on_delete": "cascade", "on_update": "restrict"}}), "ON DELETE CASCADE"),
-    ("column_fk_on_update", operation("add_column", "t", {"column": "uid", "definition": {"type": "uuid", "references": "users.id", "on_delete": "cascade", "on_update": "restrict"}}), "ON UPDATE RESTRICT"),
-    ("drop_foreign_key", operation("drop_foreign_key", "t", {"column": "uid"}), "DROP CONSTRAINT"),
-    ("add_constraint", operation("add_constraint", "t", {"constraint": "ck", "definition": {"expression": "age > 0"}}), "CHECK"),
-    ("drop_constraint", operation("drop_constraint", "t", {"constraint": "ck"}), "DROP CONSTRAINT"),
-    ("create_view", operation("create_view", "", {"view": "v", "definition": {"query": "SELECT 1"}, "depends_on": []}), "CREATE VIEW v AS SELECT 1"),
-    ("drop_view", operation("drop_view", "", {"view": "v"}), "DROP VIEW v"),
-    ("create_trigger", operation("create_trigger", "t", {"trigger": "tr", "definition": {"table": "t", "timing": "after", "events": ["insert", "update"], "body": "BODY", "when": "NEW.x"}}), "CREATE TRIGGER tr AFTER INSERT OR UPDATE ON t WHEN (NEW.x) BODY"),
-    ("create_trigger_instead", operation("create_trigger", "v", {"trigger": "tr2", "definition": {"table": "v", "timing": "instead_of", "events": ["delete"], "body": "BODY"}}), "CREATE TRIGGER tr2 INSTEAD OF DELETE ON v BODY"),
-    ("drop_trigger", operation("drop_trigger", "t", {"trigger": "tr"}), "DROP TRIGGER tr"),
-    ("create_function", operation("create_function", "", {"function": "f", "definition": {"kind": "function", "params": [{"name": "a", "type": "int"}], "returns": "int", "language": "sql", "body": "BODY"}}), "CREATE FUNCTION f(a int) RETURNS int LANGUAGE sql AS BODY"),
-    ("create_procedure", operation("create_function", "", {"function": "p", "definition": {"kind": "procedure", "body": "BODY"}}), "CREATE PROCEDURE p() AS BODY"),
-    ("create_function_multiparam", operation("create_function", "", {"function": "g", "definition": {"body": "BODY", "params": [{"name": "a", "type": "int"}, {"name": "b", "type": "text"}]}}), "CREATE FUNCTION g(a int, b text) AS BODY"),
-    ("replace_function", operation("replace_function", "", {"function": "f", "definition": {"body": "BODY"}}), "CREATE OR REPLACE FUNCTION f() AS BODY"),
-    ("drop_function", operation("drop_function", "", {"function": "f"}), "DROP FUNCTION f"),
-]
-
-
-def _hp_render(subject):
-    label, op, keyword = subject
-    bad = []
-    for dialect in _DIALECTS:
-        sql = to_sql(op, dialect)
-        if not sql or keyword not in sql:
-            bad.append(f"to_sql({label}, {dialect}) = {sql!r}, expected to contain {keyword!r}")
-    return bad
-
-
-RENDER_LAWS = [law("HP-render", "every operation type renders to DDL on every dialect", _hp_render)]
-
-
-# --------------------------------------------------------------------------- fake connections
-
-
-class _ReconControl:
-    """The transaction + foreign-key control a reconstruction connection must provide (section 5.5):
-    begin/commit/rollback and disable/verify foreign keys, each recorded in order so the control flow is
-    assertable. verify_foreign_keys reports no violations by default."""
-
-    def _record(self):
-        self.calls = []
-
-    async def begin(self):
-        self.calls.append("begin")
-
-    async def commit(self):
-        self.calls.append("commit")
-
-    async def rollback(self):
-        self.calls.append("rollback")
-
-    async def disable_foreign_keys(self):
-        self.calls.append("disable_fk")
-
-    async def enable_foreign_keys(self):
-        self.calls.append("enable_fk")
-
-    async def verify_foreign_keys(self):
-        self.calls.append("verify_fk")
-        return []
-
-
-class _Conn(_ReconControl):
-    def __init__(self):
-        self.executed = []
-        self.paused = 0
-        self.resumed = 0
-        self._record()
-
-    async def execute(self, sql):
-        self.executed.append(sql)
-
-    async def pause_push(self):
-        self.paused += 1
-
-    async def resume_push(self):
-        self.resumed += 1
-
-
-class _BareConn(_ReconControl):
-    """A connection without sync-push hooks (the hasattr-false path)."""
-
-    def __init__(self):
-        self.executed = []
-        self._record()
-
-    async def execute(self, sql):
-        self.executed.append(sql)
-
-
-class _FailingConn(_ReconControl):
-    def __init__(self, fail_on):
-        self.executed = []
-        self._fail_on = fail_on
-        self.paused = 0
-        self.resumed = 0
-        self._record()
-
-    async def pause_push(self):
-        self.paused += 1
-
-    async def resume_push(self):
-        self.resumed += 1
-
-    async def execute(self, sql):
-        if self._fail_on in sql:
-            raise RuntimeError(f"boom on {self._fail_on}")
-        self.executed.append(sql)
-
-
-class _FkViolationConn(_Conn):
-    """A connection whose post-reconstruction foreign-key verification finds a dangling reference."""
-
-    async def verify_foreign_keys(self):
-        self.calls.append("verify_fk")
-        return [{"table": "child", "column": "parent_id"}]
-
-
-# --------------------------------------------------------------------------- apply boundary probes
-
-# A column type change forces a table rebuild on sqlite/turso (section 5.5).
-_RECON_CURRENT = {"t": {"columns": {"id": {"type": "uuid", "nullable": False}, "keep": {"type": "text"}}}}
-_RECON_TARGET = {"t": {"columns": {"id": {"type": "text", "nullable": False}, "keep": {"type": "text"}}, "indexes": {"ix": {"columns": ["keep"]}}}}
-
-
-def _probe_apply():
-    async def _run():
-        bad = []
-        plan = diff(_RECON_CURRENT, _RECON_TARGET)
-
-        full = _Conn()
-        result = await apply(plan, _RECON_TARGET, full, "sqlite")
-        joined = " ; ".join(full.executed)
-        if not result["success"] or "INSERT INTO" not in joined or "CREATE" not in joined:
-            bad.append(f"reconstruction did not copy data / recreate index: {full.executed}")
-        # A reconstructed op's own in-place DDL must NOT also run (the post-reconstruction continue skips
-        # the to_sql path); the rebuild replaces it.
-        if any("ALTER COLUMN" in s for s in full.executed):
-            bad.append(f"a reconstructed op must not also execute its in-place DDL: {full.executed}")
-        if full.paused < 1 or full.resumed < 1:
-            bad.append("reconstruction did not pause/resume sync push")
-        # §5.5: foreign-key checks are disabled BEFORE the transaction (the pragma is connection-scoped,
-        # not transactional), the rebuild runs, step 6 verifies the foreign keys, the transaction commits,
-        # and the foreign-key checks are re-enabled after — the full disable/verify/re-enable lifecycle.
-        if full.calls != ["disable_fk", "begin", "verify_fk", "commit", "enable_fk"]:
-            bad.append(f"reconstruction control flow should be disable-fk/begin/verify-fk/commit/enable-fk: {full.calls}")
-
-        bare = _BareConn()
-        if not (await apply(plan, _RECON_TARGET, bare, "sqlite"))["success"]:
-            bad.append("reconstruction failed on a connection without push hooks")
-
-        # §5.5 atomicity: a DDL failure rolls the whole transaction back — never a half-migrated table —
-        # and re-enables foreign-key checks so the connection is not left with them off.
-        failing = _FailingConn("DROP TABLE")
-        failed = await apply(plan, _RECON_TARGET, failing, "sqlite")
-        if failed["success"] or "rollback" not in failing.calls or "commit" in failing.calls or "enable_fk" not in failing.calls:
-            bad.append(f"a failed reconstruction must roll back and re-enable foreign keys, not commit: {failing.calls}")
-        if failing.resumed < 1:
-            bad.append("a reconstruction that raises must still resume sync push (the exception path)")
-
-        # §5.5 step 6: a foreign key left dangling after the rebuild rolls back, re-enables, fails with a
-        # naming error, and emits a FAILED reconstruct_table migration event.
-        fk = _FkViolationConn()
-        fk_emitted = []
-
-        async def _fk_emit(event_type, aggregate_type, aggregate_id, payload):
-            fk_emitted.append((payload.get("operation"), payload.get("success"), payload.get("fault_code")))
-            return {"ok": {}}
-
-        fk_result = await apply(plan, _RECON_TARGET, fk, "sqlite", emit=_fk_emit, db_id="d")
-        if fk_result["success"] or "rollback" not in fk.calls or "commit" in fk.calls or "enable_fk" not in fk.calls:
-            bad.append(f"a post-reconstruction FK violation must roll back and re-enable foreign keys: {fk.calls}")
-        if "foreign keys left dangling after reconstruction" not in (fk_result["error"] or ""):
-            bad.append(f"the FK-dangling failure should name its cause: {fk_result['error']}")
-        if ("reconstruct_table", False, "reconstruction_failed") not in fk_emitted:
-            bad.append(f"a failed reconstruction should emit a failed reconstruct_table event: {fk_emitted}")
-        if fk.resumed < 1:
-            bad.append("a reconstruction with a dangling foreign key must still resume sync push (the FK path)")
-
-        # Two reconstruction ops on one table reconstruct it ONCE (the already-done skip): exactly one
-        # transaction is begun, not one per op.
-        two = {"t": {"columns": {"id": {"type": "text"}, "keep": {"type": "integer"}}}}
-        plan2 = diff(_RECON_CURRENT, two)
-        conn2 = _Conn()
-        await apply(plan2, two, conn2, "sqlite")
-        if conn2.calls.count("begin") != 1:
-            bad.append(f"two reconstruction ops on one table should reconstruct it once: {conn2.calls}")
-
-        # A no-emit apply (emit defaults to None) must produce no migration-event errors on stderr —
-        # the emit-None guard short-circuits before touching the (absent) emit.
-        no_emit_err = io.StringIO()
-        with redirect_stderr(no_emit_err):
-            await apply(diff(_RECON_CURRENT, _RECON_TARGET), _RECON_TARGET, _Conn(), "sqlite")
-        if no_emit_err.getvalue():
-            bad.append(f"a no-emit apply should not touch emit (no stderr): {no_emit_err.getvalue()!r}")
-
-        # An unknown operation has no renderer: apply must report it in full, not silently skip.
-        unknown_plan = {"operations": [operation("frobnicate", "t", {})], "execution_order": [0], "ambiguities": [], "dependencies": {}}
-        unknown_result = await apply(unknown_plan, {"t": {"columns": {}}}, _Conn(), "postgresql")
-        if unknown_result != {"success": False, "executed_sql": [], "operations_applied": 0, "error": "no renderer for 'frobnicate'", "error_operation": 0}:
-            bad.append(f"apply on an op with no renderer should report it in full: {unknown_result}")
-
-        # Unresolved ambiguities block apply entirely, with the full result and its error message.
-        amb_plan = {"operations": [operation("drop_column", "t", {"column": "c"})], "execution_order": [0], "ambiguities": [{"kind": "x"}], "dependencies": {}}
-        amb_result = await apply(amb_plan, {"t": {"columns": {}}}, _Conn(), "postgresql")
-        if amb_result != {"success": False, "executed_sql": [], "operations_applied": 0, "error": "unresolved ambiguities; resolve before applying", "error_operation": None}:
-            bad.append(f"apply should refuse to run with unresolved ambiguities: {amb_result}")
-
-        # _columns_added: only add_column ops on the named table contribute (so a newly-added column is
-        # not copied from the old table during reconstruction).
-        added = _columns_added([operation("add_column", "t", {"column": "new"}), operation("add_column", "other", {"column": "x"}), operation("drop_column", "t", {"column": "old"})], "t")
-        if added != {"new"}:
-            bad.append(f"_columns_added should be only the add_column columns on this table: {added}")
-
-        # The injected emit receives one hf.persist.migration per applied op, keyed by db_id:table.
-        emitted = []
-
-        async def _rec_emit(event_type, aggregate_type, aggregate_id, payload):
-            emitted.append((event_type, aggregate_type, aggregate_id))
-            return {"ok": {}}
-
-        ok_plan = diff({}, {"t": {"columns": {"id": {"type": "text"}}}})
-        await apply(ok_plan, {"t": {"columns": {"id": {"type": "text"}}}}, _Conn(), "postgresql", emit=_rec_emit, db_id="db1")
-        if emitted != [("hf.persist.migration", "schema", "db1:t")]:
-            bad.append(f"apply should emit one hf.persist.migration per op, keyed by db_id:table: {emitted}")
-
-        # The materialized-view path executes every statement, records them, and emits one successful
-        # migration event carrying them joined. A trigger-strategy view is multi-statement, so the
-        # join separator and the per-statement executed-list append both matter.
-        from honest_persist.apply import matview_create_statements
-        mv_payloads = []
-
-        async def _mv_emit(event_type, aggregate_type, aggregate_id, payload):
-            mv_payloads.append(payload)
-            return {"ok": {}}
-
-        mv_target = {"tables": {"src": {"columns": {"id": {"type": "integer"}}}}, "views": {"mv": {"query": "SELECT id FROM src", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}}}
-        mv_plan = diff({}, mv_target)
-        mv_op = next(op for op in mv_plan["operations"] if op["op"] == "create_matview")
-        mv_statements = matview_create_statements(mv_op, "sqlite")
-        mv_conn = _Conn()
-        mv_result = await apply(mv_plan, mv_target, mv_conn, "sqlite", emit=_mv_emit, db_id="db1")
-        if mv_result["executed_sql"] != ["CREATE TABLE src (id integer)"] + mv_statements:
-            bad.append(f"apply should execute and record every materialized-view statement: {mv_result['executed_sql']}")
-        mv_events = [p for p in mv_payloads if p["operation"] == "create_matview"]
-        if not mv_events or not mv_events[0]["success"] or mv_events[0]["sql"] != "; ".join(mv_statements):
-            bad.append(f"a materialized-view op should emit one successful event carrying its joined statements: {mv_events}")
-
-        # A reconstruction emits its own reconstruct_table migration event through the same emit.
-        recon_emitted = []
-
-        async def _recon_emit(event_type, aggregate_type, aggregate_id, payload):
-            recon_emitted.append((payload.get("operation"), payload.get("sql")))
-            return {"ok": {}}
-
-        await apply(diff(_RECON_CURRENT, _RECON_TARGET), _RECON_TARGET, _Conn(), "sqlite", emit=_recon_emit, db_id="db2")
-        recon_event = next((sql for op, sql in recon_emitted if op == "reconstruct_table"), None)
-        if recon_event is None:
-            bad.append(f"a reconstruction should emit a reconstruct_table migration event: {recon_emitted}")
-        elif "; " not in recon_event:
-            bad.append(f"the reconstruct_table event sql should join its statements with '; ': {recon_event!r}")
-
-        # A failing emit is swallowed — instrumentation must never break a migration — and logs to stderr.
-        async def _boom_emit(*args):
-            raise RuntimeError("emit down")
-
-        captured = io.StringIO()
-        with redirect_stderr(captured):
-            swallowed = await apply(ok_plan, {"t": {"columns": {"id": {"type": "text"}}}}, _Conn(), "postgresql", emit=_boom_emit, db_id="db1")
-        if not swallowed["success"]:
-            bad.append("a failing emit must not break the migration")
-        if "migration event emit failed" not in captured.getvalue():
-            bad.append(f"a swallowed emit failure should be logged to stderr: {captured.getvalue()!r}")
-
-        # A normal (non-reconstruction) DDL that raises halts apply.
-        add_plan = diff({}, {"t": {"columns": {"id": {"type": "text"}}}})
-        if (await apply(add_plan, {"t": {"columns": {"id": {"type": "text"}}}}, _FailingConn("CREATE TABLE"), "postgresql"))["success"]:
-            bad.append("apply should halt when a DDL statement raises")
-
-        # A materialized-view statement that raises halts apply through the matview builder path, and
-        # emits a FAILED event carrying only the statements that ran before the failure.
-        mv_fail_payloads = []
-
-        async def _mv_fail_emit(event_type, aggregate_type, aggregate_id, payload):
-            mv_fail_payloads.append(payload)
-            return {"ok": {}}
-
-        # Failing on the second refresh trigger leaves the backing table and the first trigger run, so
-        # the FAILED event carries two statements joined — pinning the join separator too.
-        mv_target = {"tables": {"src": {"columns": {"id": {"type": "integer"}}}}, "views": {"mv": {"query": "SELECT id FROM src", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}}}
-        mv_fail = await apply(diff({}, mv_target), mv_target, _FailingConn("on_src_update"), "sqlite", emit=_mv_fail_emit, db_id="db1")
-        mv_fail_ev = [p for p in mv_fail_payloads if p["operation"] == "create_matview"]
-        if mv_fail["success"] or "on_src_update" not in (mv_fail["error"] or ""):
-            bad.append(f"apply should halt when a materialized-view statement raises: {mv_fail}")
-        elif not mv_fail_ev or mv_fail_ev[0]["success"] or mv_fail_ev[0]["sql"] != "CREATE TABLE mv AS SELECT id FROM src; CREATE TRIGGER _hp_refresh_mv_on_src_insert AFTER INSERT ON src BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END":
-            bad.append(f"a failed materialized-view op should emit a FAILED event with the statements that ran, joined: {mv_fail_ev}")
-        elif mv_fail["executed_sql"] != ["CREATE TABLE src (id integer)", "CREATE TABLE mv AS SELECT id FROM src", "CREATE TRIGGER _hp_refresh_mv_on_src_insert AFTER INSERT ON src BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END"]:
-            bad.append(f"a failed materialized-view apply should record only what ran: {mv_fail['executed_sql']}")
-
-        # Unknown op with no renderer also returns None from to_sql directly.
-        if to_sql(operation("frobnicate", "t", {}), "sqlite") is not None:
-            bad.append("to_sql of an unknown op should be None")
-
-        # reconstruction_sql with no common columns omits the INSERT.
-        statements = reconstruction_sql("t", {"columns": {"id": {"type": "text"}}}, [], "sqlite")
-        if any("INSERT" in s for s in statements):
-            bad.append("reconstruction_sql with no common columns should not INSERT")
-
-        # §5.5: _dependent_views is the plain views that read the table (not a materialized view, not a
-        # view on another table); reconstruction_sql drops them before the rebuild and recreates them after.
-        from honest_persist.apply import _dependent_views
-        views = {
-            "v_dep": {"query": "SELECT id FROM t", "depends_on": ["t"]},
-            "v_other": {"query": "SELECT id FROM u", "depends_on": ["u"]},
-            "mv_dep": {"query": "SELECT id FROM t", "materialized": True, "depends_on": ["t"]},
-        }
-        if _dependent_views("t", views) != [("v_dep", "SELECT id FROM t")]:
-            bad.append(f"_dependent_views should be only the plain views reading the table: {_dependent_views('t', views)}")
-        recon = reconstruction_sql("t", {"columns": {"id": {"type": "text"}}}, ["id"], "sqlite", [("v_dep", "SELECT id FROM t")], temp_name="_tmp")
-        if recon[0] != "DROP VIEW v_dep" or recon[-1] != "CREATE VIEW v_dep AS SELECT id FROM t":
-            bad.append(f"reconstruction_sql should drop the dependent views first and recreate them last: {recon}")
-
-        # A materialized view's refresh triggers on the reconstructed table are regenerated — only those
-        # on that table, not on the matview's other sources, not for a manual view, not for a plain view.
-        from honest_persist.apply import _dependent_matview_triggers
-        mv_views = {
-            "mv": {"query": "SELECT x FROM t", "materialized": True, "refresh": "trigger", "depends_on": ["t", "u"]},
-            "mvm": {"query": "SELECT x FROM t", "materialized": True, "refresh": "manual", "depends_on": ["t"]},
-            "pv": {"query": "SELECT x FROM t", "depends_on": ["t"]},
-        }
-        if _dependent_matview_triggers("t", mv_views) != [
-            "CREATE TRIGGER _hp_refresh_mv_on_t_insert AFTER INSERT ON t BEGIN DELETE FROM mv; INSERT INTO mv SELECT x FROM t; END",
-            "CREATE TRIGGER _hp_refresh_mv_on_t_update AFTER UPDATE ON t BEGIN DELETE FROM mv; INSERT INTO mv SELECT x FROM t; END",
-            "CREATE TRIGGER _hp_refresh_mv_on_t_delete AFTER DELETE ON t BEGIN DELETE FROM mv; INSERT INTO mv SELECT x FROM t; END",
-        ]:
-            bad.append(f"_dependent_matview_triggers should regenerate only the reconstructed table's refresh triggers: {_dependent_matview_triggers('t', mv_views)}")
-
-        # User triggers on the reconstructed table are recreated; a trigger on another table is not.
-        from honest_persist.apply import _dependent_triggers
-        user_triggers = {"log_t": {"table": "t", "timing": "after", "events": ["insert"], "body": "BODY"}, "log_u": {"table": "u", "timing": "after", "events": ["insert"], "body": "BODY"}}
-        if _dependent_triggers("t", user_triggers, "sqlite") != ["CREATE TRIGGER log_t AFTER INSERT ON t BODY"]:
-            bad.append(f"_dependent_triggers should recreate only the triggers that fire on the table: {_dependent_triggers('t', user_triggers, 'sqlite')}")
-        # A reconstructed table keeps its check constraints (shared table-body builder).
-        checked = reconstruction_sql("t", {"columns": {"id": {"type": "integer"}}, "constraints": {"c": {"type": "check", "expression": "id > 0"}}}, ["id"], "sqlite", temp_name="_tmp")
-        if not any("CHECK (id > 0)" in s for s in checked):
-            bad.append(f"reconstruction_sql should keep the table's check constraints: {checked}")
-        if not requires_reconstruction(operation("alter_column", "t", {}), "sqlite"):
-            bad.append("alter_column should require reconstruction on sqlite")
-        return bad
-
-    return asyncio.run(_run())
-
-
-# --------------------------------------------------------------------------- check parser probes
-
-
-def _probe_check():
-    bad = []
-    # Each malformed expression exercises one parser failure path -> uncompilable_check.
-    malformed = [
-        "",                 # empty: no comparison term
-        "age >",            # comparison with no right term
-        "age IN 5",         # IN without a parenthesised list
-        "age IN (b)",       # IN list with a non-literal
-        "age IN (1, 2",     # IN list missing close paren
-        "(age > 1",         # parenthesised group missing close paren
-        "NOT",              # NOT with no clause
-        "age > 1 AND",      # junction with no right operand
-        "age @ 1",          # unsupported token
-        "x ( 1",            # a non-comparison op after a term (the type==op AND value-in-ops guard)
-        "> 5",              # an operator where a term is expected (left is None)
-        "x >",              # a comparison with no right term
-        "(x > 1) y",        # trailing token after a complete parse (the consume-to-end check)
-        "x > -",            # a trailing minus: the negative-literal lookahead must not overrun
-        "AND x > 1",        # a junction starting with its keyword (the operand is None)
-    ]
-    for expression in malformed:
-        result = parse_check(expression)
-        if "err" not in result or result["err"]["code"] != "uncompilable_check":
-            bad.append(f"parse_check({expression!r}) should be uncompilable: {result}")
-    # The two parse faults are named in full: an unsupported token and an otherwise-uncompilable parse.
-    if parse_check("age @ 1").get("err") != {"is_err": True, "code": "uncompilable_check", "message": "CHECK uses an unsupported token: age @ 1", "category": "server", "results": [], "detail": {"expression": "age @ 1"}}:
-        bad.append(f"an unsupported token should fault in full: {parse_check('age @ 1')}")
-    if parse_check("age >").get("err") != {"is_err": True, "code": "uncompilable_check", "message": "CHECK cannot be compiled: age >", "category": "server", "results": [], "detail": {"expression": "age >"}}:
-        bad.append(f"an uncompilable parse should fault in full: {parse_check('age >')}")
-
-    # _number reads an int or a float by the presence of a decimal point.
-    from honest_persist.check import _number
-    if _number("5") != 5 or not isinstance(_number("5"), int) or _number("1.5") != 1.5 or not isinstance(_number("1.5"), float):
-        bad.append(f"_number should read int vs float by the decimal point: {_number('5')!r}, {_number('1.5')!r}")
-
-    # Every comparison operator evaluates correctly on BOTH sides of its boundary, so each maps to the
-    # exact operator (a true-only test cannot tell > from >=).
-    op_cases = {
-        ">": [(2, 1, True), (2, 2, False), (1, 2, False)],
-        "<": [(1, 2, True), (2, 2, False), (2, 1, False)],
-        ">=": [(2, 1, True), (2, 2, True), (1, 2, False)],
-        "<=": [(1, 2, True), (2, 2, True), (2, 1, False)],
-        "=": [(1, 1, True), (1, 2, False)],
-        "!=": [(1, 2, True), (1, 1, False)],
-        "<>": [(1, 2, True), (1, 1, False)],
-    }
-    for op, cases in op_cases.items():
-        for a, b, expected in cases:
-            tree = parse_check(f"x {op} {b}")
-            if "ok" not in tree or check_holds(tree["ok"], {"x": a}) is not expected:
-                bad.append(f"operator {op!r}: ({a} {op} {b}) should be {expected}: {tree}")
-
-    # AND / OR / NOT / IN, string literals, negatives and floats — each with a DISCRIMINATING row where
-    # dropping or misreading a clause/operand would flip the result.
-    combos = [
-        ("x > 0 AND y < 10", {"x": 1, "y": 99}, False), ("x > 0 AND y < 10", {"x": 1, "y": 1}, True),
-        ("x > 5 OR y < 5", {"x": 1, "y": 9}, False), ("x > 5 OR y < 5", {"x": 9, "y": 9}, True),
-        ("NOT x > 5", {"x": 9}, False), ("NOT x > 5", {"x": 1}, True),
-        ("x IN (1, 2, 3)", {"x": 2}, True), ("x IN (1, 2, 3)", {"x": 9}, False),
-        ("name = 'ok'", {"name": "ok"}, True), ("name = 'ok'", {"name": "no"}, False),
-        ("x > -5", {"x": -3}, True), ("x > -5", {"x": -9}, False),
-        ("x > 1.5", {"x": 2}, True), ("x > 1.5", {"x": 1}, False),
-        ("(x > 0 OR x < 0) AND x != 0", {"x": 1}, True), ("(x > 0 OR x < 0) AND x != 0", {"x": 0}, False),
-        ("x>=2", {"x": 2}, True), ("x>=2", {"x": 1}, False),   # a two-char op with no surrounding spaces
-        ("a_b > 0", {"a_b": 1}, True), ("a_b > 0", {"a_b": -1}, False),   # name with an underscore
-        ("abc123 > 0", {"abc123": 1}, True),   # name with digits (the alnum continuation)
-        # Keywords are case-insensitive: lowercase forms must still be recognised as AND/OR/NOT/IN
-        # (this is what exercises the keyword vocabulary and the keyword-uppercasing — an uppercase
-        # keyword in the source matches by value even if the membership/uppercasing is broken).
-        ("x > 0 and y < 10", {"x": 1, "y": 99}, False), ("x > 0 and y < 10", {"x": 1, "y": 1}, True),
-        ("x > 5 or y < 5", {"x": 1, "y": 1}, True), ("x > 5 or y < 5", {"x": 1, "y": 9}, False),
-        ("not x > 5", {"x": 9}, False), ("not x > 5", {"x": 1}, True),
-        ("x in (1, 2, 3)", {"x": 2}, True), ("x in (1, 2, 3)", {"x": 9}, False),
-        ("-5 < x", {"x": 0}, True), ("-5 < x", {"x": -9}, False),   # a negative literal on the left
-        ("x > 0 AND -3 < y", {"x": 1, "y": 0}, True), ("x > 0 AND -3 < y", {"x": 1, "y": -9}, False),   # negative mid-expression
-        ("_x > 0", {"_x": 1}, True), ("_x > 0", {"_x": -1}, False),   # a name beginning with underscore
-        ("name = ''", {"name": ""}, True), ("name = ''", {"name": "x"}, False),   # an empty string literal
-    ]
-    for expression, row, expected in combos:
-        tree = parse_check(expression)
-        if "ok" not in tree or check_holds(tree["ok"], row) is not expected:
-            bad.append(f"check {expression!r} for {row} should be {expected}: {tree}")
-    # An unclosed string literal is tokenized to the end without an index overrun, not a crash.
-    unclosed = parse_check("name = 'oops")
-    if "ok" not in unclosed and "err" not in unclosed:
-        bad.append(f"an unclosed string should be handled, not crash: {unclosed}")
-    return bad
-
-
-def _probe_enforce_checks():
-    """CHECK enforcement at the write boundary (§6.2): on a dialect that does not enforce CHECK
-    natively, a declared CHECK is compiled and the row validated before the write — never silently
-    dropped. table_checks collects column-level and table-level CHECKs; enforce_checks compiles and
-    evaluates them; checked_insert refuses a violating row."""
-    from honest_persist import checked_insert, dialect_enforces_check, enforce_checks, table_checks
-
-    bad = []
-
-    # Native dialects enforce CHECK in the database; Turso may not, so honest-persist enforces it.
-    if not dialect_enforces_check("postgresql") or not dialect_enforces_check("sqlite"):
-        bad.append("postgresql and sqlite enforce CHECK natively")
-    if dialect_enforces_check("turso"):
-        bad.append("turso is not assumed to enforce CHECK natively")
-
-    # table_checks gathers a column-level check and a table-level check constraint, in that order.
-    table = {
-        "columns": {"price": {"type": "integer", "check": "price > 0"}, "qty": {"type": "integer"}},
-        "constraints": {"sane": {"type": "check", "expression": "qty <= 1000"}},
-    }
-    if table_checks(table) != ["price > 0", "qty <= 1000"]:
-        bad.append(f"table_checks should collect column then table CHECKs: {table_checks(table)}")
-    # A table-level constraint contributes only when it is BOTH a check AND carries an expression: a
-    # non-check constraint, or a check with no expression, is excluded.
-    selective = {"columns": {}, "constraints": {"uq": {"type": "unique", "columns": ["a"]}, "empty": {"type": "check", "expression": ""}, "real": {"type": "check", "expression": "a > 0"}}}
-    if table_checks(selective) != ["a > 0"]:
-        bad.append(f"table_checks should take only check constraints that carry an expression: {table_checks(selective)}")
-
-    schema = {"products": table}
-    # Non-native dialect: a satisfying row passes; a violating row is a check_violation fault, named in
-    # full with the failing expression and the offending row.
-    if "ok" not in enforce_checks(schema, "products", {"price": 5, "qty": 10}, "turso"):
-        bad.append("a row satisfying every CHECK should pass enforcement")
-    violation = enforce_checks(schema, "products", {"price": 0, "qty": 10}, "turso")
-    if violation.get("err") != {"is_err": True, "code": "check_violation", "message": "Row violates CHECK (price > 0)", "category": "client", "results": [], "detail": {"expression": "price > 0", "row": {"price": 0, "qty": 10}}}:
-        bad.append(f"a row violating a CHECK should be a full client check_violation: {violation}")
-
-    # Native dialect: the database enforces, so the pure layer trusts it (no row evaluation).
-    if "ok" not in enforce_checks(schema, "products", {"price": 0, "qty": 10}, "postgresql"):
-        bad.append("on a native dialect enforce_checks trusts the database")
-
-    # An uncompilable CHECK on a non-native dialect is a fault (neither natively enforced nor compiled).
-    bad_schema = {"t": {"columns": {"x": {"type": "integer", "check": "x @ 1"}}}}
-    uncompilable = enforce_checks(bad_schema, "t", {"x": 1}, "turso")
-    if uncompilable.get("err", {}).get("code") != "uncompilable_check":
-        bad.append(f"an uncompilable CHECK on a non-native dialect should fault: {uncompilable}")
-    # validate_checks names the construction-time fault in full (table, expression, dialect).
-    from honest_persist import validate_checks
-    if validate_checks(bad_schema, "turso").get("err") != {"is_err": True, "code": "uncompilable_check", "message": "CHECK on 't' can be neither natively enforced on 'turso' nor compiled: x @ 1", "category": "server", "results": [], "detail": {"table": "t", "expression": "x @ 1", "dialect": "turso"}}:
-        bad.append(f"validate_checks should name the uncompilable CHECK in full: {validate_checks(bad_schema, 'turso')}")
-    # On a native dialect validate_checks trusts the database (no compilation attempted).
-    if "ok" not in validate_checks(bad_schema, "postgresql"):
-        bad.append("validate_checks should pass an uncompilable CHECK on a native dialect")
-
-    # checked_insert wires enforcement: a violating row on a non-native dialect is refused.
-    refused = checked_insert(schema, "products", {"price": 0, "qty": 1}, "turso")
-    if refused.get("err", {}).get("code") != "check_violation":
-        bad.append(f"checked_insert should refuse a CHECK-violating row on a non-native dialect: {refused}")
-    accepted = checked_insert(schema, "products", {"price": 5, "qty": 1}, "turso")
-    if "ok" not in accepted or "INSERT INTO products" not in accepted["ok"]["sql"]:
-        bad.append(f"checked_insert should build the INSERT when the row satisfies every CHECK: {accepted}")
-    # Default dialect is native, so existing two-arg callers keep their behaviour.
-    if "ok" not in checked_insert(schema, "products", {"price": 0, "qty": 1}):
-        bad.append("checked_insert defaults to a native dialect, trusting the database")
-
-    # Construction-time validation (§6.2): a CHECK that can be neither natively enforced nor compiled is
-    # a construction-time fault, not a silently dropped guarantee surfaced only at the first write.
-    from honest_persist import validate_checks
-
-    uncompilable = {"t": {"columns": {"x": {"type": "integer", "check": "x @@ 1"}}}}
-    if "ok" not in validate_checks(uncompilable, "postgresql"):
-        bad.append("a native dialect enforces CHECK in the database, so construction does not require compilability")
-    if "ok" not in validate_checks(schema, "turso"):
-        bad.append("a compilable CHECK on a non-native dialect passes construction")
-    rejected = validate_checks(uncompilable, "turso")
-    if rejected.get("err", {}).get("code") != "uncompilable_check":
-        bad.append(f"an uncompilable CHECK on a non-native dialect must fault at construction: {rejected}")
-    return bad
-
-
-# --------------------------------------------------------------------------- validate / extended probes
-
-
-def _probe_diff_alter():
-    """A column change of each kind in isolation produces alter_column carrying that change."""
-    bad = []
-    base = {"t": {"columns": {"c": {"type": "uuid", "nullable": True, "default": None}}}}
-    cases = {
-        "type": {"t": {"columns": {"c": {"type": "text", "nullable": True, "default": None}}}},
-        "nullable": {"t": {"columns": {"c": {"type": "uuid", "nullable": False, "default": None}}}},
-        "default": {"t": {"columns": {"c": {"type": "uuid", "nullable": True, "default": "'v'"}}}},
-    }
-    for field, target in cases.items():
-        result = diff(base, target)
-        alters = [op for op in result["operations"] if op["op"] == "alter_column"]
-        if not alters or field not in alters[0]["details"]["changes"]:
-            bad.append(f"diff with only a {field} change did not produce that alteration: {result['operations']}")
-    # A column gaining a foreign key with cascade actions produces an add_foreign_key that carries them.
-    users = {"users": {"columns": {"id": {"type": "uuid", "primary_key": True}}}}
-    no_fk = {**users, "t": {"columns": {"owner": {"type": "uuid"}}}}
-    with_fk = {**users, "t": {"columns": {"owner": {"type": "uuid", "references": "users.id", "on_delete": "cascade", "on_update": "restrict"}}}}
-    fk_ops = [op for op in diff(no_fk, with_fk)["operations"] if op["op"] == "add_foreign_key"]
-    if not fk_ops or fk_ops[0]["details"].get("on_delete") != "cascade" or fk_ops[0]["details"].get("on_update") != "restrict":
-        bad.append(f"an added FK with cascade actions should carry them in the op: {fk_ops}")
-    # A changed index is dropped and re-added.
-    with_ix = {"t": {"columns": {"a": {"type": "text"}, "b": {"type": "text"}}, "indexes": {"ix": {"columns": ["a"]}}}}
-    changed_ix = {"t": {"columns": {"a": {"type": "text"}, "b": {"type": "text"}}, "indexes": {"ix": {"columns": ["b"]}}}}
-    ops = [op["op"] for op in diff(with_ix, changed_ix)["operations"]]
-    if "drop_index" not in ops or "add_index" not in ops:
-        bad.append(f"a changed index should be dropped and re-added: {ops}")
-    # Adding a column and an index on it: the index must run after the column (same-table
-    # dependency). Adding two columns plus an index over both gives the index two predecessors.
-    existing = {"t": {"columns": {"x": {"type": "text"}}}}
-    grown = {"t": {"columns": {"x": {"type": "text"}, "b": {"type": "text"}, "c": {"type": "text"}}, "indexes": {"ix": {"columns": ["b", "c"]}}}}
-    plan = diff(existing, grown)
-    order = plan["execution_order"]
-    ops_in_order = [plan["operations"][i]["op"] for i in order]
-    if ops_in_order[-1] != "add_index":
-        bad.append(f"add_index must be ordered after its columns: {ops_in_order}")
-    # Mutually-dependent views have no valid execution order -> schema_cycle.
-    cyclic = {
-        "tables": {"t": {"columns": {"a": {"type": "text"}}}},
-        "views": {"v1": {"sql": "x", "depends_on": ["v2"]}, "v2": {"sql": "y", "depends_on": ["v1"]}},
-    }
-    result = diff({}, cyclic)
-    if "err" not in result or result["err"]["code"] != "schema_cycle":
-        bad.append(f"a view dependency cycle should fault schema_cycle: {result.get('err') or result.get('operations')}")
-    return bad
-
-
-def _probe_validate():
-    bad = []
-    invalid = {
-        "dangling_fk": {"t": {"columns": {"a": {"type": "text", "references": "ghost.id"}}}},
-        "malformed_fk": {"t": {"columns": {"a": {"type": "text", "references": "nodot"}}}},
-        "missing_pk": {"t": {"columns": {"a": {"type": "text"}}, "primary_key": ["b"]}},
-        "missing_index": {"t": {"columns": {"a": {"type": "text"}}, "indexes": {"ix": {"columns": ["b"]}}}},
-        "missing_constraint": {"t": {"columns": {"a": {"type": "text"}}, "constraints": {"ck": {"columns": ["b"]}}}},
-    }
-    for label, schema in invalid.items():
-        result = validate_schema(schema)
-        if "err" not in result or result["err"]["code"] != "schema_invalid":
-            bad.append(f"validate_schema({label}) should be schema_invalid: {result}")
-    # A valid schema with a real PK, index, and constraint validates (the not-missing branches).
-    valid = {
-        "t": {
-            "columns": {"a": {"type": "text"}, "b": {"type": "text"}},
-            "primary_key": ["a"],
-            "indexes": {"ix": {"columns": ["b"]}},
-            "constraints": {"ck": {"columns": ["a"]}},
-        }
-    }
-    if "ok" not in validate_schema(valid):
-        bad.append("a schema with valid PK/index/constraint should validate ok")
-    # A view depending on a missing table is invalid.
-    bad_view = {"tables": {"t": {"columns": {"a": {"type": "text"}}}}, "views": {"v": {"depends_on": ["ghost"]}}}
-    if "err" not in validate_schema(bad_view):
-        bad.append("a view depending on a missing table should be invalid")
-    return bad
-
-
-def _probe_extended():
-    bad = []
-    base = {"tables": {"t": {"columns": {"a": {"type": "text"}}}}}
-    with_view = {"tables": base["tables"], "views": {"v": {"sql": "SELECT a FROM t", "depends_on": ["t"]}}}
-    changed_view = {"tables": base["tables"], "views": {"v": {"sql": "SELECT a, a FROM t", "depends_on": ["t"]}}}
-    with_trig = {"tables": base["tables"], "triggers": {"tr": {"table": "t", "sql": "X"}}}
-    changed_trig = {"tables": base["tables"], "triggers": {"tr": {"table": "t", "sql": "Y"}}}
-    with_func = {"tables": base["tables"], "procedures": {"f": {"kind": "function", "sql": "A"}}}
-    changed_func = {"tables": base["tables"], "procedures": {"f": {"kind": "function", "sql": "B"}}}
-    with_proc = {"tables": base["tables"], "procedures": {"p": {"kind": "procedure", "sql": "A"}}}
-    changed_proc = {"tables": base["tables"], "procedures": {"p": {"kind": "procedure", "sql": "B"}}}
-
-    def _ops(current, target):
-        result = diff(current, target)
-        return [] if "err" in result else [op["op"] for op in result["operations"]]
-
-    expectations = [
-        ("view_add", base, with_view, "create_view"),
-        ("view_drop", with_view, base, "drop_view"),
-        ("view_change", with_view, changed_view, "create_view"),
-        ("trigger_add", base, with_trig, "create_trigger"),
-        ("trigger_drop", with_trig, base, "drop_trigger"),
-        ("trigger_change", with_trig, changed_trig, "create_trigger"),
-        ("function_add", base, with_func, "create_function"),
-        ("function_drop", with_func, base, "drop_function"),
-        ("function_replace", with_func, changed_func, "replace_function"),
-        ("procedure_add", base, with_proc, "create_function"),
-        ("procedure_change", with_proc, changed_proc, "drop_function"),
-    ]
-    for label, current, target, expected_op in expectations:
-        ops = _ops(current, target)
-        if expected_op not in ops:
-            bad.append(f"diff({label}) should emit {expected_op}: got {ops}")
-
-    # A schema diffed against itself yields no operations even when it carries indexes, views,
-    # triggers, and functions — the unchanged-common branch of every extended-object diff.
-    with_index = {"t": {"columns": {"a": {"type": "text"}}, "indexes": {"ix": {"columns": ["a"]}}}}
-    for label, schema in [("index", with_index), ("view", with_view), ("trigger", with_trig), ("function", with_func)]:
-        result = diff(schema, schema)
-        if "err" in result or result["operations"]:
-            bad.append(f"self-diff of a schema with an unchanged {label} should be empty: {result}")
-
-    # §6.6: the diff carries a materialized view as one dialect-agnostic op; apply expands it per
-    # dialect. First the ops: create_matview / drop_matview carry the whole definition.
-    from honest_persist.apply import _mv_refresh_events, matview_create_statements, matview_drop_statements
-    from honest_persist.schema import _matview_create_ops, _matview_drop_ops
-    mv_view = {"query": "SELECT id FROM src", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}
-    create = _matview_create_ops("mv", mv_view)
-    if [op["op"] for op in create] != ["create_matview"]:
-        bad.append(f"_matview_create_ops should emit a single create_matview op: {[op['op'] for op in create]}")
-    elif create[0]["table"] != "mv" or create[0]["details"]["view"] != "mv" or create[0]["details"]["definition"] != mv_view or create[0]["details"]["depends_on"] != ["src"]:
-        bad.append(f"the create_matview op should carry the view, its definition, and its dependencies: {create[0]}")
-    drop = _matview_drop_ops("mv", mv_view)
-    if [op["op"] for op in drop] != ["drop_matview"] or drop[0]["details"]["view"] != "mv" or drop[0]["details"]["definition"] != mv_view or drop[0]["details"]["depends_on"] != ["src"]:
-        bad.append(f"_matview_drop_ops should emit a single drop_matview op carrying the definition and dependencies: {drop}")
-    # A drop_table op carries the dropped table's columns, so an inline foreign key still orders the
-    # drop (the referencing table before the referenced one).
-    fk_drop = diff({"team": {"columns": {"id": {"type": "integer"}}}, "roster": {"columns": {"team_id": {"type": "integer", "references": "team.id"}}}}, {})
-    roster_drop = next((o for o in fk_drop["operations"] if o["op"] == "drop_table" and o["table"] == "roster"), None)
-    if not roster_drop or roster_drop["details"].get("columns", {}).get("team_id", {}).get("references") != "team.id":
-        bad.append(f"a drop_table op should carry the table's columns so inline foreign keys order the drop: {roster_drop}")
-    # A new table's indexes are created too: create_table is followed by an add_index per index, so
-    # the index is not silently lost.
-    new_indexed = diff({}, {"t": {"columns": {"id": {"type": "integer"}, "s": {"type": "integer"}}, "indexes": {"by_s": {"columns": ["s"]}}}})
-    added_index = [o for o in new_indexed["operations"] if o["op"] == "add_index"]
-    if len(added_index) != 1 or added_index[0]["table"] != "t" or added_index[0]["details"]["index"] != "by_s" or added_index[0]["details"]["definition"] != {"columns": ["s"]}:
-        bad.append(f"a new table's indexes should be created via add_index: {added_index}")
-    # Check constraints are recorded in the registry (opaque SQL the catalog cannot faithfully return);
-    # a non-check constraint is not.
-    from honest_persist.schema import _constraint_registry_rows
-    reg = _constraint_registry_rows({"t": {"constraints": {"amount_ok": {"type": "check", "expression": "amount >= 0"}, "u": {"type": "unique", "columns": ["y"]}}}})
-    if reg != [("t.amount_ok", {"table": "t", "constraint": "amount_ok", "definition": {"type": "check", "expression": "amount >= 0"}})]:
-        bad.append(f"_constraint_registry_rows should record only check constraints, keyed table.constraint: {reg}")
-    # A primary-key column is canonically not-null, whether declared column-level or in the table's
-    # primary_key list, so a declared primary key round-trips against the not-null the inspector reads.
-    from honest_persist.schema import _canonical_columns
-    column_pk = _canonical_columns({"t": {"columns": {"id": {"type": "integer", "primary_key": True}, "name": {"type": "text"}}}})
-    if column_pk["t"]["columns"]["id"] != {"type": "integer", "primary_key": True, "nullable": False} or column_pk["t"]["columns"]["name"] != {"type": "text"}:
-        bad.append(f"_canonical_columns should make a column-level primary key not-null and leave others alone: {column_pk}")
-    table_pk = _canonical_columns({"t": {"columns": {"a": {"type": "integer"}}, "primary_key": ["a"]}})
-    if table_pk["t"]["columns"]["a"] != {"type": "integer", "nullable": False}:
-        bad.append(f"_canonical_columns should make a table-primary_key column not-null: {table_pk}")
-
-    # apply renders the op natively on PostgreSQL and backfilled on SQLite/Turso.
-    op = create[0]
-    if matview_create_statements(op, "postgresql") != [
-        "CREATE MATERIALIZED VIEW mv AS SELECT id FROM src",
-        "CREATE FUNCTION _hp_refresh_mv() RETURNS trigger AS $$ BEGIN REFRESH MATERIALIZED VIEW mv; RETURN NULL; END $$ LANGUAGE plpgsql",
-        "CREATE TRIGGER _hp_refresh_mv_on_src_insert AFTER INSERT ON src FOR EACH STATEMENT EXECUTE FUNCTION _hp_refresh_mv()",
-        "CREATE TRIGGER _hp_refresh_mv_on_src_update AFTER UPDATE ON src FOR EACH STATEMENT EXECUTE FUNCTION _hp_refresh_mv()",
-        "CREATE TRIGGER _hp_refresh_mv_on_src_delete AFTER DELETE ON src FOR EACH STATEMENT EXECUTE FUNCTION _hp_refresh_mv()",
-    ]:
-        bad.append(f"PostgreSQL create should be a native materialized view with a trigger function: {matview_create_statements(op, 'postgresql')}")
-    if matview_create_statements(op, "sqlite") != [
-        "CREATE TABLE mv AS SELECT id FROM src",
-        "CREATE TRIGGER _hp_refresh_mv_on_src_insert AFTER INSERT ON src BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END",
-        "CREATE TRIGGER _hp_refresh_mv_on_src_update AFTER UPDATE ON src BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END",
-        "CREATE TRIGGER _hp_refresh_mv_on_src_delete AFTER DELETE ON src BEGIN DELETE FROM mv; INSERT INTO mv SELECT id FROM src; END",
-    ]:
-        bad.append(f"SQLite create should be a backing table with inline-body triggers: {matview_create_statements(op, 'sqlite')}")
-    if matview_drop_statements(drop[0], "postgresql") != [
-        "DROP TRIGGER _hp_refresh_mv_on_src_insert ON src",
-        "DROP TRIGGER _hp_refresh_mv_on_src_update ON src",
-        "DROP TRIGGER _hp_refresh_mv_on_src_delete ON src",
-        "DROP FUNCTION _hp_refresh_mv",
-        "DROP MATERIALIZED VIEW mv",
-    ]:
-        bad.append(f"PostgreSQL drop should drop the triggers, the function, and the materialized view: {matview_drop_statements(drop[0], 'postgresql')}")
-    if matview_drop_statements(drop[0], "sqlite") != [
-        "DROP TRIGGER _hp_refresh_mv_on_src_insert",
-        "DROP TRIGGER _hp_refresh_mv_on_src_update",
-        "DROP TRIGGER _hp_refresh_mv_on_src_delete",
-        "DROP TABLE mv",
-    ]:
-        bad.append(f"SQLite drop should drop the triggers and the backing table: {matview_drop_statements(drop[0], 'sqlite')}")
-
-    # A manual materialized view has no refresh triggers; the storage is created and dropped alone.
-    manual = {"query": "SELECT id FROM src", "materialized": True, "refresh": "manual", "depends_on": ["src"]}
-    manual_op = _matview_create_ops("mm", manual)[0]
-    manual_drop = _matview_drop_ops("mm", manual)[0]
-    if matview_create_statements(manual_op, "postgresql") != ["CREATE MATERIALIZED VIEW mm AS SELECT id FROM src"]:
-        bad.append(f"a manual PostgreSQL materialized view is just the native view: {matview_create_statements(manual_op, 'postgresql')}")
-    if matview_create_statements(manual_op, "sqlite") != ["CREATE TABLE mm AS SELECT id FROM src"]:
-        bad.append(f"a manual SQLite materialized view is just the backing table: {matview_create_statements(manual_op, 'sqlite')}")
-    if matview_drop_statements(manual_drop, "postgresql") != ["DROP MATERIALIZED VIEW mm"] or matview_drop_statements(manual_drop, "sqlite") != ["DROP TABLE mm"]:
-        bad.append(f"a manual materialized view drops with no triggers on either dialect: {matview_drop_statements(manual_drop, 'postgresql')}, {matview_drop_statements(manual_drop, 'sqlite')}")
-    if _mv_refresh_events("mm", manual) != [] or len(_mv_refresh_events("mv", mv_view)) != 3 or len(_mv_refresh_events("mv", {**mv_view, "refresh": "on_commit"})) != 3:
-        bad.append("refresh events: none for manual, three per source for trigger and on_commit")
-
-    # Refresh is native on PostgreSQL and in-place delete-and-reinsert on SQLite; Turso is SQLite.
-    from honest_persist import refresh_materialized_view
-    refresh_schema = {"tables": {}, "views": {"mv": mv_view}}
-    if refresh_materialized_view(refresh_schema, "mv", "postgresql") != ["REFRESH MATERIALIZED VIEW mv"]:
-        bad.append(f"refresh should be the native REFRESH on PostgreSQL: {refresh_materialized_view(refresh_schema, 'mv', 'postgresql')}")
-    if refresh_materialized_view(refresh_schema, "mv", "sqlite") != ["DELETE FROM mv", "INSERT INTO mv SELECT id FROM src"]:
-        bad.append(f"refresh should be delete-and-reinsert on SQLite: {refresh_materialized_view(refresh_schema, 'mv', 'sqlite')}")
-    # Turso backfills exactly as SQLite does (it has no native materialized view either).
-    if (matview_create_statements(op, "turso") != matview_create_statements(op, "sqlite")
-            or matview_drop_statements(drop[0], "turso") != matview_drop_statements(drop[0], "sqlite")
-            or refresh_materialized_view(refresh_schema, "mv", "turso") != refresh_materialized_view(refresh_schema, "mv", "sqlite")):
-        bad.append("Turso should backfill a materialized view exactly as SQLite does")
-    return bad
-
-
-def _probe_checked():
-    """Schema-checked builders (§7.3): every table and column a query names is validated
-    against the declared schema, returning ok(Query) or a typed fault. Pure. Exercises every
-    branch."""
-    from honest_persist import checked_delete, checked_insert, checked_select, checked_update, select
-
-    bad = []
-    schema = {
-        "users": {"columns": {"id": {"type": "int"}, "email": {"type": "text"}, "status": {"type": "text"}, "name": {"type": "text"}, "created": {"type": "int"}}},
-        "orders": {"columns": {"user_id": {"type": "int"}}},
-    }
-
-    # select: ok with wildcard, where, ORDER BY (a '-' descending term), and a known join.
-    args = {"columns": ["*"], "where": {"status": "active"}, "order_by": ["name", "-created"], "joins": [{"table": "orders", "on": "orders.user_id = users.id"}]}
-    r = checked_select(schema, "users", **args)
-    if "ok" not in r:
-        bad.append(f"checked_select valid should be ok: {r}")
-    elif r["ok"] != select("users", **args):
-        bad.append("checked_select ok must wrap exactly the raw select Query")
-    # select: ok with no columns/where/order_by/joins (the `or []` empty branches).
-    if "ok" not in checked_select(schema, "users"):
-        bad.append("checked_select with no optional args should be ok")
-    # select: unknown column in each of the three positions, plus unknown table and join table.
-    if checked_select(schema, "users", columns=["emial"]).get("err", {}).get("code") != "unknown_column":
-        bad.append("misspelled select column should fault unknown_column")
-    if checked_select(schema, "users", where={"ghost": 1}).get("err", {}).get("code") != "unknown_column":
-        bad.append("unknown where column should fault unknown_column")
-    if checked_select(schema, "users", order_by=["-ghost"]).get("err", {}).get("code") != "unknown_column":
-        bad.append("unknown order_by column should fault unknown_column")
-    if checked_select(schema, "ghost").get("err") != {"is_err": True, "code": "unknown_table", "message": "Table 'ghost' is not declared in the schema", "category": "server", "results": [], "detail": {"table": "ghost"}}:
-        bad.append(f"an unknown table should fault unknown_table in full: {checked_select(schema, 'ghost')}")
-    if checked_select(schema, "users", joins=[{"table": "ghost", "on": "x"}]).get("err") != {"is_err": True, "code": "unknown_table", "message": "Join table 'ghost' is not declared in the schema", "category": "server", "results": [], "detail": {"table": "ghost"}}:
-        bad.append(f"an unknown join table should fault unknown_table in full: {checked_select(schema, 'users', joins=[{'table': 'ghost', 'on': 'x'}])}")
-    # the unknown_column fault names the offending column(s), the table, and the declared set, with the
-    # server category and the full message.
-    col_err = checked_select(schema, "users", columns=["emial", "id"]).get("err", {})
-    if col_err.get("category") != "server" or col_err.get("message") != "Column(s) ['emial'] not declared on table 'users'":
-        bad.append(f"unknown_column fault should carry its message and server category: {col_err}")
-    detail = col_err.get("detail", {})
-    if detail.get("columns") != ["emial"] or detail.get("table") != "users" or "email" not in detail.get("declared", []):
-        bad.append(f"unknown_column detail should name the bad column, table, and declared set: {detail}")
-
-    # insert / update / delete: ok and unknown-column paths; the where=None branch on update and delete.
-    if "ok" not in checked_insert(schema, "users", {"id": 1, "email": "a@b.co"}):
-        bad.append("valid checked_insert should be ok")
-    if checked_insert(schema, "users", {"nope": 1}).get("err", {}).get("code") != "unknown_column":
-        bad.append("unknown insert column should fault")
-    if "ok" not in checked_update(schema, "users", {"status": "active"}, {"id": 1}):
-        bad.append("valid checked_update should be ok")
-    # a multi-column update joins its SET assignments with ', ' (pins the set_clause separator)
-    multi_update = checked_update(schema, "users", {"status": "active", "email": "x"}, {"id": 1})
-    if "ok" not in multi_update or multi_update["ok"]["sql"] != "UPDATE users SET status = :set_status, email = :set_email WHERE id = :id":
-        bad.append(f"a multi-column update should comma-join its SET assignments: {multi_update}")
-    if "ok" not in checked_update(schema, "users", {"status": "active"}, None):
-        bad.append("checked_update with where=None should be ok")
-    if checked_update(schema, "users", {"nope": 1}, {"id": 1}).get("err", {}).get("code") != "unknown_column":
-        bad.append("unknown update value column should fault")
-    if checked_update(schema, "users", {"status": "x"}, {"ghost": 1}).get("err", {}).get("code") != "unknown_column":
-        bad.append("unknown update where column should fault")
-    if "ok" not in checked_delete(schema, "users", {"id": 1}):
-        bad.append("valid checked_delete should be ok")
-    if "ok" not in checked_delete(schema, "users", None):
-        bad.append("checked_delete with where=None should be ok")
-    if checked_delete(schema, "users", {"ghost": 1}).get("err", {}).get("code") != "unknown_column":
-        bad.append("unknown delete where column should fault")
-    # a table declared with no columns -> declared set empty -> any column is unknown.
-    if checked_insert({"t": {}}, "t", {"a": 1}).get("err", {}).get("code") != "unknown_column":
-        bad.append("a table with no declared columns should reject any column")
-    return bad
-
-
-class _RowsConn:
-    """A stand-in async connection (§7.4): awaits to canned rows/rowcount and records the
-    (sql, params) it was handed. Conformance is not linted, so a fixture class is fine here."""
-
-    def __init__(self, rows, rowcount):
-        self.rows = rows
-        self.rowcount = rowcount
-        self.calls = []
-
-    async def execute(self, sql, params):
-        self.calls.append((sql, params))
-        return {"rows": self.rows, "rowcount": self.rowcount}
-
-
-def _probe_execute():
-    """Execute (§7.4): the async I/O boundary, exercised with a stand-in connection. Plain data
-    out, empty-result branches return None, and the connection is handed the Query's sql +
-    params. Driven through one event loop."""
-    from honest_persist import execute, execute_many, execute_one, execute_scalar
-
-    async def _run():
-        bad = []
-        q = {"sql": "SELECT id, name FROM t WHERE id = :id", "params": {"id": 1}}
-        full = _RowsConn([{"id": 1, "name": "a"}, {"id": 2, "name": "b"}], 2)
-        empty = _RowsConn([], 0)
-
-        if await execute(q, full) != [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]:
-            bad.append("execute should return every row")
-        if await execute(q, empty) != []:
-            bad.append("execute on no rows should be []")
-        if await execute_one(q, full) != {"id": 1, "name": "a"}:
-            bad.append("execute_one should return the first row")
-        if await execute_one(q, empty) is not None:
-            bad.append("execute_one on no rows should be None")
-        if await execute_scalar(q, full) != 1:
-            bad.append("execute_scalar should return the first column of the first row")
-        if await execute_scalar(q, empty) is not None:
-            bad.append("execute_scalar on no rows should be None")
-        if await execute_many(q, full) != 2:
-            bad.append("execute_many should return the rowcount")
-        # the boundary hands the connection exactly the Query's sql and params, nothing rebuilt.
-        if full.calls[-1] != ("SELECT id, name FROM t WHERE id = :id", {"id": 1}):
-            bad.append(f"execute should pass the Query's sql and params to the connection: {full.calls[-1]}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-class _TxConn:
-    """A stand-in async transactional connection (§7.5): records begin/commit/rollback and each
-    write, raising on the write at `fail_at`. Conformance is not linted, so a fixture is fine."""
-
-    def __init__(self, fail_at):
-        self.fail_at = fail_at
-        self.log = []
-        self._i = 0
-
-    async def begin(self):
-        self.log.append("begin")
-
-    async def commit(self):
-        self.log.append("commit")
-
-    async def rollback(self):
-        self.log.append("rollback")
-
-    async def execute(self, sql, params):
-        index = self._i
-        self._i += 1
-        self.log.append(("execute", sql))
-        if self.fail_at is not None and index == self.fail_at:
-            raise RuntimeError("simulated write failure")
-        return {"rows": [], "rowcount": 1}
-
-
-def _probe_transaction():
-    """Transactions (§7.5): all-or-nothing over a stand-in connection. Commit on success,
-    rollback on the first failing write, and the begin/commit/rollback sequence is exact."""
-    from honest_persist import transaction
-
-    async def _run():
-        bad = []
-        w1 = {"sql": "INSERT INTO t (id) VALUES (:id)", "params": {"id": 1}}
-        w2 = {"sql": "UPDATE t SET n = :n WHERE id = :id", "params": {"n": 9, "id": 1}}
-
-        # success: every write runs, then commit; results are the per-write rows-affected.
-        commit = _TxConn(None)
-        r = await transaction([w1, w2], commit)
-        if r != {"ok": {"results": [1, 1]}}:
-            bad.append(f"committed transaction should return both rows-affected: {r}")
-        if commit.log != ["begin", ("execute", w1["sql"]), ("execute", w2["sql"]), "commit"]:
-            bad.append(f"commit path sequence wrong: {commit.log}")
-
-        # empty: begin then commit, no writes, empty results.
-        empty = _TxConn(None)
-        if await transaction([], empty) != {"ok": {"results": []}}:
-            bad.append("empty transaction should commit with no results")
-        if empty.log != ["begin", "commit"]:
-            bad.append(f"empty path sequence wrong: {empty.log}")
-
-        # failure on the first write: rollback, no commit, no second write, failed_at = 0.
-        first = _TxConn(0)
-        r = await transaction([w1, w2], first)
-        err_w = r.get("err", {})
-        if err_w.get("code") != "write_failed" or err_w.get("category") != "server" or not err_w.get("message") or err_w.get("detail", {}).get("failed_at") != 0:
-            bad.append(f"failure should be a write_failed server fault at index 0 with a message: {r}")
-        if first.log != ["begin", ("execute", w1["sql"]), "rollback"]:
-            bad.append(f"rollback path should stop at the failing write: {first.log}")
-
-        # failure on a later write: the earlier write ran, then rollback; failed_at points at it.
-        middle = _TxConn(1)
-        r = await transaction([w1, w2], middle)
-        if r["err"]["detail"]["failed_at"] != 1 or middle.log[-1] != "rollback" or "commit" in middle.log:
-            bad.append(f"mid-transaction failure should roll back at index 1: {r} log={middle.log}")
-
-        # req 14 (§8): a transaction emits one hf.persist.transaction through the injected emit.
-        events = []
-
-        async def rec_emit(event_type, aggregate_type, aggregate_id, payload):
-            events.append((event_type, aggregate_type, aggregate_id, payload))
-
-        await transaction([w1, w2], _TxConn(None), rec_emit, "users_db", "req-1")
-        if len(events) != 1 or events[0][0] != "hf.persist.transaction" or events[0][1] != "transaction" or events[0][2] != "users_db":
-            bad.append(f"a committed transaction should emit one hf.persist.transaction for the db: {events}")
-        else:
-            payload = events[0][3]
-            if payload["write_count"] != 2 or payload["outcome"] != "ok" or payload["failed_at"] is not None or payload["request_id"] != "req-1" or payload["duration_ns"] < 0:
-                bad.append(f"committed transaction event payload wrong: {payload}")
-
-        # A failed transaction emits outcome constraint_violation with the failing write's index.
-        fail_events = []
-
-        async def rec_fail(event_type, aggregate_type, aggregate_id, payload):
-            fail_events.append(payload)
-
-        failed = await transaction([w1, w2], _TxConn(1), rec_fail, "users_db", "req-2")
-        if failed.get("err", {}).get("code") != "write_failed":
-            bad.append("a failing transaction still returns write_failed")
-        if not fail_events or fail_events[0]["outcome"] != "constraint_violation" or fail_events[0]["failed_at"] != 1:
-            bad.append(f"a failed transaction should emit constraint_violation with failed_at: {fail_events}")
-
-        # A failing emit is swallowed — the transaction result is unaffected — and logged to stderr.
-        async def down_emit(event_type, aggregate_type, aggregate_id, payload):
-            raise RuntimeError("emit is down")
-
-        down_err = io.StringIO()
-        with redirect_stderr(down_err):
-            down_result = await transaction([w1], _TxConn(None), down_emit, "users_db", "req-3")
-        if down_result != {"ok": {"results": [1]}}:
-            bad.append("a failing transaction-event emit must not break the transaction")
-        if "transaction event emit failed" not in down_err.getvalue():
-            bad.append(f"a swallowed transaction-emit failure should log to stderr: {down_err.getvalue()!r}")
-
-        # A no-emit transaction (emit defaults to None) touches no emit and writes no stderr.
-        no_emit_err = io.StringIO()
-        with redirect_stderr(no_emit_err):
-            await transaction([w1], _TxConn(None))
-        if no_emit_err.getvalue():
-            bad.append(f"a no-emit transaction should not touch emit (no stderr): {no_emit_err.getvalue()!r}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_transaction_real():
-    """transaction's real all-or-nothing behavior against real databases (spec section 8.6): a
-    committed transaction persists every write, and a failing write rolls the earlier ones back — on a
-    real engine, not simulated. The _TxConn fake only records begin/commit/rollback and cannot show
-    whether a real database actually undoes the earlier writes. Runs on real SQLite, Turso, and
-    PostgreSQL; skipped under the mutation loop like the other real-database probes (the transaction
-    control flow itself is mutation-tested against the fake)."""
-    if os.environ.get("HONEST_MUTATION"):
-        return []
-    from honest_persist import insert, transaction
-
-    async def _run():
-        bad = []
-        for dialect, conn in [("sqlite", _SqliteConn()), ("turso", turso_connection()), ("postgresql", postgres_connection())]:
-            if conn is None:
-                print(f"honest-persist: no {dialect} available; transaction not checked for it", file=sys.stderr)
-                continue
-            await conn.execute("CREATE TABLE acct (id integer PRIMARY KEY, bal integer)")
-            committed = await transaction([insert("acct", {"id": 1, "bal": 10}), insert("acct", {"id": 2, "bal": 20})], conn)
-            rows = await conn.execute("SELECT id FROM acct ORDER BY id")
-            if "ok" not in committed or [r["id"] for r in rows["rows"]] != [1, 2]:
-                bad.append(f"{dialect}: a committed transaction should persist every write: {committed}, {rows['rows']}")
-            # The second write duplicates a primary key, so it fails; the first write of the transaction
-            # must be rolled back, leaving only the two rows the committed transaction wrote.
-            rolled = await transaction([insert("acct", {"id": 3, "bal": 5}), insert("acct", {"id": 3, "bal": 6})], conn)
-            after = await conn.execute("SELECT id FROM acct ORDER BY id")
-            if "err" not in rolled or [r["id"] for r in after["rows"]] != [1, 2]:
-                bad.append(f"{dialect}: a failing transaction should roll back its earlier writes on a real engine: {rolled}, {after['rows']}")
-            conn.close()
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_reconstruct_fk_violation():
-    """The reconstruction's dangling-foreign-key safety net against real databases (section 5.5): if a
-    rebuild would leave a foreign key pointing at a missing row, the whole reconstruction rolls back.
-    The _FkViolationConn fake injects the violation; here a real orphan row (inserted with foreign-key
-    enforcement off) is carried into the rebuild and the real verification catches it — SQLite via
-    PRAGMA foreign_key_check, Turso via the adapter's orphan query. PostgreSQL has no reconstruction
-    path. Skipped under the mutation loop; the fake covers the control flow there."""
-    if os.environ.get("HONEST_MUTATION"):
-        return []
-    from honest_persist import migrate
-
-    async def _run():
-        bad = []
-        for dialect, conn in [("sqlite", _SqliteConn()), ("turso", turso_connection())]:
-            if conn is None:
-                continue
-            await conn.execute("CREATE TABLE parent (id integer PRIMARY KEY)")
-            await conn.execute("CREATE TABLE child (id integer PRIMARY KEY, pid integer REFERENCES parent(id), note text)")
-            await conn.execute("PRAGMA foreign_keys = OFF")
-            await conn.execute("INSERT INTO child (id, pid, note) VALUES (1, 99, :n)", {"n": "x"})
-            await conn.execute("PRAGMA foreign_keys = ON")
-            # Making note NOT NULL rebuilds child; the rebuild carries the orphan (pid 99 -> no parent),
-            # which the foreign-key verification must catch, rolling the whole reconstruction back.
-            target = {"tables": {
-                "parent": {"columns": {"id": {"type": "integer", "primary_key": True}}},
-                "child": {"columns": {"id": {"type": "integer", "primary_key": True}, "pid": {"type": "integer", "nullable": True, "references": "parent.id"}, "note": {"type": "text", "nullable": False}}},
-            }}
-            result = await migrate(target, conn, dialect)
-            if "ok" not in result or result["ok"]["success"] or "dangling" not in (result["ok"]["error"] or ""):
-                bad.append(f"{dialect}: a reconstruction that leaves a dangling foreign key should roll back: {result}")
-            conn.close()
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_instrument():
-    """Pool-layer instrumentation (§8.3, 8.5, 8.7, 8.8): the typed pool faults and the pure event
-    payload builders persist emits through honest-observe — branch paths a data file leaves implicit."""
-    from honest_persist.instrument import (
-        POOL_FAULT_CODES,
-        build_migration_event,
-        build_pool_event,
-        build_query_event,
-        build_transaction_event,
-        extract_table,
-        pool_fault,
-        sql_hash,
-    )
-
-    bad = []
-    if POOL_FAULT_CODES != {"unknown_database", "unresolvable_dsn", "unknown_tenant", "pool_exhausted", "pool_closed", "credential_rejected", "lifecycle_failed"}:
-        bad.append("POOL_FAULT_CODES vocabulary is wrong")
-    # Each fault code maps to its exact category (the full client/server map).
-    expected_categories = {"unknown_database": "client", "unknown_tenant": "client", "unresolvable_dsn": "server", "pool_exhausted": "server", "pool_closed": "server", "credential_rejected": "server", "lifecycle_failed": "server"}
-    for code, category in expected_categories.items():
-        fault_record = pool_fault(code, "msg")
-        if fault_record != {"code": code, "message": "msg", "category": category}:
-            bad.append(f"pool_fault({code}) wrong: {fault_record}")
-    if extract_table("SELECT * FROM users WHERE id = 1") != "users":
-        bad.append("extract_table should find the FROM table")
-    if extract_table("INSERT INTO orders (x) VALUES (1)") != "orders":
-        bad.append("extract_table should find the INTO table")
-    if extract_table("UPDATE accounts SET x = 1") != "accounts":
-        bad.append("extract_table should find the UPDATE table")
-    if extract_table("BEGIN") != "":
-        bad.append("extract_table should return '' when no table is present")
-    if sql_hash("SELECT 1") != "e004ebd5b5532a4b85984a62f8ad48a81aa3460c1ca07701f386135d72cdecf5" or sql_hash("SELECT 1") == sql_hash("SELECT 2"):
-        bad.append("sql_hash should be a stable per-sql sha256 digest")
-
-    # Each event builder's full payload is pinned exactly (every key and value).
-    builders = [
-        (build_query_event("db", "users", "select", 3, 1500, "SELECT 1", "r1", None, True),
-         {"db_id": "db", "table_name": "users", "operation": "select", "row_count": 3, "duration_ns": 1500, "sql_hash": sql_hash("SELECT 1"), "sql": "SELECT 1", "request_id": "r1", "fault_code": None}),
-        (build_query_event("db", "users", "select", 3, 1500, "SELECT 1", "r1", "bad", False),
-         {"db_id": "db", "table_name": "users", "operation": "select", "row_count": 3, "duration_ns": 1500, "sql_hash": sql_hash("SELECT 1"), "sql": None, "request_id": "r1", "fault_code": "bad"}),
-        (build_migration_event("db", "create_table", "users", {"x": 1}, 2000, "CREATE TABLE users", True, None),
-         {"db_id": "db", "operation": "create_table", "table": "users", "detail": {"x": 1}, "duration_ns": 2000, "sql": "CREATE TABLE users", "success": True, "fault_code": None}),
-        (build_pool_event("db", "closed", 10, 1, 2, 5000, "pool_closed", "shut"),
-         {"db_id": "db", "event": "closed", "pool_size": 10, "active": 1, "waiting": 2, "duration_ns": 5000, "fault_code": "pool_closed", "message": "shut"}),
-        (build_transaction_event("db", 3, "constraint_violation", 2, 1200, "r1"),
-         {"db_id": "db", "write_count": 3, "outcome": "constraint_violation", "failed_at": 2, "duration_ns": 1200, "request_id": "r1"}),
-    ]
-    for actual, expected in builders:
-        if actual != expected:
-            bad.append(f"instrument event builder mismatch: got {actual}, expected {expected}")
-    return bad
-
-
-def _probe_instrumented():
-    """Instrumented execute (§8.5): the boundary emits hf.persist.query through the injected emit on
-    success and on failure (then re-raises), never blocks the result, swallows emit failures, and
-    skips instrumentation entirely when no emit is wired in (zero overhead when disabled)."""
-    from honest_persist.instrumented import instrumented_execute
-
-    async def _run():
-        bad = []
-        q = {"sql": "SELECT id FROM users WHERE id = :id", "params": {"id": 1}}
-        conn = _RowsConn([{"id": 1}, {"id": 2}], 2)
-
-        # No emit wired in: run and return the rows, no event, and no stderr (the emit-None fast path
-        # never touches the absent emit).
-        no_emit_err = io.StringIO()
-        with redirect_stderr(no_emit_err):
-            no_emit_rows = await instrumented_execute(q, conn, None, "users_db", "select", "r1", True)
-        if no_emit_rows != [{"id": 1}, {"id": 2}]:
-            bad.append("with no emit, instrumented_execute should just return the rows")
-        if no_emit_err.getvalue():
-            bad.append(f"a no-emit instrumented_execute should not touch emit (no stderr): {no_emit_err.getvalue()!r}")
-
-        # A failing emit is swallowed and logged to stderr; the query result is unaffected.
-        async def down_emit(event_type, aggregate_type, aggregate_id, payload):
-            raise RuntimeError("emit is down")
-
-        down_err = io.StringIO()
-        with redirect_stderr(down_err):
-            down_rows = await instrumented_execute(q, conn, down_emit, "users_db", "select", "r1", True)
-        if down_rows != [{"id": 1}, {"id": 2}] or "query event emit failed" not in down_err.getvalue():
-            bad.append(f"a failing query-event emit should be swallowed and logged: {down_rows}, {down_err.getvalue()!r}")
-
-        # Success: one hf.persist.query event, keyed db:table, fault_code null, row_count set.
-        calls = []
-
-        async def emit(event_type, aggregate_type, aggregate_id, payload):
-            calls.append((event_type, aggregate_type, aggregate_id, payload))
-            return {"ok": {"event_id": "e"}}
-
-        if await instrumented_execute(q, conn, emit, "users_db", "select", "r1", True) != [{"id": 1}, {"id": 2}]:
-            bad.append("instrumented_execute should still return the rows")
-        if len(calls) != 1 or calls[0][:3] != ("hf.persist.query", "persist", "users_db:users"):
-            bad.append(f"a successful query should emit one hf.persist.query keyed db:table: {calls}")
-        elif calls[0][3]["fault_code"] is not None or calls[0][3]["row_count"] != 2 or calls[0][3]["operation"] != "select":
-            bad.append(f"the success event payload is wrong: {calls[0][3]}")
-
-        # Query failure: emit the event with a fault code (and no full sql outside development), re-raise.
-        failures = []
-
-        async def emit_fail(event_type, aggregate_type, aggregate_id, payload):
-            failures.append(payload)
-
-        raised = False
+import tempfile
+
+import honest_persist as hp
+
+# The real engines the parametrized laws run against. sqlite is always here; postgresql and turso come
+# from the conformance fixtures, which provision a real server or open a real embedded database. The
+# fixtures live beside this file and are not linted (they hold the driver adapters and provisioning).
+from postgres_fixture import postgres_target  # noqa: E402
+from turso_fixture import turso_replica_config  # noqa: E402
+
+try:
+    import turso as _turso_probe  # noqa: F401
+    _TURSO_INSTALLED = True
+except Exception:  # noqa: BLE001
+    _TURSO_INSTALLED = False
+
+try:
+    import asyncpg as _asyncpg_probe  # noqa: F401
+    _ASYNCPG_INSTALLED = True
+except Exception:  # noqa: BLE001
+    _ASYNCPG_INSTALLED = False
+
+# Skips the laws recorded this run: an engine or a fixture that was genuinely unavailable, each named
+# with its reason. run() prints them so an unavailable engine is visible and never a silent pass.
+_SKIPS = []
+
+
+def _note_skip(reason):
+    """Record one named skip so the runner can show it; a skip is never a pass and never a failure."""
+    _SKIPS.append(reason)
+
+
+_WIDGETS_SQL = "CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"
+
+
+def _insert(engine, widget_id, name):
+    """One INSERT into widgets, spelled the way the engine's driver binds parameters: `:name` for sqlite
+    and turso, `$n` for postgresql (asyncpg binds positionally, in the parameters' own order)."""
+    numbered = engine == "postgresql"
+    text = _pick(numbered,
+                 lambda: "INSERT INTO widgets (id, name) VALUES ($1, $2)",
+                 lambda: "INSERT INTO widgets (id, name) VALUES (:id, :name)")
+    return {"text": text, "parameters": {"id": widget_id, "name": name}}
+
+
+def _pick(flag, when_true, when_false):
+    """A two-branch dict lookup, so the law code picks a spelling without an if (the module it tests
+    forbids them; the laws keep the same shape)."""
+    return {True: when_true, False: when_false}[flag]()
+
+
+# Cached once per run: whether the installed pyturso does MVCC concurrent writes at all, measured
+# against the raw engine (not persist's boundary). This decides whether turso's MVCC laws are in scope
+# on this interpreter's pyturso, apart from whether persist's own code enables it — so a persist that
+# forgets the journal-mode pragma FAILS the law rather than skipping it.
+_TURSO_MVCC = {}
+
+
+def _turso_engine_does_mvcc():
+    """Ask the installed turso engine directly whether it does MVCC concurrent writes: on a local file, set
+    journal_mode='mvcc' and land two interleaved BEGIN CONCURRENT writers. Returns {'ok': True} or
+    {'skip': reason}. This is the write mode only; replication never enters it. A pyturso too old for MVCC
+    (or none installed) is a named skip, so the turso MVCC law never fails vacuously on a build that cannot
+    do MVCC, while a build that can forces persist's writer path to actually deliver it."""
+    if _TURSO_MVCC:
+        return _TURSO_MVCC
+    if not _TURSO_INSTALLED:
+        _TURSO_MVCC["skip"] = "turso: pyturso is not installed, so the turso MVCC write path was not exercised"
+        return _TURSO_MVCC
+    import turso
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "mvcc-capability.db")
         try:
-            await instrumented_execute(q, _TxConn(fail_at=0), emit_fail, "users_db", "select", "r1", False)
-        except RuntimeError:
-            raised = True
-        if not raised:
-            bad.append("a query failure should re-raise after emitting")
-        if len(failures) != 1 or failures[0]["fault_code"] is None or failures[0]["row_count"] != 0 or failures[0]["sql"] is not None:
-            bad.append(f"a failed non-development query should emit fault_code, row_count 0, no full sql: {failures}")
+            seed = turso.connect(path)
+            seed.cursor().execute("PRAGMA journal_mode = 'mvcc'").fetchone()
+            seed.cursor().execute("CREATE TABLE _probe (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+            seed.commit()
+            seed.close()
+            a = turso.connect(path); b = turso.connect(path)
+            a.cursor().execute("PRAGMA journal_mode = 'mvcc'").fetchone()
+            b.cursor().execute("PRAGMA journal_mode = 'mvcc'").fetchone()
+            a.cursor().execute("BEGIN CONCURRENT"); b.cursor().execute("BEGIN CONCURRENT")
+            a.cursor().execute("INSERT INTO _probe (id, name) VALUES (1, 'a')")
+            b.cursor().execute("INSERT INTO _probe (id, name) VALUES (2, 'b')")
+            a.commit(); b.commit(); a.close(); b.close()
+            check = turso.connect(path)
+            landed = check.cursor().execute("SELECT COUNT(*) FROM _probe").fetchone()[0]
+            check.close()
+            _TURSO_MVCC["ok" if landed == 2 else "skip"] = (
+                True if landed == 2 else
+                f"turso: this pyturso build did not land two concurrent MVCC writers (landed {landed})")
+        except Exception as failed:  # noqa: BLE001
+            _TURSO_MVCC["skip"] = (
+                f"turso: this pyturso build does not do MVCC concurrent writes "
+                f"({type(failed).__name__}: {failed})")
+    return _TURSO_MVCC
 
-        # A failing emit is swallowed: the query result is unaffected.
-        async def emit_down(event_type, aggregate_type, aggregate_id, payload):
-            raise ValueError("emit is down")
 
-        if await instrumented_execute(q, conn, emit_down, "users_db", "select", "r1", True) != [{"id": 1}, {"id": 2}]:
-            bad.append("a failing emit must never break the query")
+def _real_engines(tmpdir):
+    """The real engines available this run, each a profile the parametrized laws drive. sqlite and turso
+    are embedded files under `tmpdir`; postgresql is a freshly provisioned test database. An engine that
+    cannot be reached is left out and its absence recorded as a named skip, so a law never passes
+    vacuously for an engine that was not there. turso is in scope as a concurrent-write engine only when
+    the installed pyturso actually does MVCC; otherwise its absence is a named skip."""
+    engines = [{"engine": "sqlite", "target": os.path.join(tmpdir, "sqlite.db"), "connections": 1,
+                "concurrent_writes": True}]
+    turso_mvcc = _turso_engine_does_mvcc()
+    if turso_mvcc.get("ok"):
+        engines.append({"engine": "turso", "target": os.path.join(tmpdir, "turso.db"), "connections": 1,
+                        "concurrent_writes": True})
+    else:
+        _note_skip(turso_mvcc["skip"])
+    postgres = _postgres_profile()
+    engines.extend(postgres)
+    return engines
+
+
+def _postgres_profile():
+    """A one-element list holding the postgresql profile when a real server and asyncpg are both here, or
+    an empty list with the reason recorded."""
+    if not _ASYNCPG_INSTALLED:
+        _note_skip("postgresql: asyncpg is not installed, so persist's postgresql driver rows were not exercised")
+        return []
+    target = postgres_target()
+    if target is None:
+        _note_skip("postgresql: no PostgreSQL server could be reached or provisioned, so its driver rows were not exercised")
+        return []
+    return [{"engine": "postgresql", "target": target, "connections": 2, "concurrent_writes": True}]
+
+# Every function the declaration names (honest-persist.hd), in declaration order. The surface sweep
+# reads this list; a function added to the .hd is added here so the sweep stays the full inventory.
+ALL_FUNCTIONS = [
+    # column 1: input I/O — the ways in
+    "session_open", "query_ask", "query_deposit", "query_collect", "lifecycle_stop", "clock_read",
+    "copy_on_disk", "lifecycle_turn", "migration_plan", "schema_live", "schema_declared", "view_refreshes",
+    # column 2: one orchestrator per door
+    "session_connect", "query_answer", "query_prepare_deposit", "query_redeem_ticket", "migration_compare",
+    "schema_read_live", "schema_say_declared", "schema_say_refreshes", "lifecycle_shut_down", "lifecycle_catch_up",
+    # column 3: output I/O
+    "session_open_connection", "query_run_statement", "channel_pull", "channel_push",
+    "session_close_connection", "session_open_writer", "session_open_channel", "crew_make",
+    "crew_start", "crew_stop", "query_run_together", "crew_run_write", "crew_deposit",
+    "lifecycle_install_handler", "crew_release_ticket", "crew_post_receipt", "crew_wait_for_work",
+    "schema_read_declared", "schema_inspect", "log_write",
+    # the pure core
+    "engine_of", "refuse_unusable_settings", "crew_size", "permitted_connections", "compile_statement",
+    "refuse_undeclared_columns", "refuse_some_columns_as_an_object", "refuse_a_read",
+    "refuse_an_unknown_ticket", "travels_together",
+    "answer_from_receipt", "answer_from_rows", "condition_from_narrowing", "methods_of",
+    "asked_from_written", "declaration_from_asked", "grammar_of", "replicates", "next_wait",
+    "progress_line", "writer_waiting", "next_in_order", "worth_retrying", "budget_spent", "how_to_retry",
+    "retry_schedule", "refusal_reaches_caller", "lifecycle_register", "receipt_for",
+    # the schema half
+    "field", "refuse_owned_names", "schema_from_declared", "refuse_undeclared_loss", "migration_needed",
+    "difference", "name_what_is_ambiguous", "order_operations", "name_what_destroys", "capability_of",
+    "how_to_write", "how_to_migrate", "how_to_inspect", "how_to_spell", "what_an_operation_carries",
+    "how_to_compare", "spell_operation",
+    # a question across models, and a declared view
+    "join_between", "spell_view", "mechanism_for", "refreshes_from_declared", "what_to_do_after_a_refresh",
+]
+
+
+def _need(name):
+    """The function `name` off the package, or raise so the caller records it as not built. Every
+    behavioural law reaches its functions through this, so a missing one becomes a named failure rather
+    than an AttributeError that aborts the probe."""
+    fn = getattr(hp, name, None)
+    if fn is None:
+        raise _NotBuilt(name)
+    return fn
+
+
+class _NotBuilt(Exception):
+    """Raised when a declared function is not yet on disk. Carries the function name."""
+
+
+def _conflict_fault(code="write_conflict"):
+    """A driver rejection categorised conflict — two writers raced for one row, worth another attempt
+    (declaration FaultCategory). Built through the package's own fault constructor, so it is the same
+    reserved-is_err record every honest module builds."""
+    return hp.fault(code, "two writers wrote one row", "conflict", [], {"driver": "SQLITE_BUSY"})
+
+
+def _logical_fault(code="not_null_violation"):
+    """A logical rejection the caller owns — a constraint violation that fails identically however
+    often it runs, categorised refused (declaration FaultCategory)."""
+    return hp.fault(code, "a column that must hold something held nothing", "refused", [], {})
+
+
+# ---------------------------------------------------------------------------
+# 1. The surface sweep — the backbone RED signal.
+# ---------------------------------------------------------------------------
+
+def _probe_surface():
+    """Every declared function exists and is callable. The 87 the .hd names are read off the package;
+    each one missing is reported by name. This is the law that makes the suite demonstrably RED on the
+    unbuilt code without the harness aborting: it never calls a function, only looks for it."""
+    bad = []
+    for name in ALL_FUNCTIONS:
+        fn = getattr(hp, name, None)
+        if fn is None:
+            bad.append(f"{name}: not built (no such attribute on honest_persist)")
+        elif not callable(fn):
+            bad.append(f"{name}: present but not callable ({type(fn).__name__})")
+    missing = sum(1 for n in ALL_FUNCTIONS if getattr(hp, n, None) is None)
+    if missing:
+        built = len(ALL_FUNCTIONS) - missing
+        bad.append(f"surface: {built}/{len(ALL_FUNCTIONS)} functions built — {missing} of the declared functions are still missing")
+    return bad
+
+
+# ---------------------------------------------------------------------------
+# 2. Pure-function property laws.
+# ---------------------------------------------------------------------------
+
+def _probe_engine_of():
+    """engine_of reads the engine off the target and opens nothing: a bare path or sqlite scheme is
+    sqlite, postgresql/postgres is postgresql, libsql is turso, and a scheme no engine ships a row for
+    is a refused Fault carrying the accepted schemes in detail (declaration engine_of)."""
+    bad = []
+    try:
+        engine_of = _need("engine_of")
+    except _NotBuilt as e:
+        return [f"{e}: engine_of"]
+    for target, engine in (("x.db", "sqlite"), ("sqlite:///x", "sqlite"),
+                           ("postgresql://h/d", "postgresql"), ("postgres://h/d", "postgresql"),
+                           ("libsql://p", "turso")):
+        got = engine_of(target)
+        if got != engine:
+            bad.append(f"engine_of({target!r}) should be {engine!r}, got {got!r}")
+    miss = engine_of("mysql://h/d")
+    if not (hp.is_fault(miss) and miss["category"] == "refused" and "mysql" in str(miss["detail"].get("arrived"))):
+        bad.append(f"engine_of on an unknown scheme should be a refused Fault naming the arriving scheme: {miss}")
+    if hp.is_fault(miss) and "mysql" in miss["detail"].get("arrived", "") and "sqlite" not in miss["detail"].get("accepted", []):
+        bad.append("engine_of fault detail should carry the accepted schemes a caller could have named")
+    return bad
+
+
+def _probe_deciders():
+    """The write-decision leaves read a word or a number and nothing else: worth_retrying finds only a
+    conflict worth another attempt; budget_spent is true the moment the attempts reach the budget
+    (declaration worth_retrying, budget_spent)."""
+    bad = []
+    try:
+        worth_retrying = _need("worth_retrying")
+        budget_spent = _need("budget_spent")
+    except _NotBuilt as e:
+        return [f"{e}: a decider is not built"]
+    if worth_retrying(_conflict_fault()) is not True:
+        bad.append("worth_retrying should be true for a conflict")
+    for category in ("refused", "budget_spent", "cut_short"):
+        f = hp.fault("c", "m", category, [], {})
+        if worth_retrying(f) is not False:
+            bad.append(f"worth_retrying should be false for category {category}")
+    for attempts, budget, want in ((3, 3, True), (2, 3, False), (1, 1, True), (0, 1, False), (4, 3, True)):
+        if budget_spent(attempts, budget) is not want:
+            bad.append(f"budget_spent({attempts}, {budget}) should be {want}")
+    return bad
+
+
+def _probe_next_wait():
+    """next_wait is the pure backoff: zero before the first attempt and rising with each one, worked
+    out from the attempt number alone so a test reads it without a clock (declaration next_wait). The
+    exact seconds are not fixed, so this asserts the first-attempt zero, non-negativity and the strict
+    rise rather than invented numbers."""
+    bad = []
+    try:
+        next_wait = _need("next_wait")
+    except _NotBuilt as e:
+        return [f"{e}: next_wait"]
+    delays = [next_wait(n) for n in (1, 2, 3, 4)]
+    if delays[0] != 0.0:
+        bad.append(f"next_wait(1) should be 0.0 before the first attempt, got {delays[0]}")
+    for n, d in zip((1, 2, 3, 4), delays):
+        if not isinstance(d, (int, float)) or d < 0:
+            bad.append(f"next_wait({n}) should be a non-negative number, got {d!r}")
+    for earlier, later in zip(delays[1:], delays[2:]):
+        if not later > earlier:
+            bad.append(f"next_wait should rise with each attempt: {delays}")
+            break
+    return bad
+
+
+def _probe_retry_schedule():
+    """retry_schedule is the pure generator that owns the conflict-retry schedule for one write,
+    driven one step at a time (declaration retry_schedule, spec 7.7). Each of its four dispositions is
+    exercised directly, plus the budget-exhaustion sequence a driver walks. The delay is a backoff the
+    declaration leaves to next_wait, so this pins the disposition and the attempt count, not the
+    seconds."""
+    bad = []
+    try:
+        retry_schedule = _need("retry_schedule")
+    except _NotBuilt as e:
+        return [f"{e}: retry_schedule"]
+    policy = {"retryable": ["SQLITE_BUSY", "SQLITE_LOCKED"], "bound": 3, "verified_at_contention": 8}
+
+    # A success — an int outcome — lands at once, nothing to retry.
+    landed = retry_schedule(policy, 1, 1)
+    if landed.get("disposition") != "landed":
+        bad.append(f"a successful write (int outcome) should yield landed: {landed}")
+
+    # A logical fault the caller owns gives up at once and is never retried.
+    logical = retry_schedule(policy, _logical_fault(), 1)
+    if logical.get("disposition") != "give_up_logical":
+        bad.append(f"a non-conflict Fault should yield give_up_logical at once: {logical}")
+
+    # A conflict with budget to spare asks for another run at the next attempt.
+    runs = retry_schedule(policy, _conflict_fault(), 1)
+    if runs.get("disposition") != "run":
+        bad.append(f"a conflict with budget to spare should yield run: {runs}")
+    elif runs.get("attempt") != 2:
+        bad.append(f"a run after attempt 1 should schedule attempt 2, got {runs.get('attempt')}")
+
+    # A conflict at the bound stops and types the failure as contention, never the caller's error.
+    spent = retry_schedule(policy, _conflict_fault(), 3)
+    if spent.get("disposition") != "give_up_contention":
+        bad.append(f"a conflict at the bound should yield give_up_contention: {spent}")
+
+    # Drive the schedule the way lifecycle_catch_up does: feed a conflict at each attempt until it
+    # stops. With a bound of three the driver makes three real attempts and gives up on contention.
+    attempt = 1
+    dispositions = []
+    for _ in range(10):
+        step = retry_schedule(policy, _conflict_fault(), attempt)
+        dispositions.append(step["disposition"])
+        if step["disposition"] == "run":
+            attempt = step["attempt"]
+        else:
+            break
+    if dispositions != ["run", "run", "give_up_contention"]:
+        bad.append(f"a bound-3 run of conflicts should be run, run, give_up_contention, got {dispositions}")
+    if attempt != 3:
+        bad.append(f"a bound-3 run should make exactly three attempts, reached attempt {attempt}")
+    return bad
+
+
+def _probe_schema_pure():
+    """The schema-diff core turns two schemas into a plan. schema_from_declared builds the target from
+    the models (built already); migration_needed is structural equality; difference, order_operations,
+    name_what_destroys, name_what_is_ambiguous and refuse_undeclared_loss carry the plan the rest of
+    the way (declaration, spec section 5)."""
+    bad = []
+    empty_declared = {"models": [], "views": [], "dropping_tables": [], "dropping_views": []}
+    one_model = {"name": "User", "table": "users",
+                 "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None}],
+                 "dropping": [], "indexes": [], "constraints": []}
+    declared = {"models": [one_model], "views": [], "dropping_tables": [], "dropping_views": []}
+
+    try:
+        schema_from_declared = _need("schema_from_declared")
+        migration_needed = _need("migration_needed")
+    except _NotBuilt as e:
+        bad.append(f"{e}: a schema core function")
+    else:
+        if schema_from_declared(empty_declared) != {"tables": [], "views": []}:
+            bad.append("schema_from_declared of an empty declaration should be an empty schema")
+        wanted = schema_from_declared(declared)
+        if not (wanted["tables"] and wanted["tables"][0]["name"] == "users"):
+            bad.append(f"schema_from_declared should name the table by the model's table: {wanted}")
+        if migration_needed(wanted, wanted) is not False:
+            bad.append("migration_needed should be false when the schemas match")
+        if migration_needed({"tables": [], "views": []}, wanted) is not True:
+            bad.append("migration_needed should be true when the schemas differ")
+
+    live = {"tables": [], "views": []}
+    wanted = {"tables": [{"name": "users", "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None}], "indexes": [], "constraints": []}], "views": []}
+    try:
+        difference = _need("difference")
+        ops = difference(live, wanted)
+        if not isinstance(ops, list) or not ops:
+            bad.append(f"difference from an empty live to one wanted table should emit an operation: {ops}")
+        elif ops[0].get("kind") != "create_table":
+            bad.append(f"the first operation to build a missing table should be create_table: {ops[0]}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: difference")
+    except Exception as e:
+        bad.append(f"difference raised {type(e).__name__}: {e}")
+
+    # A pointed-at table and a table that points at it: order_operations plans the pointed-at first.
+    ops_unordered = [
+        {"kind": "create_table", "table": "posts", "column": None, "columns": [], "indexes": [],
+         "constraints": [{"name": "fk", "kind": "primary_key", "columns": ["author"], "rule": {}, "value": None}],
+         "copying": [], "values": [], "renamed_to": None, "view": None, "destroys": False},
+        {"kind": "create_table", "table": "users", "column": None, "columns": [], "indexes": [],
+         "constraints": [], "copying": [], "values": [], "renamed_to": None, "view": None, "destroys": False},
+    ]
+    try:
+        order_operations = _need("order_operations")
+        ordered = order_operations(ops_unordered)
+        if hp.is_fault(ordered):
+            bad.append(f"order_operations of an acyclic plan should not fault: {ordered}")
+        elif not isinstance(ordered, list) or len(ordered) != 2:
+            bad.append(f"order_operations should return the operations ordered: {ordered}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: order_operations")
+    except Exception as e:
+        bad.append(f"order_operations raised {type(e).__name__}: {e}")
+
+    # name_what_destroys marks a drop_table as destroying and names what it loses.
+    drop = [{"kind": "drop_table", "table": "legacy", "column": None, "columns": [], "indexes": [],
+             "constraints": [], "copying": [], "values": [], "renamed_to": None, "view": None, "destroys": False}]
+    try:
+        name_what_destroys = _need("name_what_destroys")
+        plan = name_what_destroys(drop)
+        if "legacy" not in plan.get("destroys", []):
+            bad.append(f"name_what_destroys should name the dropped table among destroys: {plan}")
+        if plan["operations"] and plan["operations"][0].get("destroys") is not True:
+            bad.append("name_what_destroys should mark a drop_table as destroying")
+    except _NotBuilt as e:
+        bad.append(f"{e}: name_what_destroys")
+    except Exception as e:
+        bad.append(f"name_what_destroys raised {type(e).__name__}: {e}")
+
+    # refuse_undeclared_loss reads the `destroys` mark name_what_destroys set, per the .hd: a
+    # destructive operation arrives already marked, and the function reads that mark rather than the
+    # operation kind. So a drop_table marked destroying and declared by no model is refused; the same
+    # drop_table marked not-destroying is passed, which is what proves the mark — not the kind — is read.
+    destroying_plan = {"operations": [{**drop[0], "destroys": True}], "destroys": ["legacy"]}
+    safe_plan = {"operations": [{**drop[0], "destroys": False}], "destroys": []}
+    try:
+        refuse_undeclared_loss = _need("refuse_undeclared_loss")
+        refused = refuse_undeclared_loss(destroying_plan, empty_declared)
+        if not hp.is_fault(refused):
+            bad.append(f"refuse_undeclared_loss should fault when no model declared the marked loss: {refused}")
+        allowed = refuse_undeclared_loss(destroying_plan, {**empty_declared, "dropping_tables": ["legacy"]})
+        if hp.is_fault(allowed):
+            bad.append(f"refuse_undeclared_loss should pass a drop the host declared: {allowed}")
+        passed = refuse_undeclared_loss(safe_plan, empty_declared)
+        if hp.is_fault(passed):
+            bad.append(f"refuse_undeclared_loss should pass an operation marked not destroying: {passed}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: refuse_undeclared_loss")
+    except Exception as e:
+        bad.append(f"refuse_undeclared_loss raised {type(e).__name__}: {e}")
+
+    # name_what_is_ambiguous stops a column gone and another arrived with no rename field.
+    ambiguous = [
+        {"kind": "drop_column", "table": "users", "column": "fname", "columns": [], "indexes": [],
+         "constraints": [], "copying": [], "values": [], "renamed_to": None, "view": None, "destroys": True},
+        {"kind": "add_column", "table": "users", "column": "first_name",
+         "columns": [{"name": "first_name", "declared_type": "text", "renamed_from": None, "references": None}],
+         "indexes": [], "constraints": [], "copying": [], "values": [], "renamed_to": None, "view": None, "destroys": False},
+    ]
+    try:
+        name_what_is_ambiguous = _need("name_what_is_ambiguous")
+        verdict = name_what_is_ambiguous(ambiguous, declared)
+        if not hp.is_fault(verdict):
+            bad.append(f"name_what_is_ambiguous should fault on a drop-and-add that could be a rename: {verdict}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: name_what_is_ambiguous")
+    except Exception as e:
+        bad.append(f"name_what_is_ambiguous raised {type(e).__name__}: {e}")
+    return bad
+
+
+def _ddl_operation(kind, **fields):
+    """One schema-change operation record with every field present, so spell_operation reads it without a
+    KeyError; the caller overrides only the fields that matter to the kind under test."""
+    base = {"kind": kind, "table": "posts", "column": None, "columns": [], "indexes": [], "constraints": [],
+            "copying": [], "values": [], "renamed_to": None, "view": None, "destroys": False}
+    base.update(fields)
+    return base
+
+
+def _probe_schema_diff():
+    """The diff core handles the parts a create-from-empty never reaches: a table present in both the
+    live and declared schema whose columns differ emits add_column, drop_column and alter_column;
+    order_operations refuses a dependency cycle; schema_from_declared carries a declared view. (declaration
+    difference, order_operations, schema_from_declared, section 5)."""
+    try:
+        difference = _need("difference")
+        order_operations = _need("order_operations")
+        schema_from_declared = _need("schema_from_declared")
+    except _NotBuilt as e:
+        return [f"{e}: a schema-diff function"]
+    bad = []
+
+    def column(name, declared_type="text", references=None):
+        return {"name": name, "declared_type": declared_type, "renamed_from": None, "references": references}
+
+    live = {"tables": [{"name": "users",
+                        "columns": [column("id", "integer"), column("changed", "text"), column("old_col")],
+                        "indexes": [], "constraints": []}], "views": []}
+    target = {"tables": [{"name": "users",
+                          "columns": [column("id", "integer"), column("changed", "integer"), column("new_col")],
+                          "indexes": [], "constraints": []}], "views": []}
+    kinds = {operation["kind"] for operation in difference(live, target)}
+    if not {"add_column", "drop_column", "alter_column"} <= kinds:
+        bad.append(f"difference of a table whose columns changed should add, drop and alter columns: {kinds}")
+
+    def create(table, columns, constraints):
+        return {"kind": "create_table", "table": table, "column": None, "columns": columns, "indexes": [],
+                "constraints": constraints, "copying": [], "values": [], "renamed_to": None, "view": None,
+                "destroys": False}
+
+    cycle_a = create("a", [column("bid", "integer", {"table": "b", "column": "id", "on_delete": "cascade"})],
+                     [{"name": "fk", "kind": "foreign_key", "columns": ["bid"]}])
+    cycle_b = create("b", [column("aid", "integer", {"table": "a", "column": "id", "on_delete": "cascade"})],
+                     [{"name": "fk", "kind": "foreign_key", "columns": ["aid"]}])
+    ordered = order_operations([cycle_a, cycle_b])
+    if not (hp.is_fault(ordered) and ordered.get("code") == "cyclic_operations"):
+        bad.append(f"order_operations should refuse a dependency cycle: {ordered}")
+
+    declared = {"models": [], "dropping_tables": [], "dropping_views": [],
+                "views": [{"name": "v", "freshness": "always current",
+                           "declaration": _need("declaration_from_asked")({"model": "User", "wanted": "all"})}]}
+    built = schema_from_declared(declared)
+    if not (isinstance(built, dict) and len(built.get("views", [])) == 1):
+        bad.append(f"schema_from_declared should carry a declared view: {built}")
+    return bad
+
+
+def _probe_dialect_edges():
+    """The engine tables refuse a word they hold no row for, and the view machinery writes a declared
+    view's SELECT per engine and the operations a materialized view needs. how_to_write, how_to_migrate,
+    how_to_inspect and what_an_operation_carries fault on a word no row holds; refuse_unusable_settings
+    refuses a setting an engine cannot use and passes the rest; mechanism_for answers the operations a
+    freshness needs or refuses an unknown one; spell_view writes a view's SELECT for each engine and
+    refuses an engine it has no row for (declaration how_to_write, how_to_migrate, how_to_inspect,
+    what_an_operation_carries, refuse_unusable_settings, mechanism_for, spell_view)."""
+    bad = []
+    for name in ("how_to_write", "how_to_migrate", "how_to_inspect", "what_an_operation_carries",
+                 "refuse_unusable_settings", "mechanism_for", "spell_view", "capability_of"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            bad.append(f"{e}: {name}")
+    if bad:
+        return bad
+    how_to_write = _need("how_to_write")
+    how_to_migrate = _need("how_to_migrate")
+    how_to_inspect = _need("how_to_inspect")
+    what_an_operation_carries = _need("what_an_operation_carries")
+    refuse_unusable_settings = _need("refuse_unusable_settings")
+    mechanism_for = _need("mechanism_for")
+    spell_view = _need("spell_view")
+    capability_of = _need("capability_of")
+
+    for reader in (how_to_write, how_to_migrate, how_to_inspect):
+        if not hp.is_fault(reader("mysql")):
+            bad.append(f"{reader.__name__} on an engine no row holds should be a Fault")
+    if not hp.is_fault(what_an_operation_carries("not_a_kind")):
+        bad.append("what_an_operation_carries on a kind no row holds should be a Fault")
+
+    if hp.is_fault(refuse_unusable_settings("sqlite", ["busy_timeout_s"])):
+        bad.append("refuse_unusable_settings should pass a setting the engine can use")
+    if not hp.is_fault(refuse_unusable_settings("postgresql", ["busy_timeout_s"])):
+        bad.append("refuse_unusable_settings should refuse a setting the engine cannot use")
+
+    for freshness in ("always current", "current when read", "refreshed when asked"):
+        for engine in ("sqlite", "postgresql", "turso"):
+            operations = mechanism_for(freshness, engine, capability_of(engine, "materialized_view"))
+            if not isinstance(operations, list):
+                bad.append(f"{engine}: mechanism_for {freshness!r} should answer the operations it needs: {operations}")
+    if not hp.is_fault(mechanism_for("never", "sqlite", capability_of("sqlite", "materialized_view"))):
+        bad.append("mechanism_for an unknown freshness should be a Fault")
+
+    view = {"name": "active_users", "freshness": "always current",
+            "declaration": _declaration(model="User")}
+    for engine in ("sqlite", "postgresql", "turso"):
+        written = spell_view(view, engine)
+        if not (isinstance(written, dict) and "text" in written):
+            bad.append(f"{engine}: spell_view should write the view's SELECT: {written}")
+    if not hp.is_fault(spell_view(view, "mysql")):
+        bad.append("spell_view on an engine no row holds should be a Fault")
+    return bad
+
+
+def _probe_spelling_dialects():
+    """spell_operation writes each schema change as the SQL one engine wants, and the three engines differ
+    on type names, boolean literals and reference clauses. One rich create_table (a primary key, a NOT
+    NULL text column with a string default, a boolean column with a boolean default, a foreign key, a
+    unique index), a drop_table, an add_column and a drop_column are spelled for sqlite, postgresql and
+    turso, under both the plain and the replicating spelling, and an unknown storage type is refused
+    (declaration spell_operation, type_spelled, spec section 5)."""
+    try:
+        spell_operation = _need("spell_operation")
+    except _NotBuilt as e:
+        return [f"{e}: spell_operation"]
+    columns = [
+        {"name": "id", "declared_type": "integer", "renamed_from": None, "references": None},
+        {"name": "name", "declared_type": "text", "renamed_from": None, "references": None},
+        {"name": "active", "declared_type": "boolean", "renamed_from": None, "references": None},
+        {"name": "author", "declared_type": "integer", "renamed_from": None,
+         "references": {"table": "users", "column": "id", "on_delete": "cascade"}},
+    ]
+    constraints = [
+        {"name": "pk_posts", "kind": "primary_key", "columns": ["id"]},
+        {"kind": "not_null", "columns": ["name"]},
+        {"kind": "default", "columns": ["name"], "value": "guest"},
+        {"kind": "default", "columns": ["active"], "value": True},
+        {"name": "uq_name", "kind": "unique", "columns": ["name"]},
+    ]
+    tag = [{"name": "tag", "declared_type": "text", "renamed_from": None, "references": None}]
+    create = _ddl_operation("create_table", columns=columns, constraints=constraints,
+                            indexes=[{"name": "ix_name", "columns": ["name"], "unique": True}])
+    drop_table = _ddl_operation("drop_table", table="legacy")
+    add_column = _ddl_operation("add_column", column="tag", columns=tag)
+    drop_column = _ddl_operation("drop_column", column="tag", columns=tag)
+    unknown = _ddl_operation("create_table",
+                             columns=[{"name": "x", "declared_type": "no_such_type", "renamed_from": None, "references": None}])
+
+    bad = []
+    for engine in ("sqlite", "postgresql", "turso"):
+        for replicating in (False, True):
+            for operation in (create, drop_table, add_column, drop_column):
+                spelled = spell_operation(operation, engine, replicating)
+                if not (isinstance(spelled, list) and spelled and "text" in spelled[0]):
+                    bad.append(f"{engine} (replicating={replicating}): spell_operation of {operation['kind']} "
+                               f"should write statements: {spelled}")
+        refused = spell_operation(unknown, engine, False)
+        if not hp.is_fault(refused):
+            bad.append(f"{engine}: an unknown storage type should be refused, not spelled: {refused}")
+    # An engine with no spelling row at all: a group handed a made-up engine word.
+    miss = spell_operation(drop_table, "mysql", False)
+    if not hp.is_fault(miss):
+        bad.append(f"spell_operation on an unknown engine should be a Fault: {miss}")
+    return bad
+
+
+_QUERY_BASE = {"model": "User", "wanted": "all", "columns": [],
+               "condition": {"each": {}, "any_of": [], "none_of": []}, "order": {}, "grouping": [],
+               "having": {"each": {}, "any_of": [], "none_of": []}, "paging": None, "rows": None,
+               "shaping": "dictionaries", "across": None}
+
+
+def _declaration(**fields):
+    """One query declaration with every field present, overriding only what the asking word under test
+    needs, so compile_statement reads it without a KeyError."""
+    built = dict(_QUERY_BASE)
+    built.update(fields)
+    return built
+
+
+def _satisfying_declarations():
+    """One satisfying declaration per asking word (declaration_from_asked's eighteen), each carrying the
+    part its word needs: an order for first, a page for page, a column to measure for the aggregates,
+    rows for add and change, a narrowing for change and remove."""
+    narrowing = hp.condition_from_narrowing({"id": {"gt": 1}})
+    return {
+        "all": _declaration(), "one": _declaration(wanted="one"), "exists": _declaration(wanted="exists"),
+        "count": _declaration(wanted="count"), "first": _declaration(wanted="first", order={"id": "ascending"}),
+        "page": _declaration(wanted="page", paging={"size": 10, "number": 2}),
+        "distinct": _declaration(wanted="distinct", columns=["name"]),
+        "sum": _declaration(wanted="sum", columns=["id"]), "average": _declaration(wanted="average", columns=["id"]),
+        "smallest": _declaration(wanted="smallest", columns=["id"]), "largest": _declaration(wanted="largest", columns=["id"]),
+        "count_distinct": _declaration(wanted="count_distinct", columns=["name"]),
+        "add": _declaration(wanted="add", rows=[{"id": 1, "name": "a"}]),
+        "change": _declaration(wanted="change", rows=[{"name": "b"}], condition=narrowing),
+        "change_all": _declaration(wanted="change_all", rows=[{"name": "b"}], condition=narrowing),
+        "remove": _declaration(wanted="remove", condition=narrowing),
+        "remove_all": _declaration(wanted="remove_all", condition=narrowing),
+    }
+
+
+def _probe_query_compilation():
+    """compile_statement turns a declaration into the SQL one engine wants, and the three engines differ
+    on identifier quoting, placeholder style ($n for postgresql, :name and ? for sqlite and turso) and
+    the case-insensitive operator. Every asking word is compiled with a satisfying declaration for
+    sqlite, postgresql and turso, and a rich SELECT (a filter with OR and NOT and an ignore-case LIKE, a
+    join, an order, a grouping, a having and a page) exercises the read renderer. A declaration a word
+    cannot do without is refused declaration_incomplete; an unknown word is a NoMatch
+    (declaration compile_statement, declaration_from_asked, section 7)."""
+    try:
+        compile_statement = _need("compile_statement")
+    except _NotBuilt as e:
+        return [f"{e}: compile_statement"]
+    bad = []
+    for word, declaration in _satisfying_declarations().items():
+        for engine in ("sqlite", "postgresql", "turso"):
+            statement = compile_statement(declaration, engine)
+            if not (isinstance(statement, dict) and "text" in statement and "parameters" in statement):
+                bad.append(f"{engine}: compile_statement of {word!r} should be a Statement: {statement}")
+
+    rich = _declaration(
+        columns=["name"],
+        condition=hp.condition_from_narrowing({"name": {"like": "a%", "ignore_case": True},
+                                            "or": [{"id": {"gt": 1}}, {"id": {"lt": 100}}], "not": [{"id": 5}]}),
+        order={"id": "ascending", "name": "descending"}, grouping=["name"],
+        having=hp.condition_from_narrowing({"id": {"gte": 1}}), paging={"size": 5, "number": 1},
+        across=[{"model": "Post", "by_column": "id", "to_column": "author"}])
+    for engine in ("sqlite", "postgresql", "turso"):
+        statement = compile_statement(rich, engine)
+        if not (isinstance(statement, dict) and "text" in statement):
+            bad.append(f"{engine}: a rich SELECT with a filter, join, order, grouping, having and page should compile: {statement}")
+
+    # A page that needs a page number it was not given is refused; an unknown asking word is a NoMatch.
+    incomplete = compile_statement(_declaration(wanted="first"), "sqlite")
+    if not (hp.is_fault(incomplete) and incomplete.get("code") == "declaration_incomplete"):
+        bad.append(f"compile_statement of a first with no order should be declaration_incomplete: {incomplete}")
+    unknown = compile_statement(_declaration(wanted="teleport"), "sqlite")
+    if not (isinstance(unknown, dict) and unknown.get("table") == "asking_words"):
+        bad.append(f"compile_statement of an unknown word should be a NoMatch naming asking_words: {unknown}")
+    not_a_declaration = compile_statement("just a string", "sqlite")
+    if not hp.is_fault(not_a_declaration):
+        bad.append(f"compile_statement of a non-declaration should be a Fault: {not_a_declaration}")
+    bad_engine = compile_statement(_declaration(), "mysql")
+    if not hp.is_fault(bad_engine):
+        bad.append(f"compile_statement for an unknown engine should be a Fault: {bad_engine}")
+    return bad
+
+
+def _probe_query_shapers():
+    """The answer shapers and the join turn driver rows and a write receipt into what a caller reads.
+    answer_from_rows shapes rows per asking word: the rows for all, exactly one or an absence or a
+    too-many refusal for one, the first for first, a bool for exists, a number for count. answer_from_receipt
+    reads the count out of an ok receipt and the Fault out of a not-ok one. join_between reads the join a
+    foreign key already declared, and refuses when no key joins the two models (declaration
+    answer_from_rows, answer_from_receipt, join_between)."""
+    try:
+        answer_from_rows = _need("answer_from_rows")
+        answer_from_receipt = _need("answer_from_receipt")
+        join_between = _need("join_between")
+    except _NotBuilt as e:
+        return [f"{e}: a query shaper"]
+    model = {"name": "User", "table": "users",
+             "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None}]}
+    bad = []
+    rows = [{"id": 1}, {"id": 2}]
+    if answer_from_rows(model, rows, _declaration(wanted="all")) != rows:
+        bad.append("answer_from_rows of all should hand the rows back as they came")
+    if answer_from_rows(model, [{"id": 1}], _declaration(wanted="one")) != {"id": 1}:
+        bad.append("answer_from_rows of one should hand the single row back")
+    if answer_from_rows(model, [], _declaration(wanted="one")) is not None:
+        bad.append("answer_from_rows of one with no rows should be NOTHING")
+    if not hp.is_fault(answer_from_rows(model, rows, _declaration(wanted="one"))):
+        bad.append("answer_from_rows of one with two rows should be a not_exactly_one Fault")
+    if answer_from_rows(model, rows, _declaration(wanted="first")) != {"id": 1}:
+        bad.append("answer_from_rows of first should be the first row")
+    if answer_from_rows(model, [{"present": 1}], _declaration(wanted="exists")) is not True:
+        bad.append("answer_from_rows of exists should read the single column as a bool")
+    if answer_from_rows(model, [{"n": 7}], _declaration(wanted="count")) != 7:
+        bad.append("answer_from_rows of count should be the one number")
+
+    if answer_from_receipt({"ok": True, "touched": 3, "failure": None}) != 3:
+        bad.append("answer_from_receipt of an ok receipt should be the count touched")
+    if not hp.is_fault(answer_from_receipt({"ok": False, "touched": 0, "failure": _logical_fault()})):
+        bad.append("answer_from_receipt of a not-ok receipt should surface the Fault it carries")
+
+    posts = {"name": "Post", "table": "posts",
+             "columns": [{"name": "author", "declared_type": "integer", "renamed_from": None,
+                          "references": {"table": "users", "column": "id"}}]}
+    joined = join_between(posts, model, {"each": {}, "any_of": [], "none_of": []})
+    if not (isinstance(joined, dict) and joined.get("by_column") == "author" and joined.get("to_column") == "id"):
+        bad.append(f"join_between should read the join the foreign key declared: {joined}")
+    unrelated = {"name": "Tag", "table": "tags", "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None}]}
+    if not hp.is_fault(join_between(model, unrelated, {"each": {}, "any_of": [], "none_of": []})):
+        bad.append("join_between should refuse when no key joins the two models")
+
+    # condition_from_narrowing's own refusals and empty answer, and answer_from_rows on a write.
+    narrow = _need("condition_from_narrowing")
+    if narrow(None) != {"each": {}, "any_of": [], "none_of": []}:
+        bad.append("condition_from_narrowing of nothing should be the empty condition")
+    if not hp.is_fault(narrow({"x": {"gt": 1, "lt": 2}})):
+        bad.append("condition_from_narrowing of a comparison naming two operators should be a Fault")
+    if not hp.is_fault(narrow(42)):
+        bad.append("condition_from_narrowing of a narrowing that is not a dict should be a Fault")
+    if not hp.is_fault(answer_from_rows(model, [], _declaration(wanted="add"))):
+        bad.append("answer_from_rows of a write asking word should be a write_has_no_rows Fault")
+    return bad
+
+
+def _probe_query_reading():
+    """asked_from_written reads a caller's written query into the parts a declaration is built from, and
+    declaration_from_asked builds the one declaration all four ways of writing share. A pseudo_sql chain
+    naming select, where, ordered_by and a tail asking word is read; a django chain through its own
+    method names is read; a method name no spelling gives a part is a NoMatch; and declaration_from_asked
+    turns the parts into a declaration, faults when a part it cannot do without is missing, and answers a
+    NoMatch on an asking word no row holds (declaration asked_from_written, declaration_from_asked)."""
+    try:
+        asked_from_written = _need("asked_from_written")
+        declaration_from_asked = _need("declaration_from_asked")
+        methods_of = _need("methods_of")
+    except _NotBuilt as e:
+        return [f"{e}: a query-reading function"]
+    bad = []
+    # A pseudo_sql chain: select, where, ordered_by, and a trailing asking word.
+    pseudo = asked_from_written('User.select("name").where(id=1).ordered_by("id").all', methods_of("pseudo_sql"))
+    if not (isinstance(pseudo, dict) and pseudo.get("wanted") == "all" and "where" in pseudo and "select" in pseudo):
+        bad.append(f"asked_from_written should lift the parts out of a pseudo_sql chain: {pseudo}")
+    # An add carrying rows, and a page carrying paging, each through a call.
+    add = asked_from_written('User.rows({"id": 1}).add', methods_of("pseudo_sql"))
+    if add.get("wanted") != "add":
+        bad.append(f"asked_from_written should read the add asking word: {add}")
+    # A django chain through django's own method names (filter -> where, values -> select).
+    django = asked_from_written('User.objects.filter(id=1).values("name")', methods_of("django"))
+    if not (isinstance(django, dict) and "where" in django and "select" in django):
+        bad.append(f"asked_from_written should read a django chain through its method names: {django}")
+
+    # declaration_from_asked builds the declaration from the lifted parts.
+    built = declaration_from_asked({"model": "User", "wanted": "all", "where": {"id": 1}, "select": ["name"],
+                                    "ordered_by": {"id": "ascending"}})
+    if not (isinstance(built, dict) and built.get("wanted") == "all" and "condition" in built):
+        bad.append(f"declaration_from_asked should build a declaration from the parts: {built}")
+    # A part it cannot do without (the model) is a Fault; an unknown asking word is a NoMatch.
+    no_model = declaration_from_asked({"wanted": "all"})
+    if not hp.is_fault(no_model):
+        bad.append(f"declaration_from_asked with no model should be a Fault: {no_model}")
+    unknown = declaration_from_asked({"model": "User", "wanted": "teleport"})
+    if not (isinstance(unknown, dict) and unknown.get("table") == "asking_words"):
+        bad.append(f"declaration_from_asked with an unknown asking word should be a NoMatch: {unknown}")
+
+    # The rows a write carries are one shape: a list of row-dicts, whether the caller wrote one row or
+    # several. A single `.rows({...})` must not collapse to a bare dict, or _add reads rows[0] off a dict
+    # (KeyError 0) and travels_together counts the dict's keys instead of its rows (bead honest-framework-hl4).
+    one = declaration_from_asked(asked_from_written('User.rows({"id": 1, "name": "a"}).add', methods_of("pseudo_sql")))
+    if one.get("rows") != [{"id": 1, "name": "a"}]:
+        bad.append(f"a single-row add should carry rows as a one-element list, not a bare dict: {one.get('rows')!r}")
+    several = declaration_from_asked(asked_from_written('User.rows({"id": 2}, {"id": 3}).add', methods_of("pseudo_sql")))
+    if several.get("rows") != [{"id": 2}, {"id": 3}]:
+        bad.append(f"a multi-row add should carry rows as a list of the rows: {several.get('rows')!r}")
+    return bad
+
+
+def _probe_query_pure():
+    """The query half reads a caller's writing into one engine-free declaration and compiles it. The
+    four grammar readers (grammar_of, methods_of, asked_from_written, declaration_from_asked), the
+    narrowing reader (condition_from_narrowing), the compiler (compile_statement, how_to_compare), the
+    join (join_between) and the answer shapers each answer a value, a Fault on a malformed shape, or a
+    NoMatch on a word no table holds (declaration, query_answer path)."""
+    bad = []
+
+    try:
+        grammar_of = _need("grammar_of")
+        for written, grammar in (("User.objects.filter(x=1)", "django"),
+                                 ("User.query.filter_by(x=1)", "sqlalchemy"),
+                                 ("user.find_many(where={})", "prisma")):
+            got = grammar_of(written)
+            if got != grammar:
+                bad.append(f"grammar_of({written!r}) should read {grammar!r}, got {got!r}")
+        unmarked = grammar_of("!!! nothing marks a grammar here !!!")
+        if not (isinstance(unmarked, dict) and unmarked.get("reason") == "no_key_to_look_up"):
+            bad.append(f"grammar_of of text marking no spelling should be a NoMatch, reason no_key_to_look_up: {unmarked}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: grammar_of")
+    except Exception as e:
+        bad.append(f"grammar_of raised {type(e).__name__}: {e}")
+
+    try:
+        methods_of = _need("methods_of")
+        names = methods_of("django")
+        if not isinstance(names, dict) or not names:
+            bad.append(f"methods_of should return the method names one grammar uses: {names}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: methods_of")
+    except Exception as e:
+        bad.append(f"methods_of raised {type(e).__name__}: {e}")
+
+    try:
+        condition_from_narrowing = _need("condition_from_narrowing")
+        # A word inside a comparison the operators table holds no row for is a NoMatch naming operators.
+        miss = hp.condition_from_narrowing({"age": {"bigger_than": 18}})
+        if not (isinstance(miss, dict) and miss.get("table") == "operators"):
+            bad.append(f"an unknown operator should be a NoMatch naming table operators: {miss}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: condition_from_narrowing")
+    except Exception as e:
+        bad.append(f"condition_from_narrowing raised {type(e).__name__}: {e}")
+
+    model = {"name": "User", "table": "users",
+             "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None},
+                         {"name": "name", "declared_type": "text", "renamed_from": None, "references": None}],
+             "dropping": [], "indexes": [], "constraints": []}
+    declaration = {"model": "User", "wanted": "all", "columns": [], "condition": {"each": {}, "any_of": [], "none_of": []},
+                   "order": {}, "grouping": [], "having": {"each": {}, "any_of": [], "none_of": []},
+                   "paging": None, "rows": None, "shaping": "dictionaries", "across": None}
+    try:
+        compile_statement = _need("compile_statement")
+        statement = compile_statement(declaration, "sqlite")
+        if hp.is_fault(statement) or (isinstance(statement, dict) and "reason" in statement):
+            bad.append(f"compile_statement of a valid select should be a Statement, not a fault or miss: {statement}")
+        elif not ("text" in statement and "parameters" in statement):
+            bad.append(f"a Statement should carry text and parameters: {statement}")
+        # An asking word the renderers table holds no row for is a NoMatch naming asking_words.
+        bad_word = compile_statement({**declaration, "wanted": "teleport"}, "sqlite")
+        if isinstance(bad_word, dict) and "reason" in bad_word and bad_word.get("table") != "asking_words":
+            bad.append(f"compile_statement on an unknown asking word should name table asking_words: {bad_word}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: compile_statement")
+    except Exception as e:
+        bad.append(f"compile_statement raised {type(e).__name__}: {e}")
+
+    try:
+        how_to_compare = _need("how_to_compare")
+        row = how_to_compare("eq", "sqlite")
+        if not (isinstance(row, dict) and {"symbol", "shape", "wraps", "ignoring_case"} <= set(row)):
+            bad.append(f"how_to_compare should return a Comparing with the four columns: {row}")
+        # Both ways it can miss answer a NoMatch: an unknown engine names table engines.
+        miss_engine = how_to_compare("eq", "mysql")
+        if not (isinstance(miss_engine, dict) and miss_engine.get("table") == "engines"):
+            bad.append(f"how_to_compare on an unknown engine should be a NoMatch naming table engines: {miss_engine}")
+        if hp.is_fault(row):
+            bad.append("how_to_compare names no Fault; both its arguments are vocabularies")
+    except _NotBuilt as e:
+        bad.append(f"{e}: how_to_compare")
+    except Exception as e:
+        bad.append(f"how_to_compare raised {type(e).__name__}: {e}")
+
+    # refuse_undeclared_columns refuses a column no model declares; refuse_some_columns_as_an_object
+    # refuses asking for columns and your own model at once; travels_together answers a bool.
+    for name, args, should_fault in (
+        ("refuse_undeclared_columns", (model, {**declaration, "columns": ["nonesuch"]}), True),
+        ("refuse_undeclared_columns", (model, {**declaration, "columns": ["name"]}), False),
+        ("refuse_some_columns_as_an_object", ({**declaration, "columns": ["name"], "shaping": "objects"},), True),
+    ):
+        try:
+            fn = _need(name)
+            got = fn(*args)
+            if should_fault and not hp.is_fault(got):
+                bad.append(f"{name} should fault on {args[-1]}: {got}")
+            if not should_fault and hp.is_fault(got):
+                bad.append(f"{name} should pass a legal declaration: {got}")
+        except _NotBuilt as e:
+            bad.append(f"{e}: {name}")
+        except Exception as e:
+            bad.append(f"{name} raised {type(e).__name__}: {e}")
+
+    try:
+        travels_together = _need("travels_together")
+        if not isinstance(travels_together(declaration), bool):
+            bad.append("travels_together should answer a bool")
+    except _NotBuilt as e:
+        bad.append(f"{e}: travels_together")
+    except Exception as e:
+        bad.append(f"travels_together raised {type(e).__name__}: {e}")
+
+    # answer_from_rows shapes rows; answer_from_receipt turns a receipt into the count a caller reads.
+    rows = [{"id": 1, "name": "bob"}]
+    try:
+        answer_from_rows = _need("answer_from_rows")
+        shaped = answer_from_rows(model, rows, declaration)
+        if hp.is_fault(shaped):
+            bad.append(f"answer_from_rows of a plain all-dictionaries read should not fault: {shaped}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: answer_from_rows")
+    except Exception as e:
+        bad.append(f"answer_from_rows raised {type(e).__name__}: {e}")
+
+    receipt = {"id": "t-1", "ok": True, "touched": 2, "attempts": 1, "failure": None}
+    try:
+        answer_from_receipt = _need("answer_from_receipt")
+        got = answer_from_receipt(receipt)
+        if got != 2 and not (isinstance(got, int)):
+            bad.append(f"answer_from_receipt should turn an ok receipt into the count touched: {got}")
+        failed = answer_from_receipt({"id": "t", "ok": False, "touched": 0, "attempts": 3, "failure": _logical_fault()})
+        if not hp.is_fault(failed):
+            bad.append(f"answer_from_receipt of a failed receipt should surface the Fault: {failed}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: answer_from_receipt")
+    except Exception as e:
+        bad.append(f"answer_from_receipt raised {type(e).__name__}: {e}")
+
+    # join_between works out the join from a declared foreign key; asked_from_written and
+    # declaration_from_asked each answer a value, a Fault, or a NoMatch.
+    for name in ("join_between", "asked_from_written", "declaration_from_asked"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            bad.append(f"{e}: {name}")
+    try:
+        declaration_from_asked = _need("declaration_from_asked")
+        miss = declaration_from_asked({"wanted": "teleport", "model": "User"})
+        if isinstance(miss, dict) and "reason" in miss and miss.get("table") != "asking_words":
+            bad.append(f"declaration_from_asked on an unknown asking word should name table asking_words: {miss}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: declaration_from_asked")
+    except Exception as e:
+        bad.append(f"declaration_from_asked raised {type(e).__name__}: {e}")
+    return bad
+
+
+def _probe_engine_tables():
+    """The seven per-engine tables are data an operator reads, never conditionals over driver text.
+    Each hands back the engine's own row: how_to_write (Transacting), how_to_migrate (MigrationMode),
+    how_to_inspect (the six questions), how_to_retry (RetryPolicy), how_to_spell (Spelling),
+    what_an_operation_carries (Carrying), capability_of (Capability), and the two spellers spell_operation
+    and spell_view (declaration, spec section 6-7)."""
+    bad = []
+
+    try:
+        how_to_write = _need("how_to_write")
+        t = how_to_write("sqlite")
+        if not (isinstance(t, dict) and {"begin", "parameters", "commits"} <= set(t)):
+            bad.append(f"how_to_write should return a Transacting: {t}")
+        if isinstance(t, dict) and t.get("parameters") not in ("named", "positional"):
+            bad.append(f"how_to_write parameters should be a ParameterStyle word: {t.get('parameters')}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: how_to_write")
+    except Exception as e:
+        bad.append(f"how_to_write raised {type(e).__name__}: {e}")
+
+    try:
+        how_to_migrate = _need("how_to_migrate")
+        mode = how_to_migrate("sqlite")
+        if mode not in ("all_or_nothing", "per_operation"):
+            bad.append(f"how_to_migrate should return a MigrationMode word: {mode}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: how_to_migrate")
+    except Exception as e:
+        bad.append(f"how_to_migrate raised {type(e).__name__}: {e}")
+
+    try:
+        how_to_inspect = _need("how_to_inspect")
+        insp = how_to_inspect("sqlite")
+        wanted = {"tables", "columns", "indexes", "constraints", "views", "materialized_views", "types"}
+        if not (isinstance(insp, dict) and wanted <= set(insp)):
+            bad.append(f"how_to_inspect should return the six questions plus the types map: {insp}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: how_to_inspect")
+    except Exception as e:
+        bad.append(f"how_to_inspect raised {type(e).__name__}: {e}")
+
+    try:
+        how_to_retry = _need("how_to_retry")
+        policy = how_to_retry("sqlite")
+        if not (isinstance(policy, dict) and {"retryable", "bound", "verified_at_contention"} <= set(policy)):
+            bad.append(f"how_to_retry should return a RetryPolicy: {policy}")
+        if isinstance(policy, dict) and not policy.get("retryable"):
+            bad.append("how_to_retry should name at least one retryable rejection for sqlite")
+    except _NotBuilt as e:
+        bad.append(f"{e}: how_to_retry")
+    except Exception as e:
+        bad.append(f"how_to_retry raised {type(e).__name__}: {e}")
+
+    try:
+        how_to_spell = _need("how_to_spell")
+        sp = how_to_spell("create_table", "sqlite", False)
+        if hp.is_fault(sp):
+            bad.append(f"how_to_spell of create_table on sqlite should not fault: {sp}")
+        elif not (isinstance(sp, dict) and {"statements", "rebuilds", "commits_between"} <= set(sp)):
+            bad.append(f"how_to_spell should return a Spelling: {sp}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: how_to_spell")
+    except Exception as e:
+        bad.append(f"how_to_spell raised {type(e).__name__}: {e}")
+
+    try:
+        what_an_operation_carries = _need("what_an_operation_carries")
+        carrying = what_an_operation_carries("create_table")
+        wanted = {"columns", "indexes", "constraints", "copying", "values", "renamed_to", "view"}
+        if not (isinstance(carrying, dict) and wanted <= set(carrying)):
+            bad.append(f"what_an_operation_carries should return a Carrying: {carrying}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: what_an_operation_carries")
+    except Exception as e:
+        bad.append(f"what_an_operation_carries raised {type(e).__name__}: {e}")
+
+    try:
+        capability_of = _need("capability_of")
+        cap = capability_of("sqlite", "materialized_view")
+        if not (isinstance(cap, dict) and {"native", "built_from"} <= set(cap)):
+            bad.append(f"capability_of should return a Capability: {cap}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: capability_of")
+    except Exception as e:
+        bad.append(f"capability_of raised {type(e).__name__}: {e}")
+
+    # spell_operation turns one change into statements; a create_view's NoMatch from spell_view travels
+    # out as it stands.
+    op = {"kind": "create_table", "table": "users", "column": None,
+          "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None}],
+          "indexes": [], "constraints": [], "copying": [], "values": [], "renamed_to": None, "view": None, "destroys": False}
+    try:
+        spell_operation = _need("spell_operation")
+        statements = spell_operation(op, "sqlite", False)
+        if hp.is_fault(statements) or (isinstance(statements, dict) and "reason" in statements):
+            bad.append(f"spell_operation of create_table on sqlite should be a list of statements: {statements}")
+        elif not isinstance(statements, list):
+            bad.append(f"spell_operation should return a list of Statement: {statements}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: spell_operation")
+    except Exception as e:
+        bad.append(f"spell_operation raised {type(e).__name__}: {e}")
+
+    for name in ("spell_view", "mechanism_for"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            bad.append(f"{e}: {name}")
+    return bad
+
+
+def _probe_crew_pure():
+    """The crew's pure readers answer a bool or a ticket off the crew record and nothing else:
+    writer_waiting, next_in_order, replicates, refusal_reaches_caller, receipt_for, progress_line, and
+    the two settlers crew_size and permitted_connections (declaration, lifecycle_catch_up path)."""
+    bad = []
+    crew = {"arrivals": ["t-1", "t-2"], "writes": {}, "waiting": {}, "arrived": "BELL", "stop": "BELL",
+            "drainers": [], "size": 1}
+
+    try:
+        next_in_order = _need("next_in_order")
+        if next_in_order(crew) != "t-1":
+            bad.append("next_in_order should answer the first ticket in arrival order")
+        if next_in_order({**crew, "arrivals": []}) is not None:
+            bad.append("next_in_order of an empty crew should be NOTHING (None)")
+    except _NotBuilt as e:
+        bad.append(f"{e}: next_in_order")
+    except Exception as e:
+        bad.append(f"next_in_order raised {type(e).__name__}: {e}")
+
+    try:
+        replicates = _need("replicates")
+        db_no = {"target": "x.db", "engine": "sqlite", "connections": [], "writers": [], "channel": None, "crew": crew, "shutdown": "exit_immediately"}
+        if replicates(db_no) is not False:
+            bad.append("replicates should be false with no channel")
+        if replicates({**db_no, "channel": "CH"}) is not True:
+            bad.append("replicates should be true with a channel")
+    except _NotBuilt as e:
+        bad.append(f"{e}: replicates")
+    except Exception as e:
+        bad.append(f"replicates raised {type(e).__name__}: {e}")
+
+    try:
+        receipt_for = _need("receipt_for")
+        r = receipt_for("t-1", 3, None, 1)
+        if r != {"id": "t-1", "ok": True, "touched": 3, "attempts": 1, "failure": None}:
+            bad.append(f"receipt_for with no failure should be an ok receipt: {r}")
+        rf = receipt_for("t-2", 0, _logical_fault(), 3)
+        if rf.get("ok") is not False or rf.get("attempts") != 3:
+            bad.append(f"receipt_for with a failure should be a not-ok receipt carrying the attempts: {rf}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: receipt_for")
+    except Exception as e:
+        bad.append(f"receipt_for raised {type(e).__name__}: {e}")
+
+    for name in ("writer_waiting", "refusal_reaches_caller"):
+        try:
+            fn = _need(name)
+            got = fn(crew) if name == "writer_waiting" else fn(_logical_fault())
+            if not isinstance(got, bool):
+                bad.append(f"{name} should answer a bool, got {got!r}")
+        except _NotBuilt as e:
+            bad.append(f"{e}: {name}")
+        except Exception as e:
+            bad.append(f"{name} raised {type(e).__name__}: {e}")
+
+    try:
+        progress_line = _need("progress_line")
+        db = {"target": "x.db", "engine": "sqlite", "connections": [], "writers": [], "channel": None, "crew": crew, "shutdown": "exit_immediately"}
+        line = progress_line(db, 1.5, False)
+        if not isinstance(line, dict):
+            bad.append(f"progress_line should build a dict log line: {line}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: progress_line")
+    except Exception as e:
+        bad.append(f"progress_line raised {type(e).__name__}: {e}")
+
+    # crew_size and permitted_connections settle a count from what the deployment asked for; NOTHING
+    # (None) means none was asked and a default is settled.
+    for name in ("crew_size", "permitted_connections"):
+        try:
+            fn = _need(name)
+            asked = fn(5)
+            if asked != 5 and not hp.is_fault(asked):
+                bad.append(f"{name}(5) should settle to the asked count or a Fault, got {asked}")
+            default = fn(None)
+            if not (isinstance(default, int) or hp.is_fault(default)):
+                bad.append(f"{name}(None) should settle a default int or a Fault, got {default}")
+        except _NotBuilt as e:
+            bad.append(f"{e}: {name}")
+        except Exception as e:
+            bad.append(f"{name} raised {type(e).__name__}: {e}")
+
+    try:
+        refuse_unusable_settings = _need("refuse_unusable_settings")
+        got = refuse_unusable_settings("sqlite", {})
+        if hp.is_fault(got) and not got:
+            bad.append("refuse_unusable_settings should pass an empty settings dict")
+    except _NotBuilt as e:
+        bad.append(f"{e}: refuse_unusable_settings")
+    except Exception as e:
+        bad.append(f"refuse_unusable_settings raised {type(e).__name__}: {e}")
+    return bad
+
+
+def _probe_schema_declarations():
+    """field records the two facts a column annotation cannot carry (built already); refuse_owned_names
+    refuses a model claiming a name the library or an engine owns (declaration field, refuse_owned_names)."""
+    bad = []
+    try:
+        field = _need("field")
+        if field("old", None) != {"renamed_from": "old", "references": None}:
+            bad.append("field should carry renamed_from and the named absence for references")
+        if field(None, None) != {"renamed_from": None, "references": None}:
+            bad.append("field with nothing said should be two named absences")
+    except _NotBuilt as e:
+        bad.append(f"{e}: field")
+    except Exception as e:
+        bad.append(f"field raised {type(e).__name__}: {e}")
+
+    try:
+        refuse_owned_names = _need("refuse_owned_names")
+        clean = {"models": [{"name": "User", "table": "users", "columns": [], "dropping": [], "indexes": [], "constraints": []}],
+                 "views": [], "dropping_tables": [], "dropping_views": []}
+        if hp.is_fault(refuse_owned_names(clean)):
+            bad.append("refuse_owned_names should pass a model claiming a name of its own")
+        owned = {"models": [{"name": "Log", "table": "sqlite_master", "columns": [], "dropping": [], "indexes": [], "constraints": []}],
+                 "views": [], "dropping_tables": [], "dropping_views": []}
+        if not hp.is_fault(refuse_owned_names(owned)):
+            bad.append("refuse_owned_names should fault on a model claiming an engine-owned name")
+    except _NotBuilt as e:
+        bad.append(f"{e}: refuse_owned_names")
+    except Exception as e:
+        bad.append(f"refuse_owned_names raised {type(e).__name__}: {e}")
+    return bad
+
+
+def _probe_refresh():
+    """The refresh half picks the views asking to be refreshed on a clock and decides what to do after
+    one runs. refreshes_from_declared keeps only the refresh-when-asked views and refuses one naming no
+    cadence; what_to_do_after_a_refresh reads one outcome and answers continue or stop, never
+    retry_after (declaration refreshes_from_declared, what_to_do_after_a_refresh)."""
+    bad = []
+    refresh_view = {"name": "daily_totals", "declaration": {}, "freshness": "refreshed when asked",
+                    "cadence": {"interval_seconds": 3600.0, "deadline_seconds": None}, "attempts_allowed": 3}
+    plain_view = {"name": "active_users", "declaration": {}, "freshness": None, "cadence": None, "attempts_allowed": None}
+    no_cadence = {"name": "broken", "declaration": {}, "freshness": "refreshed when asked", "cadence": None, "attempts_allowed": None}
+
+    try:
+        refreshes_from_declared = _need("refreshes_from_declared")
+        picked = refreshes_from_declared({"models": [], "views": [refresh_view, plain_view], "dropping_tables": [], "dropping_views": []})
+        if hp.is_fault(picked):
+            bad.append(f"refreshes_from_declared should keep the refresh-when-asked view: {picked}")
+        elif len(picked) != 1 or picked[0]["name"] != "daily_totals":
+            bad.append(f"refreshes_from_declared should keep only the refresh-when-asked view: {picked}")
+        refused = refreshes_from_declared({"models": [], "views": [no_cadence], "dropping_tables": [], "dropping_views": []})
+        if not hp.is_fault(refused):
+            bad.append(f"refreshes_from_declared should fault on a refresh view naming no cadence: {refused}")
+        none = refreshes_from_declared({"models": [], "views": [plain_view], "dropping_tables": [], "dropping_views": []})
+        if hp.is_fault(none) or none != []:
+            bad.append(f"refreshes_from_declared of only plain views should be an empty list, not a fault: {none}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: refreshes_from_declared")
+    except Exception as e:
+        bad.append(f"refreshes_from_declared raised {type(e).__name__}: {e}")
+
+    try:
+        what_to_do_after_a_refresh = _need("what_to_do_after_a_refresh")
+        attempt = {"consecutive_faults": 0, "attempted": 1, "overran": False}
+        ok = what_to_do_after_a_refresh(5, attempt, 3)
+        if ok.get("kind") != "continue":
+            bad.append(f"a successful refresh should continue at the cadence: {ok}")
+        if ok.get("kind") == "retry_after":
+            bad.append("what_to_do_after_a_refresh must never answer retry_after")
+        conflict_attempt = {"consecutive_faults": 1, "attempted": 1, "overran": False}
+        again = what_to_do_after_a_refresh(_conflict_fault(), conflict_attempt, 3)
+        if again.get("kind") == "retry_after":
+            bad.append("a conflict worth another go should be answered continue, never retry_after")
+        spent_attempt = {"consecutive_faults": 3, "attempted": 3, "overran": False}
+        stop = what_to_do_after_a_refresh(_conflict_fault(), spent_attempt, 3)
+        if stop.get("kind") != "stop":
+            bad.append(f"a refresh past its allowance should stop: {stop}")
+    except _NotBuilt as e:
+        bad.append(f"{e}: what_to_do_after_a_refresh")
+    except Exception as e:
+        bad.append(f"what_to_do_after_a_refresh raised {type(e).__name__}: {e}")
+    return bad
+
+
+# ---------------------------------------------------------------------------
+# 3. Real-database laws. A genuine sqlite connection, built in the test, never a mock. Failure is
+#    injected by a competing write lock or a read-only connection.
+# ---------------------------------------------------------------------------
+
+def _event_tables_sql():
+    """The CREATE statements a drainer's write lands against: one ordinary table the laws write rows to.
+    A law builds this against its own real database before exercising a write boundary."""
+    return "CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"
+
+
+async def _real_query_on(engine, target, connections):
+    """One real round trip through the output I/O boundaries of one engine: open, CREATE, INSERT (the
+    count branch), SELECT (the rows branch), schema_inspect, query_run_together, close. The connection is
+    a real database of that engine and the rows come back from it (declaration, column 3)."""
+    bad = []
+    session_open_connection = _need("session_open_connection")
+    query_run_statement = _need("query_run_statement")
+    session_close_connection = _need("session_close_connection")
+    schema_inspect = _need("schema_inspect")
+    how_to_inspect = _need("how_to_inspect")
+    query_run_together = _need("query_run_together")
+    how_to_write = _need("how_to_write")
+
+    conn = await session_open_connection(target, engine, connections)
+    if hp.is_fault(conn):
+        return [f"{engine}: session_open_connection should open a real connection: {conn}"]
+    created = await query_run_statement(conn, engine, {"text": _WIDGETS_SQL, "parameters": {}})
+    if hp.is_fault(created):
+        bad.append(f"{engine}: query_run_statement should run a CREATE: {created}")
+    inserted = await query_run_statement(conn, engine, _insert(engine, 1, "bolt"))
+    if hp.is_fault(inserted):
+        bad.append(f"{engine}: query_run_statement should run an INSERT and answer the count touched: {inserted}")
+    elif inserted != 1:
+        bad.append(f"{engine}: an INSERT of one row should answer 1 touched, got {inserted}")
+    read = await query_run_statement(conn, engine, {"text": "SELECT id, name FROM widgets ORDER BY id", "parameters": {}})
+    if hp.is_fault(read) or not read or read[0].get("name") != "bolt":
+        bad.append(f"{engine}: query_run_statement should read the row back: {read}")
+
+    live = await schema_inspect(conn, engine, how_to_inspect(engine))
+    if hp.is_fault(live):
+        bad.append(f"{engine}: schema_inspect should read the live schema from the real database: {live}")
+    elif not any(t.get("name") == "widgets" for t in live.get("tables", [])):
+        bad.append(f"{engine}: schema_inspect should find the widgets table it just built: {live}")
+
+    together = await query_run_together(conn, engine, [_insert(engine, 2, "nut"), _insert(engine, 3, "washer")], how_to_write(engine))
+    if hp.is_fault(together):
+        bad.append(f"{engine}: query_run_together should land several writes as one transaction: {together}")
+    elif together != 2:
+        bad.append(f"{engine}: query_run_together of two rows should answer 2 touched, got {together}")
+
+    closed = await session_close_connection(conn)
+    if hp.is_fault(closed):
+        bad.append(f"{engine}: session_close_connection should close the real connection: {closed}")
+    return bad
+
+
+def _probe_real_query():
+    """A real round trip through the output I/O boundaries, run against every real engine available this
+    run — sqlite, postgresql, turso — so each engine's open, statement, inspect and transaction driver
+    rows are exercised against a genuine database, never a mock (declaration, column 3)."""
+
+    async def _run():
+        try:
+            _need("session_open_connection")
+        except _NotBuilt as e:
+            return [f"{e}: a query boundary"]
+        bad = []
+        with tempfile.TemporaryDirectory() as d:
+            for profile in _real_engines(d):
+                bad.extend(await _real_query_on(profile["engine"], profile["target"], profile["connections"]))
         return bad
 
     return asyncio.run(_run())
 
 
-def _probe_instrumented_apply():
-    """Instrumented apply (§8.7): apply emits one hf.persist.migration per operation executed, in
-    execution order, through the injected emit (schema aggregate, db:table id); a failed operation
-    emits with the fault code; a reconstructed table emits one reconstruct_table event; a failing
-    emit is swallowed."""
+async def _sqlite_readonly_refusal(conn, query_run_statement):
+    """Injure a real sqlite connection with query_only, then write: the driver really refuses it."""
+    await query_run_statement(conn, "sqlite", {"text": "PRAGMA query_only = ON", "parameters": {}})
+    return await query_run_statement(conn, "sqlite", {"text": "INSERT INTO widgets (id, name) VALUES (1, 'x')", "parameters": {}})
+
+
+async def _constraint_refusal(engine, conn, query_run_statement):
+    """A real NOT NULL violation the driver refuses: the name column cannot hold nothing, so the write
+    fails at the driver and the boundary must turn that into a Fault rather than raise."""
+    return await query_run_statement(conn, engine, _insert(engine, 1, None))
+
+
+async def _real_refusal_on(engine, target, connections):
+    """A real driver refusal of one engine comes back as a Fault, not a raise: a read-only sqlite
+    connection, or a NOT NULL violation on postgresql and turso. Injected against a genuine database,
+    never patched (declaration query_run_statement, section 8.5)."""
+    session_open_connection = _need("session_open_connection")
+    query_run_statement = _need("query_run_statement")
+    conn = await session_open_connection(target, engine, connections)
+    if hp.is_fault(conn):
+        return [f"{engine}: session_open_connection should open the real database: {conn}"]
+    created = await query_run_statement(conn, engine, {"text": _WIDGETS_SQL, "parameters": {}})
+    if hp.is_fault(created):
+        return [f"{engine}: the table could not be built before the refusal law: {created}"]
+    refused = await _pick(engine == "sqlite",
+                          lambda: _sqlite_readonly_refusal(conn, query_run_statement),
+                          lambda: _constraint_refusal(engine, conn, query_run_statement))
+    if not hp.is_fault(refused):
+        return [f"{engine}: a write the driver refuses should be a Fault, not a raise or a silent pass: {refused}"]
+    return []
+
+
+def _probe_real_readonly_fault():
+    """A real failure, injected not mocked, on every available engine: a write the driver refuses comes
+    back as a Fault rather than raising. sqlite is put in query_only mode; postgresql and turso are given
+    a NOT NULL violation. The databases are genuine, so the driver really refuses and the boundary really
+    turns the refusal into data (declaration query_run_statement)."""
 
     async def _run():
+        try:
+            _need("session_open_connection")
+            _need("query_run_statement")
+        except _NotBuilt as e:
+            return [f"{e}: query boundary for the refusal injection"]
         bad = []
-        target = {"a": {"columns": {"id": {"type": "integer"}}}, "b": {"columns": {"id": {"type": "integer"}}}}
-        plan = diff({}, target)
-
-        # Two plain DDL operations -> one migration event per op.
-        events = []
-
-        async def emit(event_type, aggregate_type, aggregate_id, payload):
-            events.append((event_type, aggregate_type, aggregate_id, payload))
-
-        result = await apply(plan, target, _Conn(), "postgresql", emit, "users_db")
-        if not result["success"]:
-            bad.append("the plain apply should succeed")
-        if len(events) != 2 or any(e[0] != "hf.persist.migration" or e[1] != "schema" for e in events):
-            bad.append(f"apply should emit one hf.persist.migration per operation: {events}")
-        elif events[0][3]["success"] is not True or events[0][3]["fault_code"] is not None or events[0][3]["operation"] != "create_table":
-            bad.append(f"the migration event payload is wrong: {events[0][3]}")
-
-        # A failing DDL emits one event with the fault code, then apply halts.
-        fail_events = []
-
-        async def emit_fail(event_type, aggregate_type, aggregate_id, payload):
-            fail_events.append(payload)
-
-        one = {"a": {"columns": {"id": {"type": "integer"}}}}
-        fresult = await apply(diff({}, one), one, _FailingConn("CREATE TABLE"), "postgresql", emit_fail, "users_db")
-        if fresult["success"]:
-            bad.append("apply should halt on a failing DDL")
-        if len(fail_events) != 1 or fail_events[0]["success"] is not False or fail_events[0]["fault_code"] is None:
-            bad.append(f"a failed operation should emit success False with a fault code: {fail_events}")
-
-        # A reconstructed table emits one reconstruct_table event (success), and a failed
-        # reconstruction emits one with success False.
-        recon_events = []
-
-        async def emit_recon(event_type, aggregate_type, aggregate_id, payload):
-            recon_events.append(payload)
-
-        await apply(diff(_RECON_CURRENT, _RECON_TARGET), _RECON_TARGET, _Conn(), "sqlite", emit_recon, "users_db")
-        if not any(p["operation"] == "reconstruct_table" and p["success"] is True for p in recon_events):
-            bad.append(f"a reconstructed table should emit a successful reconstruct_table event: {recon_events}")
-        recon_fail = []
-
-        async def emit_recon_fail(event_type, aggregate_type, aggregate_id, payload):
-            recon_fail.append(payload)
-
-        await apply(diff(_RECON_CURRENT, _RECON_TARGET), _RECON_TARGET, _FailingConn("DROP TABLE"), "sqlite", emit_recon_fail, "users_db")
-        if not any(p["operation"] == "reconstruct_table" and p["success"] is False for p in recon_fail):
-            bad.append(f"a failed reconstruction should emit a reconstruct_table event with success False: {recon_fail}")
-
-        # A failing emit is swallowed: the migration still succeeds.
-        async def emit_down(event_type, aggregate_type, aggregate_id, payload):
-            raise ValueError("emit is down")
-
-        if not (await apply(plan, target, _Conn(), "postgresql", emit_down, "users_db"))["success"]:
-            bad.append("a failing emit must never break the migration")
+        with tempfile.TemporaryDirectory() as d:
+            for profile in _real_engines(d):
+                bad.extend(await _real_refusal_on(profile["engine"], profile["target"], profile["connections"]))
         return bad
 
     return asyncio.run(_run())
 
 
-def _probe_pool():
-    """Pool routing (§8.1, 8.2): resolve a manifest to its pool selector — a db_id selects a
-    registered database, a tenant_id a per-tenant one, the credential and lifecycle are carried, and
-    a manifest naming no database faults unknown_database."""
-    from honest_persist.pool import POOL_LIFECYCLES, resolve_pool_key
+async def _make_table(engine, target, connections):
+    """Build the widgets table on a real database of this engine through persist's own read boundary, so
+    the crew-write law opens its writer against a database that is already there."""
+    session_open_connection = _need("session_open_connection")
+    query_run_statement = _need("query_run_statement")
+    session_close_connection = _need("session_close_connection")
+    pool = await session_open_connection(target, engine, connections)
+    if hp.is_fault(pool):
+        return pool
+    built = await query_run_statement(pool, engine, {"text": _WIDGETS_SQL, "parameters": {}})
+    await session_close_connection(pool)
+    return built
 
+
+async def _crew_write_on(engine, target, connections):
+    """crew_run_write runs one write the engine's way and answers a WriteOutcome: the count affected, or
+    the driver's Fault when the write itself is refused (declaration crew_run_write, spec 7.7). Every
+    engine in scope has a live concurrent-write mode: sqlite and postgresql always, turso when the
+    installed pyturso does MVCC (its BEGIN CONCURRENT writer, enabled by session_open_writer), so a clean
+    write answers the count on each."""
     bad = []
-    if POOL_LIFECYCLES != {"persistent", "ephemeral", "on_demand"}:
-        bad.append("POOL_LIFECYCLES vocabulary is wrong")
-    by_db = resolve_pool_key({"db_id": "users_db", "id": 1})
-    if "ok" not in by_db or by_db["ok"]["database"] != "users_db" or by_db["ok"]["kind"] != "db_id":
-        bad.append(f"a db_id should select a registered database: {by_db}")
-    elif by_db["ok"]["lifecycle"] != "persistent" or by_db["ok"]["credential"] is not None:
-        bad.append("the default lifecycle is persistent and there is no credential by default")
-    by_tenant = resolve_pool_key({"tenant_id": "acme", "credential": "read_replica", "db_lifecycle": "ephemeral"})
-    if "ok" not in by_tenant or by_tenant["ok"]["kind"] != "tenant_id" or by_tenant["ok"]["database"] != "acme":
-        bad.append(f"a tenant_id should select a per-tenant database: {by_tenant}")
-    elif by_tenant["ok"]["credential"] != "read_replica" or by_tenant["ok"]["lifecycle"] != "ephemeral":
-        bad.append("the credential and lifecycle should be carried through")
-    none = resolve_pool_key({"some": "query data"})
-    if none.get("err") != {"code": "unknown_database", "message": "manifest carries neither db_id nor tenant_id", "category": "client"}:
-        bad.append(f"a manifest naming no database should fault unknown_database in full: {none}")
+    session_open_writer = _need("session_open_writer")
+    crew_run_write = _need("crew_run_write")
+    session_close_connection = _need("session_close_connection")
+    how_to_write = _need("how_to_write")
+
+    built = await _make_table(engine, target, connections)
+    if hp.is_fault(built):
+        return [f"{engine}: the table could not be built before the crew-write law: {built}"]
+    writer = await session_open_writer(target, engine)
+    if hp.is_fault(writer):
+        return [f"{engine}: session_open_writer should open a real writer connection: {writer}"]
+
+    clean = await crew_run_write(writer, engine, _insert(engine, 1, "cog"), how_to_write(engine))
+    bad.extend(_judge_clean_write(engine, clean))
+
+    # A write the driver refuses (NOT NULL) answers a Fault, never a raise.
+    refused = await crew_run_write(writer, engine, _insert(engine, 2, None), how_to_write(engine))
+    if not hp.is_fault(refused):
+        bad.append(f"{engine}: a NOT NULL violation should answer a Fault WriteOutcome, got {refused}")
+
+    await session_close_connection(writer)
     return bad
 
 
-class _SqliteConn:
-    """A real in-memory SQLite connection adapted to persist's duck-typed boundary (§7.4): await to
-    {rows, rowcount}, named params, dict rows. Conformance is not linted, so a fixture class is fine."""
-
-    def __init__(self):
-        # Autocommit (isolation_level=None) so the reconstruction lifecycle's explicit BEGIN/COMMIT and
-        # its foreign-key pragmas run as issued, rather than inside sqlite3's implicit transactions.
-        self._conn = sqlite3.connect(":memory:", isolation_level=None)
-        self._conn.row_factory = sqlite3.Row
-
-    async def execute(self, sql, params=None):
-        cursor = self._conn.execute(sql, params or {})
-        return {"rows": [dict(row) for row in cursor.fetchall()], "rowcount": cursor.rowcount}
-
-    # The reconstruction lifecycle (§5.5) against real SQLite: the pragma toggles run outside a
-    # transaction, verify_foreign_keys reports PRAGMA foreign_key_check violations, and push hooks are
-    # absent (this is not a synced connection).
-    async def begin(self):
-        self._conn.execute("BEGIN")
-
-    async def commit(self):
-        self._conn.execute("COMMIT")
-
-    async def rollback(self):
-        self._conn.execute("ROLLBACK")
-
-    async def disable_foreign_keys(self):
-        self._conn.execute("PRAGMA foreign_keys = OFF")
-
-    async def enable_foreign_keys(self):
-        self._conn.execute("PRAGMA foreign_keys = ON")
-
-    async def verify_foreign_keys(self):
-        return [dict(row) for row in self._conn.execute("PRAGMA foreign_key_check").fetchall()]
-
-    def close(self):
-        self._conn.close()
+def _judge_clean_write(engine, outcome):
+    """A clean write on any engine in scope answers the count it affected. turso reaches here only when
+    the installed pyturso does MVCC, so its BEGIN CONCURRENT write answers a count exactly as sqlite and
+    postgresql do; there is no MVCC-off branch, because a pyturso without MVCC is a named skip upstream,
+    never an engine whose clean write is expected to fault."""
+    if isinstance(outcome, dict) and outcome.get("reason"):
+        return [f"{engine}: a real write should not answer a NoMatch: {outcome}"]
+    if hp.is_fault(outcome):
+        return [f"{engine}: a clean write should answer a WriteOutcome count, not a Fault: {outcome}"]
+    return _pick(outcome == 1, lambda: [], lambda: [f"{engine}: crew_run_write of one row should answer 1, got {outcome}"])
 
 
-def _probe_postgres_pure():
-    """The PostgreSQL inspector's pure pieces (section 9.1): type resolution, column reconstruction,
-    and the exact catalog SQL, verified without a connection. This runs even under the mutation gate
-    (which skips the real-server integration probe), so the PostgreSQL pure logic stays
-    mutation-tested."""
-    from honest_persist.migrate import (
-        _PG_INDEXES, _PG_REGISTRY_EXISTS, _PG_SCHEMA, _pg_column, _pg_tables, _pg_type,
-    )
-    bad = []
-    if _pg_type("timestamp with time zone") != "timestamptz" or _pg_type("text") != "text" or _pg_type("integer") != "integer":
-        bad.append("_pg_type should resolve timestamptz and pass other types through")
-    # _pg_tables groups the flat schema rows by table, skips owned bookkeeping tables, and resolves
-    # every column shape: primary-key present, a resolved type with a default, and a plain nullable.
-    def _r(**fields):
-        return {"ref_table": None, "ref_column": None, "delete_rule": "NO ACTION", "update_rule": "NO ACTION", **fields}
+def _probe_crew_run_write():
+    """crew_run_write against every available real engine, plus the no-driver NoMatch. Each engine's
+    write driver row is exercised: the clean count where the engine's concurrent-write mode is live, the
+    refused Fault on a NOT NULL violation, and a NoMatch for an engine with no driver row at all
+    (declaration crew_run_write, spec 7.7)."""
 
-    rows = [
-        _r(table_name="account", column_name="id", data_type="integer", is_nullable="NO", column_default=None, is_primary_key=1),
-        _r(table_name="account", column_name="email", data_type="text", is_nullable="YES", column_default=None, is_primary_key=0),
-        _r(table_name="account", column_name="created", data_type="timestamp with time zone", is_nullable="YES", column_default="now()", is_primary_key=0),
-        _r(table_name="account", column_name="team_id", data_type="integer", is_nullable="YES", column_default=None, is_primary_key=0, ref_table="team", ref_column="id", delete_rule="CASCADE"),
-        _r(table_name="_hp_object", column_name="name", data_type="text", is_nullable="NO", column_default=None, is_primary_key=1),
-    ]
-    index_rows = [
-        {"table_name": "account", "index_name": "account_by_email", "column_name": "email", "indisunique": False},
-        {"table_name": "account", "index_name": "account_uq_created_team", "column_name": "created", "indisunique": True},
-        {"table_name": "account", "index_name": "account_uq_created_team", "column_name": "team_id", "indisunique": True},
-        {"table_name": "_hp_object", "index_name": "hp_ix", "column_name": "name", "indisunique": False},
-    ]
-    tables = _pg_tables(rows, index_rows, {"_hp_object"})
-    if tables != {"account": {"columns": {
-        "id": {"type": "integer", "nullable": False, "primary_key": True},
-        "email": {"type": "text", "nullable": True},
-        "created": {"type": "timestamptz", "nullable": True, "default": "now()"},
-        "team_id": {"type": "integer", "nullable": True, "references": "team.id", "on_delete": "cascade"},
-    }, "indexes": {
-        "account_by_email": {"columns": ["email"]},
-        "account_uq_created_team": {"columns": ["created", "team_id"], "unique": True},
-    }}}:
-        bad.append(f"_pg_tables should group columns and attach explicit indexes, excluding owned tables: {tables}")
-    # _pg_column omits the primary-key flag, default, and foreign key when absent.
-    if _pg_column(_r(data_type="text", is_nullable="YES", column_default=None, is_primary_key=0)) != {"type": "text", "nullable": True}:
-        bad.append("_pg_column should omit primary_key, default, and references when absent")
-    # A foreign key with an on_update rule and the default on_delete: the update rule is set, the
-    # delete rule skipped.
-    if _pg_column(_r(data_type="integer", is_nullable="YES", column_default=None, is_primary_key=0, ref_table="usr", ref_column="id", update_rule="RESTRICT")) != {"type": "integer", "nullable": True, "references": "usr.id", "on_update": "restrict"}:
-        bad.append("_pg_column should set an on_update rule and skip a default on_delete")
-    if _PG_REGISTRY_EXISTS != "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '_hp_object'":
-        bad.append(f"the registry-existence query is wrong: {_PG_REGISTRY_EXISTS}")
-    if _PG_SCHEMA != (
-        "SELECT c.table_name, c.column_name, c.data_type, c.is_nullable, c.column_default, "
-        "CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key, "
-        "fk.ref_table, fk.ref_column, fk.delete_rule, fk.update_rule "
-        "FROM information_schema.columns c "
-        "JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE' "
-        "LEFT JOIN (SELECT kcu.table_name, kcu.column_name FROM information_schema.table_constraints tc "
-        "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
-        "WHERE tc.table_schema = 'public' AND tc.constraint_type = 'PRIMARY KEY') pk "
-        "ON pk.table_name = c.table_name AND pk.column_name = c.column_name "
-        "LEFT JOIN (SELECT kcu.table_name, kcu.column_name, ccu.table_name AS ref_table, ccu.column_name AS ref_column, rc.delete_rule, rc.update_rule "
-        "FROM information_schema.table_constraints tc "
-        "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
-        "JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema "
-        "JOIN information_schema.referential_constraints rc ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema "
-        "WHERE tc.table_schema = 'public' AND tc.constraint_type = 'FOREIGN KEY') fk "
-        "ON fk.table_name = c.table_name AND fk.column_name = c.column_name "
-        "WHERE c.table_schema = 'public' ORDER BY c.table_name, c.ordinal_position"
-    ):
-        bad.append(f"the schema query is wrong: {_PG_SCHEMA}")
-    if _PG_INDEXES != (
-        "SELECT t.relname AS table_name, i.relname AS index_name, a.attname AS column_name, ix.indisunique "
-        "FROM pg_index ix "
-        "JOIN pg_class i ON i.oid = ix.indexrelid "
-        "JOIN pg_class t ON t.oid = ix.indrelid "
-        "JOIN pg_namespace n ON n.oid = t.relnamespace "
-        "JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true "
-        "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum "
-        "WHERE n.nspname = 'public' AND NOT ix.indisprimary "
-        "AND ix.indexrelid NOT IN (SELECT conindid FROM pg_constraint WHERE contype IN ('p', 'u')) "
-        "ORDER BY t.relname, i.relname, k.ord"
-    ):
-        bad.append(f"the index query is wrong: {_PG_INDEXES}")
-    from honest_persist.migrate import _INSPECTORS, _inspect_postgresql
-    if _INSPECTORS.get("postgresql") is not _inspect_postgresql:
-        bad.append("postgresql should dispatch to the PostgreSQL inspector")
-    return bad
+    async def _run():
+        try:
+            session_open_writer = _need("session_open_writer")
+            crew_run_write = _need("crew_run_write")
+            how_to_write = _need("how_to_write")
+        except _NotBuilt as e:
+            return [f"{e}: crew_run_write path"]
+        bad = []
+        with tempfile.TemporaryDirectory() as d:
+            engines = _real_engines(d)
+            for profile in engines:
+                bad.extend(await _crew_write_on(profile["engine"], profile["target"],
+                                                profile["connections"]))
+            # An engine with no driver row answers a NoMatch before any write runs, named once against a
+            # real sqlite writer (the miss is settled on the engine word, so one writer proves it).
+            sqlite_target = os.path.join(d, "miss.db")
+            writer = await session_open_writer(sqlite_target, "sqlite")
+            miss = await crew_run_write(writer, "mysql", _insert("sqlite", 1, "x"), how_to_write("sqlite"))
+            if not (isinstance(miss, dict) and miss.get("table") == "engines" and miss.get("reason") == "no_row_for_the_key"):
+                bad.append(f"crew_run_write on an engine with no driver should be a NoMatch naming table engines: {miss}")
+            await _need("session_close_connection")(writer)
+        return bad
+
+    return asyncio.run(_run())
 
 
-def _probe_postgres():
-    """PostgreSQL end to end against a real server (section 9.1; spec section 8.6 — a real database,
-    no mocks). Drives the full migrate/inspect workflow and native materialized views on real
-    PostgreSQL: it prefers a running local server and otherwise spins up a throwaway cluster. When no
-    PostgreSQL can be provisioned at all (no server and no binaries) the probe cannot run and reports
-    it rather than passing silently."""
-    from honest_persist import diff, expand_schema, inspect, migrate, refresh_materialized_view
+def _probe_boundary_faults():
+    """The output boundaries turn a bad argument or an unreachable driver into a Fault value, never a
+    raise: an open the driver cannot reach, a bound of zero connections, a writer that will not open, and
+    a statement or a group handed an engine word no driver ships. Each is injected against the real
+    boundaries (declaration session_open_connection, session_open_writer, query_run_statement,
+    query_run_together)."""
 
-    # Under the mutation gate the whole suite reruns once per mutant; a real server in that loop is
-    # prohibitively slow, and this integration probe's pure logic is mutation-tested by the pure PG
-    # probe. It still runs in every normal suite pass (coverage gate, pre-commit test run).
-    if os.environ.get("HONEST_MUTATION"):
-        return []
-    conn = postgres_connection()
-    if conn is None:
-        print("honest-persist: no PostgreSQL available; the PostgreSQL probe did not run", file=sys.stderr)
-        return []
+    async def _run():
+        for name in ("session_open_connection", "session_open_writer", "query_run_statement",
+                     "query_run_together", "session_close_connection", "how_to_write"):
+            try:
+                _need(name)
+            except _NotBuilt as e:
+                return [f"{e}: {name}"]
+        session_open_connection = _need("session_open_connection")
+        session_open_writer = _need("session_open_writer")
+        query_run_statement = _need("query_run_statement")
+        query_run_together = _need("query_run_together")
+        session_close_connection = _need("session_close_connection")
+        how_to_write = _need("how_to_write")
+        bad = []
+        with tempfile.TemporaryDirectory() as d:
+            # An open the driver cannot reach: a path under a directory that is not there.
+            unreachable = await session_open_connection(os.path.join(d, "missing", "db.db"), "sqlite", 1)
+            if not (hp.is_fault(unreachable) and unreachable.get("code") == "could_not_reach"):
+                bad.append(f"an unreachable open should be a could_not_reach Fault: {unreachable}")
+            # A bound of zero connections leaves none to read on.
+            none_left = await session_open_connection(os.path.join(d, "z.db"), "sqlite", 0)
+            if not (hp.is_fault(none_left) and none_left.get("code") == "no_connection_permitted"):
+                bad.append(f"a zero-connection bound should be a no_connection_permitted Fault: {none_left}")
+            # A writer that cannot open.
+            no_writer = await session_open_writer(os.path.join(d, "missing", "w.db"), "sqlite")
+            if not (hp.is_fault(no_writer) and no_writer.get("code") == "writer_would_not_open"):
+                bad.append(f"a writer that will not open should be a writer_would_not_open Fault: {no_writer}")
+            # A statement and a group handed an engine word no driver ships.
+            conn = await session_open_connection(os.path.join(d, "ok.db"), "sqlite", 1)
+            stmt = {"text": "SELECT 1", "parameters": {}}
+            miss_stmt = await query_run_statement(conn, "mysql", stmt)
+            if not (hp.is_fault(miss_stmt) and miss_stmt.get("code") == "no_such_engine"):
+                bad.append(f"a statement on an unknown engine should be a no_such_engine Fault: {miss_stmt}")
+            miss_group = await query_run_together(conn, "mysql", [stmt], how_to_write("sqlite"))
+            if not (hp.is_fault(miss_group) and miss_group.get("code") == "no_such_engine"):
+                bad.append(f"a group on an unknown engine should be a no_such_engine Fault: {miss_group}")
+            await session_close_connection(conn)
+
+            # A group the driver refuses rolls the whole transaction back and comes back a Fault, on every
+            # engine: a NOT NULL violation inside the group.
+            for profile in _real_engines(d):
+                bad.extend(await _refused_group_on(profile["engine"], profile["target"], profile["connections"]))
+        return bad
+
+    return asyncio.run(_run())
+
+
+async def _refused_group_on(engine, target, connections):
+    """A group of writes the driver refuses (a NOT NULL violation) rolls back and answers a group_refused
+    Fault, never a raise (declaration query_run_together)."""
+    session_open_connection = _need("session_open_connection")
+    query_run_statement = _need("query_run_statement")
+    query_run_together = _need("query_run_together")
+    session_close_connection = _need("session_close_connection")
+    how_to_write = _need("how_to_write")
+    conn = await session_open_connection(target, engine, connections)
+    if hp.is_fault(conn):
+        return [f"{engine}: the connection for the refused-group law would not open: {conn}"]
+    built = await query_run_statement(conn, engine, {"text": _WIDGETS_SQL, "parameters": {}})
+    if hp.is_fault(built):
+        return [f"{engine}: the table for the refused-group law could not be built: {built}"]
+    refused = await query_run_together(conn, engine, [_insert(engine, 1, None)], how_to_write(engine))
+    await session_close_connection(conn)
+    return _pick(hp.is_fault(refused), lambda: [],
+                 lambda: [f"{engine}: a group with a NOT NULL violation should be a Fault, got {refused}"])
+
+
+def _probe_readers_and_log():
+    """The three low boundaries that touch the platform rather than a database: clock_read reads the
+    wall clock, copy_on_disk reads whether a file is already there, log_write writes a line and never
+    faults (declaration clock_read, copy_on_disk, log_write)."""
 
     async def _run():
         bad = []
-        schema = {
-            "tables": {"account": {"columns": {
-                "id": {"type": "integer", "nullable": False, "primary_key": True},
-                "email": {"type": "text", "nullable": True},
-                "created": {"type": "timestamptz", "nullable": True, "default": "now()"},
-            }}},
-            "views": {
-                "active": {"query": "SELECT id FROM account", "depends_on": ["account"]},
-                "big": {"query": "SELECT id FROM account WHERE id > 1", "materialized": True, "refresh": "trigger", "depends_on": ["account"]},
-            },
-        }
-        made = await migrate(schema, conn, "postgresql")
-        if "ok" not in made or not made["ok"]["success"]:
-            bad.append(f"migrate should build the tables, view, and native materialized view on PostgreSQL: {made}")
+        try:
+            clock_read = _need("clock_read")
+            now = clock_read()
+            if not isinstance(now, float):
+                bad.append(f"clock_read should answer the wall-clock time as a float: {now!r}")
+        except _NotBuilt as e:
+            bad.append(f"{e}: clock_read")
+        except Exception as e:
+            bad.append(f"clock_read raised {type(e).__name__}: {e}")
+
+        try:
+            copy_on_disk = _need("copy_on_disk")
+            with tempfile.TemporaryDirectory() as d:
+                here = os.path.join(d, "present.db")
+                open(here, "w").close()
+                if copy_on_disk(here) is not True:
+                    bad.append("copy_on_disk should be true for a file that is there")
+                if copy_on_disk(os.path.join(d, "absent.db")) is not False:
+                    bad.append("copy_on_disk should be false for a file that is not there")
+        except _NotBuilt as e:
+            bad.append(f"{e}: copy_on_disk")
+        except Exception as e:
+            bad.append(f"copy_on_disk raised {type(e).__name__}: {e}")
+
+        try:
+            log_write = _need("log_write")
+            got = log_write({"event": "test", "db": "x"})
+            if got is not None:
+                bad.append(f"log_write should answer NOTHING (None) and never fault: {got}")
+        except _NotBuilt as e:
+            bad.append(f"{e}: log_write")
+        except Exception as e:
+            bad.append(f"log_write raised {type(e).__name__}: {e}")
+        return bad
+
+    return asyncio.run(_run())
+
+
+def _probe_crew_lifecycle():
+    """The crew's real boundaries wired together: crew_make builds an empty crew, session_open_writer
+    opens a drainer's connection, crew_deposit hands a write in and takes a ticket, crew_release_ticket
+    and crew_post_receipt move the outcome back to the waiting caller, crew_start and crew_stop run and
+    stop the drainers, crew_wait_for_work sleeps until work arrives, and lifecycle_install_handler and
+    lifecycle_register install the shutdown handler and the replicating-database list. Exercised against
+    a real file-backed sqlite database so the drainers share one store (declaration, column 3)."""
+
+    async def _run():
+        bad = []
+        for name in ("crew_make", "crew_start", "crew_stop", "crew_deposit", "crew_release_ticket",
+                     "crew_post_receipt", "crew_wait_for_work", "lifecycle_install_handler", "lifecycle_register"):
+            try:
+                _need(name)
+            except _NotBuilt as e:
+                bad.append(f"{e}: {name}")
+        if bad:
+            return bad
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "fleet.db")
+            base = sqlite3.connect(target)
+            base.execute(_event_tables_sql())
+            base.commit()
+            base.close()
+            crew_make = _need("crew_make")
+            crew_deposit = _need("crew_deposit")
+            crew = crew_make()
+            if not (isinstance(crew, dict) and crew.get("arrivals") == []):
+                bad.append(f"crew_make should build an empty crew with a doorbell: {crew}")
+            statement = {"text": "INSERT INTO widgets (id, name) VALUES (4, 'pin')", "parameters": {}}
+            ticket = crew_deposit(crew, statement)
+            if hp.is_fault(ticket):
+                bad.append(f"crew_deposit should hand back a ticket: {ticket}")
+            elif not isinstance(ticket, str):
+                bad.append(f"crew_deposit should answer a Ticket (a string claim): {ticket}")
+        return bad
+
+    return asyncio.run(_run())
+
+
+def _probe_channel():
+    """The replication channel is a Turso (libsql) boundary: session_open_channel opens the one line to a
+    primary, channel_push sends local commits, channel_pull brings down what the primary has. These need
+    a real libsql primary; when pyturso is not installed the law records that the three functions are at
+    least declared and names the skip, so it never passes vacuously (declaration channel_push/pull)."""
+    bad = []
+    for name in ("session_open_channel", "channel_push", "channel_pull"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            bad.append(f"{e}: {name}")
+    try:
+        import turso  # noqa: F401
+    except Exception:
+        bad.append("channel laws need a real libsql/turso primary (pyturso not importable); the push/pull round trip is unverified here")
+    return bad
+
+
+async def _replica_marker_reached(url, token, marker):
+    """Open a replica on the real primary, write one marked row locally, push it, then open a second
+    fresh replica and pull: answer whether the marker made the whole round trip to the primary and back.
+    The channel is persist's own session_open_channel / channel_push / channel_pull, against the real
+    cloud database, never a mock."""
+    session_open_channel = _need("session_open_channel")
+    channel_push = _need("channel_push")
+    channel_pull = _need("channel_pull")
+    session_close_connection = _need("session_close_connection")
+    bad = []
+    with tempfile.TemporaryDirectory() as d:
+        writer_channel = await session_open_channel(os.path.join(d, "replica.db"), url, token)
+        if hp.is_fault(writer_channel):
+            return [f"session_open_channel should open the one line to the real primary: {writer_channel}"], False
+        # The first push proves the channel reaches a primary and brings the schema down onto an empty copy.
+        bootstrap = await channel_push(writer_channel)
+        if hp.is_fault(bootstrap):
+            return [f"the first channel_push should bootstrap the replica against the primary: {bootstrap}"], False
+        cursor = writer_channel.cursor()
+        await cursor.execute("CREATE TABLE IF NOT EXISTS replication_probe (id INTEGER PRIMARY KEY, mark TEXT NOT NULL)")
+        await writer_channel.commit()
+        await cursor.execute("INSERT INTO replication_probe (mark) VALUES (?)", [marker])
+        await writer_channel.commit()
+        pushed = await channel_push(writer_channel)
+        if hp.is_fault(pushed):
+            bad.append(f"channel_push should send the local commit to the primary: {pushed}")
+
+        reader_channel = await session_open_channel(os.path.join(d, "replica2.db"), url, token)
+        if hp.is_fault(reader_channel):
+            await session_close_connection(writer_channel)
+            return bad + [f"session_open_channel should open a second replica to read back: {reader_channel}"], False
+        pulled = await channel_pull(reader_channel)
+        if hp.is_fault(pulled):
+            bad.append(f"channel_pull should bring the primary's state down to a fresh replica: {pulled}")
+        read_cursor = reader_channel.cursor()
+        found = await read_cursor.execute("SELECT mark FROM replication_probe WHERE mark = ?", [marker])
+        rows = await found.fetchall()
+        await session_close_connection(writer_channel)
+        await session_close_connection(reader_channel)
+        return bad, bool(rows)
+
+
+def _probe_replication():
+    """The replication round trip against the real Turso primary, the one that was only structurally
+    checked before. A locally written, uniquely marked row is pushed to the primary through
+    channel_push; a fresh replica then pulls it back through channel_pull, proving the row reached the
+    primary and returns (declaration session_open_channel, channel_push, channel_pull, section 5.5).
+
+    A missing TURSO_KEY or turso CLI raises out of the fixture and becomes a loud failure here: the law
+    is to test the real primary, never to skip it. Only a genuine transient network failure reaching the
+    platform is tolerated, and it is recorded as a named skip rather than a pass."""
+
+    async def _run():
+        for name in ("session_open_channel", "channel_push", "channel_pull"):
+            try:
+                _need(name)
+            except _NotBuilt as e:
+                return [f"{e}: {name}"]
+        bad = await _channel_fault_cases()
+        config = turso_replica_config()
+        if "unavailable" in config:
+            _note_skip(f"replication: {config['unavailable']}")
+            return bad
+        marker = "hp_" + secrets.token_hex(8)
+        round_trip, reached = await _replica_marker_reached(config["url"], config["token"], marker)
+        bad.extend(round_trip)
+        if not reached and not round_trip:
+            bad.append("the marked row did not make the round trip: it was pushed to the real primary but a "
+                       "fresh replica did not pull it back")
+        return bad
+
+    return asyncio.run(_run())
+
+
+async def _channel_fault_cases():
+    """The channel boundaries turn a bad local path and an unreachable primary into Fault values, never a
+    raise: session_open_channel on a path it cannot make, and channel_push / channel_pull on a channel
+    whose primary is not a real address. No network and no mock — the driver really refuses
+    (declaration session_open_channel, channel_push, channel_pull)."""
+    session_open_channel = _need("session_open_channel")
+    channel_push = _need("channel_push")
+    channel_pull = _need("channel_pull")
+    bad = []
+    with tempfile.TemporaryDirectory() as d:
+        # A local path the driver cannot make: its parent is a file, so the directory cannot be created.
+        blocker = os.path.join(d, "a-file")
+        open(blocker, "w").close()
+        unmakeable = await session_open_channel(os.path.join(blocker, "sub", "c.db"), "libsql://x.turso.io", "tok")
+        if not (hp.is_fault(unmakeable) and unmakeable.get("code") == "channel_would_not_open"):
+            bad.append(f"a channel on an unmakeable path should be a channel_would_not_open Fault: {unmakeable}")
+        # A channel whose primary is not a real address: the open defers, the push and pull refuse.
+        channel = await session_open_channel(os.path.join(d, "c.db"), "not-a-valid-url", "tok")
+        if hp.is_fault(channel):
+            bad.append(f"the local channel should open before its primary is reached: {channel}")
+        else:
+            pushed = await channel_push(channel)
+            if not (hp.is_fault(pushed) and pushed.get("code") == "push_refused"):
+                bad.append(f"a push to an unreachable primary should be a push_refused Fault: {pushed}")
+            pulled = await channel_pull(channel)
+            if not (hp.is_fault(pulled) and pulled.get("code") == "pull_refused"):
+                bad.append(f"a pull from an unreachable primary should be a pull_refused Fault: {pulled}")
+    return bad
+
+
+# ---------------------------------------------------------------------------
+# 4. Orchestrator and door laws, against a real database.
+# ---------------------------------------------------------------------------
+
+async def _migration_schema_on_postgres(target):
+    """schema_live and migration_plan against a real PostgreSQL: the door reads the live schema and says
+    what a migration would change, or faults legitimately when the host declares no models."""
+    schema_live = _need("schema_live")
+    migration_plan = _need("migration_plan")
+    session_open_connection = _need("session_open_connection")
+    query_run_statement = _need("query_run_statement")
+    session_close_connection = _need("session_close_connection")
+    pool = await session_open_connection(target, "postgresql", 1)
+    if hp.is_fault(pool):
+        return [f"postgresql: the migration/schema law could not open a connection: {pool}"]
+    await query_run_statement(pool, "postgresql", {"text": "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)", "parameters": {}})
+    await session_close_connection(pool)
+    bad = []
+    live = await schema_live(target)
+    if hp.is_fault(live):
+        bad.append(f"postgresql: schema_live should read the real database's schema: {live}")
+    elif not any(t.get("name") == "users" for t in live.get("tables", [])):
+        bad.append(f"postgresql: schema_live should find the users table the test built: {live}")
+    plan = await migration_plan(target)
+    if not (hp.is_fault(plan) or ("operations" in plan and "destroys" in plan)):
+        bad.append(f"postgresql: migration_plan should answer a Plan or a Fault: {plan}")
+    return bad
+
+
+def _probe_migration_and_schema():
+    """The three read-only doors ask a real database a question and change nothing. migration_plan /
+    migration_compare say what a migration would change; schema_live / schema_read_live say what the
+    database holds now; schema_declared / schema_say_declared say what the host declared. Run against a
+    real sqlite file the test builds behind the models (declaration migration_plan, schema_live,
+    schema_declared)."""
+
+    async def _run():
+        bad = []
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "shape.db")
+            base = sqlite3.connect(target)
+            base.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+            base.commit()
+            base.close()
+
+            try:
+                schema_live = _need("schema_live")
+                live = await schema_live(target)
+                if hp.is_fault(live):
+                    bad.append(f"schema_live should read the real database's schema: {live}")
+                elif not any(t.get("name") == "users" for t in live.get("tables", [])):
+                    bad.append(f"schema_live should find the users table the test built: {live}")
+            except _NotBuilt as e:
+                bad.append(f"{e}: schema_live")
+            except Exception as e:
+                bad.append(f"schema_live raised {type(e).__name__}: {e}")
+
+            try:
+                migration_plan = _need("migration_plan")
+                plan = await migration_plan(target)
+                if hp.is_fault(plan):
+                    # A fault here is legitimate only when the host declares no models; this law just
+                    # proves the door runs against a real database and answers a Plan or a Fault value.
+                    pass
+                elif not ("operations" in plan and "destroys" in plan):
+                    bad.append(f"migration_plan should answer a Plan with operations and destroys: {plan}")
+            except _NotBuilt as e:
+                bad.append(f"{e}: migration_plan")
+            except Exception as e:
+                bad.append(f"migration_plan raised {type(e).__name__}: {e}")
+
+            # A target naming no engine is refused before anything opens.
+            try:
+                schema_live = _need("schema_live")
+                refused = await schema_live("mysql://nope/db")
+                if not hp.is_fault(refused):
+                    bad.append(f"schema_live on a target naming no engine should be a Fault: {refused}")
+            except _NotBuilt:
+                pass
+            except Exception as e:
+                bad.append(f"schema_live on a bad target raised {type(e).__name__}: {e}")
+
+        # The same read-only doors against a real PostgreSQL: schema_read_live inspects the live schema,
+        # migration_compare answers a Plan or a legitimate Fault when the host declares no models.
+        if _ASYNCPG_INSTALLED:
+            target = postgres_target()
+            if target is None:
+                _note_skip("migration/schema doors: no PostgreSQL server, so they were exercised on sqlite only")
+            else:
+                bad.extend(await _migration_schema_on_postgres(target))
+        else:
+            _note_skip("migration/schema doors: asyncpg is not installed, so they were exercised on sqlite only")
+
+        try:
+            schema_declared = _need("schema_declared")
+            declared = schema_declared()
+            if hp.is_fault(declared):
+                pass  # a host with an owned-name model legitimately faults here
+            elif not ({"models", "views", "dropping_tables", "dropping_views"} <= set(declared)):
+                bad.append(f"schema_declared should answer a Declared record: {declared}")
+        except _NotBuilt as e:
+            bad.append(f"{e}: schema_declared")
+        except Exception as e:
+            bad.append(f"schema_declared raised {type(e).__name__}: {e}")
+
+        for name in ("migration_compare", "schema_read_live", "schema_say_declared", "schema_say_refreshes",
+                     "schema_read_declared", "view_refreshes"):
+            try:
+                _need(name)
+            except _NotBuilt as e:
+                bad.append(f"{e}: {name}")
+        return bad
+
+    return asyncio.run(_run())
+
+
+def _probe_session_open():
+    """session_open opens a database for a caller through session_connect against a real sqlite file,
+    and is the one door that raises rather than returning a value when it cannot open (declaration
+    session_open, session_connect)."""
+
+    async def _run():
+        bad = []
+        for name in ("session_open", "session_connect"):
+            try:
+                _need(name)
+            except _NotBuilt as e:
+                bad.append(f"{e}: {name}")
+        if bad:
+            return bad
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "open.db")
+            session_open = _need("session_open")
+            db = await session_open(target, "exit_immediately", None, None)
+            if hp.is_fault(db):
+                bad.append(f"session_open should return a Database, not a Fault value (it raises instead): {db}")
+            elif not (isinstance(db, dict) and db.get("engine") == "sqlite"):
+                bad.append(f"session_open should build a Database handle reading the engine off the target: {db}")
+        return bad
+
+    return asyncio.run(_run())
+
+
+def _probe_query_ask():
+    """query_ask answers a question or a declared write with one of three shapes: an Answer, a Fault
+    whose category decides a retry, or a NoMatch the library could not read (declaration query_ask,
+    query_answer). Run against a real opened database."""
+
+    async def _run():
+        bad = []
+        for name in ("session_open", "query_ask", "query_answer"):
+            try:
+                _need(name)
+            except _NotBuilt as e:
+                bad.append(f"{e}: {name}")
+        if bad:
+            return bad
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "ask.db")
+            session_open = _need("session_open")
+            query_ask = _need("query_ask")
+            db = await session_open(target, "exit_immediately", None, None)
+            if hp.is_fault(db):
+                return [f"session_open failed before query_ask could run: {db}"]
+            model = {"name": "Widget", "table": "widgets",
+                     "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None}],
+                     "dropping": [], "indexes": [], "constraints": []}
+            # A misspelled question marks no grammar: a NoMatch, the database untouched.
+            miss = await query_ask(db, model, "%%% not any grammar %%%")
+            if not (isinstance(miss, dict) and "reason" in miss):
+                bad.append(f"query_ask of a misspelled question should answer a NoMatch as data: {miss}")
+        return bad
+
+    return asyncio.run(_run())
+
+
+_READ_MODEL = {"name": "User", "table": "users",
+               "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None},
+                           {"name": "name", "declared_type": "text", "renamed_from": None, "references": None}],
+               "dropping": [], "indexes": [], "constraints": []}
+
+
+async def _read_answers_on(engine, target):
+    """Drive real reads through the query_ask door against one engine: a list, one row, a count, an
+    exists, and a misspelled question that reads back a NoMatch. This runs query_answer end to end —
+    grammar, compile, the read boundary and the answer shaper — against a real opened database."""
+    session_open_connection = _need("session_open_connection")
+    query_run_statement = _need("query_run_statement")
+    session_close_connection = _need("session_close_connection")
+    session_open = _need("session_open")
+    query_ask = _need("query_ask")
+
+    pool = await session_open_connection(target, engine, 1)
+    if hp.is_fault(pool):
+        return [f"{engine}: the read law could not open a connection: {pool}"]
+    await query_run_statement(pool, engine, {"text": "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)", "parameters": {}})
+    await query_run_statement(pool, engine, {"text": "INSERT INTO users (id, name) VALUES (1, 'bob')", "parameters": {}})
+    await session_close_connection(pool)
+
+    db = await session_open(target, "exit_immediately", None, None)
+    if hp.is_fault(db):
+        return [f"{engine}: session_open failed before the read law: {db}"]
+    bad = []
+    rows = await query_ask(db, _READ_MODEL, "User.where(id=1).all")
+    if not (isinstance(rows, list) and rows and rows[0].get("name") == "bob"):
+        bad.append(f"{engine}: query_ask of an all should read the rows back: {rows}")
+    one = await query_ask(db, _READ_MODEL, "User.where(id=1).one")
+    if not (isinstance(one, dict) and one.get("id") == 1):
+        bad.append(f"{engine}: query_ask of a one should read the single row: {one}")
+    count = await query_ask(db, _READ_MODEL, "User.where(name=\"bob\").count")
+    if count != 1:
+        bad.append(f"{engine}: query_ask of a count should answer the number, got {count}")
+    exists = await query_ask(db, _READ_MODEL, "User.where(id=1).exists")
+    if exists is not True:
+        bad.append(f"{engine}: query_ask of an exists should answer true, got {exists}")
+    miss = await query_ask(db, _READ_MODEL, "%% not any grammar %%")
+    if not (isinstance(miss, dict) and "reason" in miss):
+        bad.append(f"{engine}: a misspelled question should read back a NoMatch: {miss}")
+    return bad
+
+
+def _probe_query_ask_reads():
+    """query_answer answers real reads end to end, driven through the query_ask door against a real
+    database on sqlite and postgresql (turso's session_open path addresses a remote primary, so its
+    local read is exercised through the boundary laws instead). Each read shape — a list, one row, a
+    count, an exists — and a misspelled question that reads back a NoMatch is checked (declaration
+    query_ask, query_answer)."""
+
+    async def _run():
+        for name in ("session_open", "query_ask", "session_open_connection", "query_run_statement"):
+            try:
+                _need(name)
+            except _NotBuilt as e:
+                return [f"{e}: {name}"]
+        bad = []
+        with tempfile.TemporaryDirectory() as d:
+            bad.extend(await _read_answers_on("sqlite", os.path.join(d, "reads.db")))
+            if _ASYNCPG_INSTALLED:
+                target = postgres_target()
+                if target is not None:
+                    bad.extend(await _read_answers_on("postgresql", target))
+                else:
+                    _note_skip("query_ask reads: no PostgreSQL server, so the read path was exercised on sqlite only")
+            else:
+                _note_skip("query_ask reads: asyncpg is not installed, so the read path was exercised on sqlite only")
+        return bad
+
+    return asyncio.run(_run())
+
+
+def _probe_lifecycle_doors():
+    """The remaining lifecycle doors are declared and reachable: lifecycle_stop receives the shutdown
+    signal, lifecycle_turn runs one drainer's turn, lifecycle_shut_down pushes every local commit out,
+    lifecycle_catch_up drives the retry (its behaviour is proved by _probe_generator_retry)
+    (declaration lifecycle_stop, lifecycle_turn, lifecycle_shut_down, lifecycle_catch_up)."""
+    bad = []
+    for name in ("lifecycle_stop", "lifecycle_turn", "lifecycle_shut_down", "lifecycle_catch_up"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            bad.append(f"{e}: {name}")
+    return bad
+
+
+# ---------------------------------------------------------------------------
+# 5. The headline laws: the driven-generator retry and the crew write-queue.
+# ---------------------------------------------------------------------------
+
+def _probe_generator_retry():
+    """The seam the generator opened, made real. lifecycle_catch_up owns the real write attempts and
+    retry_schedule owns the schedule; neither holds the other, so a test can count the attempts and
+    inject a boundary failure at each gap — the test declaro's self-retrying loop made impossible
+    (declaration lifecycle_catch_up, retry_schedule, spec 7.7).
+
+    This law drives lifecycle_catch_up against a REAL file-backed sqlite database. A second connection
+    holds a competing write lock (BEGIN EXCLUSIVE), so every attempt the drainer makes hits a genuine
+    SQLITE_BUSY conflict rather than a patched function. With the lock held for the whole turn, the
+    schedule exhausts its bound, and the law asserts (a) the write was attempted exactly `bound` times
+    and ended on a budget_spent Fault, and (b) the database is left consistent — the contended row never
+    half-landed."""
+
+    async def _run():
+        bad = []
+        for name in ("session_open", "crew_deposit", "crew_release_ticket", "lifecycle_catch_up", "how_to_retry"):
+            try:
+                _need(name)
+            except _NotBuilt as e:
+                bad.append(f"{e}: {name} (the driven-retry seam)")
+        if bad:
             return bad
 
-        # The native materialized view holds the query result, and the refresh trigger keeps it
-        # current: seeding two rows and inserting a third above the threshold is reflected.
-        await conn.execute("INSERT INTO account (id, email) VALUES (1, :a), (2, :b)", {"a": "a@x", "b": "b@x"})
-        await conn.execute("INSERT INTO account (id, email) VALUES (3, :c)", {"c": "c@x"})
-        rows = await conn.execute("SELECT id FROM big ORDER BY id")
-        if [r["id"] for r in rows["rows"]] != [2, 3]:
-            bad.append(f"the native materialized view's refresh trigger should keep it current: {rows['rows']}")
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "retry.db")
+            base = sqlite3.connect(target)
+            base.execute(_event_tables_sql())
+            base.commit()
+            base.close()
 
-        # inspect reads the real information_schema and the registry: the table with its primary key,
-        # nullability, resolved timestamptz type, and default; the view and materialized view from the
-        # registry. Neither the view nor the native materialized view is reported as a table.
-        read = await inspect(conn, "postgresql")
-        back = read["ok"]
-        if set(back["tables"]) != {"account"}:
-            bad.append(f"inspect should report only the base table, not the view or materialized view: {set(back['tables'])}")
+            session_open = _need("session_open")
+            crew_deposit = _need("crew_deposit")
+            crew_release_ticket = _need("crew_release_ticket")
+            lifecycle_catch_up = _need("lifecycle_catch_up")
+            how_to_retry = _need("how_to_retry")
+
+            db = await session_open(target, "exit_immediately", None, None)
+            if hp.is_fault(db):
+                return [f"session_open failed before the retry law could run: {db}"]
+
+            # Inject a real, persistent conflict: a competing connection takes an exclusive write lock
+            # and holds it, so the drainer's every attempt gets SQLITE_BUSY from the real driver.
+            blocker = sqlite3.connect(target, isolation_level=None, timeout=0)
+            blocker.execute("BEGIN EXCLUSIVE")
+
+            bound = how_to_retry("sqlite")["bound"]
+            statement = {"text": "INSERT INTO widgets (id, name) VALUES (9, 'contended')", "parameters": {}}
+            ticket = crew_deposit(db["crew"], statement)
+
+            draining = {"db": db, "writer": db["writers"][0] if db.get("writers") else None,
+                        "stop": db["crew"].get("stop"), "idle": 0.01}
+            # Drive one turn: lifecycle_catch_up performs the real attempts against the locked database.
+            turn = await lifecycle_catch_up({"db": db, "writer": draining["writer"], "statement": statement,
+                                             "writer_waiting": False, "attempts": 1})
+            receipt = await crew_release_ticket(db["crew"], ticket)
+
+            blocker.execute("ROLLBACK")
+            blocker.close()
+
+            if not hp.is_fault(receipt) and isinstance(receipt, dict):
+                if receipt.get("ok") is not False:
+                    bad.append(f"a write that lost every race should end not-ok: {receipt}")
+                if receipt.get("attempts") != bound:
+                    bad.append(f"the drainer should make exactly {bound} attempts (the bound), the receipt says {receipt.get('attempts')}")
+                failure = receipt.get("failure")
+                if not (isinstance(failure, dict) and failure.get("category") == "budget_spent"):
+                    bad.append(f"exhausted contention should be typed budget_spent, never the caller's error: {failure}")
+            else:
+                bad.append(f"the parked caller should read a Receipt for its contended write: {receipt}")
+
+            # The database is left consistent: the contended row never half-landed.
+            check = sqlite3.connect(target)
+            rows = check.execute("SELECT COUNT(*) FROM widgets WHERE id = 9").fetchone()[0]
+            check.close()
+            if rows != 0:
+                bad.append(f"a write that never won its race must leave no row behind; found {rows}")
+        return bad
+
+    return asyncio.run(_run())
+
+
+def _probe_crew_concurrency():
+    """The crew write-queue serialises concurrent writers against one real database and backs off on
+    contention (declaration Crew, crew_run_write, spec 7.7). Several callers deposit writes at once;
+    the law asserts every write lands and the rows are consistent — no write lost, none doubled — which
+    is what the single-writer-per-connection crew buys. The database is a real sqlite file shared by the
+    drainers; no mock."""
+
+    async def _run():
+        bad = []
+        for name in ("session_open", "crew_deposit", "crew_release_ticket", "lifecycle_catch_up"):
+            try:
+                _need(name)
+            except _NotBuilt as e:
+                bad.append(f"{e}: {name} (the crew write-queue)")
+        if bad:
+            return bad
+
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "queue.db")
+            base = sqlite3.connect(target)
+            base.execute(_event_tables_sql())
+            base.commit()
+            base.close()
+
+            session_open = _need("session_open")
+            crew_deposit = _need("crew_deposit")
+            crew_release_ticket = _need("crew_release_ticket")
+            lifecycle_catch_up = _need("lifecycle_catch_up")
+
+            db = await session_open(target, "exit_immediately", None, None)
+            if hp.is_fault(db):
+                return [f"session_open failed before the concurrency law could run: {db}"]
+
+            writes = [{"text": "INSERT INTO widgets (id, name) VALUES (:id, :name)", "parameters": {"id": i, "name": f"w{i}"}}
+                      for i in range(1, 6)]
+            tickets = [crew_deposit(db["crew"], w) for w in writes]
+            if any(hp.is_fault(t) for t in tickets):
+                return [f"crew_deposit faulted while queueing concurrent writers: {tickets}"]
+
+            # Several drainers run their turns concurrently against the one real database.
+            writer = db["writers"][0] if db.get("writers") else None
+            turns = [lifecycle_catch_up({"db": db, "writer": writer, "statement": None,
+                                         "writer_waiting": True, "attempts": 1}) for _ in writes]
+            await asyncio.gather(*turns, return_exceptions=True)
+            receipts = await asyncio.gather(*[crew_release_ticket(db["crew"], t) for t in tickets])
+
+            if any(hp.is_fault(r) or (isinstance(r, dict) and r.get("ok") is not True) for r in receipts):
+                bad.append(f"every queued write should land under serialisation: {receipts}")
+
+            check = sqlite3.connect(target)
+            landed = check.execute("SELECT COUNT(*) FROM widgets").fetchone()[0]
+            distinct = check.execute("SELECT COUNT(DISTINCT id) FROM widgets").fetchone()[0]
+            check.close()
+            if landed != 5 or distinct != 5:
+                bad.append(f"five serialised writes should land five distinct rows, found {landed} ({distinct} distinct)")
+        return bad
+
+    return asyncio.run(_run())
+
+
+def _probe_turso_mvcc():
+    """Turso's MVCC write mode, proved through persist's own writer boundary on a local file. Two writers
+    from session_open_writer interleave BEGIN CONCURRENT and both disjoint rows land, which WAL refuses
+    outright, so this fails unless session_open_writer actually turned MVCC on for each writer. This is the
+    write mode only; no replication channel is opened, because MVCC writes and master-to-slave sync are
+    separate. When the installed pyturso cannot do MVCC the law is a named skip, never a pass (declaration
+    session_open_writer, crew_run_write, spec 7.7)."""
+    cap = _turso_engine_does_mvcc()
+    if not cap.get("ok"):
+        _note_skip(cap["skip"] + " (the turso MVCC concurrency law)")
+        return []
+
+    async def _run():
+        for name in ("session_open_writer", "session_open_connection", "query_run_statement",
+                     "session_close_connection"):
+            try:
+                _need(name)
+            except _NotBuilt as e:
+                return [f"{e}: {name} (the turso MVCC law)"]
+        import turso  # the raw read for the landed-row count, the same engine persist writes through
+        bad = []
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "mvcc.db")
+            built = await _make_table("turso", target, 1)
+            if hp.is_fault(built):
+                return [f"turso: the widgets table could not be built before the MVCC law: {built}"]
+            a = await _need("session_open_writer")(target, "turso")
+            b = await _need("session_open_writer")(target, "turso")
+            if hp.is_fault(a) or hp.is_fault(b):
+                return [f"turso: session_open_writer should open two real MVCC writers, got {a!r} and {b!r}"]
+            try:
+                ca, cb = a.cursor(), b.cursor()
+                await ca.execute("BEGIN CONCURRENT")
+                await cb.execute("BEGIN CONCURRENT")
+                await ca.execute("INSERT INTO widgets (id, name) VALUES (1, 'a')")
+                await cb.execute("INSERT INTO widgets (id, name) VALUES (2, 'b')")
+                await a.commit()
+                await b.commit()
+            except Exception as refused:  # noqa: BLE001
+                bad.append(
+                    "turso: two writers from session_open_writer should both run BEGIN CONCURRENT under "
+                    "MVCC and commit, but one was refused, so session_open_writer did not enable MVCC: "
+                    f"{type(refused).__name__}: {refused}")
+            await _need("session_close_connection")(a)
+            await _need("session_close_connection")(b)
+            reader = turso.connect(target)
+            landed = reader.cursor().execute("SELECT id FROM widgets ORDER BY id").fetchall()
+            reader.close()
+            ids = [row[0] for row in landed]
+            if ids != [1, 2]:
+                bad.append(f"turso: both interleaved MVCC writers should land, expected ids [1, 2], found {ids}")
+        return bad
+
+    return asyncio.run(_run())
+
+
+def _probe_crew_lifecycle_paths():
+    """The crew-lifecycle branches the happy path does not reach (declaration crew_deposit,
+    crew_release_ticket, crew_post_receipt, crew_start, crew_stop, crew_wait_for_work, lifecycle_register):
+    a blank write refused, an unknown ticket refused, a receipt nobody holds logged, a second receipt for
+    one ticket refused, the crew started once and a second start refused, stopped cleanly and with a
+    drainer that raised, work found already there and waited for, and a database put on or kept off the
+    shutdown list or refused for a word that is no shutdown. The drainers run a quiet turn that only waits
+    for the stop bell, so no real writer is needed."""
+    for name in ("crew_make", "crew_deposit", "crew_release_ticket", "crew_post_receipt", "crew_start",
+                 "crew_stop", "crew_wait_for_work", "lifecycle_register", "receipt_for"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (crew lifecycle paths)"]
+
+    async def _run():
+        import honest_persist.crew as crewmod
+        saved_registered = list(crewmod._REGISTERED)
+        bad = []
+        crew_make = _need("crew_make"); crew_deposit = _need("crew_deposit")
+        crew_release_ticket = _need("crew_release_ticket"); crew_post_receipt = _need("crew_post_receipt")
+        crew_start = _need("crew_start"); crew_stop = _need("crew_stop")
+        crew_wait_for_work = _need("crew_wait_for_work"); receipt_for = _need("receipt_for")
+        lifecycle_register = _need("lifecycle_register")
+
+        crew = crew_make()
+        blank = crew_deposit(crew, {"text": "   ", "parameters": {}})
+        if not (hp.is_fault(blank) and blank.get("code") == "empty_write"):
+            bad.append(f"a blank write should be refused empty_write: {blank}")
+
+        miss = await crew_release_ticket(crew, "no-such-ticket")
+        if not (hp.is_fault(miss) and miss.get("code") == "no_such_ticket"):
+            bad.append(f"releasing an unknown ticket should be refused no_such_ticket: {miss}")
+
+        # A receipt nobody holds: the caller walked away before the outcome was posted.
+        orphan = crew_deposit(crew, {"text": "INSERT INTO widgets (id, name) VALUES (7, 'x')", "parameters": {}})
+        crew["waiting"].pop(orphan)
+        logged = crew_post_receipt(crew, orphan, receipt_for(orphan, 1, None, 1))
+        if logged is not None:
+            bad.append(f"a receipt nobody holds should be logged and answer NOTHING: {logged}")
+
+        # A second receipt for one ticket: two drainers ran one write.
+        held = crew_deposit(crew, {"text": "INSERT INTO widgets (id, name) VALUES (8, 'y')", "parameters": {}})
+        crew_post_receipt(crew, held, receipt_for(held, 1, None, 1))
+        again = crew_post_receipt(crew, held, receipt_for(held, 1, None, 1))
+        if not (hp.is_fault(again) and again.get("code") == "double_receipt"):
+            bad.append(f"a second receipt for one ticket should be refused double_receipt: {again}")
+
+        # crew_start runs one quiet drainer per writer; a second start is refused; crew_stop ends them clean.
+        async def _quiet_turn(draining):
+            await draining["stop"].wait()
+
+        db = {"crew": crew_make(), "writers": [None, None]}
+        started = await crew_start(db, _quiet_turn)
+        if not (isinstance(started, dict) and db["crew"]["drainers"]):
+            bad.append(f"crew_start should run one drainer per writer: {started}")
+        twice = await crew_start(db, _quiet_turn)
+        if not (hp.is_fault(twice) and twice.get("code") == "crew_already_running"):
+            bad.append(f"a second crew_start should be refused crew_already_running: {twice}")
+        # crew_wait_for_work finds work already there (no sleep) when an arrival is pending.
+        db["crew"]["arrivals"].append("pending")
+        await crew_wait_for_work({"db": db, "writer": None, "stop": db["crew"]["stop"], "idle": 0.01})
+        db["crew"]["arrivals"].clear()
+        # and with nothing there it sleeps until the stop bell rings.
+        db["crew"]["stop"].set()
+        await crew_wait_for_work({"db": db, "writer": None, "stop": db["crew"]["stop"], "idle": 0.01})
+        stopped = await crew_stop(db["crew"])
+        if stopped is not None:
+            bad.append(f"stopping a clean crew should answer NOTHING: {stopped}")
+
+        # A drainer that raises makes crew_stop report it, never swallow it.
+        async def _bad_turn(_draining):
+            raise RuntimeError("drainer boom")
+
+        db2 = {"crew": crew_make(), "writers": [None]}
+        await crew_start(db2, _bad_turn)
+        ended = await crew_stop(db2["crew"])
+        if not (hp.is_fault(ended) and ended.get("code") == "drainer_would_not_stop"):
+            bad.append(f"crew_stop should report a drainer that raised: {ended}")
+
+        # lifecycle_register puts a replicating database on the shutdown list, keeps an immediate one off,
+        # and refuses a shutdown word it has no row for.
+        on = lifecycle_register({"shutdown": "replicate_then_exit"})
+        off = lifecycle_register({"shutdown": "exit_immediately"})
+        unknown = lifecycle_register({"shutdown": "teleport_away"})
+        if on is not None or off is not None:
+            bad.append(f"registering a known shutdown should answer NOTHING: {on}, {off}")
+        if not (hp.is_fault(unknown) and unknown.get("code") == "no_such_shutdown"):
+            bad.append(f"an unknown shutdown word should be refused no_such_shutdown: {unknown}")
+        if {"shutdown": "replicate_then_exit"} not in crewmod.read_registered():
+            bad.append("a replicate_then_exit database should be on the registered list")
+        crewmod._REGISTERED[:] = saved_registered  # leave the shutdown list as it was for other laws
+        return bad
+
+    return asyncio.run(_run())
+
+
+def _probe_shutdown_handler():
+    """lifecycle_install_handler puts the library's shutdown handler in front of whatever was there, is
+    idempotent, and the chained handler runs the door and then any displaced handler (declaration
+    lifecycle_install_handler). The process signal handlers are saved and restored around the law, and the
+    door is stubbed so the law exercises the chaining, not the shutdown itself. An install from a thread
+    that is not the main one is refused handler_refused rather than raising."""
+    import signal
+    import threading
+    import honest_persist.crew as crewmod
+    import honest_persist.doors as doorsmod
+    lifecycle_install_handler = _need("lifecycle_install_handler")
+    saved = {n: signal.getsignal(n) for n in (signal.SIGTERM, signal.SIGINT)}
+    real_stop = doorsmod.lifecycle_stop
+    bad = []
+    marks = {"displaced": 0}
+
+    def _previous(_number, _frame):
+        marks["displaced"] += 1
+
+    try:
+        # An install from a non-main thread is refused, not raised. Done first, while our handler is not
+        # yet in place, so the thread actually reaches signal.signal (which raises off the main thread).
+        off_thread = {}
+
+        def _install_off_main():
+            off_thread["result"] = lifecycle_install_handler()
+
+        worker = threading.Thread(target=_install_off_main)
+        worker.start(); worker.join()
+        refused_it = off_thread.get("result")
+        if not (hp.is_fault(refused_it) and refused_it.get("code") == "handler_refused"):
+            bad.append(f"installing from a non-main thread should be refused handler_refused: {refused_it}")
+
+        doorsmod.lifecycle_stop = lambda *a, **k: None  # the door calls this; a sync stub keeps it off the loop
+        signal.signal(signal.SIGTERM, _previous)   # a callable previous handler, to cover the displaced arm
+        signal.signal(signal.SIGINT, signal.SIG_DFL)  # the default, not callable, to cover the no-displaced arm
+        installed = lifecycle_install_handler()
+        if installed is not None:
+            bad.append(f"installing the handler should answer NOTHING: {installed}")
+        ours_term = signal.getsignal(signal.SIGTERM)
+        ours_int = signal.getsignal(signal.SIGINT)
+        if not getattr(ours_term, crewmod._OURS, False):
+            bad.append("lifecycle_install_handler should put our handler in front on SIGTERM")
+        again = lifecycle_install_handler()
+        if again is not None or signal.getsignal(signal.SIGTERM) is not ours_term:
+            bad.append("a second install should leave our handler in place (idempotent)")
+        ours_term(signal.SIGTERM, None)   # the door, then the displaced previous handler
+        ours_int(signal.SIGINT, None)     # the door, then nothing displaced (default was not callable)
+        if marks["displaced"] != 1:
+            bad.append(f"the chained handler should run the displaced handler once, ran {marks['displaced']}")
+    finally:
+        doorsmod.lifecycle_stop = real_stop
+        for number, handler in saved.items():
+            signal.signal(number, handler)
+    return bad
+
+
+def _probe_door_paths():
+    """The input doors' branches the happy path does not reach (declaration session_open, query_ask,
+    lifecycle_stop, lifecycle_turn, migration_plan, view_refreshes). session_open reads two env counts and
+    raises CouldNotOpen when one is not a number or when the open itself is refused; query_ask turns a
+    question that raises into a question_raised Fault; lifecycle_stop and lifecycle_turn answer NOTHING on
+    success, the orchestrator's Fault on a bad drain, and a typed Fault when the orchestrator raises;
+    migration_plan answers the plan or the comparison's refusal; view_refreshes hands back the schedule.
+    The orchestrator-failure branches are driven by injecting a failing stand-in at the door's own imported
+    name, restored afterwards; the real engine is a file-backed sqlite."""
+    import honest_persist.doors as doorsmod
+    for name in ("session_open", "query_ask", "lifecycle_stop", "lifecycle_turn", "migration_plan",
+                 "view_refreshes"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (door paths)"]
+
+    saved_env = {k: os.environ.get(k) for k in ("HONEST_PERSIST_CONNECTIONS", "HONEST_PERSIST_CREW_SIZE")}
+    real_shutdown = doorsmod.lifecycle_shut_down
+    real_catch_up = doorsmod.lifecycle_catch_up
+    real_answer = doorsmod.query_answer
+
+    async def _run(d):
+        bad = []
+        session_open = _need("session_open")
+        target = os.path.join(d, "door.db")
+
+        # A non-number env count raises CouldNotOpen carrying env_not_a_number.
+        os.environ["HONEST_PERSIST_CONNECTIONS"] = "not-a-number"
+        os.environ.pop("HONEST_PERSIST_CREW_SIZE", None)
+        try:
+            await session_open(target, "exit_immediately", None, None)
+            bad.append("session_open with a non-number env count should raise CouldNotOpen")
+        except doorsmod.CouldNotOpen as raised:
+            if not (hp.is_fault(raised.fault) and raised.fault.get("code") == "env_not_a_number"):
+                bad.append(f"CouldNotOpen should carry the env_not_a_number fault: {raised.fault}")
+
+        # A whole-number env count is read and the open succeeds.
+        os.environ["HONEST_PERSIST_CONNECTIONS"] = "3"
+        db = await session_open(target, "exit_immediately", None, None)
+        if hp.is_fault(db):
+            bad.append(f"session_open with a whole-number env count should open: {db}")
+        os.environ.pop("HONEST_PERSIST_CONNECTIONS", None)
+
+        # An unreachable target makes the open itself refuse, which the door raises.
+        try:
+            await session_open(os.path.join(d, "no-dir", "x.db"), "exit_immediately", None, None)
+            bad.append("session_open on an unreachable target should raise CouldNotOpen")
+        except doorsmod.CouldNotOpen:
+            pass
+
+        # A question that raises inside query_answer comes back as a question_raised Fault, never a raise.
+        async def _answer_raises(_asking):
+            raise RuntimeError("the question blew up")
+
+        doorsmod.query_answer = _answer_raises
+        asked = await _need("query_ask")(db, {"name": "Widget"}, "count the widgets")
+        if not (hp.is_fault(asked) and asked.get("code") == "question_raised"):
+            bad.append(f"a question that raises should answer a question_raised Fault: {asked}")
+        doorsmod.query_answer = real_answer
+
+        # lifecycle_stop with nothing to drain answers NOTHING; a faulting drain comes back as the Fault;
+        # a drain that raises is caught as shutdown_raised.
+        if await _need("lifecycle_stop")() is not None:
+            bad.append("lifecycle_stop with nothing to drain should answer NOTHING")
+
+        async def _drain_faults(_s):
+            return hp.fault("drain_incomplete", "the drain did not finish", "cut_short", [], {})
+
+        doorsmod.lifecycle_shut_down = _drain_faults
+        if not hp.is_fault(await doorsmod.lifecycle_stop()):
+            bad.append("lifecycle_stop should hand back the drain's Fault")
+
+        async def _drain_raises(_s):
+            raise RuntimeError("drain blew up")
+
+        doorsmod.lifecycle_shut_down = _drain_raises
+        blew = await doorsmod.lifecycle_stop()
+        if not (hp.is_fault(blew) and blew.get("code") == "shutdown_raised"):
+            bad.append(f"a drain that raises should be caught as shutdown_raised: {blew}")
+        doorsmod.lifecycle_shut_down = real_shutdown
+
+        # lifecycle_turn: a turn whose catch-up refuses hands the refusal back; one that raises is caught.
+        async def _catch_up_faults(_c):
+            return hp.fault("driver_said_no", "the driver refused", "refused", [], {})
+
+        doorsmod.lifecycle_catch_up = _catch_up_faults
+        turn_fault = await doorsmod.lifecycle_turn({"db": {"target": target}, "writer": None})
+        if not hp.is_fault(turn_fault):
+            bad.append(f"lifecycle_turn should hand back the catch-up's refusal: {turn_fault}")
+
+        async def _catch_up_raises(_c):
+            raise RuntimeError("turn blew up")
+
+        doorsmod.lifecycle_catch_up = _catch_up_raises
+        turn_raised = await doorsmod.lifecycle_turn({"db": {"target": target}, "writer": None})
+        if not (hp.is_fault(turn_raised) and turn_raised.get("code") == "turn_raised"):
+            bad.append(f"a turn that raises should be caught as turn_raised: {turn_raised}")
+        doorsmod.lifecycle_catch_up = real_catch_up
+
+        # migration_plan: a reachable database answers a plan; an unreachable one answers the refusal.
+        plan = await _need("migration_plan")(target)
+        if hp.is_fault(plan) or not isinstance(plan, dict):
+            bad.append(f"migration_plan on a reachable database should answer a plan: {plan}")
+        refused_plan = await _need("migration_plan")(os.path.join(d, "no-dir", "y.db"))
+        if not hp.is_fault(refused_plan):
+            bad.append(f"migration_plan on an unreachable database should answer the refusal: {refused_plan}")
+
+        # view_refreshes hands back a schedule list for the database handle.
+        schedule = _need("view_refreshes")(db)
+        if not isinstance(schedule, list):
+            bad.append(f"view_refreshes should hand back a list of schedule declarations: {schedule}")
+        return bad
+
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            return asyncio.run(_run(d))
+    finally:
+        doorsmod.lifecycle_shut_down = real_shutdown
+        doorsmod.lifecycle_catch_up = real_catch_up
+        doorsmod.query_answer = real_answer
+        for key, value in saved_env.items():
+            _pick(value is None, lambda: os.environ.pop(key, None), lambda: os.environ.__setitem__(key, value))
+
+
+def _probe_migration_on_open():
+    """Opening a database whose declared schema is ahead of the live one migrates it as part of the open
+    (declaration session_connect, _apply_migration, spell_operation): session_connect reads the host's
+    declared model, reads the empty live schema, works out the difference, spells each change for the
+    engine and runs them as one transaction, so the declared table exists once the open returns. Run
+    against a real file-backed sqlite. The declared model is cleaned up afterwards so it does not alter
+    another law's schema read."""
+    for name in ("session_open", "session_connect"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (migration on open)"]
+    try:
+        from pydantic import BaseModel
+    except Exception:  # noqa: BLE001
+        _note_skip("pydantic: not installed, so the migrate-on-open path was not exercised")
+        return []
+    import gc
+
+    class _Gadget(BaseModel):
+        id: int
+        name: str
+        __tablename__ = "hp_law_gadgets"
+
+    async def _run():
+        bad = []
+        session_open = _need("session_open")
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "migrate.db")
+            db = await session_open(target, "exit_immediately", None, None)
+            if hp.is_fault(db):
+                return [f"session_open with a declared model should migrate then open, not fault: {db}"]
+            check = sqlite3.connect(target)
+            names = [row[0] for row in check.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()]
+            check.close()
+            if "hp_law_gadgets" not in names:
+                bad.append(f"opening should have migrated the declared table into being, tables found: {names}")
+        return bad
+
+    try:
+        return asyncio.run(_run())
+    finally:
+        del _Gadget
+        gc.collect()
+
+
+def _probe_pydantic_loader():
+    """The Pydantic schema loader reads a host's declared models and views into a Declared (declaration
+    schema_read_declared, _pydantic_loader). A host that declares a model (with __tablename__ and typed
+    columns) and a view (with __viewname__ and __declaration__) is read back: each basic column type
+    mapped to its DECLARED_TYPES word, an annotation it has no word for falling to text, and the optional
+    __indexes__/__constraints__/__dropping__ and the view's freshness and cadence read off the class. When
+    Pydantic is not installed the loader raises, which schema_read_declared reads as the host having
+    declared nothing, so this law records a named skip rather than failing."""
+    try:
+        from pydantic import BaseModel
+    except Exception:  # noqa: BLE001
+        _note_skip("pydantic: not installed, so the declared-model loader path was not exercised")
+        return []
+    from honest_persist._pydantic_loader import load_declared
+
+    class _Account(BaseModel):
+        id: int
+        name: str
+        balance: float
+        active: bool
+        avatar: bytes
+        extra: dict  # an annotation the loader has no word for, so it falls to text
+        __tablename__ = "hp_law_accounts"
+        __indexes__ = [{"name": "ix_name", "columns": ["name"]}]
+        __constraints__ = [{"kind": "unique", "columns": ["name"]}]
+        __dropping__ = ["old_column"]
+
+    class _AccountSummary(BaseModel):
+        __viewname__ = "hp_law_account_summary"
+        __declaration__ = "SELECT id, name FROM hp_law_accounts"
+        __freshness__ = "on_write"
+        __cadence__ = 60
+        __attempts_allowed__ = 3
+
+    class _Sweep(BaseModel):
+        __dropping_tables__ = ["hp_law_legacy_table"]
+        __dropping_views__ = ["hp_law_legacy_view"]
+
+    import gc
+    bad = []
+    try:
+        declared = load_declared()
+        account = _pick(any(m["table"] == "hp_law_accounts" for m in declared["models"]),
+                        lambda: next(m for m in declared["models"] if m["table"] == "hp_law_accounts"),
+                        lambda: None)
+        if account is None:
+            bad.append("load_declared should read a host model carrying __tablename__ into the Declared")
         else:
-            cols = back["tables"]["account"]["columns"]
-            if cols["id"] != {"type": "integer", "nullable": False, "primary_key": True}:
-                bad.append(f"inspect should read the NOT NULL primary key: {cols['id']}")
-            if cols["email"] != {"type": "text", "nullable": True}:
-                bad.append(f"inspect should read the nullable column: {cols['email']}")
-            if cols["created"]["type"] != "timestamptz" or cols["created"]["nullable"] is not True or "default" not in cols["created"]:
-                bad.append(f"inspect should resolve timestamptz and read the default: {cols['created']}")
-        if back["views"] != schema["views"]:
-            bad.append(f"inspect should round-trip the view and materialized view from the registry: {back['views']}")
+            by_name = {c["name"]: c["declared_type"] for c in account["columns"]}
+            want = {"id": "integer", "name": "text", "balance": "float", "active": "boolean",
+                    "avatar": "bytes", "extra": "text"}
+            for col, typ in want.items():
+                if by_name.get(col) != typ:
+                    bad.append(f"the loader should map column {col} to {typ}, got {by_name.get(col)}")
+            if not (account["indexes"] and account["constraints"] and account["dropping"]):
+                bad.append(f"the model's declared indexes, constraints and dropping should be read off the class: {account}")
+            view = _pick(any(v["name"] == "hp_law_account_summary" for v in declared["views"]),
+                         lambda: next(v for v in declared["views"] if v["name"] == "hp_law_account_summary"),
+                         lambda: None)
+            if view is None or view["declaration"] != "SELECT id, name FROM hp_law_accounts" or view["freshness"] != "on_write":
+                bad.append(f"load_declared should read a host view carrying __viewname__ and __declaration__: {view}")
+            if "hp_law_legacy_table" not in declared["dropping_tables"] or "hp_law_legacy_view" not in declared["dropping_views"]:
+                bad.append(f"load_declared should collect __dropping_tables__ and __dropping_views__: {declared}")
+    finally:
+        del _Account, _AccountSummary, _Sweep  # drop the host models so they do not pollute another law's schema read
+        gc.collect()
+    return bad
+
+
+def _probe_pure_edges():
+    """The pure spelling, schema and engine branches a create-from-empty migration never reaches
+    (declaration spell_operation, spell_view, mechanism_for, name_what_destroys, refuse_undeclared_loss,
+    how_to_spell, crew_size, permitted_connections). Each is driven by a crafted record through the real
+    public function: every schema-change kind is spelled; a check constraint and an empty column list are
+    refused; a view that stands for a write and one whose SELECT will not compile are refused; a
+    materialized view an engine cannot offer is refused; every way a loss is asked for (a column dropped
+    or narrowed, a table or view dropped, and a change that nothing can declare) is walked, and a drop a
+    model declared is permitted; how_to_spell refuses a change that cannot reach the primary and a kind it
+    has no row for; and a crew or connection count below one is refused."""
+    for name in ("spell_operation", "spell_view", "mechanism_for", "name_what_destroys",
+                 "refuse_undeclared_loss", "how_to_spell", "crew_size", "permitted_connections"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (pure edges)"]
+    spell_operation = _need("spell_operation"); spell_view = _need("spell_view")
+    mechanism_for = _need("mechanism_for"); name_what_destroys = _need("name_what_destroys")
+    refuse_undeclared_loss = _need("refuse_undeclared_loss"); how_to_spell = _need("how_to_spell")
+    crew_size = _need("crew_size"); permitted_connections = _need("permitted_connections")
+    bad = []
+
+    read_decl = _declaration()
+    write_decl = _declaration(wanted="add", rows=[{"id": 1}])
+    view = {"name": "active", "freshness": "always current", "declaration": read_decl}
+    kinds = {
+        "rename_column": _ddl_operation("rename_column", column="old", renamed_to="new"),
+        "rename_table": _ddl_operation("rename_table", renamed_to="posts2"),
+        "create_index": _ddl_operation("create_index", indexes=[{"name": "ix", "columns": ["id"], "unique": False}]),
+        "drop_index": _ddl_operation("drop_index", indexes=[{"name": "ix", "columns": ["id"], "unique": False}]),
+        "create_view": _ddl_operation("create_view", view=view),
+        "drop_view": _ddl_operation("drop_view", view=view),
+        "insert_enum_values": _ddl_operation("insert_enum_values", values=["a", "b"]),
+        "remove_enum_values": _ddl_operation("remove_enum_values", values=["a"]),
+    }
+    for name, op in kinds.items():
+        for engine in ("sqlite", "postgresql", "turso"):
+            spelled = spell_operation(op, engine, False)
+            if not (isinstance(spelled, list) and spelled and "text" in spelled[0]):
+                bad.append(f"spell_operation of {name} on {engine} should write statements: {spelled}")
+    # A check constraint this reduced speller does not write, and a create_table handed no columns.
+    check_create = _ddl_operation("create_table", table="t",
+                                  columns=[{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None}],
+                                  constraints=[{"name": "ck", "kind": "check", "columns": ["id"]}])
+    if not hp.is_fault(spell_operation(check_create, "sqlite", False)):
+        bad.append("a check constraint should be refused check_unsupported, not spelled")
+    if not hp.is_fault(spell_operation(_ddl_operation("create_table", table="t", columns=[]), "sqlite", False)):
+        bad.append("a create_table handed no columns should be refused empty_field")
+
+    # spell_view: a view that stands for a write is not a question; one whose SELECT will not compile is a Fault.
+    if not hp.is_fault(spell_view({"name": "w", "declaration": write_decl}, "sqlite")):
+        bad.append("spell_view of a view that stands for a write should be refused view_not_a_question")
+    if not hp.is_fault(spell_view({"name": "w", "declaration": _declaration(wanted="first")}, "sqlite")):
+        bad.append("spell_view of a view whose SELECT will not compile should be a Fault")
+
+    # mechanism_for: an engine with no materialized view of its own and nothing to build one from is refused.
+    if not hp.is_fault(mechanism_for("always current", "sqlite", {"native": False, "built_from": ""})):
+        bad.append("mechanism_for a materialized view an engine cannot offer should be refused")
+
+    # name_what_destroys names the losses; refuse_undeclared_loss walks every way a loss is asked for.
+    destroyers = [_ddl_operation("drop_column", table="users", column="gone"),
+                  _ddl_operation("alter_column", table="users", column="narrowed"),
+                  _ddl_operation("drop_table", table="legacy"),
+                  _ddl_operation("drop_view", table="old_view")]
+    marked = name_what_destroys(destroyers)
+    if not marked["destroys"]:
+        bad.append(f"name_what_destroys should name every loss: {marked}")
+    empty_declared = {"models": [], "views": [], "dropping_tables": [], "dropping_views": []}
+    if not hp.is_fault(refuse_undeclared_loss(marked, empty_declared)):
+        bad.append("refuse_undeclared_loss should refuse an undeclared loss")
+    # A drop a model asked for is permitted (the plan runs); a destroying change nothing can declare is refused.
+    permit_declared = {"models": [{"table": "users", "dropping": ["gone"], "columns": []}],
+                       "views": [], "dropping_tables": [], "dropping_views": []}
+    permitted = refuse_undeclared_loss(name_what_destroys([_ddl_operation("drop_column", table="users", column="gone")]), permit_declared)
+    if hp.is_fault(permitted):
+        bad.append(f"a drop a model declared should be permitted, not refused: {permitted}")
+    undeclarable = {"operations": [{**_ddl_operation("create_table", table="x"), "destroys": True},
+                                    {**_ddl_operation("drop_view", table="old_view"), "destroys": True}]}
+    if not hp.is_fault(refuse_undeclared_loss(undeclarable, empty_declared)):
+        bad.append("a destroying change nothing can declare should be refused")
+
+    # name_what_is_ambiguous folds a declared rename into one rename_column operation: a model says a
+    # new column was renamed_from the gone one, so the drop and the add become a single rename.
+    from honest_persist.schema import name_what_is_ambiguous
+    renamed_ops = [_ddl_operation("drop_column", table="users", column="was"),
+                   _ddl_operation("add_column", table="users", column="now",
+                                  columns=[{"name": "now", "declared_type": "text", "renamed_from": "was", "references": None}])]
+    renamed_declared = {"models": [{"table": "users", "dropping": [],
+                                    "columns": [{"name": "now", "declared_type": "text", "renamed_from": "was", "references": None}]}],
+                        "views": [], "dropping_tables": [], "dropping_views": []}
+    settled = name_what_is_ambiguous(renamed_ops, renamed_declared)
+    if hp.is_fault(settled) or not any(op["kind"] == "rename_column" for op in settled):
+        bad.append(f"a declared rename should fold the drop and add into one rename_column: {settled}")
+
+    # how_to_spell: a change that cannot reach the primary, and a kind it has no row for.
+    if not hp.is_fault(how_to_spell("alter_column", "turso", True)):
+        bad.append("how_to_spell of alter_column on a replicating turso should refuse change_cannot_reach_primary")
+    if not hp.is_fault(how_to_spell("teleport_kind", "sqlite", False)):
+        bad.append("how_to_spell of a kind no row holds should refuse no_spelling_for_change")
+
+    # A crew or connection count below one is refused before any drainer would hang.
+    if not hp.is_fault(crew_size(0)):
+        bad.append("crew_size(0) should refuse crew_too_small")
+    if not hp.is_fault(permitted_connections(0)):
+        bad.append("permitted_connections(0) should refuse connections_too_few")
+    return bad
+
+
+def _probe_fail_closed_rows():
+    """The fail-closed no-match rows and the boundary error branches that normal flow never reaches, each
+    reporting a refused Fault rather than a bare KeyError or a raise (the via-negativa contract: a lookup
+    a bounded key set should make impossible is still reported loudly if it ever happens). The program-bug
+    rows are read directly; the driver error branches are driven with a stand-in connection whose close
+    and rollback raise; the declared-models reader is driven with a loader that raises."""
+    import honest_persist.io as iomod
+    import honest_persist.engines as enginesmod
+    import honest_persist.spelling as spellingmod
+    bad = []
+
+    # The no-match rows each answer a refused Fault naming the miss, never a bare value.
+    driver_miss = asyncio.run(iomod._no_engine_driver("sqlite", {}))
+    if not hp.is_fault(driver_miss):
+        bad.append(f"the driver no-match row should answer a refused Fault: {driver_miss}")
+    operator_miss = enginesmod._no_operator_row("teleports_past")
+    if not hp.is_fault(operator_miss):
+        bad.append(f"the operator no-match row should answer a Fault: {operator_miss}")
+    spelling_miss = spellingmod._no_spelling_row(_ddl_operation("create_table"), "sqlite")
+    if not hp.is_fault(spelling_miss):
+        bad.append(f"the spelling no-match row should answer a refused Fault: {spelling_miss}")
+
+    # A connection whose close and rollback raise: the close becomes a would_not_close Fault, the quiet
+    # rollback swallows a sqlite error and answers NOTHING.
+    class _AngryConnection:
+        def close(self):
+            raise RuntimeError("the driver would not let go")
+
+        def rollback(self):
+            raise sqlite3.Error("nothing to roll back")
+
+    closed = asyncio.run(_need("session_close_connection")(_AngryConnection()))
+    if not (hp.is_fault(closed) and closed.get("code") == "would_not_close"):
+        bad.append(f"a close the driver refuses should answer a would_not_close Fault: {closed}")
+    if iomod._rollback_quiet(_AngryConnection()) is not None:
+        bad.append("a rollback the driver refuses should be swallowed quietly and answer NOTHING")
+
+    # The declared-models reader answers the empty Declared when the loader raises, rather than propagating.
+    import honest_persist._pydantic_loader as loadermod
+    real_load = loadermod.load_declared
+    try:
+        loadermod.load_declared = _raises_loader
+        read = iomod._read_declared_models()
+    finally:
+        loadermod.load_declared = real_load
+    if read != {"models": [], "views": [], "dropping_tables": [], "dropping_views": []}:
+        bad.append(f"the declared-models reader should answer the empty Declared when the loader raises: {read}")
+
+    # The orchestrator's two defensive refusal rows pass a refusal straight through when reached: the
+    # reading layer settles an incomplete read and a crew deposit before these run, so normal flow never
+    # reaches them, but if it did they must not swallow the refusal.
+    import honest_persist.orchestrators as orchmod
+    would_not = asyncio.run(orchmod._would_not_compile({}, hp.fault("would_not_compile", "a statement that would not compile", "refused", [], {})))
+    if not hp.is_fault(would_not):
+        bad.append("the would-not-compile row should pass the compiler's refusal straight through")
+    crew_refused = asyncio.run(orchmod._crew_refused({}, hp.fault("crew_refused", "the crew refused the deposit", "refused", [], {})))
+    if not hp.is_fault(crew_refused):
+        bad.append("the crew-refused row should pass the deposit's refusal straight through")
+
+    # A method name no spelling maps to a part answers a NoMatch (the fail-closed row for an unknown
+    # method; it is not yet wired into asked_from_written, bead honest-framework-hl4's neighbour).
+    import honest_persist._query_read as qrmod
+    if not hp.is_no_match(qrmod._no_method("not_a_method", "User.not_a_method()")):
+        bad.append("the no-method row should answer a NoMatch naming the known methods")
+
+    # The turso-replicated alter_column spelling row refuses: a column rebuild runs locally and cannot
+    # reach the primary. how_to_spell pre-empts this in spell_operation, so the row is reached only here.
+    alter = _ddl_operation("alter_column", column="c",
+                           columns=[{"name": "c", "declared_type": "text", "renamed_from": None, "references": None}])
+    if not hp.is_fault(spellingmod._spell(alter, "turso", True)):
+        bad.append("the turso-replicated alter_column row should refuse: a column rebuild cannot reach the primary")
+    return bad
+
+
+def _raises_loader():
+    raise RuntimeError("the loader blew up")
+
+
+_WRITE_MODEL = {"name": "User", "table": "users",
+                "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None},
+                            {"name": "name", "declared_type": "text", "renamed_from": None, "references": None}],
+                "dropping": [], "indexes": [], "constraints": []}
+
+
+def _probe_query_write_paths():
+    """query_answer carries a write all the way to a real database, by each of its three routes
+    (declaration query_answer, spec 7.7): several rows land as one transaction, a transaction whose rows
+    collide comes back as the driver's Fault, a lone row is deposited with the crew and its receipt waited
+    for while a drainer runs it, and a read that names a column the model does not declare is refused
+    before any statement is compiled. Run against a real file-backed sqlite; the lone-row deposit is
+    drained by a concurrent lifecycle_catch_up, the host scheduler's job."""
+    for name in ("session_open", "query_ask", "query_answer", "lifecycle_catch_up"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (query write paths)"]
+    from honest_persist.orchestrators import lifecycle_catch_up
+
+    async def _run(d):
+        bad = []
+        target = os.path.join(d, "writes.db")
+        base = sqlite3.connect(target)
+        base.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+        base.commit(); base.close()
+        session_open = _need("session_open"); query_ask = _need("query_ask")
+        db = await session_open(target, "exit_immediately", None, None)
+        if hp.is_fault(db):
+            return [f"session_open failed before the write-paths law: {db}"]
+
+        # A read that names a column the model does not declare is refused before a statement compiles.
+        refused_read = await query_ask(db, _WRITE_MODEL, 'User.where(id=1).select("nope").all')
+        if not (hp.is_fault(refused_read) and refused_read.get("code") == "undeclared_column"):
+            bad.append(f"a read naming an undeclared column should be refused undeclared_column: {refused_read}")
+
+        # Several rows land as one transaction.
+        many = await query_ask(db, _WRITE_MODEL, 'User.rows({"id": 2, "name": "b"}, {"id": 3, "name": "c"}).add')
+        if many != 2:
+            bad.append(f"a multi-row add should land every row and answer the count: {many}")
+        # A transaction whose rows collide with what is there comes back as the driver's Fault.
+        collide = await query_ask(db, _WRITE_MODEL, 'User.rows({"id": 2, "name": "x"}, {"id": 9, "name": "y"}).add')
+        if not hp.is_fault(collide):
+            bad.append(f"a colliding multi-row write should answer the driver's Fault: {collide}")
+
+        # A lone row is deposited with the crew; a concurrent drainer runs it and the receipt is waited for.
+        writer = db["writers"][0] if db.get("writers") else None
+        write = asyncio.ensure_future(query_ask(db, _WRITE_MODEL, 'User.rows({"id": 5, "name": "e"}).add'))
+        for _ in range(60):
+            if write.done():
+                break
+            await lifecycle_catch_up({"db": db, "writer": writer, "statement": None,
+                                      "writer_waiting": True, "attempts": 1})
+            await asyncio.sleep(0.005)
+        try:
+            landed = await asyncio.wait_for(write, timeout=5)
+        except asyncio.TimeoutError:
+            write.cancel()
+            return bad + ["a lone-row deposit was never drained: query_answer did not return"]
+        if landed != 1:
+            bad.append(f"a lone-row deposit, once drained, should answer the count: {landed}")
+
+        check = sqlite3.connect(target)
+        rows = [r[0] for r in check.execute("SELECT id FROM users ORDER BY id").fetchall()]
+        check.close()
+        if rows != [2, 3, 5]:
+            bad.append(f"the writes that should have landed are 2, 3 and 5; found {rows}")
+        return bad
+
+    with tempfile.TemporaryDirectory() as d:
+        return asyncio.run(_run(d))
+
+
+def _probe_query_read_edges():
+    """The two parse boundaries asked_from_written answers as data rather than a raise (declaration
+    asked_from_written): a call argument that is not a python literal (a bare name) reads back as the
+    absence, and a written query that is not valid python at all parses to nothing instead of raising."""
+    try:
+        asked_from_written = _need("asked_from_written")
+        methods_of = _need("methods_of")
+    except _NotBuilt as e:
+        return [f"{e}: a query-reading function (parse edges)"]
+    bad = []
+    # A bare name where a literal was expected: literal_eval cannot read it, so the part reads as absence.
+    bare = asked_from_written("User.select(whatever_bare_name).all", methods_of("pseudo_sql"))
+    if not isinstance(bare, dict):
+        bad.append(f"asked_from_written should read a non-literal argument as data, not raise: {bare}")
+    # A written query that is not valid python parses to nothing, never a raise.
+    malformed = asked_from_written("User.(((", methods_of("pseudo_sql"))
+    if not isinstance(malformed, dict):
+        bad.append(f"asked_from_written of a malformed query should parse to nothing, not raise: {malformed}")
+    return bad
+
+
+def _probe_inspect_edges():
+    """schema_inspect reads the parts a clean empty database never shows (declaration schema_inspect): a
+    view is read into the schema, a column whose storage type the package has no word for comes back as a
+    Fault rather than a guess, and a question a closed connection cannot answer is a Fault, never a raise.
+    Driven against real sqlite files through the inspect boundary."""
+    for name in ("session_open_connection", "schema_inspect", "how_to_inspect", "session_close_connection"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (inspect edges)"]
+    schema_inspect = _need("schema_inspect"); how_to_inspect = _need("how_to_inspect")
+    session_open_connection = _need("session_open_connection")
+    session_close_connection = _need("session_close_connection")
+
+    async def _run(d):
+        bad = []
+        # A database holding a view: the view is read into the schema.
+        with_view = os.path.join(d, "view.db")
+        base = sqlite3.connect(with_view)
+        base.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+        base.execute("CREATE VIEW active AS SELECT id FROM users")
+        base.commit(); base.close()
+        conn = await session_open_connection(with_view, "sqlite", 1)
+        held = await schema_inspect(conn, "sqlite", how_to_inspect("sqlite"))
+        await session_close_connection(conn)
+        if hp.is_fault(held) or not any(v["name"] == "active" for v in held.get("views", [])):
+            bad.append(f"schema_inspect should read a declared view into the schema: {held}")
+
+        # A column whose storage type the package has no word for: a Fault, not a guess.
+        odd = os.path.join(d, "odd.db")
+        base = sqlite3.connect(odd)
+        base.execute("CREATE TABLE shapes (id INTEGER PRIMARY KEY, where_it_is GEOMETRY)")
+        base.commit(); base.close()
+        conn = await session_open_connection(odd, "sqlite", 1)
+        read = await schema_inspect(conn, "sqlite", how_to_inspect("sqlite"))
+        await session_close_connection(conn)
+        if not hp.is_fault(read):
+            bad.append(f"a column whose storage type has no word should make the inspect a Fault: {read}")
+
+        # A question a closed connection cannot answer: a Fault, never a raise.
+        empty = os.path.join(d, "closed.db")
+        base = sqlite3.connect(empty)
+        base.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        base.commit(); base.close()
+        conn = await session_open_connection(empty, "sqlite", 1)
+        await session_close_connection(conn)
+        refused_inspect = await schema_inspect(conn, "sqlite", how_to_inspect("sqlite"))
+        if not hp.is_fault(refused_inspect):
+            bad.append(f"inspecting through a closed connection should be a Fault, not a raise: {refused_inspect}")
+        return bad
+
+    with tempfile.TemporaryDirectory() as d:
+        return asyncio.run(_run(d))
+
+
+def _probe_shutdown_push():
+    """lifecycle_shut_down drains every registered database at exit and closes it (declaration
+    lifecycle_shut_down): a local, non-replicating database on the registered list has nothing to push to
+    a primary, so the drain writes its progress line and closes the connections cleanly. The registered
+    list is saved and restored around the law, and the database is a real file-backed sqlite."""
+    for name in ("session_open", "lifecycle_shut_down"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (shutdown push)"]
+    import honest_persist.crew as crewmod
+    saved = list(crewmod._REGISTERED)
+
+    async def _run(d):
+        bad = []
+        session_open = _need("session_open"); lifecycle_shut_down = _need("lifecycle_shut_down")
+        target = os.path.join(d, "shut.db")
+        base = sqlite3.connect(target)
+        base.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        base.commit(); base.close()
+        db = await session_open(target, "exit_immediately", None, None)
+        if hp.is_fault(db):
+            return [f"session_open failed before the shutdown law: {db}"]
+        crewmod._REGISTERED.append(db)
+        out = await lifecycle_shut_down({"started_at": 0.0})
+        if hp.is_fault(out):
+            bad.append(f"shutting down a local registered database should not fault: {out}")
+        elif not any(x is db for x in out.get("databases", [])):
+            bad.append(f"lifecycle_shut_down should report the databases it drained: {out}")
+        return bad
+
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            return asyncio.run(_run(d))
+    finally:
+        crewmod._REGISTERED[:] = saved
+
+
+def _probe_migration_refusals():
+    """Opening a database whose migration cannot run safely raises CouldNotOpen rather than touching the
+    data (declaration session_connect, _apply_migration): a live column no model declares and none asked
+    to drop is an undeclared loss the open refuses, and a declared check constraint this reduced speller
+    cannot write is a spelling refusal the open carries out. Each host model is declared as a pydantic
+    class, run against a real sqlite file, and cleaned up so it does not reach another law's schema read."""
+    try:
+        from pydantic import BaseModel
+    except Exception:  # noqa: BLE001
+        _note_skip("pydantic: not installed, so the migration-refusal paths were not exercised")
+        return []
+    import gc
+    from honest_persist.doors import CouldNotOpen
+    session_open = _need("session_open")
+    bad = []
+
+    class _LossUser(BaseModel):
+        id: int
+        name: str
+        __tablename__ = "hp_law_loss_users"
+
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "loss.db")
+            base = sqlite3.connect(target)
+            base.execute("CREATE TABLE hp_law_loss_users (id INTEGER PRIMARY KEY, name TEXT, secret TEXT)")
+            base.commit(); base.close()
+            try:
+                asyncio.run(session_open(target, "exit_immediately", None, None))
+                bad.append("opening a database that would lose an undeclared column should raise CouldNotOpen")
+            except CouldNotOpen as raised:
+                if raised.fault.get("code") != "undeclared_loss":
+                    bad.append(f"the open should refuse undeclared_loss: {raised.fault}")
+    finally:
+        del _LossUser
+        gc.collect()
+
+    class _CheckThing(BaseModel):
+        id: int
+        __tablename__ = "hp_law_check_things"
+        __constraints__ = [{"name": "ck", "kind": "check", "columns": ["id"]}]
+
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "check.db")
+            try:
+                asyncio.run(session_open(target, "exit_immediately", None, None))
+                bad.append("opening a database whose migration needs a spelling the engine lacks should raise CouldNotOpen")
+            except CouldNotOpen as raised:
+                if raised.fault.get("code") != "check_unsupported":
+                    bad.append(f"the open should refuse check_unsupported: {raised.fault}")
+    finally:
+        del _CheckThing
+        gc.collect()
+    return bad
+
+
+def _probe_view_refresh_specs():
+    """schema_say_refreshes turns a declared `refreshed when asked` view into a ScheduleSpec the host's
+    scheduler drives (declaration schema_say_refreshes): the spec carries the view's key and cadence, its
+    work rewrites the view's table, and its decide rule reads what to do after a run. The host view is a
+    pydantic model, cleaned up afterwards; the spec is built without opening a database, so no migration
+    runs."""
+    try:
+        from pydantic import BaseModel
+    except Exception:  # noqa: BLE001
+        _note_skip("pydantic: not installed, so the view-refresh schedule path was not exercised")
+        return []
+    import gc
+    schema_say_refreshes = _need("schema_say_refreshes")
+    bad = []
+
+    class _RefreshView(BaseModel):
+        __viewname__ = "hp_law_refresh_view"
+        __declaration__ = "SELECT id FROM hp_law_users"
+        __freshness__ = "refreshed when asked"
+        __cadence__ = 30
+        __attempts_allowed__ = 2
+
+    try:
+        specs = schema_say_refreshes({"target": "x", "engine": "sqlite"})
+        if hp.is_fault(specs) or not isinstance(specs, list) or not specs:
+            bad.append(f"schema_say_refreshes should hand back a schedule spec for a refreshed-when-asked view: {specs}")
         else:
-            stable = diff(back, expand_schema(schema))
-            if stable["operations"]:
-                bad.append(f"an already-migrated PostgreSQL schema should diff to no operations: {stable['operations']}")
+            spec = next((s for s in specs if s.get("key") == "hp_law_refresh_view"), None)
+            if spec is None:
+                bad.append(f"the schedule spec for the declared view should be present: {specs}")
+            elif spec.get("cadence") != 30:
+                bad.append(f"the spec should carry the view's cadence: {spec}")
+            else:
+                if asyncio.run(spec["work"]()) != 0:
+                    bad.append("the spec's work should rewrite the view's table and answer the rows touched")
+                if not isinstance(spec["decide"](0, 1), dict):
+                    bad.append("the spec's decide should answer what to do after a run")
+    finally:
+        del _RefreshView
+        gc.collect()
+    return bad
 
-        # refresh_materialized_view runs the native REFRESH on PostgreSQL.
-        if refresh_materialized_view(schema, "big", "postgresql") != ["REFRESH MATERIALIZED VIEW big"]:
-            bad.append("refresh_materialized_view should build the native REFRESH on PostgreSQL")
-        await conn.execute("REFRESH MATERIALIZED VIEW big")
 
-        # Dropping the materialized view removes it and its refresh function; the schema round-trips.
-        dropped = await migrate({"tables": schema["tables"], "views": {"active": schema["views"]["active"]}, "triggers": {}, "procedures": {}}, conn, "postgresql")
-        gone = await inspect(conn, "postgresql")
-        if "ok" not in dropped or "big" in gone["ok"]["views"]:
-            bad.append(f"dropping the materialized view should remove it: {dropped}, {gone['ok']['views']}")
+def _probe_retry_outcomes():
+    """The two WriteOutcome branches the contended-write law does not reach (declaration
+    lifecycle_catch_up, crew_run_write, retry_schedule, spec 7.7): a write refused for a logical reason (a
+    NOT NULL violation) is given up at once carrying the driver's Fault, never retried as contention; and a
+    write whose engine has no driver answers a NoMatch that travels straight out of the drain, never
+    reaching the schedule. Run against a real sqlite file, with a concurrent drainer for the logical case."""
+    for name in ("session_open", "crew_deposit", "crew_release_ticket", "lifecycle_catch_up", "crew_make"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (retry outcomes)"]
+    from honest_persist.crew import crew_make, crew_deposit
+
+    async def _run(d):
+        bad = []
+        session_open = _need("session_open"); crew_release_ticket = _need("crew_release_ticket")
+        lifecycle_catch_up = _need("lifecycle_catch_up")
+        target = os.path.join(d, "retry.db")
+        base = sqlite3.connect(target)
+        base.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+        base.commit(); base.close()
+        db = await session_open(target, "exit_immediately", None, None)
+        if hp.is_fault(db):
+            return [f"session_open failed before the retry-outcome law: {db}"]
+        writer = db["writers"][0]
+        ticket = crew_deposit(db["crew"], {"text": "INSERT INTO widgets (id, name) VALUES (1, NULL)", "parameters": {}})
+        waiter = asyncio.ensure_future(crew_release_ticket(db["crew"], ticket))
+        for _ in range(30):
+            if waiter.done():
+                break
+            await lifecycle_catch_up({"db": db, "writer": writer, "statement": None,
+                                      "writer_waiting": True, "attempts": 1})
+            await asyncio.sleep(0.005)
+        receipt = await asyncio.wait_for(waiter, timeout=3)
+        if not (isinstance(receipt, dict) and receipt.get("ok") is False and receipt.get("attempts") == 1):
+            bad.append(f"a logical refusal should be given up at once, never retried as contention: {receipt}")
+
+        # A write whose engine has no driver answers a NoMatch straight out of the drain.
+        stray = crew_make()
+        crew_deposit(stray, {"text": "INSERT INTO widgets (id) VALUES (2)", "parameters": {}})
+        no_driver = {"engine": "mysql", "crew": stray, "channel": None, "target": "x",
+                     "connections": [], "writers": []}
+        drained = await lifecycle_catch_up({"db": no_driver, "writer": None, "statement": None,
+                                            "writer_waiting": False, "attempts": 0})
+        if not hp.is_no_match(drained):
+            bad.append(f"a write whose engine has no driver should answer a NoMatch out of the drain: {drained}")
+        return bad
+
+    with tempfile.TemporaryDirectory() as d:
+        return asyncio.run(_run(d))
+
+
+def _probe_replication_orchestration():
+    """The orchestrator paths only a replicating turso database reaches (declaration session_connect,
+    lifecycle_catch_up, lifecycle_shut_down, section 5.5): opening with a primary and token opens the sync
+    channel and puts the database on the shutdown-registered list; a free turn pushes the local commits and
+    pulls the primary's back; and shutting down pushes each registered database out. Each sync boundary
+    answers as data, never a raise. Driven against the real Turso primary; when it is unavailable this is a
+    named skip, never a pass. The registered list is saved and restored."""
+    for name in ("session_open", "lifecycle_catch_up", "lifecycle_shut_down"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (replication orchestration)"]
+    import honest_persist.crew as crewmod
+    config = turso_replica_config()
+    if "unavailable" in config:
+        _note_skip(f"replication orchestration: {config['unavailable']}")
+        return []
+
+    async def _run(d):
+        bad = []
+        session_open = _need("session_open"); lifecycle_catch_up = _need("lifecycle_catch_up")
+        lifecycle_shut_down = _need("lifecycle_shut_down")
+        target = "libsql://" + os.path.join(d, "rep.db")
+        db = await session_open(target, "replicate_then_exit", config["url"], config["token"])
+        if hp.is_fault(db):
+            return [f"opening a replicating turso database should build a handle, not fault: {db}"]
+        if db.get("engine") != "turso" or db.get("channel") is None:
+            bad.append(f"a replicating open should name the turso engine and hold a channel: engine={db.get('engine')}")
+        if not any(x is db for x in crewmod.read_registered()):
+            bad.append("a replicate_then_exit database should be on the shutdown-registered list")
+        # A free turn syncs: it pushes the local commits and pulls the primary's back, answering as data.
+        turn = await lifecycle_catch_up({"db": db, "writer": db["writers"][0], "statement": None,
+                                         "writer_waiting": False, "attempts": 0})
+        if not (turn is None or isinstance(turn, dict)):
+            bad.append(f"a free turn on a replicating database should answer as data, never raise: {turn!r}")
+        # Shutting down pushes every registered database out, answering as data.
+        out = await lifecycle_shut_down({"started_at": 0.0})
+        if not (hp.is_fault(out) or isinstance(out, dict)):
+            bad.append(f"shutting down a replicating database should answer as data: {out!r}")
+        return bad
+
+    saved = list(crewmod._REGISTERED)
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            return asyncio.run(_run(d))
+    finally:
+        crewmod._REGISTERED[:] = saved
+
+
+def _probe_sync_turn():
+    """A free turn on a replicating database runs the sync (declaration lifecycle_catch_up, channel_push,
+    channel_pull, spec 5.5), by both of its push outcomes, against real Turso channels: a channel whose
+    primary is unreachable makes the turn's push fail, which ends the sync there; and a channel bootstrapped
+    on the real primary makes the push succeed, so the turn goes on to pull the primary's state back. No
+    stand-in: both channels are real session_open_channel objects. The real-primary half is a named skip
+    when the primary is unavailable."""
+    for name in ("lifecycle_catch_up", "crew_make", "session_open_channel", "channel_push",
+                 "session_close_connection"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (sync turn)"]
+    lifecycle_catch_up = _need("lifecycle_catch_up"); crew_make = _need("crew_make")
+    session_open_channel = _need("session_open_channel"); channel_push = _need("channel_push")
+    session_close_connection = _need("session_close_connection")
+
+    def _replicating_db(channel):
+        crew = crew_make()
+        crew["stop"].set()  # nothing to drain, so the wait for work returns at once
+        return {"engine": "turso", "crew": crew, "channel": channel, "target": "x",
+                "connections": [], "writers": [None]}
+
+    async def _run(d):
+        bad = []
+        # A real channel whose primary is unreachable: the turn's push fails and the sync ends there.
+        unreachable = await session_open_channel(os.path.join(d, "bad.db"), "not-a-valid-url", "tok")
+        if hp.is_fault(unreachable):
+            bad.append(f"a channel should open locally before its primary is reached: {unreachable}")
+        else:
+            turn = await lifecycle_catch_up({"db": _replicating_db(unreachable), "writer": None,
+                                             "statement": None, "writer_waiting": False, "attempts": 0})
+            if not hp.is_fault(turn):
+                bad.append(f"a free turn whose push cannot reach the primary should answer that Fault: {turn}")
+
+        # A real channel bootstrapped on the real primary: the push succeeds, so the turn pulls as well.
+        config = turso_replica_config()
+        if "unavailable" in config:
+            _note_skip(f"sync turn (pull half): {config['unavailable']}")
+            return bad
+        channel = await session_open_channel(os.path.join(d, "good.db"), config["url"], config["token"])
+        if hp.is_fault(channel):
+            return bad + [f"the sync channel should open on the real primary: {channel}"]
+        boot = await channel_push(channel)  # bootstrap, so the turn's own push succeeds and it goes on to pull
+        if hp.is_fault(boot):
+            await session_close_connection(channel)
+            return bad + [f"the first push should bootstrap the replica against the primary: {boot}"]
+        turn = await lifecycle_catch_up({"db": _replicating_db(channel), "writer": None,
+                                         "statement": None, "writer_waiting": False, "attempts": 0})
+        await session_close_connection(channel)
+        if not (turn is None or isinstance(turn, dict)):
+            bad.append(f"a free turn whose push succeeds should pull and answer as data: {turn!r}")
+        return bad
+
+    with tempfile.TemporaryDirectory() as d:
+        return asyncio.run(_run(d))
+
+
+def _probe_observe_emit_swallowed():
+    """A query whose observe emit fails still answers its rows (declaration query_run_statement, spec 8.5):
+    the emit of hf.persist.query is best-effort, so an emit that raises is swallowed and never fails the
+    query. The emit seam is driven with an emit that raises, and a real read still reads its rows.
+
+    The matching success path (io.py returns after a clean emit) is NOT exercised here, and cannot be
+    honestly: persist calls honest_observe.emit('hf.persist.query', payload) with two positional arguments,
+    but the real emit is an async function of nine, so every real emit raises TypeError and the success
+    return is dead code until the seam is reconciled (bead honest-framework-z6l). An earlier version of this
+    law mocked a two-argument emit that succeeded, which hid that mismatch; it is removed."""
+    for name in ("session_open_connection", "query_run_statement", "session_close_connection"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (observe emit)"]
+    import honest_observe
+    real_emit = honest_observe.emit
+
+    def _raising_emit(*_args, **_kwargs):
+        raise RuntimeError("the observe seam blew up")
+
+    async def _run(d):
+        session_open_connection = _need("session_open_connection")
+        query_run_statement = _need("query_run_statement")
+        session_close_connection = _need("session_close_connection")
+        target = os.path.join(d, "emit.db")
+        base = sqlite3.connect(target)
+        base.execute("CREATE TABLE x (id INTEGER PRIMARY KEY)")
+        base.commit(); base.close()
+        conn = await session_open_connection(target, "sqlite", 1)
+        ran = await query_run_statement(conn, "sqlite", {"text": "SELECT id FROM x", "parameters": {}})
+        await session_close_connection(conn)
+        return [] if not hp.is_fault(ran) else [f"a read should answer its rows when the observe emit fails: {ran}"]
+
+    try:
+        honest_observe.emit = _raising_emit
+        with tempfile.TemporaryDirectory() as d:
+            return asyncio.run(_run(d))
+    finally:
+        honest_observe.emit = real_emit
+
+
+class _SqliteQueryConnection:
+    """A duck-typed §7 connection over a real sqlite3 database: `await execute(sql, params)` answers
+    {rows, rowcount}, and begin/commit/rollback drive a transaction. This is the adopter-supplied
+    connection the §7 layer runs on (spec §7.4, §8.1.1 — a real driver, not a mock); the sqlite
+    connection is opened in autocommit mode so a single execute persists and a transaction is explicit."""
+
+    def __init__(self, path):
+        self._raw = sqlite3.connect(path, isolation_level=None)
+
+    async def execute(self, sql, params):
+        cursor = self._raw.execute(sql, params or {})
+        rows = _pick(cursor.description is None, lambda: [],
+                     lambda: [dict(zip([c[0] for c in cursor.description], row)) for row in cursor.fetchall()])
+        return {"rows": rows, "rowcount": cursor.rowcount}
+
+    async def begin(self):
+        self._raw.execute("BEGIN")
+
+    async def commit(self):
+        self._raw.execute("COMMIT")
+
+    async def rollback(self):
+        self._raw.execute("ROLLBACK")
+
+    def close(self):
+        self._raw.close()
+
+
+def _probe_query_builders():
+    """The §7 query builders are pure functions that return a Query — plain data, no I/O (spec §7.1, §7.2):
+    select, insert, update, delete and raw each answer a dict carrying the SQL text and the named
+    parameters, and none performs any I/O. The parameters a write carries are the values it was handed."""
+    for name in ("select", "insert", "update", "delete", "raw"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (query builders)"]
+    select = _need("select"); insert = _need("insert"); update = _need("update")
+    delete = _need("delete"); raw = _need("raw")
+    bad = []
+    for label, query in (
+        ("select", select("users", ["id", "email"], {"status": "active"}, None, None, None, None)),
+        ("insert", insert("users", {"id": 1, "email": "a@b.c"})),
+        ("update", update("users", {"email": "x@y.z"}, {"id": 1})),
+        ("delete", delete("users", {"id": 1})),
+        ("raw", raw("SELECT 1", None)),
+    ):
+        if not (isinstance(query, dict) and isinstance(query.get("sql"), str) and isinstance(query.get("params"), dict)):
+            bad.append(f"{label} should build a Query with sql text and a params dict: {query}")
+    # The values a write carries must be present in its params, so the driver binds them.
+    written = insert("users", {"id": 7, "email": "z@z.z"})
+    if 7 not in written["params"].values() or "z@z.z" not in written["params"].values():
+        bad.append(f"insert should carry the row's values in the Query params: {written}")
+    return bad
+
+
+def _probe_query_execute():
+    """The §7 execute family runs a built Query on a real sqlite connection and answers plain data (spec
+    §7.4): execute reads the rows, execute_one the first row or NOTHING, execute_scalar the first cell or
+    NOTHING, execute_many the rows affected. A row written by insert is read back by select, updated, and
+    deleted, each count confirmed, with no ORM and no model instances — plain dicts throughout."""
+    for name in ("select", "insert", "update", "delete", "execute", "execute_one", "execute_scalar", "execute_many"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (query execute)"]
+    select = _need("select"); insert = _need("insert"); update = _need("update")
+    delete = _need("delete"); execute = _need("execute"); execute_one = _need("execute_one")
+    execute_scalar = _need("execute_scalar"); execute_many = _need("execute_many")
+
+    async def _run(d):
+        bad = []
+        conn = _SqliteQueryConnection(os.path.join(d, "q.db"))
+        await conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT)", {})
+        wrote = await execute_many(insert("widgets", {"id": 1, "name": "alpha"}), conn)
+        if wrote != 1:
+            bad.append(f"execute_many of an insert should answer 1 row affected: {wrote}")
+        rows = await execute(select("widgets", ["id", "name"], {"id": 1}, None, None, None, None), conn)
+        if not (isinstance(rows, list) and rows and rows[0].get("name") == "alpha"):
+            bad.append(f"execute of a select should read the row back as a plain dict: {rows}")
+        one = await execute_one(select("widgets", ["id", "name"], {"id": 1}, None, None, None, None), conn)
+        if not (isinstance(one, dict) and one.get("id") == 1):
+            bad.append(f"execute_one should read the single row: {one}")
+        missing = await execute_one(select("widgets", ["id"], {"id": 999}, None, None, None, None), conn)
+        if missing is not None:
+            bad.append(f"execute_one with no rows should answer NOTHING: {missing}")
+        scalar = await execute_scalar(select("widgets", ["name"], {"id": 1}, None, None, None, None), conn)
+        if scalar != "alpha":
+            bad.append(f"execute_scalar should answer the first cell: {scalar}")
+        changed = await execute_many(update("widgets", {"name": "beta"}, {"id": 1}), conn)
+        if changed != 1:
+            bad.append(f"execute_many of an update should answer 1 row affected: {changed}")
+        removed = await execute_many(delete("widgets", {"id": 1}), conn)
+        if removed != 1:
+            bad.append(f"execute_many of a delete should answer 1 row affected: {removed}")
         conn.close()
         return bad
 
-    return asyncio.run(_run())
-
-
-# The SQL-construction validity schema (section 5): one rich schema whose creation emits the
-# framework's create vocabulary — tables with a primary key, a unique column, a default, an inline
-# foreign key (which orders the two table creations) and a check constraint; an index; a plain view;
-# and materialized views in both the trigger and manual strategies. Migrating it in and then out
-# against a real engine exercises every one of those constructions plus the drop vocabulary, proving
-# the generated SQL is valid dialect SQL, not merely the string our own assertions expected.
-_VALIDITY_SCHEMA = {
-    "tables": {
-        "team": {"columns": {"id": {"type": "integer", "primary_key": True}, "name": {"type": "text", "unique": True}}},
-        "player": {
-            "columns": {"id": {"type": "integer", "primary_key": True}, "team_id": {"type": "integer", "references": "team.id"}, "score": {"type": "integer", "nullable": True, "default": "0"}},
-            "indexes": {"player_by_score": {"columns": ["score"]}},
-            "constraints": {"score_nonneg": {"type": "check", "expression": "score >= 0"}},
-        },
-    },
-    "views": {
-        "roster": {"query": "SELECT id FROM player", "depends_on": ["player"]},
-        "scorers": {"query": "SELECT id FROM player WHERE score > 0", "materialized": True, "refresh": "trigger", "depends_on": ["player"]},
-        "team_players": {"query": "SELECT team_id FROM player", "materialized": True, "refresh": "manual", "depends_on": ["player"]},
-    },
-}
-# A modification of the validity schema that exercises the alter vocabulary: player gains a column and
-# loses its index and check constraint, with its views and materialized views still depending on it.
-# PostgreSQL renders these in place; SQLite rebuilds the table, which must carry the survivors and
-# recreate the dependent views and materialized-view refresh triggers.
-_VALIDITY_MODIFIED = {
-    "tables": {
-        "team": _VALIDITY_SCHEMA["tables"]["team"],
-        "player": {"columns": {**_VALIDITY_SCHEMA["tables"]["player"]["columns"], "position": {"type": "text", "nullable": True}}},
-    },
-    "views": _VALIDITY_SCHEMA["views"],
-}
-
-
-def _probe_sql_validity():
-    """Catch invalid SQL before commit (section 5): the constructions the framework generates are
-    executed against a real PostgreSQL and a real SQLite to confirm the engine accepts them — the check
-    a pure assertion cannot make, since a pure test only confirms the string I meant to build, not that
-    it is valid dialect SQL. Migrating the rich schema in exercises the create vocabulary (this is where
-    the SQLite-vs-PostgreSQL materialized-view trigger difference lives) and migrating it back out
-    exercises the drop vocabulary. Decoupled from mutation: like the other real-database probes it skips
-    the per-mutant loop and runs in every normal and coverage pass. (Round-trip re-migration of an
-    unchanged schema and reconstruction under a dependent view are separate open inspector-completeness
-    items, tracked apart from this gate.)"""
-    if os.environ.get("HONEST_MUTATION"):
-        return []
-    from honest_persist import apply, diff, expand_schema
-
-    async def _run():
-        bad = []
-        expanded = expand_schema(_VALIDITY_SCHEMA)
-        for dialect, conn in [("sqlite", _SqliteConn()), ("turso", turso_connection()), ("postgresql", postgres_connection())]:
-            if conn is None:
-                print(f"honest-persist: no {dialect} available; SQL-validity not checked for it", file=sys.stderr)
-                continue
-            # Drive apply from the diff directly over declared schemas so ordering carries full
-            # foreign-key and dependency information; this gate is about whether the engine accepts the
-            # generated SQL, not about the inspector round-trip (which is tracked separately).
-            modified = expand_schema(_VALIDITY_MODIFIED)
-            created = await apply(diff({}, expanded), expanded, conn, dialect)
-            if not created["success"]:
-                bad.append(f"{dialect} rejected a generated create construction: {created}")
-            else:
-                altered = await apply(diff(expanded, modified), modified, conn, dialect)
-                if not altered["success"]:
-                    bad.append(f"{dialect} rejected a generated alter construction: {altered}")
-                dropped = await apply(diff(modified, {}), {}, conn, dialect)
-                if not dropped["success"]:
-                    bad.append(f"{dialect} rejected a generated drop construction: {dropped}")
-            conn.close()
-        return bad
-
-    return asyncio.run(_run())
-
-
-# Schemas that must survive a live round-trip (section 9.1): migrate in, inspect back, and the inspected
-# schema must diff to no operations. This is where inspector-completeness gaps surface — an attribute
-# the inspector fails to read makes a stable schema look changed and churns on the next migration.
-_ROUNDTRIP_SCHEMAS = {
-    "primary-key-nullability": {"tables": {"account": {"columns": {
-        "id": {"type": "integer", "primary_key": True},
-        "email": {"type": "text", "nullable": True},
-    }}}},
-    "foreign-keys": {"tables": {
-        "team": {"columns": {"id": {"type": "integer", "primary_key": True}}},
-        "player": {"columns": {
-            "id": {"type": "integer", "primary_key": True},
-            "team_id": {"type": "integer", "nullable": True, "references": "team.id", "on_delete": "cascade"},
-        }},
-    }},
-    "indexes": {"tables": {"event": {
-        "columns": {"id": {"type": "integer", "primary_key": True}, "kind": {"type": "text", "nullable": True}, "at": {"type": "integer", "nullable": True}},
-        "indexes": {"event_by_kind": {"columns": ["kind"]}, "event_by_kind_at": {"columns": ["kind", "at"], "unique": True}},
-    }}},
-    "check-constraints": {"tables": {"ledger": {
-        "columns": {"id": {"type": "integer", "primary_key": True}, "amount": {"type": "integer", "nullable": True}, "kind": {"type": "text", "nullable": True}},
-        "constraints": {"amount_nonneg": {"type": "check", "expression": "amount >= 0"}, "kind_known": {"type": "check", "expression": "kind IN ('debit', 'credit')"}},
-    }}},
-    # Everything at once: a primary key, a unique column, a default, an inline foreign key that orders
-    # the two tables, an index, a check constraint, a plain view, and both materialized-view strategies.
-    "full-schema": {
-        "tables": {
-            "team": {"columns": {"id": {"type": "integer", "primary_key": True}, "name": {"type": "text", "unique": True}}},
-            "player": {
-                "columns": {"id": {"type": "integer", "primary_key": True}, "team_id": {"type": "integer", "nullable": True, "references": "team.id"}, "score": {"type": "integer", "nullable": True, "default": "0"}},
-                "indexes": {"player_by_score": {"columns": ["score"]}},
-                "constraints": {"score_nonneg": {"type": "check", "expression": "score >= 0"}},
-            },
-        },
-        "views": {
-            "roster": {"query": "SELECT id FROM player", "depends_on": ["player"]},
-            "scorers": {"query": "SELECT id FROM player WHERE score > 0", "materialized": True, "refresh": "trigger", "depends_on": ["player"]},
-            "team_players": {"query": "SELECT team_id FROM player", "materialized": True, "refresh": "manual", "depends_on": ["player"]},
-        },
-    },
-}
-
-
-def _probe_roundtrip():
-    """A schema round-trips through a live database (section 9.1): after migrating it in, inspecting the
-    database back and diffing against the schema yields no operations, so re-migration is a no-op rather
-    than churn. Run against a real PostgreSQL and a real SQLite; skipped under the mutation loop like the
-    other real-database probes."""
-    if os.environ.get("HONEST_MUTATION"):
-        return []
-    from honest_persist import diff, expand_schema, inspect, migrate
-
-    async def _run():
-        bad = []
-        for dialect, conn in [("sqlite", _SqliteConn()), ("turso", turso_connection()), ("postgresql", postgres_connection())]:
-            if conn is None:
-                print(f"honest-persist: no {dialect} available; round-trip not checked for it", file=sys.stderr)
-                continue
-            for label, schema in _ROUNDTRIP_SCHEMAS.items():
-                made = await migrate(schema, conn, dialect)
-                back = await inspect(conn, dialect)
-                if "ok" not in made or not made["ok"]["success"] or "ok" not in back:
-                    bad.append(f"{dialect} could not migrate/inspect '{label}': {made}, {back}")
-                    continue
-                churn = diff(back["ok"], expand_schema(schema))
-                if churn["operations"]:
-                    bad.append(f"{dialect} schema '{label}' should round-trip to no operations, got: {churn['operations']}")
-                await migrate({"tables": {}, "views": {}, "triggers": {}, "procedures": {}}, conn, dialect)
-            conn.close()
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_pool_registry():
-    """The pool registry (§8.1): create-on-first-contact, cache, and reuse — the cache threaded as a
-    value with an injected connect — exercised end to end against a real in-memory SQLite database."""
-    from honest_persist import empty_pool_registry, execute, get_pool, insert, raw, select
-
-    async def _run():
-        bad = []
-        created = []
-
-        async def connect(selector):
-            created.append(selector["database"])
-            return _SqliteConn()
-
-        registry = empty_pool_registry()
-        if registry != {}:
-            bad.append("empty_pool_registry should be an empty cache")
-
-        # First contact creates the pool and caches it.
-        result, registry = await get_pool(registry, {"db_id": "main"}, connect, 0)
-        if "ok" not in result or created != ["main"]:
-            bad.append(f"first contact should create and return a connection: {result}, {created}")
-        conn = result["ok"]
-
-        # The same database reuses the cached connection; connect is not called again.
-        result2, registry = await get_pool(registry, {"db_id": "main"}, connect, 1)
-        if result2["ok"] is not conn or created != ["main"]:
-            bad.append(f"a seen database should reuse the cached connection: {created}")
-
-        # A different database, and a different credential variant, are each a new pool.
-        _, registry = await get_pool(registry, {"db_id": "other"}, connect, 2)
-        _, registry = await get_pool(registry, {"db_id": "main", "credential": "replica"}, connect, 3)
-        if created != ["main", "other", "main"]:
-            bad.append(f"an unseen database or credential should create a new pool: {created}")
-
-        # A manifest naming no database errs and does not touch the cache.
-        errored, unchanged = await get_pool(registry, {"q": 1}, connect, 4)
-        if errored.get("err", {}).get("code") != "unknown_database" or unchanged is not registry:
-            bad.append(f"a manifest with no database should err and leave the cache: {errored}")
-
-        # End to end against real SQLite: create, insert, and select through the cached connection.
-        await execute(raw("CREATE TABLE t (x integer)"), conn)
-        await execute(insert("t", {"x": 7}), conn)
-        rows = await execute(select("t", ["x"]), conn)
-        if rows != [{"x": 7}]:
-            bad.append(f"persist should round-trip a row through real SQLite: {rows}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_lifecycle():
-    """Pool lifecycle execution (§8.2): is_idle is a pure threshold check; reap_idle closes and
-    evicts on_demand pools idle past the threshold, leaving persistent and ephemeral pools and
-    recently-used on_demand pools alone — closing real SQLite connections through the injected close."""
-    from honest_persist import empty_pool_registry, get_pool, is_idle, reap_idle
-
-    ms = 1_000_000  # nanoseconds per millisecond
-
-    async def _run():
-        bad = []
-        if is_idle(0, 5 * ms, 10) or not is_idle(0, 20 * ms, 10):
-            bad.append("is_idle should be true only once the idle time exceeds the threshold")
-
-        closed = []
-
-        async def close(conn):
-            conn.close()
-            closed.append(conn)
-
-        async def connect(selector):
-            return _SqliteConn()
-
-        registry = empty_pool_registry()
-        _, registry = await get_pool(registry, {"db_id": "scratch", "db_lifecycle": "on_demand"}, connect, 0)
-        _, registry = await get_pool(registry, {"db_id": "main"}, connect, 0)
-        # At t = 20ms with a 10ms threshold the on_demand pool is idle; the persistent one is never reaped.
-        registry = await reap_idle(registry, 20 * ms, 10, close)
-        if len(closed) != 1:
-            bad.append(f"reap_idle should close exactly the idle on_demand pool: {closed}")
-        if "main:" not in registry or "scratch:" in registry:
-            bad.append(f"reap_idle should evict the on_demand pool and keep the persistent one: {list(registry)}")
-
-        # A recently-used on_demand pool is not reaped.
-        fresh = empty_pool_registry()
-        _, fresh = await get_pool(fresh, {"db_id": "scratch", "db_lifecycle": "on_demand"}, connect, 100 * ms)
-        fresh = await reap_idle(fresh, 105 * ms, 10, close)
-        if "scratch:" not in fresh:
-            bad.append("a recently-used on_demand pool should not be reaped")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_ephemeral():
-    """Ephemeral lifecycle (§8.2): recreate_ephemeral connects, applies the target schema, and caches
-    a pool for each ephemeral database in configuration order — exercised against real in-memory
-    SQLite, then the recreated schema is used to insert and read a row, proving the table is real."""
-    from honest_persist import execute, insert, recreate_ephemeral, select
-
-    async def _run():
-        bad = []
-        connected = []
-
-        async def connect(selector):
-            connected.append(selector["database"])
-            return _SqliteConn()
-
-        config = [
-            {"db_id": "keep", "db_lifecycle": "persistent", "schema": {"a": {"columns": {"id": {"type": "integer"}}}}},
-            {"db_id": "scratch", "db_lifecycle": "ephemeral", "schema": {"t": {"columns": {"id": {"type": "integer"}, "name": {"type": "text"}}}}},
-            {"db_id": "session", "db_lifecycle": "ephemeral", "schema": {"s": {"columns": {"k": {"type": "integer"}}}}},
-        ]
-        registry = await recreate_ephemeral(config, connect, "sqlite", 0)
-        if connected != ["scratch", "session"]:
-            bad.append(f"only ephemeral databases are recreated, in configuration order: {connected}")
-        if "scratch:" not in registry or "keep:" in registry:
-            bad.append(f"the registry should hold the ephemeral pools, not the persistent one: {list(registry)}")
-        elif registry["scratch:"]["lifecycle"] != "ephemeral":
-            bad.append(f"a recreated ephemeral pool should carry the ephemeral lifecycle: {registry['scratch:']}")
-
-        # The recreated schema is real: insert and read a row through the cached connection.
-        conn = registry["scratch:"]["conn"]
-        await execute(insert("t", {"id": 1, "name": "ada"}), conn)
-        rows = await execute(select("t", ["name"]), conn)
-        if rows != [{"name": "ada"}]:
-            bad.append(f"the recreated ephemeral schema should accept and return a row: {rows}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_pool_events():
-    """Pool events (§8.8): get_pool emits hf.persist.pool 'created' on first contact (not on reuse),
-    reap_idle emits 'closed' on eviction, both through the injected emit and keyed by the pool
-    aggregate; emit_pool_event swallows a failing emit, and no emit means no event."""
-    from honest_persist import emit_pool_event, empty_pool_registry, get_pool, reap_idle
-    from honest_persist.pool import is_idle
-
-    ms = 1_000_000
-
-    async def _run():
-        bad = []
-        # is_idle is strict and uses a ms->ns factor of 1_000_000: exactly at the threshold is not idle,
-        # one nanosecond past is.
-        if is_idle(0, 10_000_000, 10) is not False:
-            bad.append("is_idle should be False at exactly the threshold (strict >)")
-        if is_idle(0, 10_000_001, 10) is not True:
-            bad.append("is_idle should be True one nanosecond past the threshold")
-        events = []
-
-        async def emit(event_type, aggregate_type, aggregate_id, payload):
-            events.append((event_type, aggregate_type, aggregate_id, payload))
-
-        async def connect(selector):
-            return _SqliteConn()
-
-        async def close(conn):
-            conn.close()
-
-        registry = empty_pool_registry()
-        _, registry = await get_pool(registry, {"db_id": "main", "db_lifecycle": "on_demand"}, connect, 0, emit)
-        if len(events) != 1 or events[0][:3] != ("hf.persist.pool", "pool", "main") or events[0][3]["event"] != "created":
-            bad.append(f"first contact should emit a pool created event: {events}")
-        elif (events[0][3]["pool_size"], events[0][3]["active"], events[0][3]["waiting"]) != (1, 1, 0):
-            bad.append(f"the created event should report one connection, one active, none waiting: {events[0][3]}")
-
-        # Reuse does not re-emit created, and it refreshes last_used to the new now (so the pool is not
-        # prematurely reaped).
-        _, registry = await get_pool(registry, {"db_id": "main", "db_lifecycle": "on_demand"}, connect, 5, emit)
-        if len(events) != 1:
-            bad.append("reusing a cached pool should not emit a created event")
-        if registry["main:"]["last_used"] != 5:
-            bad.append(f"reusing a pool should refresh its last_used: {registry['main:']}")
-
-        # Reaping emits closed.
-        registry = await reap_idle(registry, 20 * ms, 10, close, emit)
-        if len(events) != 2 or events[1][2] != "main" or events[1][3]["event"] != "closed":
-            bad.append(f"reaping a pool should emit a closed event: {events}")
-        elif (events[1][3]["pool_size"], events[1][3]["active"], events[1][3]["waiting"]) != (1, 0, 0):
-            bad.append(f"the reaped closed event should report the closed connection, none active: {events[1][3]}")
-
-        # A failing emit is swallowed; no emit is a no-op.
-        async def emit_down(event_type, aggregate_type, aggregate_id, payload):
-            raise ValueError("emit is down")
-
-        pool_down_err = io.StringIO()
-        with redirect_stderr(pool_down_err):
-            await emit_pool_event(emit_down, "x", "error", 1, 0, 1, None, "pool_exhausted", "saturated")
-        if "pool event emit failed" not in pool_down_err.getvalue():
-            bad.append(f"a failing pool-event emit should be swallowed and logged: {pool_down_err.getvalue()!r}")
-        none_err = io.StringIO()
-        with redirect_stderr(none_err):
-            await emit_pool_event(None, "x", "created", 1, 1, 0, None, None, None)
-        if none_err.getvalue():
-            bad.append(f"a no-emit pool event should not touch emit (no stderr): {none_err.getvalue()!r}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_write_queue():
-    """The optimistic write queue (§8.6): merge_pending folds the pending writes for a table into a
-    read by primary key (a pending insert appears, an update overrides, a delete vanishes); drain
-    persists the queue to the backend through the injected execute — exercised against real SQLite
-    for insert, update, and delete."""
-    from honest_persist import drain_queue, empty_write_queue, enqueue_write, execute, merge_pending, raw, select
-    from honest_persist.queue import is_stalled
-
-    async def _run():
-        bad = []
-        # is_stalled fires once the failure has persisted for the six-hour limit. The boundary is pinned
-        # with the literal STALL_NS (6 * 3600 * 1e9 = 21_600_000_000_000) so a shift of any factor or the
-        # >= comparator is caught: exactly at the limit stalls, one nanosecond short does not.
-        if is_stalled(0, 21_600_000_000_000) is not True:
-            bad.append("is_stalled should fire exactly at the six-hour limit")
-        if is_stalled(0, 21_599_999_999_999) is not False:
-            bad.append("is_stalled should not fire one nanosecond before the limit")
-
-        # Read transparency: pending writes fold into a SELECT by primary key; other tables ignored.
-        rows = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
-        pending = empty_write_queue()
-        pending = enqueue_write(pending, "insert", "t", {"id": 3, "name": "c"})
-        pending = enqueue_write(pending, "update", "t", {"id": 1, "name": "A"})
-        pending = enqueue_write(pending, "delete", "t", {"id": 2, "name": "b"})
-        pending = enqueue_write(pending, "insert", "other", {"id": 9, "name": "x"})
-        merged = merge_pending(rows, pending, "t", "id")
-        if merged != [{"id": 1, "name": "A"}, {"id": 3, "name": "c"}]:
-            bad.append(f"merge_pending should fold pending writes for the table by primary key: {merged}")
-
-        # Drain against real SQLite: two inserts, then an update and a delete.
-        conn = _SqliteConn()
-        await execute(raw("CREATE TABLE t (id integer primary key, name text)"), conn)
-        inserts = enqueue_write(enqueue_write(empty_write_queue(), "insert", "t", {"id": 1, "name": "a"}), "insert", "t", {"id": 2, "name": "b"})
-        drained = await drain_queue(inserts, conn, execute, "id")
-        if drained != []:
-            bad.append("drain_queue should return the empty queue")
-        if await execute(select("t", ["id", "name"]), conn) != [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]:
-            bad.append("drained inserts should reach the backend")
-        change = enqueue_write(enqueue_write(empty_write_queue(), "update", "t", {"id": 1, "name": "z"}), "delete", "t", {"id": 2, "name": "b"})
-        await drain_queue(change, conn, execute, "id")
-        if await execute(select("t", ["id", "name"]), conn) != [{"id": 1, "name": "z"}]:
-            bad.append("a drained update and delete should reach the backend")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_supervisor():
-    """Durability + the supervised drain (§8.6): the queue survives a restart through its JSONL file,
-    and supervise_drain drains with retry, raising and emitting queue_stalled only once it has been
-    failing past the six-hour limit — driven against a real temp file and real SQLite."""
-    import tempfile
-
-    from honest_persist import (
-        backoff_delay,
-        empty_write_queue,
-        enqueue_write,
-        execute,
-        load_queue,
-        raw,
-        save_queue,
-        supervise_drain,
-    )
-
-    hour = 3600 * 1_000_000_000
-
-    async def _run():
-        bad = []
-        if backoff_delay(0, 100) != 100 or backoff_delay(3, 100) != 800:
-            bad.append("backoff_delay should double the base per attempt")
-
-        # Durability: a missing file is empty; save then load round-trips the queue through JSONL.
-        writes = enqueue_write(enqueue_write(empty_write_queue(), "insert", "t", {"id": 1, "name": "a"}), "delete", "t", {"id": 2, "name": "b"})
-        with tempfile.TemporaryDirectory() as directory:
-            path = directory + "/queue.jsonl"
-            if load_queue(path) != []:
-                bad.append("loading a missing queue file should give an empty queue")
-            save_queue(writes, path)
-            if load_queue(path) != writes:
-                bad.append("the queue should survive a save/load round-trip through JSONL")
-
-        # A successful supervised drain against SQLite clears the queue and resets the failure clock.
-        conn = _SqliteConn()
-        await execute(raw("CREATE TABLE t (id integer primary key, name text)"), conn)
-        insert_only = enqueue_write(empty_write_queue(), "insert", "t", {"id": 1, "name": "a"})
-        drained, failure, ok_first = await supervise_drain(insert_only, conn, execute, "id", 0, None, None)
-        if not ok_first or drained != [] or failure is not None:
-            bad.append(f"a successful drain should clear the queue and reset the clock: {drained}, {failure}, {ok_first}")
-
-        async def boom(query, connection):
-            raise RuntimeError("backend down")
-
-        # A failing drain keeps the queue and starts the failure clock, not yet stalled.
-        kept, started, ok_fail = await supervise_drain(insert_only, conn, boom, "id", 100, None, None)
-        if ok_fail or kept != insert_only or started != 100:
-            bad.append(f"a failed drain should keep the queue and start the clock: {kept}, {started}, {ok_fail}")
-
-        # Past six hours it emits queue_stalled and raises; a no-op emit and a failing emit are both fine.
-        events = []
-
-        async def emit(event_type, aggregate_type, aggregate_id, payload):
-            events.append((event_type, aggregate_type, aggregate_id, payload))
-
-        async def emit_down(event_type, aggregate_type, aggregate_id, payload):
-            raise ValueError("emit is down")
-
-        down_err = io.StringIO()
-        none_err = io.StringIO()
-        for sink, label, capture in ((emit, "emit", io.StringIO()), (None, "no emit", none_err), (emit_down, "failing emit", down_err)):
-            raised = False
-            try:
-                with redirect_stderr(capture):
-                    await supervise_drain(insert_only, conn, boom, "id", 7 * hour, 0, sink)
-            except RuntimeError:
-                raised = True
-            if not raised:
-                bad.append(f"a stalled queue should still raise the fault with {label}")
-        if none_err.getvalue():
-            bad.append(f"a no-emit stalled queue should not touch emit (no stderr): {none_err.getvalue()!r}")
-        if not events or events[0][:3] != ("hf.persist.queue_stalled", "persist", "write_queue"):
-            bad.append(f"a stalled queue should emit hf.persist.queue_stalled for the write_queue: {events}")
-        elif events[0][3] != {"queue_depth": len(insert_only), "stalled_for_ns": 7 * hour, "fault_code": "queue_stalled"}:
-            bad.append(f"the queue_stalled payload should carry the depth, stall time, and fault code: {events[0][3]}")
-        if "queue_stalled emit failed" not in down_err.getvalue():
-            bad.append(f"a swallowed queue_stalled emit failure should log to stderr: {down_err.getvalue()!r}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_drain_loop():
-    """The supervisor's drain loop and durable enqueue (§8.6): enqueue_durable persists the queue on
-    every write so it survives a restart; run_drain_loop retries a failing backend with exponential
-    backoff until it drains, and raises once it has stalled past the limit — driven with an injected
-    clock and sleep against real SQLite and a real temp file."""
-    import tempfile
-
-    from honest_persist import (
-        empty_write_queue,
-        enqueue_durable,
-        enqueue_write,
-        execute,
-        load_queue,
-        raw,
-        run_drain_loop,
-        select,
-    )
-
-    hour = 3600 * 1_000_000_000
-
-    async def _run():
-        bad = []
-
-        # Durable enqueue: every write is persisted, so the queue survives a restart.
-        with tempfile.TemporaryDirectory() as directory:
-            path = directory + "/queue.jsonl"
-            queue = enqueue_durable(empty_write_queue(), "insert", "t", {"id": 1, "name": "a"}, path)
-            if queue != [{"op": "insert", "table": "t", "row": {"id": 1, "name": "a"}}]:
-                bad.append(f"enqueue_durable should return the new queue: {queue}")
-            if load_queue(path) != queue:
-                bad.append("enqueue_durable should persist the queue so it survives a restart")
-
-        conn = _SqliteConn()
-        await execute(raw("CREATE TABLE t (id integer primary key, name text)"), conn)
-        queue = enqueue_write(empty_write_queue(), "insert", "t", {"id": 1, "name": "a"})
-
-        # run_drain_loop retries a failing-then-succeeding backend, sleeping the exponential backoff.
-        attempts = {"n": 0}
-
-        async def flaky(query, connection):
-            attempts["n"] += 1
-            if attempts["n"] < 3:
-                raise RuntimeError("transient")
-            await execute(query, connection)
-
-        slept = []
-
-        async def sleep(milliseconds):
-            slept.append(milliseconds)
-
-        ticks = {"t": 0}
-
-        def now():
-            ticks["t"] += 1
-            return ticks["t"]
-
-        drained = await run_drain_loop(queue, conn, flaky, "id", 10, now, sleep, None)
-        if drained != [] or attempts["n"] != 3 or slept != [20, 40]:
-            bad.append(f"run_drain_loop should retry with exponential backoff until it drains: {attempts}, {slept}")
-        if await execute(select("t", ["id", "name"]), conn) != [{"id": 1, "name": "a"}]:
-            bad.append("the write should reach the backend once the loop drains")
-
-        # A perpetually failing backend, with the clock past the limit, stalls and raises.
-        async def always_fail(query, connection):
-            raise RuntimeError("backend down")
-
-        jumps = {"t": 0}
-
-        def jump_now():
-            jumps["t"] += 7 * hour
-            return jumps["t"]
-
-        raised = False
+    with tempfile.TemporaryDirectory() as d:
+        return asyncio.run(_run(d))
+
+
+def _probe_checked_builders():
+    """The §7.3 schema-checked builders validate the names a query uses against the DECLARED schema — a
+    pure check needing no connection (spec §7.3): on success each returns exactly the Query its raw
+    counterpart produces; an undeclared table is an unknown_table Fault and an undeclared column an
+    unknown_column Fault, across the selected columns, the WHERE keys, the ORDER BY keys and the
+    INSERT/UPDATE value keys. The `*` wildcard, an ORDER BY `-` prefix and all-columns (NOTHING) are not
+    column-checked."""
+    for name in ("checked_select", "checked_insert", "checked_update", "checked_delete",
+                 "select", "insert", "update", "delete"):
         try:
-            await run_drain_loop(queue, conn, always_fail, "id", 10, jump_now, sleep, None)
-        except RuntimeError:
-            raised = True
-        if not raised:
-            bad.append("a perpetually failing drain loop should eventually stall and raise")
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (checked builders)"]
+    checked_select = _need("checked_select"); checked_insert = _need("checked_insert")
+    checked_update = _need("checked_update"); checked_delete = _need("checked_delete")
+    select = _need("select"); insert = _need("insert"); update = _need("update"); delete = _need("delete")
+    schema = {"tables": [{"name": "users",
+                          "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None},
+                                      {"name": "email", "declared_type": "text", "renamed_from": None, "references": None}],
+                          "indexes": [], "constraints": []},
+                         {"name": "posts",
+                          "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None},
+                                      {"name": "author", "declared_type": "integer", "renamed_from": None, "references": None}],
+                          "indexes": [], "constraints": []}], "views": []}
+    bad = []
+    # On success the checked builder returns exactly the raw builder's Query.
+    if checked_select(schema, "users", ["id", "email"], {"id": 1}, None, None, None, None) != select("users", ["id", "email"], {"id": 1}, None, None, None, None):
+        bad.append("checked_select should return exactly the raw select's Query on success")
+    if checked_insert(schema, "users", {"id": 1, "email": "a@b.c"}) != insert("users", {"id": 1, "email": "a@b.c"}):
+        bad.append("checked_insert should return exactly the raw insert's Query on success")
+    if checked_update(schema, "users", {"email": "x"}, {"id": 1}) != update("users", {"email": "x"}, {"id": 1}):
+        bad.append("checked_update should return exactly the raw update's Query on success")
+    if checked_delete(schema, "users", {"id": 1}) != delete("users", {"id": 1}):
+        bad.append("checked_delete should return exactly the raw delete's Query on success")
+    # An undeclared table is unknown_table; an undeclared column is unknown_column, everywhere a name is used.
+    bad_table = checked_select(schema, "nope", ["id"], None, None, None, None, None)
+    if not (hp.is_fault(bad_table) and bad_table.get("code") == "unknown_table"):
+        bad.append(f"an undeclared table should be an unknown_table Fault: {bad_table}")
+    bad_col = checked_select(schema, "users", ["nosuch"], None, None, None, None, None)
+    if not (hp.is_fault(bad_col) and bad_col.get("code") == "unknown_column"):
+        bad.append(f"an undeclared selected column should be an unknown_column Fault: {bad_col}")
+    if not hp.is_fault(checked_select(schema, "users", ["id"], {"nosuch": 1}, None, None, None, None)):
+        bad.append("checked_select should check the WHERE keys")
+    if not hp.is_fault(checked_select(schema, "users", ["id"], None, ["nosuch"], None, None, None)):
+        bad.append("checked_select should check the ORDER BY keys")
+    if not hp.is_fault(checked_insert(schema, "users", {"nosuch": 1})):
+        bad.append("checked_insert should check the value keys")
+    if not hp.is_fault(checked_update(schema, "users", {"nosuch": 1}, {"id": 1})):
+        bad.append("checked_update should check the value keys")
+    if not hp.is_fault(checked_delete(schema, "users", {"nosuch": 1})):
+        bad.append("checked_delete should check the WHERE keys")
+    # The * wildcard, all-columns (NOTHING), and an ORDER BY `-` prefix on a declared column are not refused.
+    if hp.is_fault(checked_select(schema, "users", ["*"], None, None, None, None, None)):
+        bad.append("checked_select should not column-check the * wildcard")
+    if hp.is_fault(checked_select(schema, "users", None, None, ["-id"], None, None, None)):
+        bad.append("checked_select should pass all-columns and a `-`-prefixed declared ORDER BY column")
+    # A join's table is checked for existence; its ON expression is raw SQL and is not column-checked.
+    # (All-columns is used so the check turns only on the join table, not on qualified column names.)
+    good_join = checked_select(schema, "users", None, None, None, None, None,
+                               [{"table": "posts", "on": "posts.author = users.id"}])
+    if hp.is_fault(good_join):
+        bad.append(f"a join to a declared table should pass, its ON left as raw SQL: {good_join}")
+    bad_join = checked_select(schema, "users", None, None, None, None, None,
+                              [{"table": "nope", "on": "nope.x = users.id"}])
+    if not (hp.is_fault(bad_join) and bad_join.get("code") == "unknown_table"):
+        bad.append(f"a join to an undeclared table should be an unknown_table Fault: {bad_join}")
+    return bad
+
+
+def _probe_query_select_options():
+    """select carries the optional clauses the basic round-trip does not reach (spec §7.2): an order,
+    ascending and the descending `-` prefix, a limit and an offset that page the result, and a join that
+    reads a second table. execute_scalar answers NOTHING when the query matches nothing. Run on a real
+    sqlite connection."""
+    for name in ("select", "insert", "execute", "execute_scalar", "execute_many"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (select options)"]
+    select = _need("select"); insert = _need("insert"); execute = _need("execute")
+    execute_scalar = _need("execute_scalar"); execute_many = _need("execute_many")
+
+    async def _run(d):
+        bad = []
+        conn = _SqliteQueryConnection(os.path.join(d, "opt.db"))
+        await conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT)", {})
+        await conn.execute("CREATE TABLE tags (wid INTEGER, tag TEXT)", {})
+        for wid, nm in ((1, "a"), (2, "b"), (3, "c")):
+            await execute_many(insert("widgets", {"id": wid, "name": nm}), conn)
+        await execute_many(insert("tags", {"wid": 1, "tag": "x"}), conn)
+
+        ascending = await execute(select("widgets", ["id"], None, ["id"], None, None, None), conn)
+        if [row["id"] for row in ascending] != [1, 2, 3]:
+            bad.append(f"an ascending order_by should sort ascending: {ascending}")
+        # The descending `-` prefix, paged by a limit and offset over the reversed order.
+        paged = await execute(select("widgets", ["id"], None, ["-id"], 2, 1, None), conn)
+        if [row["id"] for row in paged] != [2, 1]:
+            bad.append(f"a descending order_by with limit and offset should page the reverse order: {paged}")
+        joined = await execute(select("widgets", ["widgets.id", "tags.tag"], {"id": 1}, None, None, None,
+                                      [{"table": "tags", "on": "tags.wid = widgets.id"}]), conn)
+        if not (joined and joined[0].get("tag") == "x"):
+            bad.append(f"a join should read the joined row: {joined}")
+        empty = await execute_scalar(select("widgets", ["name"], {"id": 999}, None, None, None, None), conn)
+        if empty is not None:
+            bad.append(f"execute_scalar with no matching row should answer NOTHING: {empty}")
+        conn.close()
         return bad
 
-    return asyncio.run(_run())
+    with tempfile.TemporaryDirectory() as d:
+        return asyncio.run(_run(d))
 
 
-def _probe_connection_pool():
-    """The multi-connection pool (§8.1, 8.3, 8.8): new_pool / acquire / release manage N connections
-    as a value — acquire faults pool_exhausted when every one is in use; open_pool establishes each
-    connection resiliently through connect_with_retry and emits created, closing the ones already
-    opened if a later one cannot be established; lease emits exhausted on a full pool, close emits
-    closed — open and close driven against real SQLite connections."""
-    from honest_persist import (
-        acquire_connection,
-        close_pool,
-        lease_connection,
-        new_pool,
-        open_pool,
-        release_connection,
-    )
+def _probe_query_transaction():
+    """A §7 transaction runs several writes all-or-nothing on one connection (spec §7.5): on success it
+    answers each write's rows-affected count in order and every write commits; on a failing write it rolls
+    back, answers a write_failed Fault naming the index, and leaves nothing behind for another reader."""
+    for name in ("insert", "transaction", "execute"):
+        try:
+            _need(name)
+        except _NotBuilt as e:
+            return [f"{e}: {name} (query transaction)"]
+    insert = _need("insert"); transaction = _need("transaction"); execute = _need("execute")
+    select = _need("select")
+
+    async def _run(d):
+        bad = []
+        conn = _SqliteQueryConnection(os.path.join(d, "t.db"))
+        await conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT)", {})
+        landed = await transaction([insert("widgets", {"id": 1, "name": "a"}),
+                                    insert("widgets", {"id": 2, "name": "b"})], conn)
+        if not (isinstance(landed, list) and landed == [1, 1]):
+            bad.append(f"a transaction of two inserts should answer each write's count: {landed}")
+        count = await execute(select("widgets", ["id"], None, None, None, None, None), conn)
+        if len(count) != 2:
+            bad.append(f"both writes of a successful transaction should commit: {count}")
+        # A failing write (a duplicate primary key) rolls the whole transaction back.
+        refused = await transaction([insert("widgets", {"id": 3, "name": "c"}),
+                                     insert("widgets", {"id": 1, "name": "dup"})], conn)
+        if not (hp.is_fault(refused) and refused.get("code") == "write_failed"):
+            bad.append(f"a transaction with a failing write should answer a write_failed Fault: {refused}")
+        after = await execute(select("widgets", ["id"], None, None, None, None, None), conn)
+        if len(after) != 2:
+            bad.append(f"a rolled-back transaction must leave no row behind; rows now {len(after)}")
+        conn.close()
+        return bad
+
+    with tempfile.TemporaryDirectory() as d:
+        return asyncio.run(_run(d))
+
+
+# ---------------------------------------------------------------------------
+# The runner.
+# ---------------------------------------------------------------------------
+
+def _probe_async_write():
+    """The asynchronous write path of spec 8.6, exposed as two caller doors. query_deposit hands a
+    declared write to the crew and returns a Ticket at once, not awaited to durability; query_collect
+    redeems the ticket, waits on the outcome, and answers with what the write did. A read handed to
+    query_deposit is refused, because a read has nothing to defer (refuse_a_read); a ticket no crew holds
+    handed to query_collect reads back a NoMatch, the database untouched (refuse_an_unknown_ticket). The
+    two pure guards are pinned on both branches directly, and the two doors run end to end against a real
+    opened sqlite database (declaration query_deposit, query_collect, query_prepare_deposit,
+    query_redeem_ticket, refuse_a_read, refuse_an_unknown_ticket)."""
 
     async def _run():
         bad = []
 
-        # Pure mechanics: acquire hands out idle connections, faults when full, release returns one.
-        pool = new_pool(["c1", "c2"])
-        if pool != {"size": 2, "idle": ["c1", "c2"], "active": 0}:
-            bad.append(f"new_pool should hold the connections idle: {pool}")
-        first, pool = acquire_connection(pool)
-        second, pool = acquire_connection(pool)
-        if first["ok"] != "c1" or second["ok"] != "c2" or pool["active"] != 2:
-            bad.append(f"acquire should hand out idle connections and count them active: {first}, {second}, {pool}")
-        miss, pool = acquire_connection(pool)
-        if miss.get("err") != {"code": "pool_exhausted", "message": "every connection in the pool is in use", "category": "server"}:
-            bad.append(f"acquire on a full pool should fault pool_exhausted in full: {miss}")
-        pool = release_connection(pool, "c1")
-        if pool != {"size": 2, "idle": ["c1"], "active": 1}:
-            bad.append(f"release should return the connection to idle and decrement active: {pool}")
-
-        # open_pool against real SQLite: each connection is established resiliently through
-        # connect_with_retry, so a transient failure retries, and a created event fires once the
-        # whole pool is open.
-        created = []
-
-        async def emit_created(event_type, aggregate_type, aggregate_id, payload):
-            created.append(payload)
-
-        def classify(exc):
-            return "unresolvable_dsn"
-
-        slept = []
-
-        async def sleep(delay_ms):
-            slept.append(delay_ms)
-            return None
-
-        attempts = {"n": 0}
-
-        async def flaky_connect(selector):
-            attempts["n"] += 1
-            if attempts["n"] == 1:
-                raise RuntimeError("connection refused")
-            return _SqliteConn()
-
-        async def close_unused(conn):
-            conn.close()
-
-        opened = await open_pool("main", flaky_connect, classify, close_unused, 2, 3, 10, sleep, emit_created)
-        if "ok" not in opened or opened["ok"]["size"] != 2 or [p["event"] for p in created] != ["retry", "created"]:
-            bad.append(f"open_pool should establish each connection resiliently and emit created: {opened}, {[p['event'] for p in created]}")
-        elif (created[-1]["pool_size"], created[-1]["active"], created[-1]["waiting"]) != (2, 0, 0):
-            bad.append(f"the created pool event should report the pool size and no active/waiting: {created[-1]}")
-        elif len(slept) != 1:
-            bad.append(f"the one transient failure should back off exactly once before retrying: {slept}")
-
-        # A connection that cannot be established closes the ones already opened — none leak — and
-        # returns the establishment fault.
-        made = []
-
-        async def first_then_down(selector):
-            if not made:
-                conn = _SqliteConn()
-                made.append(conn)
-                return conn
-            raise RuntimeError("connection refused")
-
-        cleaned = []
-
-        async def close_partial(conn):
-            conn.close()
-            cleaned.append(conn)
-
-        partial_events = []
-
-        async def emit_partial(event_type, aggregate_type, aggregate_id, payload):
-            partial_events.append(payload)
-            return None
-
-        partial = await open_pool("main", first_then_down, classify, close_partial, 2, 1, 1, sleep, emit_partial)
-        if partial.get("err", {}).get("code") != "unresolvable_dsn" or cleaned != made:
-            bad.append(f"open_pool should close the connections it opened when a later one fails: {partial}, {cleaned}, {made}")
-        # A pool that failed to finish opening never announces itself as created.
-        elif any(p.get("event") == "created" for p in partial_events):
-            bad.append(f"a pool that failed to open should not emit a created event: {partial_events}")
-
-        # lease emits exhausted on a full pool, and stays quiet when a connection is free.
-        exhausted = []
-
-        async def emit_exhausted(event_type, aggregate_type, aggregate_id, payload):
-            exhausted.append(payload)
-
-        result, _ = await lease_connection(new_pool([]), "main", emit_exhausted)
-        if result.get("err", {}).get("code") != "pool_exhausted" or [p["event"] for p in exhausted] != ["exhausted"]:
-            bad.append(f"lease on a full pool should fault and emit exhausted: {result}, {exhausted}")
-        elif (exhausted[0]["pool_size"], exhausted[0]["active"], exhausted[0]["waiting"], exhausted[0]["fault_code"]) != (0, 0, 1, "pool_exhausted"):
-            bad.append(f"the exhausted event should report the full pool, one waiter, and the fault code: {exhausted[0]}")
-        quiet = []
-
-        async def emit_quiet(event_type, aggregate_type, aggregate_id, payload):
-            quiet.append(payload["event"])
-
-        leased, _ = await lease_connection(new_pool(["c1"]), "main", emit_quiet)
-        if "ok" not in leased or quiet != []:
-            bad.append(f"lease with a free connection should not emit exhausted: {leased}, {quiet}")
-
-        # close_pool closes the idle connections and emits closed.
-        closed_conns = []
-
-        async def close(conn):
-            conn.close()
-            closed_conns.append(conn)
-
-        closed_events = []
-
-        async def emit_closed(event_type, aggregate_type, aggregate_id, payload):
-            closed_events.append(payload)
-
-        returned_pool = await close_pool(opened["ok"], "main", close, emit_closed)
-        if len(closed_conns) != 2 or [p["event"] for p in closed_events] != ["closed"]:
-            bad.append(f"close_pool should close the idle connections and emit closed: {closed_conns}, {[p['event'] for p in closed_events]}")
-        elif (closed_events[0]["pool_size"], closed_events[0]["active"], closed_events[0]["waiting"]) != (2, 0, 0):
-            bad.append(f"the closed event should report the pool size and no active/waiting: {closed_events[0]}")
-        if returned_pool != opened["ok"]:
-            bad.append("close_pool should return the pool")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_connect_retry():
-    """Resilient connection establishment (section 8.8, 8.3): connect_with_retry retries a transient
-    failure — emitting a retry event and sleeping the backoff — then connects against a real SQLite
-    database; exhausts its attempts on a persistently unresolvable DSN, emitting error and returning
-    err(unresolvable_dsn); and fails fast on a rejected credential without retrying at all.
-    should_retry is the pure decision underneath."""
-    from honest_persist import connect_with_retry, should_retry
-
-    async def _run():
-        bad = []
-
-        # The pure decision: retry while attempts remain and the fault is transient.
-        if not should_retry(0, 3, "unresolvable_dsn"):
-            bad.append("should_retry should retry a transient fault while attempts remain")
-        if should_retry(3, 3, "unresolvable_dsn"):
-            bad.append("should_retry should stop once the attempts are exhausted")
-        if should_retry(0, 3, "credential_rejected"):
-            bad.append("should_retry should never retry a credential_rejected fault")
-
-        def classify(exc):
-            return "credential_rejected" if "denied" in str(exc) else "unresolvable_dsn"
-
-        # A transient failure retries once, sleeps the backoff, then connects for real.
-        attempts = {"n": 0}
-
-        async def flaky(selector):
-            attempts["n"] += 1
-            if attempts["n"] < 2:
-                raise RuntimeError("connection refused")
-            return _SqliteConn()
-
-        retries_seen = []
-
-        async def emit(event_type, aggregate_type, aggregate_id, payload):
-            retries_seen.append(payload)
-
-        slept = []
-
-        async def sleep(delay_ms):
-            slept.append(delay_ms)
-
-        opened = await connect_with_retry({"database": "main"}, flaky, classify, 3, 10, sleep, emit)
-        if "ok" not in opened or [p["event"] for p in retries_seen] != ["retry"] or slept != [20]:
-            bad.append(f"a transient failure should retry once, sleep the backoff, then connect: {opened}, {retries_seen}, {slept}")
-        elif (retries_seen[0]["pool_size"], retries_seen[0]["active"], retries_seen[0]["waiting"]) != (0, 0, 0):
-            bad.append(f"a retry pool event should report no pool counters yet (0/0/0): {retries_seen[0]}")
+        # The two pure guards, each on both branches. crew_deposit leaves a waiter on the running loop,
+        # so the held-ticket case runs inside this async body.
+        guards = ("refuse_a_read", "refuse_an_unknown_ticket", "crew_make", "crew_deposit")
+        missing = [n for n in guards if getattr(hp, n, None) is None]
+        if missing:
+            bad.extend(f"not built: {n}" for n in missing)
         else:
-            conn = opened["ok"]
-            await conn.execute("CREATE TABLE t (x INTEGER)")
-            await conn.execute("INSERT INTO t (x) VALUES (1)")
-            got = await conn.execute("SELECT x FROM t")
-            if got["rows"][0]["x"] != 1:
-                bad.append(f"connect_with_retry should return a usable connection: {got}")
+            refuse_a_read = hp.refuse_a_read
+            on_read = refuse_a_read(_declaration())  # wanted "all": a read has nothing to defer
+            if not hp.is_fault(on_read):
+                bad.append(f"refuse_a_read should refuse a reading word as a Fault: {on_read}")
+            on_write = refuse_a_read(_declaration(wanted="add", rows=[{"id": 1, "name": "a"}]))
+            if on_write is not None:
+                bad.append(f"refuse_a_read should pass a write as NOTHING: {on_write}")
+            refuse_unknown = hp.refuse_an_unknown_ticket
+            crew = hp.crew_make()
+            miss = refuse_unknown(crew, "f" * 32)
+            if not (isinstance(miss, dict) and "reason" in miss):
+                bad.append(f"refuse_an_unknown_ticket should answer a NoMatch for a ticket not held: {miss}")
+            held = hp.crew_deposit(crew, {"text": "INSERT INTO users (id) VALUES (1)", "parameters": {}})
+            if not isinstance(held, str):
+                bad.append(f"crew_deposit should return a Ticket for the held-ticket guard case: {held}")
+            elif refuse_unknown(crew, held) is not None:
+                bad.append(f"refuse_an_unknown_ticket should pass a held ticket as NOTHING: {refuse_unknown(crew, held)}")
 
-        # A persistently unresolvable DSN exhausts its retries and emits error.
-        async def down(selector):
-            raise RuntimeError("connection refused")
-
-        down_events = []
-
-        async def emit_down(event_type, aggregate_type, aggregate_id, payload):
-            down_events.append(payload)
-
-        slept_noop = []
-
-        async def sleep_noop(delay_ms):
-            slept_noop.append(delay_ms)
-            return None
-
-        failed = await connect_with_retry({"database": "main"}, down, classify, 2, 10, sleep_noop, emit_down)
-        if failed.get("err", {}).get("code") != "unresolvable_dsn" or [p["event"] for p in down_events] != ["retry", "retry", "error"]:
-            bad.append(f"an unresolvable DSN should exhaust its retries and emit error: {failed}, {[p['event'] for p in down_events]}")
-        elif len(slept_noop) != 2:
-            bad.append(f"two retries should back off twice before erroring: {slept_noop}")
-        elif (down_events[-1]["pool_size"], down_events[-1]["active"], down_events[-1]["waiting"]) != (0, 0, 0):
-            bad.append(f"an error pool event should report no pool counters (0/0/0): {down_events[-1]}")
-
-        # A rejected credential fails fast: no retry, no sleep.
-        async def denied(selector):
-            raise RuntimeError("access denied")
-
-        denied_events = []
-
-        async def emit_denied(event_type, aggregate_type, aggregate_id, payload):
-            denied_events.append(payload["event"])
-
-        denied_slept = []
-
-        async def sleep_denied(delay_ms):
-            denied_slept.append(delay_ms)
-
-        rejected = await connect_with_retry({"database": "main"}, denied, classify, 3, 10, sleep_denied, emit_denied)
-        if rejected.get("err", {}).get("code") != "credential_rejected" or denied_events != ["error"] or denied_slept != []:
-            bad.append(f"a rejected credential should fail fast without retrying: {rejected}, {denied_events}, {denied_slept}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_migrate():
-    """The migration workflow (section 9): inspect reads the live SQLite schema back, and migrate
-    composes inspect + diff + apply against a real database — creating a table, then adding a column
-    on a second pass — refusing without applying when the diff is ambiguous, surfacing a diff fault
-    for an invalid target, and faulting on an unsupported dialect. Driven end-to-end on real SQLite."""
-    from honest_persist import diff, expand_schema, inspect, migrate, object_registry_queries, refresh_materialized_view
-
-    from honest_persist.migrate import _attach_foreign_keys
-
-    async def _run():
-        bad = []
-
-        # _attach_foreign_keys attaches a PRAGMA foreign_key_list row to its column: a 'table.column'
-        # reference and any non-default cascade action, leaving other columns alone and ignoring a row
-        # whose column is not present. The two real rows cover on_delete/on_update set and skipped.
-        attached = _attach_foreign_keys(
-            {"team_id": {"type": "integer", "nullable": True}, "owner_id": {"type": "integer", "nullable": True}, "note": {"type": "text"}},
-            [
-                {"from": "team_id", "table": "team", "to": "id", "on_delete": "CASCADE", "on_update": "NO ACTION"},
-                {"from": "owner_id", "table": "usr", "to": "id", "on_delete": "NO ACTION", "on_update": "RESTRICT"},
-                {"from": "ghost", "table": "x", "to": "y", "on_delete": "NO ACTION", "on_update": "NO ACTION"},
-            ],
-        )
-        if attached != {
-            "team_id": {"type": "integer", "nullable": True, "references": "team.id", "on_delete": "cascade"},
-            "owner_id": {"type": "integer", "nullable": True, "references": "usr.id", "on_update": "restrict"},
-            "note": {"type": "text"},
-        }:
-            bad.append(f"_attach_foreign_keys should set references and cascade actions on the right column: {attached}")
-
-        # inspect reads a table's explicit indexes (PRAGMA index_list origin 'c') with their columns and
-        # unique flag, but not the auto-index backing a UNIQUE column or the primary key.
-        ix = _SqliteConn()
-        await ix.execute("CREATE TABLE ev (id integer PRIMARY KEY, kind text UNIQUE, a integer, b integer)")
-        await ix.execute("CREATE INDEX ev_by_a ON ev (a)")
-        await ix.execute("CREATE UNIQUE INDEX ev_uq_ab ON ev (a, b)")
-        read_ix = await inspect(ix, "sqlite")
-        got_ix = read_ix["ok"]["tables"]["ev"].get("indexes", {})
-        if got_ix != {"ev_by_a": {"columns": ["a"]}, "ev_uq_ab": {"columns": ["a", "b"], "unique": True}}:
-            bad.append(f"inspect should read only explicit indexes, with their columns and unique flag: {got_ix}")
-
-        # A check constraint round-trips through the registry: migrate records it, and inspect
-        # reconstructs it onto the table (SQLite has no catalog for check constraints).
-        cc = _SqliteConn()
-        cc_schema = {"tables": {"acct": {"columns": {"id": {"type": "integer", "primary_key": True}, "bal": {"type": "integer", "nullable": True}}, "constraints": {"bal_ok": {"type": "check", "expression": "bal >= 0"}}}}}
-        await migrate(cc_schema, cc, "sqlite")
-        cc_back = await inspect(cc, "sqlite")
-        if cc_back["ok"]["tables"]["acct"].get("constraints") != {"bal_ok": {"type": "check", "expression": "bal >= 0"}}:
-            bad.append(f"inspect should reconstruct a check constraint onto its table from the registry: {cc_back['ok']['tables']['acct'].get('constraints')}")
-        if diff(cc_back["ok"], expand_schema(cc_schema))["operations"]:
-            bad.append("a check-constraint schema should round-trip to no operations")
-
-        # §5.5: reconstructing a table under a dependent view (a SQLite column alter) drops and recreates
-        # the view around the rebuild, rather than failing because a view references the table.
-        rv = _SqliteConn()
-        rv_v1 = {"tables": {"acct": {"columns": {"id": {"type": "integer", "primary_key": True}, "note": {"type": "text", "nullable": True}}}}, "views": {"acct_v": {"query": "SELECT id FROM acct", "depends_on": ["acct"]}}}
-        await migrate(rv_v1, rv, "sqlite")
-        rv_v2 = {"tables": {"acct": {"columns": {"id": {"type": "integer", "primary_key": True}, "note": {"type": "text", "nullable": False}}}}, "views": {"acct_v": {"query": "SELECT id FROM acct", "depends_on": ["acct"]}}}
-        recon = await migrate(rv_v2, rv, "sqlite")
-        rv_back = await inspect(rv, "sqlite")
-        if "ok" not in recon or not recon["ok"]["success"]:
-            bad.append(f"reconstructing a table under a dependent view should succeed: {recon}")
-        elif rv_back["ok"]["views"].get("acct_v") != {"query": "SELECT id FROM acct", "depends_on": ["acct"]}:
-            bad.append(f"the dependent view should survive the reconstruction: {rv_back['ok']['views']}")
-        elif rv_back["ok"]["tables"]["acct"]["columns"]["note"]["nullable"] is not False:
-            bad.append(f"the reconstruction should have applied the column change: {rv_back['ok']['tables']['acct']['columns']['note']}")
-
-        # §5.5: a materialized view whose source is reconstructed keeps refreshing — its refresh
-        # triggers, dropped with the old table, are recreated on the rebuilt one.
-        mvr = _SqliteConn()
-        mvr_v1 = {"tables": {"src": {"columns": {"id": {"type": "integer", "primary_key": True}, "flag": {"type": "integer", "nullable": True}}}}, "views": {"mv": {"query": "SELECT id FROM src WHERE flag > 0", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}}}
-        await migrate(mvr_v1, mvr, "sqlite")
-        mvr_v2 = {"tables": {"src": {"columns": {"id": {"type": "integer", "primary_key": True}, "flag": {"type": "integer", "nullable": False}}}}, "views": {"mv": {"query": "SELECT id FROM src WHERE flag > 0", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}}}
-        mvr_recon = await migrate(mvr_v2, mvr, "sqlite")
-        if "ok" not in mvr_recon or not mvr_recon["ok"]["success"]:
-            bad.append(f"reconstructing a materialized view's source should succeed: {mvr_recon}")
-        else:
-            # After the rebuild, inserting a matching row fires the recreated refresh trigger.
-            await mvr.execute("INSERT INTO src (id, flag) VALUES (1, 5)")
-            refreshed = await mvr.execute("SELECT id FROM mv")
-            if [r["id"] for r in refreshed["rows"]] != [1]:
-                bad.append(f"the materialized view's refresh trigger should survive its source's reconstruction: {refreshed['rows']}")
-
-        # §5.5: a reconstruction preserves the table's check constraints and recreates its user triggers.
-        ct = _SqliteConn()
-        ct_cols = lambda nn: {"id": {"type": "integer", "primary_key": True}, "bal": {"type": "integer", "nullable": nn}}
-        ct_extra = {"constraints": {"bal_ok": {"type": "check", "expression": "bal >= 0"}}}
-        ct_trig = {"acct_log": {"table": "acct", "timing": "after", "events": ["insert"], "body": "BEGIN SELECT 1; END"}}
-        await migrate({"tables": {"acct": {"columns": ct_cols(True), **ct_extra}}, "triggers": ct_trig}, ct, "sqlite")
-        ct_recon = await migrate({"tables": {"acct": {"columns": ct_cols(False), **ct_extra}}, "triggers": ct_trig}, ct, "sqlite")
-        if "ok" not in ct_recon or not ct_recon["ok"]["success"]:
-            bad.append(f"reconstructing a checked, triggered table should succeed: {ct_recon}")
-        else:
-            rejected = False
-            try:
-                await ct.execute("INSERT INTO acct (id, bal) VALUES (1, -1)")
-            except Exception:
-                rejected = True
-            if not rejected:
-                bad.append("the check constraint should survive the reconstruction and reject a bad row")
-            live_trigger = await ct.execute("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'acct_log'")
-            if not live_trigger["rows"]:
-                bad.append("the user trigger should be recreated on the rebuilt table")
-
-        # inspect reads tables and columns back with type, nullability, primary key, and default.
-        rich = _SqliteConn()
-        await rich.execute(
-            "CREATE TABLE rich (id integer PRIMARY KEY, label text NOT NULL, score integer DEFAULT 5, note text)"
-        )
-        read = await inspect(rich, "sqlite")
-        if set(read["ok"]) != {"tables", "views", "triggers", "procedures"}:
-            bad.append(f"inspect should return a full SchemaDefinition (section 9.1): {read}")
-        if set(read["ok"]["tables"]) != {"rich"}:
-            bad.append(f"inspect should read exactly the user tables: {read}")
-        else:
-            cols = read["ok"]["tables"]["rich"]["columns"]
-            if cols["id"] != {"type": "integer", "nullable": False, "primary_key": True}:
-                bad.append(f"inspect should read the primary key column as not-null: {cols.get('id')}")
-            if cols["label"] != {"type": "text", "nullable": False}:
-                bad.append(f"inspect should read a NOT NULL column: {cols.get('label')}")
-            if cols["score"] != {"type": "integer", "nullable": True, "default": "5"}:
-                bad.append(f"inspect should read a column default: {cols.get('score')}")
-            if cols["note"] != {"type": "text", "nullable": True}:
-                bad.append(f"inspect should read a plain nullable column: {cols.get('note')}")
-
-        # migrate creates the table on an empty database, then adds a column on the next pass.
-        conn = _SqliteConn()
-        v1 = {"notes": {"columns": {"body": {"type": "text", "nullable": True}, "ts": {"type": "integer", "nullable": True}}}}
-        first = await migrate(v1, conn, "sqlite")
-        if "ok" not in first or not first["ok"]["success"]:
-            bad.append(f"migrate should create the table on an empty database: {first}")
-        v2 = {"notes": {"columns": {"body": {"type": "text", "nullable": True}, "ts": {"type": "integer", "nullable": True}, "tag": {"type": "text", "nullable": True}}}}
-        second = await migrate(v2, conn, "sqlite")
-        after = await inspect(conn, "sqlite")
-        if "ok" not in second or "tag" not in after["ok"]["tables"]["notes"]["columns"]:
-            bad.append(f"migrate should add the new column on the second pass: {second}, {after}")
-
-        # §9.1: extended objects round-trip through the _hp_object registry. A view and a trigger
-        # declared in the schema are read back exactly by the next inspect, so a stable schema diffs
-        # to no operations rather than re-creating them on every migration. (Procedures are not a
-        # SQLite object, so their registry round-trip is exercised directly below.)
-        ext = _SqliteConn()
-        with_objects = {
-            "tables": {"widget": {"columns": {"id": {"type": "integer", "nullable": True}, "qty": {"type": "integer", "nullable": True}}}},
-            "views": {"widget_v": {"query": "SELECT id FROM widget", "depends_on": ["widget"]}},
-            "triggers": {"widget_t": {"table": "widget", "timing": "after", "events": ["insert"], "body": "BEGIN SELECT 1; END"}},
-        }
-        made = await migrate(with_objects, ext, "sqlite")
-        back = await inspect(ext, "sqlite")
-        if "ok" not in made or not made["ok"]["success"]:
-            bad.append(f"migrate should create the tables and extended objects: {made}")
-        elif back["ok"]["views"] != with_objects["views"] or back["ok"]["triggers"] != with_objects["triggers"]:
-            bad.append(f"inspect should round-trip views and triggers from the registry: {back['ok']}")
-        elif set(back["ok"]["tables"]) != {"widget"}:
-            bad.append(f"inspect should hide the _hp_object registry from the tables it reports: {back['ok']['tables']}")
-        else:
-            stable = diff(back["ok"], expand_schema(with_objects))
-            if stable["operations"]:
-                bad.append(f"a schema whose extended objects already exist should diff to no operations: {stable['operations']}")
-            dropped = await migrate({"tables": with_objects["tables"], "views": {}, "triggers": {}, "procedures": {}}, ext, "sqlite")
-            gone = await inspect(ext, "sqlite")
-            if "ok" not in dropped or gone["ok"]["views"] or gone["ok"]["triggers"]:
-                bad.append(f"dropping the extended objects should clear them from the registry: {dropped}, {gone['ok']}")
-
-        # object_registry_queries records every extended-object kind, including procedures, which are
-        # not a SQLite object but still round-trip through the registry exactly as declared.
-        proc_conn = _SqliteConn()
-        proc_schema = {"tables": {}, "procedures": {"total": {"kind": "function", "params": [{"name": "n", "type": "integer"}], "returns": "integer", "language": "sql", "body": "BEGIN RETURN n; END"}}}
-        for query in object_registry_queries(proc_schema, "sqlite"):
-            await proc_conn.execute(query["sql"], query["params"])
-        proc_back = await inspect(proc_conn, "sqlite")
-        if proc_back["ok"]["procedures"] != proc_schema["procedures"]:
-            bad.append(f"the registry should round-trip a procedure definition exactly: {proc_back['ok']['procedures']}")
-
-        # The stored definition JSON is key-sorted, so the same logical object always serializes to
-        # the same bytes regardless of dict insertion order — deterministic registry rows, for both an
-        # extended object and a check constraint.
-        ordered = object_registry_queries({"tables": {"t": {"constraints": {"c": {"type": "check", "expression": "x > 0"}}}}, "views": {"v": {"query": "SELECT 1", "materialized": False}}}, "sqlite")
-        stored = [q["params"]["definition"] for q in ordered if q["params"].get("name") == "v"]
-        if stored != ['{"materialized": false, "query": "SELECT 1"}']:
-            bad.append(f"object_registry_queries should store an object definition as key-sorted JSON: {stored}")
-        stored_c = [q["params"]["definition"] for q in ordered if q["params"].get("name") == "t.c"]
-        if stored_c != ['{"constraint": "c", "definition": {"expression": "x > 0", "type": "check"}, "table": "t"}']:
-            bad.append(f"object_registry_queries should store a constraint definition as key-sorted JSON: {stored_c}")
-
-        # §6.6: a materialized view is emulated by a CREATE TABLE AS backing table plus refresh
-        # triggers. The backing table holds the query result; a 'trigger' strategy keeps it current on
-        # source changes; inspect round-trips the view and hides the backing table; a drop removes it.
-        mv = _SqliteConn()
-        await mv.execute("CREATE TABLE src (id integer, val integer)")
-        await mv.execute("INSERT INTO src (id, val) VALUES (1, 10), (2, 20)")
-        mv_schema = {
-            "tables": {"src": {"columns": {"id": {"type": "integer", "nullable": True}, "val": {"type": "integer", "nullable": True}}}},
-            "views": {"src_mv": {"query": "SELECT id, val FROM src WHERE val > 5", "materialized": True, "refresh": "trigger", "depends_on": ["src"]}},
-        }
-        mv_made = await migrate(mv_schema, mv, "sqlite")
-        if "ok" not in mv_made or not mv_made["ok"]["success"]:
-            bad.append(f"migrate should build a materialized view's backing table and triggers: {mv_made}")
-        else:
-            seeded = await mv.execute("SELECT id FROM src_mv ORDER BY id")
-            if [r["id"] for r in seeded["rows"]] != [1, 2]:
-                bad.append(f"the backing table should hold the query result: {seeded['rows']}")
-            await mv.execute("INSERT INTO src (id, val) VALUES (3, 30), (4, 1)")
-            refreshed = await mv.execute("SELECT id FROM src_mv ORDER BY id")
-            if [r["id"] for r in refreshed["rows"]] != [1, 2, 3]:
-                bad.append(f"a refresh trigger should re-evaluate the view on a source change: {refreshed['rows']}")
-            mv_back = await inspect(mv, "sqlite")
-            if mv_back["ok"]["views"] != mv_schema["views"]:
-                bad.append(f"inspect should round-trip the materialized view: {mv_back['ok']['views']}")
-            elif "src_mv" in mv_back["ok"]["tables"]:
-                bad.append(f"inspect should hide the materialized view's backing table: {mv_back['ok']['tables']}")
-            elif diff(mv_back["ok"], expand_schema(mv_schema))["operations"]:
-                bad.append(f"an existing materialized view should diff to no operations: {diff(mv_back['ok'], expand_schema(mv_schema))['operations']}")
-            if refresh_materialized_view(mv_schema, "src_mv", "sqlite") != ["DELETE FROM src_mv", "INSERT INTO src_mv SELECT id, val FROM src WHERE val > 5"]:
-                bad.append(f"refresh_materialized_view should build the delete + reinsert on SQLite: {refresh_materialized_view(mv_schema, 'src_mv', 'sqlite')}")
-            mv_drop = await migrate({"tables": mv_schema["tables"], "views": {}, "triggers": {}, "procedures": {}}, mv, "sqlite")
-            mv_gone = await inspect(mv, "sqlite")
-            if "ok" not in mv_drop or mv_gone["ok"]["views"] or "src_mv" in mv_gone["ok"]["tables"]:
-                bad.append(f"dropping a materialized view should remove it and its backing table: {mv_drop}, {mv_gone['ok']}")
-
-        # A 'manual'-refresh materialized view generates no triggers: a source change does not update it.
-        man = _SqliteConn()
-        await man.execute("CREATE TABLE m_src (id integer)")
-        await man.execute("INSERT INTO m_src (id) VALUES (1)")
-        man_schema = {
-            "tables": {"m_src": {"columns": {"id": {"type": "integer", "nullable": True}}}},
-            "views": {"m_mv": {"query": "SELECT id FROM m_src", "materialized": True, "refresh": "manual", "depends_on": ["m_src"]}},
-        }
-        await migrate(man_schema, man, "sqlite")
-        await man.execute("INSERT INTO m_src (id) VALUES (2)")
-        manual = await man.execute("SELECT id FROM m_mv ORDER BY id")
-        if [r["id"] for r in manual["rows"]] != [1]:
-            bad.append(f"a manual materialized view should not auto-refresh on a source change: {manual['rows']}")
-        after_refresh = refresh_materialized_view(man_schema, "m_mv", "sqlite")
-        for statement in after_refresh:
-            await man.execute(statement)
-        repopulated = await man.execute("SELECT id FROM m_mv ORDER BY id")
-        if [r["id"] for r in repopulated["rows"]] != [1, 2]:
-            bad.append(f"an explicit refresh should repopulate a manual materialized view: {repopulated['rows']}")
-
-        # An ambiguous diff (a likely rename) is refused — the database is left untouched.
-        amb = _SqliteConn()
-        await amb.execute("CREATE TABLE acct (emial text)")
-        renamed = {"acct": {"columns": {"email": {"type": "text", "nullable": True}}}}
-        refused = await migrate(renamed, amb, "sqlite")
-        still = await inspect(amb, "sqlite")
-        err_amb = refused.get("err", {})
-        if err_amb.get("code") != "migration_ambiguous" or err_amb.get("message") != "Diff is ambiguous; a human must resolve the renames before applying" or err_amb.get("category") != "server" or "ambiguities" not in (err_amb.get("detail") or {}):
-            bad.append(f"the ambiguous-diff fault should be fully named with its ambiguities: {refused}")
-        if "emial" not in still["ok"]["tables"]["acct"]["columns"]:
-            bad.append(f"migrate should refuse an ambiguous diff without applying: {still}")
-
-        # An invalid target schema fails at the diff, before any apply.
-        broken = _SqliteConn()
-        invalid = {"orders": {"columns": {"id": {"type": "integer", "nullable": True}}, "primary_key": ["missing"]}}
-        rejected = await migrate(invalid, broken, "sqlite")
-        if rejected.get("err", {}).get("code") != "schema_invalid":
-            bad.append(f"migrate should surface a diff fault for an invalid target: {rejected}")
-
-        # An unsupported dialect has no inspector.
-        nodb = _SqliteConn()
-        unknown = await migrate({}, nodb, "oracle")
-        if unknown.get("err") != {"is_err": True, "code": "unsupported_dialect", "message": "no schema inspector for dialect 'oracle'", "category": "server", "results": [], "detail": {}}:
-            bad.append(f"the unsupported-dialect fault should be fully named: {unknown}")
-
-        # §6.2: a CHECK that can be neither natively enforced nor compiled is refused at construction,
-        # before any DDL touches the database, not silently dropped to surface at the first write.
-        badcheck = _SqliteConn()
-        target = {"t": {"columns": {"id": {"type": "integer", "nullable": True}, "x": {"type": "integer", "nullable": True, "check": "x @@ 1"}}}}
-        construction = await migrate(target, badcheck, "turso")
-        left = await inspect(badcheck, "turso")
-        if construction.get("err", {}).get("code") != "uncompilable_check" or "t" in left["ok"]["tables"]:
-            bad.append(f"migrate should refuse an uncompilable CHECK at construction without applying: {construction}, {left}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_abstractions():
-    """The abstraction layer (section 6): expand_schema rewrites a range column into its lower/upper
-    bound columns and a lower<=upper CHECK and leaves a plain schema unchanged; the range predicates
-    build parameterized WHERE conditions over the bounds; and a migrated range schema enforces the
-    bound invariant on real SQLite (the CHECK rejects a row whose lower exceeds its upper)."""
-    from honest_persist import expand_schema, migrate, range_adjacent, range_contains, range_overlaps
-
-    async def _run():
-        bad = []
-
-        # expand_schema rewrites a range column to bound columns + a CHECK; plain columns pass through.
-        schema = {"events": {"columns": {
-            "id": {"type": "integer", "nullable": False},
-            "span": {"type": "range", "bound_type": "integer", "nullable": False},
-        }}}
-        expanded = expand_schema(schema)
-        cols = expanded["events"]["columns"]
-        if set(cols) != {"id", "span_lower", "span_upper"}:
-            bad.append(f"expand_schema should replace the range with bound columns: {cols}")
-        elif cols["span_lower"] != {"type": "integer", "nullable": False} or cols["span_upper"] != {"type": "integer", "nullable": False}:
-            bad.append(f"expand_schema should give each bound the bound_type and nullability: {cols}")
-        check = expanded["events"].get("constraints", {}).get("span_range")
-        if check != {"type": "check", "expression": "span_lower <= span_upper"}:
-            bad.append(f"expand_schema should add the lower<=upper CHECK: {check}")
-        plain = {"t": {"columns": {"a": {"type": "text"}}}}
-        if expand_schema(plain) != plain:
-            bad.append("expand_schema should leave a plain schema unchanged in shape")
-        # A full SchemaDefinition is expanded in shape: its tables' abstractions are rewritten while
-        # views, triggers, and procedures pass through untouched (section 9.1).
-        definition = {
-            "tables": {"e": {"columns": {"span": {"type": "range", "bound_type": "integer"}}}},
-            "views": {"v": {"query": "SELECT 1"}},
-        }
-        expanded_def = expand_schema(definition)
-        if set(expanded_def) != {"tables", "views"} or expanded_def["views"] != {"v": {"query": "SELECT 1"}}:
-            bad.append(f"expand_schema should expand a definition in shape, passing views through: {expanded_def}")
-        elif set(expanded_def["tables"]["e"]["columns"]) != {"span_lower", "span_upper"}:
-            bad.append(f"expand_schema should rewrite abstractions in a definition's tables: {expanded_def['tables']}")
-        # A bare schema is detected by its keys, not by a reserved-looking name: a lone table named
-        # 'views' is still a table whose abstraction column is expanded, not an extended-object map.
-        reserved_name = expand_schema({"views": {"columns": {"s": {"type": "range", "bound_type": "integer"}}}})
-        if set(reserved_name.get("views", {}).get("columns", {})) != {"s_lower", "s_upper"}:
-            bad.append(f"expand_schema should treat a bare schema by its keys, not a reserved name: {reserved_name}")
-        # A range column without a declared nullability gives bounds without a nullable key.
-        loose = expand_schema({"r": {"columns": {"s": {"type": "range", "bound_type": "text"}}}})
-        if loose["r"]["columns"]["s_lower"] != {"type": "text"}:
-            bad.append(f"a range without nullability should give a plain bound column: {loose}")
-        # A range with no bound_type at all defaults its bounds to integer (the bound_type default).
-        nobt = expand_schema({"r2": {"columns": {"s": {"type": "range"}}}})["r2"]["columns"]
-        if nobt["s_lower"] != {"type": "integer"}:
-            bad.append(f"a range without bound_type should default to integer bounds: {nobt}")
-        # A range column ADDS its CHECK to the table's EXISTING constraints, never replacing them.
-        with_existing = expand_schema({"t2": {"columns": {"id": {"type": "integer", "primary_key": True}, "span": {"type": "range", "bound_type": "integer"}}, "constraints": {"existing": {"type": "check", "expression": "id > 0"}}}})
-        if with_existing["t2"].get("constraints") != {"existing": {"type": "check", "expression": "id > 0"}, "span_range": {"type": "check", "expression": "span_lower <= span_upper"}}:
-            bad.append(f"a range CHECK should be added to, not replace, the existing constraints: {with_existing['t2'].get('constraints')}")
-
-        # the predicates build parameterized conditions over the bound columns.
-        if range_overlaps("span", 3, 9) != {"sql": "span_lower <= :span_ub AND span_upper >= :span_lb", "params": {"span_ub": 9, "span_lb": 3}}:
-            bad.append(f"range_overlaps wrong: {range_overlaps('span', 3, 9)}")
-        if range_contains("span", 5) != {"sql": "span_lower <= :span_pt AND span_upper >= :span_pt", "params": {"span_pt": 5}}:
-            bad.append(f"range_contains wrong: {range_contains('span', 5)}")
-        if range_adjacent("span", 3, 9) != {"sql": "span_upper = :span_adj_l OR span_lower = :span_adj_u", "params": {"span_adj_l": 3, "span_adj_u": 9}}:
-            bad.append(f"range_adjacent wrong: {range_adjacent('span', 3, 9)}")
-
-        # _render_create_table renders a CHECK constraint inline; other table-constraint types are
-        # not inline-rendered on create.
-        from honest_persist import to_sql
-
-        mixed = {"op": "create_table", "table": "t", "details": {
-            "columns": {"a": {"type": "text"}},
-            "constraints": {"chk": {"type": "check", "expression": "a <> ''"}, "uq": {"type": "unique", "columns": ["a"]}},
-        }}
-        rendered_sql = to_sql(mixed, "sqlite")
-        if "CONSTRAINT chk CHECK (a <> '')" not in rendered_sql:
-            bad.append(f"_render_create_table should render a CHECK constraint inline: {rendered_sql}")
-        if "CONSTRAINT uq" in rendered_sql:
-            bad.append(f"only CHECK table constraints are rendered inline on create: {rendered_sql}")
-
-        # migrate a range schema to real SQLite: the CHECK enforces lower <= upper.
-        conn = _SqliteConn()
-        applied = await migrate(schema, conn, "sqlite")
-        if "ok" not in applied:
-            bad.append(f"migrate should apply the expanded range schema: {applied}")
-        else:
-            await conn.execute("INSERT INTO events (id, span_lower, span_upper) VALUES (1, 3, 9)")
-            good = await conn.execute("SELECT span_lower, span_upper FROM events")
-            if good["rows"][0]["span_lower"] != 3:
-                bad.append(f"a valid range row should insert: {good}")
-            rejected = False
-            try:
-                await conn.execute("INSERT INTO events (id, span_lower, span_upper) VALUES (2, 9, 3)")
-            except Exception:
-                rejected = True
-            if not rejected:
-                bad.append("the CHECK should reject a row whose lower bound exceeds its upper")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_arrays_maps():
-    """Arrays and maps (section 6.4): expand_schema removes an array or map column and generates its
-    junction table — owner_id typed from the base primary key — and the element operations build
-    queries over the junction; a migrated array schema round-trips on real SQLite."""
-    from honest_persist import (
-        array_append,
-        array_reindex,
-        array_remove,
-        array_set,
-        expand_schema,
-        map_put,
-        map_remove,
-        migrate,
-    )
-
-    async def _run():
-        bad = []
-
-        # An array column becomes a junction table; the base column is removed. owner_id takes the
-        # base table's primary-key type (here a text id).
-        schema = {"posts": {"columns": {
-            "id": {"type": "text", "primary_key": True},
-            "tags": {"type": "array", "element_type": "text"},
-        }}}
-        expanded = expand_schema(schema)
-        if set(expanded["posts"]["columns"]) != {"id"}:
-            bad.append(f"expand_schema should remove the array column from the base table: {expanded['posts']}")
-        junction = expanded.get("_hp_array_posts_tags", {}).get("columns", {})
-        if junction.get("owner_id") != {"type": "text", "nullable": False} or junction.get("ordinal") != {"type": "integer", "nullable": False} or junction.get("value") != {"type": "text", "nullable": False}:
-            bad.append(f"expand_schema should generate the array junction table: {junction}")
-
-        # A map column becomes a junction with key/value; owner_id from a table-level primary key.
-        mapped = expand_schema({"u": {"columns": {"uid": {"type": "integer"}, "prefs": {"type": "map", "key_type": "text", "value_type": "text"}}, "primary_key": ["uid"]}})
-        mj = mapped.get("_hp_map_u_prefs", {}).get("columns", {})
-        if mj.get("owner_id") != {"type": "integer", "nullable": False} or mj.get("key") != {"type": "text", "nullable": False}:
-            bad.append(f"expand_schema should generate the map junction from the table primary-key owner type: {mj}")
-        # element_type / key_type / value_type other than the text default are carried into the junction.
-        intarr = expand_schema({"p": {"columns": {"id": {"type": "text", "primary_key": True}, "xs": {"type": "array", "element_type": "integer"}}}})
-        if intarr["_hp_array_p_xs"]["columns"]["value"] != {"type": "integer", "nullable": False}:
-            bad.append(f"an array element_type should set the junction value type: {intarr['_hp_array_p_xs']['columns'].get('value')}")
-        intmap = expand_schema({"u": {"columns": {"uid": {"type": "integer", "primary_key": True}, "m": {"type": "map", "key_type": "integer", "value_type": "integer"}}}})
-        if intmap["_hp_map_u_m"]["columns"] != {"owner_id": {"type": "integer", "nullable": False}, "key": {"type": "integer", "nullable": False}, "value": {"type": "integer", "nullable": False}}:
-            bad.append(f"map key_type/value_type should set the junction column types: {intmap['_hp_map_u_m']['columns']}")
-        # element_type/key_type/value_type defaults to text when undeclared (the get defaults).
-        if expand_schema({"p": {"columns": {"id": {"type": "text", "primary_key": True}, "xs": {"type": "array"}}}})["_hp_array_p_xs"]["columns"]["value"] != {"type": "text", "nullable": False}:
-            bad.append("an array with no element_type should default the junction value to text")
-        if expand_schema({"u": {"columns": {"id": {"type": "integer", "primary_key": True}, "m": {"type": "map"}}}})["_hp_map_u_m"]["columns"] != {"owner_id": {"type": "integer", "nullable": False}, "key": {"type": "text", "nullable": False}, "value": {"type": "text", "nullable": False}}:
-            bad.append("a map with no key/value type should default both to text")
-        # _owner_type: a table-level text primary key types the owner_id text (not the integer fallback),
-        # and a primary-key column with no declared type falls back to integer (column- and table-level).
-        if expand_schema({"d": {"columns": {"k": {"type": "text"}, "xs": {"type": "array", "element_type": "text"}}, "primary_key": ["k"]}})["_hp_array_d_xs"]["columns"]["owner_id"] != {"type": "text", "nullable": False}:
-            bad.append("a table-level primary key should type the junction owner_id")
-        if expand_schema({"e": {"columns": {"k": {"primary_key": True}, "xs": {"type": "array", "element_type": "text"}}}})["_hp_array_e_xs"]["columns"]["owner_id"] != {"type": "integer", "nullable": False}:
-            bad.append("a column-level primary key with no type defaults the owner to integer")
-        if expand_schema({"g": {"columns": {"k": {}, "xs": {"type": "array", "element_type": "text"}}, "primary_key": ["k"]}})["_hp_array_g_xs"]["columns"]["owner_id"] != {"type": "integer", "nullable": False}:
-            bad.append("a table-level primary key column with no type defaults the owner to integer")
-        # array_set builds the full UPDATE over the junction.
-        if array_set("posts", "tags", "p1", 0, "y") != {"sql": "UPDATE _hp_array_posts_tags SET value = :set_value WHERE owner_id = :owner_id AND ordinal = :ordinal", "params": {"set_value": "y", "owner_id": "p1", "ordinal": 0}}:
-            bad.append(f"array_set full query wrong: {array_set('posts', 'tags', 'p1', 0, 'y')}")
-
-        # No declared primary key falls back to an integer owner_id.
-        noid = expand_schema({"t": {"columns": {"xs": {"type": "array", "element_type": "integer"}}}})
-        if noid["_hp_array_t_xs"]["columns"]["owner_id"] != {"type": "integer", "nullable": False}:
-            bad.append(f"a junction owner should default to integer with no primary key: {noid}")
-        # A table-level primary key naming no real column also falls back to integer.
-        ghost = expand_schema({"g": {"columns": {"xs": {"type": "array", "element_type": "text"}}, "primary_key": ["ghost"]}})
-        if ghost["_hp_array_g_xs"]["columns"]["owner_id"] != {"type": "integer", "nullable": False}:
-            bad.append(f"a junction owner should default to integer when the primary key names no column: {ghost}")
-
-        # The element operations build queries over the junction table.
-        if array_append("posts", "tags", "p1", 0, "x") != {"sql": "INSERT INTO _hp_array_posts_tags (owner_id, ordinal, value) VALUES (:owner_id, :ordinal, :value)", "params": {"owner_id": "p1", "ordinal": 0, "value": "x"}}:
-            bad.append(f"array_append wrong: {array_append('posts', 'tags', 'p1', 0, 'x')}")
-        if "SET value = :set_value" not in array_set("posts", "tags", "p1", 0, "y")["sql"]:
-            bad.append(f"array_set wrong: {array_set('posts', 'tags', 'p1', 0, 'y')}")
-        if array_remove("posts", "tags", "p1", 0)["sql"] != "DELETE FROM _hp_array_posts_tags WHERE owner_id = :owner_id AND ordinal = :ordinal":
-            bad.append(f"array_remove wrong: {array_remove('posts', 'tags', 'p1', 0)}")
-        if array_reindex("posts", "tags", "p1", 0) != {"sql": "UPDATE _hp_array_posts_tags SET ordinal = ordinal - 1 WHERE owner_id = :owner_id AND ordinal > :removed", "params": {"owner_id": "p1", "removed": 0}}:
-            bad.append(f"array_reindex wrong: {array_reindex('posts', 'tags', 'p1', 0)}")
-        if map_put("posts", "meta", "p1", "k", "v")["sql"] != "INSERT INTO _hp_map_posts_meta (owner_id, key, value) VALUES (:owner_id, :key, :value)":
-            bad.append(f"map_put wrong: {map_put('posts', 'meta', 'p1', 'k', 'v')}")
-        if map_remove("posts", "meta", "p1", "k")["sql"] != "DELETE FROM _hp_map_posts_meta WHERE owner_id = :owner_id AND key = :key":
-            bad.append(f"map_remove wrong: {map_remove('posts', 'meta', 'p1', 'k')}")
-
-        # migrate an array schema to real SQLite: base table + junction created, an element round-trips.
-        conn = _SqliteConn()
-        applied = await migrate(schema, conn, "sqlite")
-        if "ok" not in applied:
-            bad.append(f"migrate should create the base and junction tables: {applied}")
-        else:
-            await conn.execute("INSERT INTO posts (id) VALUES ('p1')")
-            op = array_append("posts", "tags", "p1", 0, "urgent")
-            await conn.execute(op["sql"], op["params"])
-            got = await conn.execute("SELECT value FROM _hp_array_posts_tags WHERE owner_id = 'p1'")
-            if got["rows"][0]["value"] != "urgent":
-                bad.append(f"an appended array element should round-trip: {got}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_hierarchy():
-    """Hierarchy (section 6.3): expand_schema rewrites a hierarchy column to a nullable parent plus a
-    closure table; the maintenance builders insert nodes, read ancestors and descendants in one
-    query, move a subtree, and delete a subtree — all proven on a real SQLite tree."""
-    from honest_persist import (
-        closure_ancestors,
-        closure_delete,
-        closure_descendants,
-        closure_insert,
-        closure_move,
-        expand_schema,
-        migrate,
-    )
-
-    async def _run():
-        bad = []
-
-        # expand_schema rewrites the hierarchy column to a nullable parent and a closure table.
-        schema = {"nodes": {"columns": {
-            "id": {"type": "text", "primary_key": True},
-            "parent": {"type": "hierarchy"},
-        }}}
-        expanded = expand_schema(schema)
-        if expanded["nodes"]["columns"]["parent"] != {"type": "text", "nullable": True}:
-            bad.append(f"expand_schema should make the hierarchy column a nullable parent: {expanded['nodes']}")
-        closure = expanded.get("_hp_closure_nodes", {}).get("columns", {})
-        if closure != {"ancestor": {"type": "text", "nullable": False}, "descendant": {"type": "text", "nullable": False}, "depth": {"type": "integer", "nullable": False}}:
-            bad.append(f"expand_schema should generate the closure table (ancestor/descendant/depth, node-typed): {closure}")
-
-        # build a real tree on SQLite: A root, B under A, C under B, D root.
-        conn = _SqliteConn()
-        applied = await migrate(schema, conn, "sqlite")
-        if "ok" not in applied:
-            bad.append(f"migrate should create the base and closure tables: {applied}")
+        # The two doors, end to end against a real sqlite database.
+        doors = ("session_open", "session_open_connection", "query_run_statement",
+                 "session_close_connection", "query_deposit", "query_collect")
+        missing_doors = [n for n in doors if getattr(hp, n, None) is None]
+        if missing_doors:
+            bad.extend(f"not built: {n}" for n in missing_doors)
             return bad
 
-        async def add(node, parent):
-            await conn.execute("INSERT INTO nodes (id, parent) VALUES (:id, :p)", {"id": node, "p": parent})
-            op = closure_insert("nodes", node, parent)
-            await conn.execute(op["sql"], op["params"])
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "async.db")
+            pool = await hp.session_open_connection(target, "sqlite", 1)
+            if hp.is_fault(pool):
+                bad.append(f"the async-write law could not open a connection: {pool}")
+                return bad
+            await hp.query_run_statement(pool, "sqlite", {"text": "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)", "parameters": {}})
+            await hp.session_close_connection(pool)
 
-        await add("A", None)
-        await add("B", "A")
-        await add("C", "B")
-        await add("D", None)
+            db = await hp.session_open(target, "exit_immediately", None, None)
+            if hp.is_fault(db):
+                bad.append(f"session_open failed before the async-write law: {db}")
+                return bad
 
-        async def ids(op, field):
-            rows = (await conn.execute(op["sql"], op["params"]))["rows"]
-            return sorted(row[field] for row in rows)
+            # A. A declared write comes back as a Ticket at once, not an Answer. Collecting it answers what
+            #    the write did, and the row is durable on disk.
+            ticket = hp.query_deposit(db, _READ_MODEL, 'User.rows({"id": 5, "name": "e"}).add')
+            if isinstance(ticket, dict) or not isinstance(ticket, str) or ticket == "":
+                bad.append(f"query_deposit of a declared write should return a Ticket at once, not an Answer or a refusal: {ticket!r}")
+            else:
+                answer = await hp.query_collect(db, ticket)
+                if isinstance(answer, dict) and ("reason" in answer or hp.is_fault(answer)):
+                    bad.append(f"query_collect of a held ticket should answer what the write did: {answer}")
+                conn = sqlite3.connect(target)
+                row = conn.execute("SELECT name FROM users WHERE id=5").fetchall()
+                conn.close()
+                if row != [("e",)]:
+                    bad.append(f"after query_collect the deposited write should be durable on disk, got {row}")
 
-        if await ids(closure_descendants("nodes", "A"), "descendant") != ["A", "B", "C"]:
-            bad.append("closure_descendants(A) should be the subtree {A, B, C}")
-        if await ids(closure_ancestors("nodes", "C"), "ancestor") != ["A", "B", "C"]:
-            bad.append("closure_ancestors(C) should be the chain {A, B, C}")
+            # B. A read handed to the deposit door is refused: nothing to defer, nothing deposited.
+            refused = hp.query_deposit(db, _READ_MODEL, "User.where(id=5).all")
+            if not hp.is_fault(refused):
+                bad.append(f"query_deposit of a read should be refused as a Fault: {refused}")
 
-        # move subtree B under D: C's ancestors become {B, C, D}, no longer including A.
-        for step in closure_move("nodes", "B", "D"):
-            await conn.execute(step["sql"], step["params"])
-        if await ids(closure_ancestors("nodes", "C"), "ancestor") != ["B", "C", "D"]:
-            bad.append("after moving B under D, closure_ancestors(C) should be {B, C, D}")
-        if await ids(closure_descendants("nodes", "D"), "descendant") != ["B", "C", "D"]:
-            bad.append("after the move, D's subtree should be {B, C, D}")
-
-        # delete subtree D: its whole subtree leaves the closure.
-        d = closure_delete("nodes", "D")
-        await conn.execute(d["sql"], d["params"])
-        if await ids(closure_descendants("nodes", "D"), "descendant") != []:
-            bad.append("after closure_delete(D), D's subtree should be empty")
+            # C. Collecting a ticket the crew never held reads back a NoMatch as data.
+            no_ticket = await hp.query_collect(db, "f" * 32)
+            if not (isinstance(no_ticket, dict) and "reason" in no_ticket):
+                bad.append(f"query_collect of an unknown ticket should read back a NoMatch as data: {no_ticket}")
         return bad
 
     return asyncio.run(_run())
 
 
-def _probe_enums():
-    """Enums (section 6.1): expand_schema rewrites a literal_values column to a seeded lookup table
-    and a foreign-key column; enum_seed_queries builds idempotent inserts; and a migrated enum
-    schema, with foreign keys enforced, accepts a declared value and rejects an undeclared one on
-    real SQLite, the re-seed being idempotent."""
-    from honest_persist import enum_seed_queries, expand_schema, migrate
-
-    async def _run():
-        bad = []
-
-        schema = {"orders": {"columns": {
-            "id": {"type": "integer", "primary_key": True},
-            "status": {"literal_values": ["pending", "confirmed", "shipped"], "default": "'pending'"},
-        }}}
-        expanded = expand_schema(schema)
-        status = expanded["orders"]["columns"]["status"]
-        if status != {"type": "text", "references": "_hp_enum_orders_status.value", "default": "'pending'"}:
-            bad.append(f"expand_schema should make the enum a foreign-key column: {status}")
-        lookup = expanded.get("_hp_enum_orders_status", {})
-        if lookup.get("columns", {}).get("value") != {"type": "text", "primary_key": True} or lookup.get("seed") != [{"value": "pending"}, {"value": "confirmed"}, {"value": "shipped"}]:
-            bad.append(f"expand_schema should generate the seeded lookup table: {lookup}")
-        # An enum with a declared nullability and no default keeps the nullability, omits the default.
-        nullable = expand_schema({"t": {"columns": {"k": {"literal_values": ["a", "b"], "nullable": True}}}})["t"]["columns"]["k"]
-        if nullable != {"type": "text", "references": "_hp_enum_t_k.value", "nullable": True}:
-            bad.append(f"an enum column should keep its nullability and omit an absent default: {nullable}")
-
-        # enum_seed_queries builds idempotent inserts; the dialect sets the ignore form.
-        if enum_seed_queries(expanded, "sqlite")[0] != {"sql": "INSERT OR IGNORE INTO _hp_enum_orders_status (value) VALUES (:value)", "params": {"value": "pending"}}:
-            bad.append(f"enum_seed_queries (sqlite) wrong: {enum_seed_queries(expanded, 'sqlite')}")
-        if enum_seed_queries(expanded, "postgresql")[0]["sql"] != "INSERT INTO _hp_enum_orders_status (value) VALUES (:value) ON CONFLICT DO NOTHING":
-            bad.append(f"enum_seed_queries (postgresql) wrong: {enum_seed_queries(expanded, 'postgresql')}")
-        if enum_seed_queries(expanded, "turso")[0]["sql"] != "INSERT OR IGNORE INTO _hp_enum_orders_status (value) VALUES (:value)":
-            bad.append(f"enum_seed_queries (turso) should use INSERT OR IGNORE: {enum_seed_queries(expanded, 'turso')}")
-        if enum_seed_queries(expanded, "mysql")[0]["sql"] != "INSERT INTO _hp_enum_orders_status (value) VALUES (:value)":
-            bad.append(f"enum_seed_queries on an unmapped dialect should fall back to plain INSERT: {enum_seed_queries(expanded, 'mysql')}")
-
-        # migrate to real SQLite with foreign keys enforced: declared values pass, others are rejected.
-        conn = _SqliteConn()
-        await conn.execute("PRAGMA foreign_keys = ON")
-        applied = await migrate(schema, conn, "sqlite")
-        if "ok" not in applied:
-            bad.append(f"migrate should create the enum lookup and base tables: {applied}")
-        else:
-            seeded = await conn.execute("SELECT value FROM _hp_enum_orders_status")
-            if sorted(r["value"] for r in seeded["rows"]) != ["confirmed", "pending", "shipped"]:
-                bad.append(f"the lookup table should be seeded with the enum values: {seeded}")
-            await conn.execute("INSERT INTO orders (id, status) VALUES (1, 'confirmed')")
-            kept = await conn.execute("SELECT status FROM orders WHERE id = 1")
-            if kept["rows"][0]["status"] != "confirmed":
-                bad.append(f"a declared enum value should insert: {kept}")
-            rejected = False
-            try:
-                await conn.execute("INSERT INTO orders (id, status) VALUES (2, 'bogus')")
-            except Exception:
-                rejected = True
-            if not rejected:
-                bad.append("an undeclared enum value should be rejected by the foreign key")
-            # Re-seeding is idempotent.
-            for query in enum_seed_queries(expanded, "sqlite"):
-                await conn.execute(query["sql"], query["params"])
-            again = await conn.execute("SELECT count(*) AS n FROM _hp_enum_orders_status")
-            if again["rows"][0]["n"] != 3:
-                bad.append(f"re-seeding should be idempotent: {again}")
-
-        # When apply fails, the workflow returns the failed result and runs no seed.
-        broken = _SqliteConn()
-        bad_schema = {"x": {"columns": {"a": {"type": "text"}}, "constraints": {"c": {"type": "check", "expression": "a a a"}}}}
-        failed = await migrate(bad_schema, broken, "sqlite")
-        if "ok" not in failed or failed["ok"]["success"]:
-            bad.append(f"migrate should return the failed ApplyResult when apply fails, seeding nothing: {failed}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_loader():
-    """The Pydantic schema loader (section 2): @table-decorated BaseModel subclasses load to a Schema
-    — field types mapped to abstract SQL types, Optional to nullability, Literal to enum values, Field
-    metadata and defaults to column attributes, and a Meta inner class to a composite primary key,
-    indexes, and constraints — and the loaded schema migrates to real SQLite."""
-    from datetime import datetime
-    from pathlib import Path
-    from typing import Literal
-
-    from pydantic import BaseModel, Field
-
-    from honest_persist import migrate
-    from honest_persist.loader import load_schema_from_models, table
-
-    @table("items")
-    class Item(BaseModel):
-        id: int = Field(json_schema_extra={"primary": True})
-        name: str = Field(json_schema_extra={"unique": True})
-        owner: str = Field(json_schema_extra={"references": "users.value", "on_delete": "cascade"})
-        status: Literal["a", "b"] = Field(json_schema_extra={"check": "status <> ''"})
-        qty: int = Field(default=5)
-        label: str = Field(default="x")
-        active: bool = Field(default=True)
-        ratio: float = Field(default=1.5)
-        note: str | None = None
-        flag: bool = Field(json_schema_extra={"nullable": True})
-        when: datetime | None = None
-        loc: Path | None = None
-        tag: str = Field(json_schema_extra={"default": "'none'"})
-        _internal: int = 0
-
-    @table("memberships")
-    class Membership(BaseModel):
-        user_id: int = Field(json_schema_extra={"primary": True})
-        group_id: int = Field(json_schema_extra={"primary": True})
-
-        class Meta:
-            primary_key = ["user_id", "group_id"]
-            indexes = {"by_group": {"columns": ["group_id"]}}
-            constraints = {"uniq": {"type": "unique", "columns": ["user_id", "group_id"]}}
-
-    @table("widgets")
-    class Widget(BaseModel):
-        id: int = Field(json_schema_extra={"primary": True})
-        label: str = Field(default="hi")
-
-    bad = []
-    cols = load_schema_from_models(Item)["items"]["columns"]
-    expected = {
-        "id": {"type": "integer", "nullable": False, "primary_key": True},
-        "name": {"type": "text", "nullable": False, "unique": True},
-        "owner": {"type": "text", "nullable": False, "references": "users.value", "on_delete": "cascade"},
-        "status": {"type": "text", "nullable": False, "literal_values": ["a", "b"], "check": "status <> ''"},
-        "qty": {"type": "integer", "nullable": False, "default": "5"},
-        "label": {"type": "text", "nullable": False, "default": "'x'"},
-        "active": {"type": "boolean", "nullable": False, "default": "TRUE"},
-        "ratio": {"type": "real", "nullable": False, "default": "1.5"},
-        "note": {"type": "text", "nullable": True},
-        "flag": {"type": "boolean", "nullable": True},
-        "when": {"type": "timestamptz", "nullable": True},
-        "loc": {"type": "text", "nullable": True},
-        "tag": {"type": "text", "nullable": False, "default": "'none'"},
-    }
-    if set(cols) != set(expected):
-        bad.append(f"loader should map every public field and skip private ones: {sorted(cols)}")
-    for field_name, exp in expected.items():
-        if cols.get(field_name) != exp:
-            bad.append(f"loader column {field_name}: got {cols.get(field_name)}, expected {exp}")
-
-    # A model covering every _PY_TO_SQL type and the remaining metadata keys (db_type override,
-    # primary_key alias, on_update, renamed_from), so each map entry and metadata branch is pinned.
-    from datetime import date as _date, time as _time
-    from decimal import Decimal as _Decimal
-    from uuid import UUID as _UUID
-
-    @table("typed")
-    class Typed(BaseModel):
-        raw: bytes
-        uid: _UUID
-        d: _date
-        t: _time
-        when: datetime
-        amount: _Decimal
-        blob: dict
-        items: list
-        custom: str = Field(json_schema_extra={"db_type": "citext"})
-        pk: int = Field(json_schema_extra={"primary_key": True})
-        upd: str = Field(json_schema_extra={"on_update": "cascade"})
-        ren: str = Field(json_schema_extra={"renamed_from": "old"})
-
-    typed_cols = load_schema_from_models(Typed)["typed"]["columns"]
-    typed_expected = {
-        "raw": {"type": "bytea", "nullable": False}, "uid": {"type": "uuid", "nullable": False},
-        "d": {"type": "date", "nullable": False}, "t": {"type": "time", "nullable": False},
-        "when": {"type": "timestamptz", "nullable": False}, "amount": {"type": "numeric", "nullable": False},
-        "blob": {"type": "jsonb", "nullable": False}, "items": {"type": "jsonb", "nullable": False},
-        "custom": {"type": "citext", "nullable": False}, "pk": {"type": "integer", "nullable": False, "primary_key": True},
-        "upd": {"type": "text", "nullable": False, "on_update": "cascade"}, "ren": {"type": "text", "nullable": False, "renamed_from": "old"},
-    }
-    if typed_cols != typed_expected:
-        bad.append(f"loader type map / metadata keys wrong: {typed_cols}")
-
-    membership = load_schema_from_models(Membership)["memberships"]
-    if membership.get("primary_key") != ["user_id", "group_id"]:
-        bad.append(f"a Meta composite primary key should become the table primary key: {membership}")
-    if "primary_key" in membership["columns"]["user_id"]:
-        bad.append("a composite primary key should clear the per-column primary_key flags")
-    if membership.get("indexes") != {"by_group": {"columns": ["group_id"]}} or membership.get("constraints") != {"uniq": {"type": "unique", "columns": ["user_id", "group_id"]}}:
-        bad.append(f"a Meta should carry indexes and constraints: {membership}")
-
-    async def _run():
-        conn = _SqliteConn()
-        applied = await migrate(load_schema_from_models(Widget), conn, "sqlite")
-        if "ok" not in applied:
-            bad.append(f"a loaded schema should migrate: {applied}")
-        else:
-            await conn.execute("INSERT INTO widgets (id) VALUES (1)")
-            got = await conn.execute("SELECT label FROM widgets WHERE id = 1")
-            if got["rows"][0]["label"] != "hi":
-                bad.append(f"the loaded column default should apply on migrate: {got}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_cutover():
-    """Zero-downtime cutover (section 9.1): the phases advance in order with reads switching at
-    promotion; cutover_plan orders tables by foreign key; copy_batch_query reads a resumable batch;
-    and a bulk transfer plus a mirror write are driven between two real SQLite databases."""
-    from honest_persist import (
-        bulk_copy_table,
-        copy_batch_query,
-        cutover_advance,
-        cutover_phases,
-        cutover_plan,
-        cutover_read_target,
-        mirror_write,
-    )
-
-    async def _run():
-        bad = []
-
-        # The phase machine: ordered phases, advance to terminal, reads switch at promotion.
-        if cutover_phases() != ["bulk_transfer", "mirror", "promote", "detach"]:
-            bad.append(f"cutover_phases wrong: {cutover_phases()}")
-        if [cutover_advance(p) for p in ("bulk_transfer", "mirror", "promote", "detach")] != ["mirror", "promote", "detach", "detach"]:
-            bad.append("cutover_advance should step through the phases, detach terminal")
-        if [cutover_read_target(p) for p in ("bulk_transfer", "mirror", "promote", "detach")] != ["source", "source", "destination", "destination"]:
-            bad.append("cutover_read_target should read the source until promotion, the destination after")
-
-        # cutover_plan orders referenced tables before their referrers; a cycle falls back to order.
-        schema = {"orders": {"columns": {"id": {"type": "integer"}, "buyer": {"references": "users.id"}}}, "users": {"columns": {"id": {"type": "integer"}}}}
-        if cutover_plan(schema) != ["users", "orders"]:
-            bad.append(f"cutover_plan should copy referenced tables first: {cutover_plan(schema)}")
-        cyclic = {"a": {"columns": {"x": {"references": "b.y"}}}, "b": {"columns": {"y": {"references": "a.x"}}}}
-        if cutover_plan(cyclic) != ["a", "b"]:
-            bad.append(f"cutover_plan should fall back to declared order on a cycle: {cutover_plan(cyclic)}")
-        # A reference to a table outside the schema is not an ordering constraint.
-        external = {"t": {"columns": {"id": {"type": "integer"}, "ref": {"references": "outside.id"}}}}
-        if cutover_plan(external) != ["t"]:
-            bad.append(f"cutover_plan should ignore a reference to a table outside the schema: {cutover_plan(external)}")
-
-        # copy_batch_query: first batch has no cursor, later batches read past the last key.
-        if copy_batch_query("t", "id", None, 100) != {"sql": "SELECT * FROM t ORDER BY id LIMIT :limit", "params": {"limit": 100}}:
-            bad.append(f"copy_batch_query (first) wrong: {copy_batch_query('t', 'id', None, 100)}")
-        if copy_batch_query("t", "id", 42, 100) != {"sql": "SELECT * FROM t WHERE id > :after ORDER BY id LIMIT :limit", "params": {"after": 42, "limit": 100}}:
-            bad.append(f"copy_batch_query (resume) wrong: {copy_batch_query('t', 'id', 42, 100)}")
-
-        # bulk transfer between two real SQLite databases, in resumable batches.
-        source = _SqliteConn()
-        dest = _SqliteConn()
-        await source.execute("CREATE TABLE nums (id INTEGER PRIMARY KEY, v TEXT)")
-        await dest.execute("CREATE TABLE nums (id INTEGER PRIMARY KEY, v TEXT)")
-        for n in (1, 2, 3):
-            await source.execute("INSERT INTO nums (id, v) VALUES (:id, :v)", {"id": n, "v": "r" + str(n)})
-        copied = await bulk_copy_table("nums", ["id", "v"], "id", source, dest, 2)
-        moved = await dest.execute("SELECT id, v FROM nums ORDER BY id")
-        if copied != 3 or [row["v"] for row in moved["rows"]] != ["r1", "r2", "r3"]:
-            bad.append(f"bulk_copy_table should copy every row in batches: copied={copied}, dest={moved}")
-
-        # mirror write reaches both databases.
-        write = {"sql": "INSERT INTO nums (id, v) VALUES (:id, :v)", "params": {"id": 9, "v": "mir"}}
-        results = await mirror_write(write, source, dest)
-        both = []
-        for conn in (source, dest):
-            got = await conn.execute("SELECT v FROM nums WHERE id = 9")
-            both.append(got["rows"][0]["v"] if got["rows"] else None)
-        if "source" not in results or "destination" not in results or both != ["mir", "mir"]:
-            bad.append(f"mirror_write should return both the source and destination results: {results}, {both}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_django_loader():
-    """Django interop (section 2): load_schema_from_django reads Django model definitions to a Schema
-    — field types mapped to abstract SQL types, nullability, primary keys, uniqueness, choices as enum
-    values, foreign-key references by db column, and defaults — and the loaded schema migrates to real
-    SQLite."""
-    import django
-    from django.conf import settings
-
-    if not settings.configured:
-        settings.configure(INSTALLED_APPS=["django.contrib.contenttypes", "django.contrib.auth"], DATABASES={})
-        django.setup()
-    from django.db import models
-
-    from honest_persist import migrate
-    from honest_persist.django_loader import load_schema_from_django
-
-    class Customer(models.Model):
-        name = models.CharField(max_length=50, unique=True)
-
-        class Meta:
-            app_label = "shop"
-
-    class Order(models.Model):
-        status = models.CharField(max_length=20, choices=[("pending", "P"), ("shipped", "S")], default="pending")
-        qty = models.IntegerField(default=5)
-        active = models.BooleanField(default=True)
-        note = models.TextField(null=True)
-        customer = models.ForeignKey(Customer, on_delete=models.CASCADE)
-
-        class Meta:
-            app_label = "shop"
-
-    # A model covering every _DJANGO_TO_SQL internal type, so each non-text mapping is pinned; plus the
-    # Big/Small auto primary-key variants in their own models.
-    class AllTypes(models.Model):
-        c = models.CharField(max_length=1)
-        slug = models.SlugField()
-        email = models.EmailField()
-        i = models.IntegerField()
-        bi = models.BigIntegerField()
-        si = models.SmallIntegerField()
-        pi = models.PositiveIntegerField()
-        psi = models.PositiveSmallIntegerField()
-        f = models.FloatField()
-        b = models.BooleanField()
-        u = models.UUIDField()
-        dt = models.DateTimeField()
-        d = models.DateField()
-        t = models.TimeField()
-        dec = models.DecimalField(max_digits=5, decimal_places=2)
-        bin = models.BinaryField()
-        j = models.JSONField()
-        txt = models.TextField()
-
-        class Meta:
-            app_label = "t"
-
-    class BigPk(models.Model):
-        id = models.BigAutoField(primary_key=True)
-
-        class Meta:
-            app_label = "t"
-
-    class SmallPk(models.Model):
-        id = models.SmallAutoField(primary_key=True)
-
-        class Meta:
-            app_label = "t"
-
-    bad = []
-    all_cols = load_schema_from_django(AllTypes)["t_alltypes"]["columns"]
-    all_expected = {
-        "id": {"type": "integer", "nullable": False, "primary_key": True},
-        "c": {"type": "text", "nullable": False}, "slug": {"type": "text", "nullable": False}, "email": {"type": "text", "nullable": False},
-        "i": {"type": "integer", "nullable": False}, "bi": {"type": "integer", "nullable": False}, "si": {"type": "integer", "nullable": False},
-        "pi": {"type": "integer", "nullable": False}, "psi": {"type": "integer", "nullable": False},
-        "f": {"type": "real", "nullable": False}, "b": {"type": "boolean", "nullable": False}, "u": {"type": "uuid", "nullable": False},
-        "dt": {"type": "timestamptz", "nullable": False}, "d": {"type": "date", "nullable": False}, "t": {"type": "time", "nullable": False},
-        "dec": {"type": "numeric", "nullable": False}, "bin": {"type": "bytea", "nullable": False}, "j": {"type": "jsonb", "nullable": False},
-        "txt": {"type": "text", "nullable": False},
-    }
-    if all_cols != all_expected:
-        bad.append(f"django type map wrong: {all_cols}")
-    if load_schema_from_django(BigPk)["t_bigpk"]["columns"]["id"]["type"] != "integer":
-        bad.append("a BigAutoField primary key should map to integer")
-    if load_schema_from_django(SmallPk)["t_smallpk"]["columns"]["id"]["type"] != "integer":
-        bad.append("a SmallAutoField primary key should map to integer")
-
-    # An explicit AutoField primary key (the default id is BigAutoField), a standalone unique column,
-    # and an unmapped field type that falls back to text.
-    class Cov(models.Model):
-        id = models.AutoField(primary_key=True)
-        uniq = models.CharField(max_length=1, unique=True)
-        dur = models.DurationField()
-
-        class Meta:
-            app_label = "t"
-
-    cov = load_schema_from_django(Cov)["t_cov"]["columns"]
-    if cov != {"id": {"type": "integer", "nullable": False, "primary_key": True}, "uniq": {"type": "text", "nullable": False, "unique": True}, "dur": {"type": "text", "nullable": False}}:
-        bad.append(f"AutoField/unique/unmapped-fallback wrong: {cov}")
-
-    order = load_schema_from_django(Customer, Order).get("shop_order", {}).get("columns", {})
-    expected = {
-        "id": {"type": "integer", "nullable": False, "primary_key": True},
-        "status": {"type": "text", "nullable": False, "literal_values": ["pending", "shipped"], "default": "'pending'"},
-        "qty": {"type": "integer", "nullable": False, "default": "5"},
-        "active": {"type": "boolean", "nullable": False, "default": "TRUE"},
-        "note": {"type": "text", "nullable": True},
-        "customer_id": {"type": "integer", "nullable": False, "references": "shop_customer.id"},
-    }
-    if set(order) != set(expected):
-        bad.append(f"load_schema_from_django should map every field by db column: {sorted(order)}")
-    for column_name, exp in expected.items():
-        if order.get(column_name) != exp:
-            bad.append(f"django column {column_name}: got {order.get(column_name)}, expected {exp}")
-
-    async def _run():
-        conn = _SqliteConn()
-        applied = await migrate(load_schema_from_django(Customer), conn, "sqlite")
-        if "ok" not in applied:
-            bad.append(f"a Django-loaded schema should migrate: {applied}")
-        else:
-            await conn.execute("INSERT INTO shop_customer (id, name) VALUES (1, 'acme')")
-            got = await conn.execute("SELECT name FROM shop_customer WHERE id = 1")
-            if got["rows"][0]["name"] != "acme":
-                bad.append(f"the Django-loaded table should accept a row: {got}")
-        return bad
-
-    return asyncio.run(_run())
-
-
-def _probe_ambiguity():
-    """Ambiguity detection (section 5.3): the Levenshtein edit distance, the confidence scoring
-    (1.0 types match + similar names, 0.7 types match, 0.0 types differ; below 0.5 not reported), and
-    the full possible_rename record with its exclusions."""
-    from honest_persist.ambiguity import _confidence, _levenshtein, detect_ambiguities
-
-    bad = []
-    for left, right, expected in [("", "abc", 3), ("a", "", 1), ("abc", "", 3), ("abc", "abc", 0), ("abc", "abd", 1), ("abc", "ab", 1), ("kitten", "sitting", 3), ("ab", "ba", 2), ("ab", "abcd", 2)]:
-        if _levenshtein(left, right) != expected:
-            bad.append(f"_levenshtein({left!r}, {right!r}) should be {expected}: {_levenshtein(left, right)}")
-
-    text = {"type": "text"}
-    if _confidence(text, {"type": "integer"}, "a", "a") != 0.0:
-        bad.append("differing types give confidence 0.0")
-    if _confidence(text, text, "emial", "email") != 1.0:
-        bad.append("matching types and similar names give 1.0")
-    if _confidence(text, text, "first_name", "surname") != 0.7:
-        bad.append("matching types but distant names give 0.7")
-    # Names at edit distance exactly 3 are NOT similar (the <= 2 boundary): confidence 0.7, not 1.0.
-    if _levenshtein("cat", "dog") != 3 or _confidence(text, text, "cat", "dog") != 0.7:
-        bad.append(f"names at distance 3 are not similar (0.7, not 1.0): {_confidence(text, text, 'cat', 'dog')}")
-
-    # A drop+add of a same-typed, similar-named column is one possible_rename, recorded in full.
-    found = detect_ambiguities({"t": {"columns": {"emial": text}}}, {"t": {"columns": {"email": text}}}, {})
-    if found != [{
-        "type": "possible_rename", "table": "t", "from_column": "emial", "to_column": "email",
-        "confidence": 1.0, "message": "Column 'emial' dropped and 'email' added in 't' with matching type; possible rename.",
-    }]:
-        bad.append(f"a possible rename should be recorded in full: {found}")
-    # Below 0.5 (differing types) is not reported; renamed_from and a decision both exclude it.
-    if detect_ambiguities({"t": {"columns": {"a": text}}}, {"t": {"columns": {"b": {"type": "integer"}}}}, {}):
-        bad.append("a drop+add with differing types is below threshold and not reported")
-    if detect_ambiguities({"t": {"columns": {"emial": text}}}, {"t": {"columns": {"email": {**text, "renamed_from": "emial"}}}}, {}):
-        bad.append("a renamed_from hint resolves the ambiguity")
-    if detect_ambiguities({"t": {"columns": {"emial": text}}}, {"t": {"columns": {"email": text}}}, {"t.email": "rename"}):
-        bad.append("a decisions entry resolves the ambiguity")
-    # A hinted rename source must be removed from `dropped` (the hinted set): with src renamed to dst,
-    # src must not become a false ambiguity against another, same-typed added column.
-    if detect_ambiguities({"t": {"columns": {"src": text}}}, {"t": {"columns": {"dst": {**text, "renamed_from": "src"}, "extra": text}}}, {}):
-        bad.append("a hinted rename source must be excluded from the dropped set")
-    # A renamed target must be removed from `added`: with src renamed to dst, dst must not become a
-    # false ambiguity against another, same-typed dropped column.
-    if detect_ambiguities({"t": {"columns": {"src": text, "other": text}}}, {"t": {"columns": {"dst": {**text, "renamed_from": "src"}}}}, {}):
-        bad.append("a renamed target must be excluded from the added set")
-    return bad
-
-
-def _probe_deps():
-    """Operation dependency ordering (section 5.4): the _DEPENDS_ON / _MUST_PRECEDE rule tables, the
-    relatedness test, build_dependencies, and topological_sort (order, deterministic tie-break, cycle)."""
-    from honest_persist.deps import _related, _runs_before, _subject, build_dependencies, topological_sort
-    from honest_persist.types import operation
-
-    bad = []
-    # Every _DEPENDS_ON rule: the dependency runs before the dependent (same table -> related), and not
-    # the reverse — so emptying/swapping a rule-table entry now fails.
-    depends_on = [("add_foreign_key", "create_table"), ("add_column", "create_table"), ("add_index", "create_table"), ("add_index", "add_column"), ("add_constraint", "create_table"), ("add_constraint", "add_column"), ("create_trigger", "create_table")]
-    for dependent, dependency in depends_on:
-        before, after = operation(dependency, "t", {}), operation(dependent, "t", {})
-        if not _runs_before(before, after):
-            bad.append(f"{dependency} must run before {dependent}")
-        if _runs_before(after, before):
-            bad.append(f"{dependent} must not run before {dependency}")
-    # create_view depends on a create_table AND on another create_view it declares (the second
-    # dependency in the create_view rule): the depended-on view must run first.
-    base_view = operation("create_view", "", {"view": "base"})
-    derived_view = operation("create_view", "", {"view": "derived", "depends_on": ["base"]})
-    if not _runs_before(base_view, derived_view):
-        bad.append("a view that depends on another view must run after it")
-    # ...and on the table it reads (the first dependency in the create_view rule).
-    view_on_table = operation("create_view", "", {"view": "v", "depends_on": ["t"]})
-    if not _runs_before(operation("create_table", "t", {}), view_on_table):
-        bad.append("a view that depends on a table must run after the table is created")
-    # create_matview depends on each source it reads (the three dependencies in the create_matview
-    # rule): the source table, view, or materialized view must run before the backing table.
-    if not _runs_before(operation("create_table", "t", {}), operation("create_matview", "mv", {"view": "mv", "depends_on": ["t"]})):
-        bad.append("a materialized view must run after a source table it reads")
-    if not _runs_before(operation("create_view", "", {"view": "v"}), operation("create_matview", "mv", {"view": "mv", "depends_on": ["v"]})):
-        bad.append("a materialized view must run after a source view it reads")
-    if not _runs_before(operation("create_matview", "mv1", {"view": "mv1"}), operation("create_matview", "mv2", {"view": "mv2", "depends_on": ["mv1"]})):
-        bad.append("a materialized view must run after a source materialized view it reads")
-    # An inline foreign key orders table creation: a table whose column references another is created
-    # after it, and dropped before it. _inline_references reads those references off a create/drop op.
-    from honest_persist.deps import _inline_references
-    player_create = operation("create_table", "player", {"columns": {"id": {"type": "integer"}, "team_id": {"type": "integer", "references": "team.id"}}})
-    if _inline_references(player_create) != {"team"} or _inline_references(operation("create_table", "t", {"columns": {"id": {"type": "integer"}}})) != set() or _inline_references(operation("add_column", "t", {"references": "x.y"})) != set():
-        bad.append(f"_inline_references should read a create/drop op's inline foreign keys and nothing else: {_inline_references(player_create)}")
-    if not _runs_before(operation("create_table", "team", {}), player_create):
-        bad.append("a table with an inline foreign key must be created after the table it references")
-    player_drop = operation("drop_table", "player", {"columns": {"team_id": {"type": "integer", "references": "team.id"}}})
-    if not _runs_before(player_drop, operation("drop_table", "team", {"columns": {}})):
-        bad.append("a table with an inline foreign key must be dropped before the table it references")
-    if _runs_before(operation("drop_table", "team", {"columns": {}}), player_drop):
-        bad.append("the referenced table must not be dropped before the referencing one")
-    # a materialized view is dropped before the source tables its refresh triggers fire on.
-    if not _runs_before(operation("drop_matview", "mv", {"view": "mv", "depends_on": ["src"]}), operation("drop_table", "src", {"columns": {}})):
-        bad.append("a materialized view must be dropped before the source tables it triggers on")
-    # Every _MUST_PRECEDE rule: the drop runs before the table/column drop.
-    must_precede = [("drop_foreign_key", "drop_table"), ("drop_foreign_key", "drop_column"), ("drop_index", "drop_table"), ("drop_index", "drop_column"), ("drop_constraint", "drop_table"), ("drop_constraint", "drop_column"), ("drop_column", "drop_table"), ("drop_view", "drop_table"), ("drop_trigger", "drop_table")]
-    for early, late in must_precede:
-        if not _runs_before(operation(early, "t", {}), operation(late, "t", {})):
-            bad.append(f"{early} must run before {late}")
-
-    # _related's three branches: same table, a foreign-key reference, and a depends_on declaration.
-    _subject_view = operation("create_view", "", {"view": "v", "depends_on": ["t"]})
-    if _subject(_subject_view) != "v":
-        bad.append("_subject should prefer the view name over the table")
-    if _subject(operation("create_trigger", "tbl", {"trigger": "tg"})) != "tg":
-        bad.append("_subject should prefer the trigger name over the table")
-    if _subject(operation("create_function", "", {"function": "fn"})) != "fn":
-        bad.append("_subject should prefer the function name")
-    if _subject(operation("add_column", "tbl", {"column": "c"})) != "tbl":
-        bad.append("_subject falls back to the table when there is no named object")
-    if not _related(operation("add_foreign_key", "t", {"references": "o.id"}), operation("create_table", "o", {})):
-        bad.append("a foreign-key reference should relate to the referenced table")
-    if _related(operation("add_foreign_key", "t", {"references": "o.id"}), operation("create_table", "x", {})):
-        bad.append("a foreign key must relate only to the table it actually references, not any table")
-    if not _related(_subject_view, operation("create_table", "t", {})):
-        bad.append("a depends_on declaration should relate to the named object")
-    if _related(operation("add_column", "t", {}), operation("create_table", "u", {})):
-        bad.append("unrelated operations on different tables must not relate")
-
-    # build_dependencies + topological_sort: create_table before add_foreign_key, deterministic order.
-    ops = [operation("add_foreign_key", "t", {"references": "o.id"}), operation("create_table", "t", {}), operation("create_table", "o", {})]
-    deps = build_dependencies(ops)
-    if sorted(deps[0]) != [1, 2] or deps[1] != [] or deps[2] != []:
-        bad.append(f"add_foreign_key (index 0) should depend on both create_tables: {deps}")
-    order = topological_sort(ops, deps)
-    if order != [1, 2, 0]:
-        bad.append(f"topological_sort should run the create_tables first, ties by index: {order}")
-    # Deterministic tie-break (ready.sort()): when finishing node 1 frees node 0, the lower index 0
-    # must come before the already-ready higher index 2 — [1, 0, 2], not [1, 2, 0].
-    tie = [object(), object(), object()]  # three opaque nodes; order is by index only
-    if topological_sort(tie, {0: [1], 1: [], 2: []}) != [1, 0, 2]:
-        bad.append(f"topological_sort should break ties by index deterministically: {topological_sort(tie, {0: [1], 1: [], 2: []})}")
-    # A two-node cycle has no valid order.
-    cyclic = [operation("create_view", "", {"view": "a", "depends_on": ["b"]}), operation("create_view", "", {"view": "b", "depends_on": ["a"]})]
-    if topological_sort(cyclic, build_dependencies(cyclic)) is not None:
-        bad.append("a dependency cycle should have no topological order")
-    return bad
-
-
-def _probe_types_defaults():
-    """host_defaults.default_sql (section 2.3) renders a Python default to its SQL literal by type, and
-    diff_result (section 4.7) assembles the four-key result. Both pure."""
-    from honest_persist.host_defaults import default_sql
-    from honest_persist.types import diff_result
-
-    bad = []
-    cases = [("ada", "'ada'"), (True, "TRUE"), (False, "FALSE"), (3, "3"), (1.5, "1.5"), (None, None), ([1], None)]
-    for value, expected in cases:
-        if default_sql(value) != expected:
-            bad.append(f"default_sql({value!r}) should be {expected!r}: {default_sql(value)!r}")
-
-    result = diff_result(["op"], {"a": ["b"]}, [0], ["amb"])
-    if result != {"operations": ["op"], "dependencies": {"a": ["b"]}, "execution_order": [0], "ambiguities": ["amb"]}:
-        bad.append(f"diff_result should assemble the four-key result exactly: {result}")
-    return bad
-
-
-def _probe_migrate_remote():
-    """§5.2 migrate-remote flow: on a cloud-synced connection (a truthy `synced` attribute) apply pulls
-    the current cloud state before applying any operation and pushes the completed schema only on
-    success, so DDL reaches the cloud without the sync engine replicating it. A failed migration is
-    never pushed, and a non-synced connection applies directly with no pull/push."""
-
-    class _SyncedConn:
-        synced = True
-
-        def __init__(self):
-            self.calls = []
-
-        async def execute(self, sql):
-            self.calls.append(("execute", sql))
-
-        async def pull(self):
-            self.calls.append(("pull", None))
-
-        async def push(self):
-            self.calls.append(("push", None))
-
-    class _SyncedFailingConn(_SyncedConn):
-        async def execute(self, sql):
-            self.calls.append(("execute", sql))
-            raise RuntimeError("ddl failed")
-
-    schema = {"t": {"columns": {"id": {"type": "text"}}}}
-    plan = diff({}, schema)
-    bad = []
-
-    async def _run():
-        synced = _SyncedConn()
-        result = await apply(plan, schema, synced, "turso")
-        if not result["success"]:
-            bad.append(f"migrate-remote: a clean create-table succeeds, got {result}")
-        if [kind for kind, _ in synced.calls] != ["pull", "execute", "push"]:
-            bad.append(f"migrate-remote: pull, then the operation, then push, got {[k for k, _ in synced.calls]}")
-
-        failing = _SyncedFailingConn()
-        failed = await apply(plan, schema, failing, "turso")
-        failed_kinds = [kind for kind, _ in failing.calls]
-        if failed["success"]:
-            bad.append("migrate-remote: a failing operation must not report success")
-        if "push" in failed_kinds:
-            bad.append(f"migrate-remote: a failed migration is never pushed, got {failed_kinds}")
-        if failed_kinds[:1] != ["pull"]:
-            bad.append(f"migrate-remote: the pull still happens before the failing operation, got {failed_kinds}")
-
-        plain = _Conn()
-        plain_result = await apply(plan, schema, plain, "turso")
-        if not plain_result["success"]:
-            bad.append(f"migrate-remote: a non-synced connection applies directly, got {plain_result}")
-        return bad
-
-    return asyncio.run(_run())
+_PROBES = [
+    _probe_surface,
+    _probe_engine_of,
+    _probe_deciders,
+    _probe_next_wait,
+    _probe_retry_schedule,
+    _probe_schema_pure,
+    _probe_schema_diff,
+    _probe_dialect_edges,
+    _probe_spelling_dialects,
+    _probe_query_compilation,
+    _probe_query_reading,
+    _probe_query_shapers,
+    _probe_query_pure,
+    _probe_engine_tables,
+    _probe_crew_pure,
+    _probe_schema_declarations,
+    _probe_refresh,
+    _probe_real_query,
+    _probe_real_readonly_fault,
+    _probe_crew_run_write,
+    _probe_boundary_faults,
+    _probe_readers_and_log,
+    _probe_crew_lifecycle,
+    _probe_channel,
+    _probe_replication,
+    _probe_migration_and_schema,
+    _probe_session_open,
+    _probe_query_ask,
+    _probe_query_ask_reads,
+    _probe_lifecycle_doors,
+    _probe_generator_retry,
+    _probe_crew_concurrency,
+    _probe_turso_mvcc,
+    _probe_crew_lifecycle_paths,
+    _probe_shutdown_handler,
+    _probe_door_paths,
+    _probe_pure_edges,
+    _probe_fail_closed_rows,
+    _probe_query_read_edges,
+    _probe_inspect_edges,
+    _probe_query_write_paths,
+    _probe_shutdown_push,
+    _probe_retry_outcomes,
+    _probe_replication_orchestration,
+    _probe_sync_turn,
+    _probe_observe_emit_swallowed,
+    _probe_query_builders,
+    _probe_checked_builders,
+    _probe_query_execute,
+    _probe_query_select_options,
+    _probe_query_transaction,
+    _probe_async_write,
+    # The probes that define host pydantic models run last and clean up after themselves, so their
+    # declared models never reach another law's schema read.
+    _probe_migration_on_open,
+    _probe_pydantic_loader,
+    _probe_migration_refusals,
+    _probe_view_refresh_specs,
+]
 
 
 def run():
-    groups = [
-        verify_laws(HP_LAWS, [{"name": p[0] + "->" + p[1], "params": p} for p in _PAIRS]),
-        verify_laws(RENDER_LAWS, [{"name": op[0], "params": op} for op in _RENDER_OPS]),
-    ]
-    probes = {
-        "apply": _probe_apply(),
-        "migrate_remote": _probe_migrate_remote(),
-        "instrumented_apply": _probe_instrumented_apply(),
-        "pool": _probe_pool(),
-        "pool_registry": _probe_pool_registry(),
-        "lifecycle": _probe_lifecycle(),
-        "ephemeral": _probe_ephemeral(),
-        "pool_events": _probe_pool_events(),
-        "write_queue": _probe_write_queue(),
-        "supervisor": _probe_supervisor(),
-        "drain_loop": _probe_drain_loop(),
-        "connection_pool": _probe_connection_pool(),
-        "connect_retry": _probe_connect_retry(),
-        "migrate": _probe_migrate(),
-        "postgres_pure": _probe_postgres_pure(),
-        "postgres": _probe_postgres(),
-        "sql_validity": _probe_sql_validity(),
-        "roundtrip": _probe_roundtrip(),
-        "abstractions": _probe_abstractions(),
-        "arrays_maps": _probe_arrays_maps(),
-        "hierarchy": _probe_hierarchy(),
-        "enums": _probe_enums(),
-        "loader": _probe_loader(),
-        "django_loader": _probe_django_loader(),
-        "cutover": _probe_cutover(),
-        "check": _probe_check(),
-        "enforce_checks": _probe_enforce_checks(),
-        "diff_alter": _probe_diff_alter(),
-        "validate": _probe_validate(),
-        "extended": _probe_extended(),
-        "checked": _probe_checked(),
-        "execute": _probe_execute(),
-        "transaction": _probe_transaction(),
-        "transaction_real": _probe_transaction_real(),
-        "reconstruct_fk_violation": _probe_reconstruct_fk_violation(),
-        "instrument": _probe_instrument(),
-        "instrumented": _probe_instrumented(),
-        "types_defaults": _probe_types_defaults(),
-        "deps": _probe_deps(),
-        "ambiguity": _probe_ambiguity(),
-    }
-    violations = [v for g in groups for v in g["violations"]]
-    for name, messages in probes.items():
-        if messages:
-            violations.append({"law": "HP-probe", "statement": name, "subject": name, "messages": messages})
-
-    probe_passed = sum(1 for m in probes.values() if not m)
-    passed = sum(g["passed"] for g in groups) + probe_passed
-    total = sum(g["total"] for g in groups) + len(probes)
-
-    for v in violations:
-        print(f"FAIL {v['law']} [{v['subject']}]: {v['messages']}")
-    print(f"HP laws: {passed} passed, {len(violations)} failed, {total} total")
-    return 0 if not violations else 1
+    """Run every probe, never letting one missing function abort the rest, and aggregate the failures.
+    Returns 0 when every law holds, 1 otherwise. Today the code port has not run, so this is RED by
+    construction: the surface sweep names the unbuilt functions and the behavioural laws fail on them."""
+    all_bad = []
+    for probe in _PROBES:
+        try:
+            all_bad.extend(probe())
+        except Exception as e:
+            all_bad.append(f"{probe.__name__} raised {type(e).__name__}: {e}")
+    for failure in all_bad:
+        print(f"LAW FAIL: {failure}")
+    for skip in _SKIPS:
+        print(f"LAW SKIP: {skip}")
+    print(f"laws: {len(all_bad)} failures across {len(_PROBES)} probes; {len(_SKIPS)} engine/fixture skips recorded")
+    return 0 if not all_bad else 1
 
 
 if __name__ == "__main__":

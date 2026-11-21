@@ -10,7 +10,7 @@
 set -uo pipefail
 cd "$(dirname "$0")"            # -> python/
 
-SRC=honest_alerts,honest_auth,honest_check,honest_design,honest_estimate,honest_state,honest_errors,honest_features,honest_gherkin,honest_observe,honest_page,honest_parse,honest_persist,honest_rca,honest_test,honest_type
+SRC=honest_alerts,honest_auth,honest_check,honest_design,honest_estimate,honest_state,honest_errors,honest_features,honest_gherkin,honest_observe,honest_page,honest_parse,honest_persist,honest_rca,honest_test,honest_type,honest_utilities
 # The whole workspace, every time. A `uv run --package X` anywhere before this trims the shared
 # environment to X's closure, and then thirteen suites here failed on a missing import that had
 # nothing to do with the staged change (2026-09-05). The gate must not depend on what the last

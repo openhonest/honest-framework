@@ -1,394 +1,551 @@
-"""Schema layer (section 5): the pure diff.
+"""The schema-declaration leaves of the declaration: field, schema_from_declared, migration_needed.
 
-`diff(current, target)` compares two schemas with set theory and produces the operations that
-transform `current` into `target`, ordered so dependencies are respected. Pure: same inputs,
-same output, no I/O. Migrations are a diff, not a revision chain.
-
-Table, column, foreign-key, index, and constraint changes are all set-theory diffs.
-renamed_from hints distinguish a rename from a drop+add. The operations are then dependency-
-ordered (section 5.4); a cycle in the dependency graph is a schema design error and returns a
-fault. Ambiguity detection (section 5.3) and apply() (section 5.2) are separate.
+Pure, if-free, data in and data out, no state of their own. These three are the structural half of
+the schema layer: `field` records the two facts a column annotation cannot carry, `schema_from_declared`
+builds the target schema the host's models want, and `migration_needed` says whether a live schema
+still has to be brought up to that target. Every mapping here is fixed by the declaration's types
+(honest-persist.hd) and spec section 5; none consults anything but its arguments.
 """
 
-import json
 
-from honest_type import err, fault, ok
-
-from honest_persist.ambiguity import detect_ambiguities
-from honest_persist.deps import build_dependencies, topological_sort
-from honest_persist.types import diff_result, operation
-
-# The extended-object maps of a SchemaDefinition and the `kind` each is stored under in the
-# `_hp_object` registry (section 9.1).
-_REGISTRY_KINDS = (("views", "view"), ("triggers", "trigger"), ("procedures", "procedure"))
+def field(renamed_from, references):
+    """Build the two-fact record a host says about one column beside its annotation (declaration
+    `type Field`, `fn field`): what the column was renamed from, and where it points. Neither argument
+    has a default, because a column that forgot to say where it points and one that points nowhere are
+    different facts and only the host knows which; both are the named absence (None) when the host
+    leaves them unsaid. Both facts carry through exactly as handed in, so nothing a second naming could
+    drift from is invented here."""
+    return {"renamed_from": renamed_from, "references": references}
 
 
-def _resolve_renames(added, dropped, target_mapping):
-    """Split `added` names into (renames, actual_adds) using renamed_from hints: an added name
-    whose renamed_from is a dropped name is a rename, not a fresh add (section 5.1)."""
-    renames = []
-    actual_adds = []
-    for name in sorted(added):
-        source = target_mapping[name].get("renamed_from")
-        if source and source in dropped:
-            renames.append((source, name))
-        else:
-            actual_adds.append(name)
-    return renames, actual_adds
+def _table_from_model(model):
+    """One Model becomes one Table (declaration `type Model`, `type Table`; spec 5.1). The target
+    schema names a table by the model's `table`, not its `name`, because a live schema read back from
+    a database names it that way, and carries the model's columns, indexes and constraints as they
+    stand. The model's `name` and `dropping` are the differ's business and are not fields of a table."""
+    return {
+        "name": model["table"],
+        "columns": model["columns"],
+        "indexes": model["indexes"],
+        "constraints": model["constraints"],
+    }
 
 
-def _compute_alterations(current_col, target_col):
-    """Type / nullable / default changes between two column definitions (section 5.1). An
-    empty dict means no change."""
-    changes = {}
-    if current_col.get("type") != target_col.get("type"):
-        changes["type"] = {"from": current_col.get("type"), "to": target_col.get("type")}
-    if current_col.get("nullable", True) != target_col.get("nullable", True):
-        changes["nullable"] = {
-            "from": current_col.get("nullable", True),
-            "to": target_col.get("nullable", True),
-        }
-    if current_col.get("default") != target_col.get("default"):
-        changes["default"] = {"from": current_col.get("default"), "to": target_col.get("default")}
-    return changes
+def schema_from_declared(declared):
+    """Build the target Schema from what the code declares, and from nothing else (declaration
+    `fn schema_from_declared`; spec 5.1): each Model becomes a Table, and the declared views carry over
+    unchanged. An empty declaration builds an empty schema, which is an answer and not a failure."""
+    return {
+        "tables": [_table_from_model(model) for model in declared["models"]],
+        "views": declared["views"],
+    }
 
 
-def _diff_columns(table, current_cols, target_cols):
-    """Column add / drop / rename / alter for a table present in both schemas (section 5.1)."""
-    dropped = set(current_cols) - set(target_cols)
-    added = set(target_cols) - set(current_cols)
-    common = set(current_cols) & set(target_cols)
-    renames, actual_adds = _resolve_renames(added, dropped, target_cols)
-    rename_sources = {source for source, _ in renames}
-
-    ops = []
-    for column in sorted(dropped):
-        if column not in rename_sources:
-            ops.append(operation("drop_column", table, {"column": column}))
-    for source, target_name in renames:
-        ops.append(operation("rename_column", table, {"from": source, "to": target_name}))
-    for column in actual_adds:
-        ops.append(operation("add_column", table, {"column": column, "definition": dict(target_cols[column])}))
-    for column in sorted(common):
-        changes = _compute_alterations(current_cols[column], target_cols[column])
-        if changes:
-            ops.append(operation("alter_column", table, {"column": column, "changes": changes}))
-    return ops
+def migration_needed(live, target):
+    """Answer whether the database still has to be brought up to the models (declaration
+    `fn migration_needed`; migration_compare boundary, spec line 116): a live schema already matching
+    the wanted one needs no migration, and any difference between the two needs one. The comparison is
+    structural — the two schemas are equal or they are not — and the engine's own tables are already
+    left out of the live schema by the inspection questions, so nothing here has to exclude them."""
+    return live != target
 
 
-def _diff_foreign_keys(table, current_cols, target_cols):
-    """Foreign-key changes on columns present in both schemas: a changed `references` is a drop
-    of the old FK and an add of the new (section 5.1). New columns carry their FK in the
-    add_column definition; this handles changes to existing columns."""
-    ops = []
-    for column in sorted(set(current_cols) & set(target_cols)):
-        current_ref = current_cols[column].get("references")
-        target_ref = target_cols[column].get("references")
-        if current_ref == target_ref:
-            continue
-        if current_ref:
-            ops.append(operation("drop_foreign_key", table, {"column": column, "references": current_ref}))
-        if target_ref:
-            fk = {"column": column, "references": target_ref}
-            for action in ("on_delete", "on_update"):
-                if target_cols[column].get(action):
-                    fk[action] = target_cols[column][action]
-            ops.append(operation("add_foreign_key", table, fk))
-    return ops
+from operator import itemgetter  # noqa: E402
+
+from honest_persist._util import _pick, _read_or  # noqa: E402
+from honest_persist.types import refused  # noqa: E402
+
+NOTHING = None
+
+# --- the difference between two schemas (declaration difference, spec section 5) --------------------
+_DESTROYS = {
+    "create_table": False, "drop_table": True, "add_column": False, "drop_column": True,
+    "alter_column": True, "rename_column": False, "rename_table": False, "create_index": False,
+    "drop_index": False, "create_view": False, "drop_view": False, "refresh_view": False,
+    "insert_enum_values": False, "remove_enum_values": True,
+}
 
 
-def _diff_named(table, current_named, target_named, add_op, drop_op, key):
-    """Set-theory diff for named sub-objects (indexes, constraints): added -> add, dropped ->
-    drop, changed -> drop + add."""
-    dropped = set(current_named) - set(target_named)
-    added = set(target_named) - set(current_named)
-    common = set(current_named) & set(target_named)
-
-    ops = []
-    for name in sorted(dropped):
-        ops.append(operation(drop_op, table, {key: name}))
-    for name in sorted(added):
-        ops.append(operation(add_op, table, {key: name, "definition": dict(target_named[name])}))
-    for name in sorted(common):
-        if current_named[name] != target_named[name]:
-            ops.append(operation(drop_op, table, {key: name}))
-            ops.append(operation(add_op, table, {key: name, "definition": dict(target_named[name])}))
-    return ops
+def _operation(kind, name, column, columns, indexes, constraints, copying, values, renamed_to, view):
+    """One operation, carrying everything its kind names and whether it destroys."""
+    return {
+        "kind": kind, "table": name, "column": column, "columns": columns, "indexes": indexes,
+        "constraints": constraints, "copying": copying, "values": values, "renamed_to": renamed_to,
+        "view": view, "destroys": _read_or(_DESTROYS, kind, lambda: False),
+    }
 
 
-def _diff_table(table, current_table, target_table):
-    """Every change to a table present in both schemas: columns, foreign keys, indexes,
-    constraints (section 5.1)."""
-    current_cols = current_table.get("columns", {})
-    target_cols = target_table.get("columns", {})
-    ops = _diff_columns(table, current_cols, target_cols)
-    ops.extend(_diff_foreign_keys(table, current_cols, target_cols))
-    ops.extend(_diff_named(
-        table, current_table.get("indexes", {}), target_table.get("indexes", {}),
-        "add_index", "drop_index", "index"))
-    ops.extend(_diff_named(
-        table, current_table.get("constraints", {}), target_table.get("constraints", {}),
-        "add_constraint", "drop_constraint", "constraint"))
-    return ops
+def _by_name(items):
+    """Tables, columns or views under their own names, so a comparison is three set operations."""
+    return {item["name"]: item for item in items}
 
 
-def _normalize(schema):
-    """Coerce a bare Schema (dict[str, Table]) or a SchemaDefinition into a full definition
-    (section 4.15). A dict whose keys are a subset of the reserved names and that carries
-    `tables` is a definition; anything else is a tables-only schema."""
-    if "tables" in schema and set(schema) <= {"tables", "views", "triggers", "procedures"}:
-        return {
-            "tables": schema.get("tables", {}),
-            "views": schema.get("views", {}),
-            "triggers": schema.get("triggers", {}),
-            "procedures": schema.get("procedures", {}),
-        }
-    return {"tables": schema, "views": {}, "triggers": {}, "procedures": {}}
+def _rules_on(column, table):
+    """Every rule this table declares about this column, as kind and value, sorted so list order is not
+    a difference and nameless, because the engine makes up names for unnamed rules."""
+    return sorted(
+        (rule["kind"], repr(rule["value"]))
+        for rule in filter(lambda r: column in r["columns"], table["constraints"])
+    )
 
 
-def _constraint_registry_rows(tables):
-    """The `_hp_object` rows recording each table's check constraints (section 9.1): a check constraint
-    is an opaque SQL expression the database re-renders (PostgreSQL) or does not expose at all (SQLite),
-    so honest-persist stores it in the registry and reads it back exactly rather than from the catalog.
-    Each row is keyed 'table.constraint' and carries the table, the constraint name, and its definition.
-    Pure."""
-    rows = []
-    for table_name in sorted(tables):
-        constraints = tables[table_name].get("constraints", {})
-        for constraint_name in sorted(constraints):
-            if constraints[constraint_name].get("type") == "check":
-                rows.append((table_name + "." + constraint_name, {"table": table_name, "constraint": constraint_name, "definition": constraints[constraint_name]}))
-    return rows
+def _differs(column, live, target, held, wanted):
+    """Whether the live column and the declared one are the same column: its type and every rule."""
+    return held[column]["declared_type"] != wanted[column]["declared_type"] or _rules_on(column, live) != _rules_on(column, target)
 
 
-def object_registry_queries(schema, dialect):
-    """The queries that bring the `_hp_object` registry (section 9.1) in step with a schema's extended
-    objects and check constraints, run after apply in the same workflow slot as `enum_seed_queries`
-    (section 6.1). Pure query builder: ensure the registry table exists, clear it, and record every
-    view, trigger, procedure, and check constraint as a row carrying its canonical definition as JSON —
-    so the inspector reconstructs each one exactly without ever parsing the database's rendered DDL.
-    Clearing then re-recording lets the registry shed objects the schema has dropped. Returns a list of
-    `{sql, params}`."""
-    definition = _normalize(schema)
-    queries = [
-        {"sql": "CREATE TABLE IF NOT EXISTS _hp_object (name TEXT PRIMARY KEY, kind TEXT NOT NULL, definition TEXT NOT NULL)", "params": {}},
-        {"sql": "DELETE FROM _hp_object", "params": {}},
+def _columns_of(live, target):
+    """What turns one table's live columns into its declared ones."""
+    name = target["name"]
+    held = _by_name(live["columns"])
+    wanted = _by_name(target["columns"])
+    carried_across = list(filter(lambda c: c in held, wanted))
+    added = [
+        _operation("add_column", name, column, [wanted[column]], [], target["constraints"], [], [], None, None)
+        for column in filter(lambda c: c not in held, wanted)
     ]
-    insert = "INSERT INTO _hp_object (name, kind, definition) VALUES (:name, :kind, :definition)"
-    for key, kind in _REGISTRY_KINDS:
-        for name in sorted(definition[key]):
-            queries.append({"sql": insert, "params": {"name": name, "kind": kind, "definition": json.dumps(definition[key][name], sort_keys=True)}})
-    for name, row in _constraint_registry_rows(definition["tables"]):
-        queries.append({"sql": insert, "params": {"name": name, "kind": "constraint", "definition": json.dumps(row, sort_keys=True)}})
-    return queries
+    dropped = [
+        _operation("drop_column", name, column, target["columns"], target["indexes"],
+                   target["constraints"], carried_across, [], None, None)
+        for column in filter(lambda c: c not in wanted, held)
+    ]
+    altered = [
+        _operation("alter_column", name, column, target["columns"], target["indexes"],
+                   target["constraints"], carried_across, [], None, None)
+        for column in filter(lambda c: c in held and _differs(c, live, target, held, wanted), wanted)
+    ]
+    return added + dropped + altered
 
 
-def _plain_view_create_ops(name, view):
-    """The op to create a plain (non-materialized) view (section 5.7)."""
-    return [operation("create_view", "", {"view": name, "definition": dict(view), "depends_on": list(view.get("depends_on", []))})]
+def _views_of(live, target):
+    """What turns the live views into the declared ones; a changed one is a drop and a create."""
+    held = _by_name(live["views"])
+    wanted = _by_name(target["views"])
+    created = [
+        _operation("create_view", name, None, [], [], [], [], [], None, wanted[name])
+        for name in filter(lambda n: n not in held, wanted)
+    ]
+    dropped = [
+        _operation("drop_view", name, None, [], [], [], [], [], None, held[name])
+        for name in filter(lambda n: n not in wanted, held)
+    ]
+    replaced = [
+        operation
+        for name in filter(lambda n: n in held and held[n] != wanted[n], wanted)
+        for operation in (
+            _operation("drop_view", name, None, [], [], [], [], [], None, held[name]),
+            _operation("create_view", name, None, [], [], [], [], [], None, wanted[name]),
+        )
+    ]
+    return created + dropped + replaced
 
 
-def _plain_view_drop_ops(name, view):
-    """The op to drop a plain (non-materialized) view (section 5.7)."""
-    return [operation("drop_view", "", {"view": name, "depends_on": list(view.get("depends_on", []))})]
+def difference(live, target):
+    """Work out which operations turn the live schema into the target (declaration difference): set
+    theory over two schemas, what is only in the target created, what is only live dropped, what differs
+    altered. No engine appears; the list is in the order it was worked out, not a running order."""
+    held = _by_name(live["tables"])
+    wanted = _by_name(target["tables"])
+    created = [
+        _operation("create_table", name, None, wanted[name]["columns"], wanted[name]["indexes"],
+                   wanted[name]["constraints"], [], [], None, None)
+        for name in filter(lambda n: n not in held, wanted)
+    ]
+    dropped = [
+        _operation("drop_table", name, None, [], [], [], [], [], None, None)
+        for name in filter(lambda n: n not in wanted, held)
+    ]
+    columns = [
+        operation
+        for name in filter(lambda n: n in held, wanted)
+        for operation in _columns_of(held[name], wanted[name])
+    ]
+    return created + dropped + columns + _views_of(live, target)
 
 
-def _matview_create_ops(name, view):
-    """The op to create a materialized view (section 6.6): one dialect-agnostic create_matview carrying
-    the whole definition, ordered after the sources it reads. apply renders it to the dialect's
-    statements — native materialized view or backing table, plus any refresh triggers."""
-    return [operation("create_matview", name, {"view": name, "definition": dict(view), "depends_on": list(view.get("depends_on", []))})]
+# --- ordering the operations their dependencies allow (declaration order_operations) -----------------
+def _nothing_of_its_own(_operation):
+    return ()
 
 
-def _matview_drop_ops(name, view):
-    """The op to drop a materialized view (section 6.6): one drop_matview carrying the definition so
-    apply knows which refresh triggers to drop alongside the storage. depends_on travels so it is
-    ordered before the source tables its refresh triggers fire on (section 5.4)."""
-    return [operation("drop_matview", name, {"view": name, "definition": dict(view), "depends_on": list(view.get("depends_on", []))})]
+def _its_own_table(operation):
+    return (operation["table"],)
 
 
-# Create/drop of a view dispatches on whether it is materialized (section 6.6): a plain view is a
-# CREATE/DROP VIEW; a materialized view is a single create_matview / drop_matview that apply expands
-# per dialect.
-_VIEW_CREATE_OPS = {False: _plain_view_create_ops, True: _matview_create_ops}
-_VIEW_DROP_OPS = {False: _plain_view_drop_ops, True: _matview_drop_ops}
+_MUST_ALREADY_EXIST = {
+    "create_table": _nothing_of_its_own, "drop_table": _its_own_table, "add_column": _its_own_table,
+    "drop_column": _its_own_table, "alter_column": _its_own_table, "rename_column": _its_own_table,
+    "rename_table": _its_own_table, "create_index": _its_own_table, "drop_index": _its_own_table,
+    "create_view": _its_own_table, "drop_view": _its_own_table, "refresh_view": _its_own_table,
+    "insert_enum_values": _its_own_table, "remove_enum_values": _its_own_table,
+}
 
 
-def _create_view_ops(name, view):
-    """The ops to create one view, plain or materialized (sections 5.7, 6.6)."""
-    return _VIEW_CREATE_OPS[bool(view.get("materialized"))](name, view)
+def _needed_by(operation):
+    """The tables that have to exist while this operation runs."""
+    pointed_at = tuple(sorted({
+        column["references"]["table"]
+        for column in filter(lambda c: c["references"] is not None, operation["columns"])
+    }))
+    return _MUST_ALREADY_EXIST[operation["kind"]](operation) + pointed_at
 
 
-def _drop_view_ops(name, view):
-    """The ops to drop one view, plain or materialized (sections 5.7, 6.6)."""
-    return _VIEW_DROP_OPS[bool(view.get("materialized"))](name, view)
+def _positions_of(operations, kind):
+    return {
+        operation["table"]: position
+        for position, operation in filter(lambda io: io[1]["kind"] == kind, enumerate(operations))
+    }
 
 
-def _diff_views(current_views, target_views):
-    """View add/drop/replace (section 5.7). A changed definition is a drop + create; a materialized
-    view is a create_matview / drop_matview that apply expands per dialect (section 6.6). depends_on
-    travels in the ops for dependency ordering (section 5.4)."""
-    ops = []
-    for name in sorted(set(current_views) - set(target_views)):
-        ops.extend(_drop_view_ops(name, current_views[name]))
-    for name in sorted(set(target_views) - set(current_views)):
-        ops.extend(_create_view_ops(name, target_views[name]))
-    for name in sorted(set(current_views) & set(target_views)):
-        if current_views[name] == target_views[name]:
-            continue
-        ops.extend(_drop_view_ops(name, current_views[name]))
-        ops.extend(_create_view_ops(name, target_views[name]))
-    return ops
+def _needs(operations):
+    return [(position, name) for position, operation in enumerate(operations) for name in _needed_by(operation)]
 
 
-def _diff_triggers(current_triggers, target_triggers):
-    """Trigger add/drop/replace (section 5.7). The op's table is the table the trigger fires
-    on, so it orders after that table (section 5.4)."""
-    ops = []
-    for name in sorted(set(current_triggers) - set(target_triggers)):
-        ops.append(operation("drop_trigger", current_triggers[name].get("table", ""), {"trigger": name}))
-    for name in sorted(set(target_triggers) - set(current_triggers)):
-        trigger = target_triggers[name]
-        ops.append(operation("create_trigger", trigger.get("table", ""), {"trigger": name, "definition": dict(trigger)}))
-    for name in sorted(set(current_triggers) & set(target_triggers)):
-        if current_triggers[name] == target_triggers[name]:
-            continue
-        trigger = target_triggers[name]
-        ops.append(operation("drop_trigger", current_triggers[name].get("table", ""), {"trigger": name}))
-        ops.append(operation("create_trigger", trigger.get("table", ""), {"trigger": name, "definition": dict(trigger)}))
-    return ops
+def _must_run_before(operations):
+    """Where each operation was written, and what has to run before it."""
+    makes = _positions_of(operations, "create_table")
+    ends = _positions_of(operations, "drop_table")
+    needs = _needs(operations)
+    edges = [
+        (makes[name], position)
+        for position, name in filter(lambda pn: pn[1] in makes and makes[pn[1]] != pn[0], needs)
+    ] + [
+        (position, ends[name])
+        for position, name in filter(lambda pn: pn[1] in ends and ends[pn[1]] != pn[0], needs)
+    ]
+    earlier = {position: set() for position in range(len(operations))}
+    for before, after in edges:
+        earlier[after].add(before)
+    return earlier
 
 
-def _diff_procedures(current_procs, target_procs):
-    """Procedure/function add/drop/replace (section 5.7). Functions use replace semantics
-    (CREATE OR REPLACE); procedures without replace are drop + create."""
-    ops = []
-    for name in sorted(set(current_procs) - set(target_procs)):
-        ops.append(operation("drop_function", "", {"function": name}))
-    for name in sorted(set(target_procs) - set(current_procs)):
-        ops.append(operation("create_function", "", {"function": name, "definition": dict(target_procs[name])}))
-    for name in sorted(set(current_procs) & set(target_procs)):
-        if current_procs[name] == target_procs[name]:
-            continue
-        proc = target_procs[name]
-        if proc.get("kind", "function") == "function":
-            ops.append(operation("replace_function", "", {"function": name, "definition": dict(proc)}))
-            continue
-        ops.append(operation("drop_function", "", {"function": name}))
-        ops.append(operation("create_function", "", {"function": name, "definition": dict(proc)}))
-    return ops
+def _in_an_order_that_works(operations, placed, _waiting):
+    return [operations[position] for position in placed]
 
 
-def _reference_error(references, schema):
-    """None if the 'table.column' reference resolves in the schema, else an error string."""
-    parts = references.split(".")
-    if len(parts) != 2:
-        return f"malformed reference '{references}' (expected 'table.column')"
-    ref_table, ref_column = parts
-    if ref_table not in schema:
-        return f"references unknown table '{ref_table}'"
-    if ref_column not in schema[ref_table].get("columns", {}):
-        return f"references unknown column '{ref_table}.{ref_column}'"
-    return None
+def _no_order_works(operations, _placed, waiting):
+    circle = "; ".join(
+        f"{operations[position]['kind']} on {operations[position]['table']} comes after "
+        + ", ".join(operations[source]["table"] for source in sorted(sources))
+        for position, sources in sorted(waiting.items())
+    )
+    return refused(
+        "cyclic_operations",
+        f"these operations depend on each other in a circle, so no order runs them all: {circle}. "
+        f"Break the circle in the models: take one of the references off.",
+        {"cycle": circle},
+    )
 
 
-def _table_errors(table_name, table, schema):
-    """Internal-consistency errors for one table (section 5.6): dangling foreign keys, and
-    primary-key / index / constraint references to columns that do not exist."""
-    columns = table.get("columns", {})
-    errors = []
-    for column_name, column in columns.items():
-        references = column.get("references")
-        if references:
-            problem = _reference_error(references, schema)
-            if problem:
-                errors.append(f"{table_name}.{column_name} {problem}")
-    for column_name in table.get("primary_key", []):
-        if column_name not in columns:
-            errors.append(f"{table_name}: primary_key names missing column '{column_name}'")
-    for index_name, index in table.get("indexes", {}).items():
-        for column_name in index.get("columns", []):
-            if column_name not in columns:
-                errors.append(f"{table_name}.{index_name}: index names missing column '{column_name}'")
-    for constraint_name, constraint in table.get("constraints", {}).items():
-        for column_name in constraint.get("columns", []) or []:
-            if column_name not in columns:
-                errors.append(f"{table_name}.{constraint_name}: constraint names missing column '{column_name}'")
-    return errors
+_ORDER_ANSWER = {False: _in_an_order_that_works, True: _no_order_works}
 
 
-def validate_schema(schema):
-    """Check a schema for internal consistency before it is diffed or applied (section 5.6).
-    Accepts a bare Schema or a SchemaDefinition (section 4.15). Returns ok(schema), or
-    err(fault 'schema_invalid') listing every broken reference. Pure."""
-    definition = _normalize(schema)
-    tables = definition["tables"]
-    errors = []
-    for table_name, table in tables.items():
-        errors.extend(_table_errors(table_name, table, tables))
-    known = set(tables) | set(definition["views"])
-    for view_name, view in definition["views"].items():
-        for dependency in view.get("depends_on", []):
-            if dependency not in known:
-                errors.append(f"view '{view_name}' depends_on unknown object '{dependency}'")
-    if errors:
-        return err(fault("schema_invalid", "Schema has broken references", "server", [], {"errors": errors}))
-    return ok(schema)
+def _free_positions(waiting):
+    return sorted(position for position, sources in filter(lambda ps: not ps[1], waiting.items()))
 
 
-def _canonical_columns(tables):
-    """Canonicalize columns so schemas that mean the same thing compare equal (section 5.1): a
-    primary-key column is not-null, whether declared with a column-level `primary_key` or named in the
-    table's `primary_key` list. This is what lets a declared `{primary_key: True}` round-trip against
-    an inspected column, which every dialect reports as not-null. Pure."""
-    result = {}
-    for name, table in tables.items():
-        pk_names = set(table.get("primary_key", []))
-        columns = {}
-        for column_name, column in table.get("columns", {}).items():
-            columns[column_name] = {**column, "nullable": False} if (column.get("primary_key") or column_name in pk_names) else column
-        result[name] = {**table, "columns": columns}
-    return result
+def order_operations(operations):
+    """Put the operations in an order their dependencies allow (declaration order_operations); a cycle
+    is a Fault. The same list always answers the same way, because no set is ever iterated: operations
+    still free are taken in the order they were written."""
+    waiting = _must_run_before(operations)
+    placed = []
+    free = _free_positions(waiting)
+    while free:
+        position = free[0]
+        placed.append(position)
+        del waiting[position]
+        for sources in waiting.values():
+            sources.discard(position)
+        free = _free_positions(waiting)
+    return _ORDER_ANSWER[bool(waiting)](operations, placed, waiting)
 
 
-def diff(current, target, decisions=None):
-    """Operations to transform the `current` schema into the `target` schema (section 5.1),
-    dependency-ordered (section 5.4). Pure. Returns a DiffResult, or err(fault) when the target
-    schema is invalid (section 5.6) or the dependency graph has a cycle (section 5.4)."""
-    current_def = _normalize(current)
-    target_def = _normalize(target)
-    invalid = validate_schema(target_def)
-    if "err" in invalid:
-        return invalid
-    current_tables = _canonical_columns(current_def["tables"])
-    target_tables = _canonical_columns(target_def["tables"])
-    dropped = set(current_tables) - set(target_tables)
-    added = set(target_tables) - set(current_tables)
-    modified = set(current_tables) & set(target_tables)
-    renames, actual_adds = _resolve_renames(added, dropped, target_tables)
-    rename_sources = {source for source, _ in renames}
+# --- marking what destroys, and refusing an undeclared loss (declaration) ----------------------------
+_LOSES_DATA = {
+    "create_table": False, "drop_table": True, "add_column": False, "drop_column": True,
+    "alter_column": True, "rename_column": False, "rename_table": False, "create_index": False,
+    "drop_index": False, "create_view": False, "drop_view": False, "refresh_view": False,
+    "insert_enum_values": False, "remove_enum_values": True,
+}
 
-    operations = []
-    for table in sorted(dropped):
-        if table not in rename_sources:
-            operations.append(operation("drop_table", table, {"columns": dict(current_tables[table].get("columns", {}))}))
-    for source, target_name in renames:
-        operations.append(operation("rename_table", source, {"new_name": target_name}))
-    for table in actual_adds:
-        operations.append(operation("create_table", table, dict(target_tables[table])))
-        for index_name in sorted(target_tables[table].get("indexes", {})):
-            operations.append(operation("add_index", table, {"index": index_name, "definition": dict(target_tables[table]["indexes"][index_name])}))
-    for table in sorted(modified):
-        operations.extend(_diff_table(table, current_tables[table], target_tables[table]))
-    operations.extend(_diff_views(current_def["views"], target_def["views"]))
-    operations.extend(_diff_triggers(current_def["triggers"], target_def["triggers"]))
-    operations.extend(_diff_procedures(current_def["procedures"], target_def["procedures"]))
 
-    dependencies = build_dependencies(operations)
-    execution_order = topological_sort(operations, dependencies)
-    if execution_order is None:
-        return err(fault(
-            "schema_cycle", "Schema dependency graph contains a cycle", "server", [],
-            {"operations": operations}))
-    ambiguities = detect_ambiguities(current_tables, target_tables, decisions or {})
-    return diff_result(operations, dependencies, execution_order, ambiguities)
+def _the_table(operation):
+    return operation["table"]
+
+
+def _the_column(operation):
+    return f"{operation['table']}.{operation['column']}"
+
+
+_NAMES = {
+    "create_table": _the_table, "drop_table": _the_table, "add_column": _the_column,
+    "drop_column": _the_column, "alter_column": _the_column, "rename_column": _the_column,
+    "rename_table": _the_table, "create_index": _the_table, "drop_index": _the_table,
+    "create_view": _the_table, "drop_view": _the_table, "refresh_view": _the_table,
+    "insert_enum_values": _the_table, "remove_enum_values": _the_table,
+}
+
+
+def _marked(operation):
+    """The same operation, carrying the answer about itself: a new dict, not a mutated one."""
+    return {**operation, "destroys": _LOSES_DATA[operation["kind"]]}
+
+
+def name_what_destroys(operations):
+    """Mark every operation that loses data, and name what each one loses (declaration
+    name_what_destroys)."""
+    marked = [_marked(operation) for operation in operations]
+    losing = filter(itemgetter("destroys"), marked)
+    return {"operations": marked, "destroys": [_NAMES[operation["kind"]](operation) for operation in losing]}
+
+
+def _columns_this_table_means_to_lose(table, declared):
+    return [
+        column
+        for model in filter(lambda m: m["table"] == table, declared["models"])
+        for column in model["dropping"]
+    ]
+
+
+def _asked_for(_lost, _to_write):
+    return NOTHING
+
+
+def _nobody_asked(lost, to_write):
+    return (lost, to_write)
+
+
+_PERMITTED = {True: _asked_for, False: _nobody_asked}
+
+
+def _a_column_dropped(operation, declared):
+    table = operation["table"]
+    column = str(operation["column"])
+    return _PERMITTED[column in _columns_this_table_means_to_lose(table, declared)](
+        f"the column {table}.{column}, and every value in it",
+        f"Name {column!r} in dropping on the {table} model to lose {table}.{column}.",
+    )
+
+
+def _a_column_narrowed(operation, declared):
+    table = operation["table"]
+    column = str(operation["column"])
+    return _PERMITTED[column in _columns_this_table_means_to_lose(table, declared)](
+        f"whatever no longer fits in {table}.{column}",
+        f"Name {column!r} in dropping on the {table} model to lose it.",
+    )
+
+
+def _a_table_dropped(operation, declared):
+    table = operation["table"]
+    return _PERMITTED[table in declared["dropping_tables"]](
+        f"the whole of {table}, every row and every column",
+        f"Add {table!r} to dropping_tables to lose {table}.",
+    )
+
+
+def _a_view_dropped(operation, declared):
+    view = operation["table"]
+    return _PERMITTED[view in declared["dropping_views"]](
+        f"the view {view}, and anything reading through it",
+        f"Add {view!r} to dropping_views to lose {view}.",
+    )
+
+
+def _nothing_declares_this(operation, _declared):
+    kind = operation["kind"]
+    return _nobody_asked(
+        f"whatever a {kind} on {operation['table']} was marked as destroying",
+        f"A {kind} loses nothing, so no declaration allows one and this plan cannot be permitted.",
+    )
+
+
+_HOW_A_LOSS_IS_ASKED_FOR = {
+    "drop_column": _a_column_dropped, "alter_column": _a_column_narrowed, "drop_table": _a_table_dropped,
+    "drop_view": _a_view_dropped, "create_table": _nothing_declares_this, "add_column": _nothing_declares_this,
+    "rename_column": _nothing_declares_this, "rename_table": _nothing_declares_this,
+    "create_index": _nothing_declares_this, "drop_index": _nothing_declares_this,
+    "create_view": _nothing_declares_this, "refresh_view": _nothing_declares_this,
+    "insert_enum_values": _nothing_declares_this, "remove_enum_values": _nothing_declares_this,
+}
+
+
+def _let_it_run(plan, _undeclared):
+    return plan
+
+
+def _refuse_loss(_plan, undeclared):
+    losses = "; ".join(lost for lost, _to_write in undeclared)
+    return refused(
+        "undeclared_loss",
+        f"bringing the database up to your models would destroy {losses}, and no model asked to lose "
+        f"it. {' '.join(to_write for _lost, to_write in undeclared)}",
+        {"losses": [lost for lost, _to in undeclared]},
+    )
+
+
+_LOSS_ANSWER = {False: _let_it_run, True: _refuse_loss}
+
+
+def refuse_undeclared_loss(plan, declared):
+    """Stop a migration that would destroy something no declaration asked to lose (declaration
+    refuse_undeclared_loss), naming the table and what to declare to allow it."""
+    said_for_each = [
+        _HOW_A_LOSS_IS_ASKED_FOR[operation["kind"]](operation, declared)
+        for operation in filter(itemgetter("destroys"), plan["operations"])
+    ]
+    undeclared = list(filter(lambda said: said is not NOTHING, said_for_each))
+    return _LOSS_ANSWER[undeclared != []](plan, undeclared)
+
+
+# --- a name the library or an engine owns (declaration refuse_owned_names) ---------------------------
+_OWNED_NAMES = {
+    "_honest_persist_meta": "the library", "_hp_": "the library", "_honest_persist_tmp_": "the library",
+    "sqlite_": "the engine", "turso_": "the engine", "__turso": "the engine",
+}
+
+
+def _nothing_is_wrong(_claims):
+    return NOTHING
+
+
+def _refuse_owned(claims):
+    named = "; ".join(
+        f"the model {table} declares {name}, and every name starting {prefix} belongs to {_read_or(_OWNED_NAMES, prefix, lambda: '')}"
+        for table, name, prefix in claims
+    )
+    prefixes = ", ".join(sorted({prefix for _table, _name, prefix in claims}))
+    return refused(
+        "owned_name",
+        f"{named}. Rename each to a name that does not start {prefixes}.",
+        {"prefixes": sorted({prefix for _t, _n, prefix in claims})},
+    )
+
+
+_OWNED_ANSWER = {False: _nothing_is_wrong, True: _refuse_owned}
+
+
+def refuse_owned_names(declared):
+    """Refuse a model claiming a name the library or an engine owns (declaration refuse_owned_names)."""
+    claims = [
+        (model["table"], name, prefix)
+        for model in declared["models"]
+        for name in [model["table"], *(column["name"] for column in model["columns"])]
+        for prefix in filter(lambda p: name.casefold().startswith(p), _OWNED_NAMES)
+    ]
+    return _OWNED_ANSWER[claims != []](claims)
+
+
+# --- a drop and an add that only the models can tell from a rename (declaration) ---------------------
+_STAYS = "stays as it is"
+_BECOMES_A_RENAME = "becomes the rename"
+_FOLDED_IN = "folded into the rename"
+
+
+def _each_of_kind(operations, kind):
+    """Where it sits, its table and its column, for every operation of one kind."""
+    return [
+        (at, operation["table"], str(operation["column"]))
+        for at, operation in filter(lambda io: io[1]["kind"] == kind, enumerate(operations))
+    ]
+
+
+def _replacements(declared):
+    """(table, the column it replaced) -> the column that replaced it, off the models."""
+    return {
+        (model["table"], str(column["renamed_from"])): column["name"]
+        for model in declared["models"]
+        for column in filter(lambda c: c["renamed_from"] is not NOTHING, model["columns"])
+    }
+
+
+def _asked_to_lose(declared):
+    """(table, column) -> the table, for every column a model means to lose."""
+    return {
+        (model["table"], column): model["table"]
+        for model in declared["models"]
+        for column in model["dropping"]
+    }
+
+
+def _a_rename(operation, appeared):
+    """The one operation that replaces a gone column and the one that appeared."""
+    return {
+        "kind": "rename_column", "table": operation["table"], "column": operation["column"],
+        "columns": operation["columns"], "indexes": operation["indexes"],
+        "constraints": operation["constraints"], "copying": operation["copying"],
+        "values": operation["values"], "renamed_to": appeared, "view": operation["view"],
+        "destroys": False,
+    }
+
+
+_WHAT_BECOMES_OF_IT = {
+    _STAYS: lambda operation, _appeared: [operation],
+    _BECOMES_A_RENAME: lambda operation, appeared: [_a_rename(operation, appeared)],
+    _FOLDED_IN: lambda _operation, _appeared: [],
+}
+
+
+def _with_renames_made(operations, fate, appeared_as, _ambiguous):
+    return [
+        built
+        for at, operation in enumerate(operations)
+        for built in _WHAT_BECOMES_OF_IT[fate[at]](operation, appeared_as[at])
+    ]
+
+
+def _refuse_ambiguous(_operations, _fate, _appeared_as, ambiguous):
+    pairs = "; ".join(
+        f'"{was}" is gone from {table} and "{now}" has appeared on it'
+        for table, was, now in ambiguous
+    )
+    table, was, now = ambiguous[0]
+    return refused(
+        "ambiguous_rename",
+        f"{pairs}. Either {was} was renamed to {now}, which keeps its rows, or {was} was dropped and "
+        f"{now} added, which loses them. Write renamed_from=\"{was}\" on {now}, or name {was} in "
+        f"{table}'s dropping.",
+        {"ambiguous": ambiguous},
+    )
+
+
+_AMBIGUOUS_ANSWER = {False: _with_renames_made, True: _refuse_ambiguous}
+
+
+def name_what_is_ambiguous(operations, declared):
+    """Turn each declared rename into one operation, and refuse what nothing declares (declaration
+    name_what_is_ambiguous). A gone column is settled when the models say another column replaced it, or
+    when the model that lost it named it in dropping; a gone column nothing settles, beside a column that
+    appeared on the same table, is the pair this refuses."""
+    gone = _each_of_kind(operations, "drop_column")
+    appeared = _each_of_kind(operations, "add_column")
+    replaced_by = _replacements(declared)
+    losing = _asked_to_lose(declared)
+    arrived = {(table, column): at for at, table, column in appeared}
+    renames = {
+        (table, column): replaced_by[(table, column)]
+        for _at, table, column in filter(
+            lambda g: (g[1], g[2]) in replaced_by and (g[1], replaced_by[(g[1], g[2])]) in arrived, gone)
+    }
+    taken = {(table, appeared_as): was for (table, was), appeared_as in renames.items()}
+    unsettled_gone = [
+        (table, column)
+        for _at, table, column in filter(
+            lambda g: (g[1], g[2]) not in renames and (g[1], g[2]) not in losing, gone)
+    ]
+    unclaimed = [
+        (table, column)
+        for _at, table, column in filter(lambda a: (a[1], a[2]) not in taken, appeared)
+    ]
+    ambiguous = [
+        (table, was, now)
+        for table, was in unsettled_gone
+        for far, now in filter(lambda u: u[0] == table, unclaimed)
+    ]
+    fate = dict.fromkeys(range(len(operations)), _STAYS)
+    fate.update({at: _BECOMES_A_RENAME for at, table, column in filter(lambda g: (g[1], g[2]) in renames, gone)})
+    fate.update({at: _FOLDED_IN for at, table, column in filter(lambda a: (a[1], a[2]) in taken, appeared)})
+    appeared_as = dict.fromkeys(range(len(operations)), "")
+    appeared_as.update({at: renames[(table, column)] for at, table, column in filter(lambda g: (g[1], g[2]) in renames, gone)})
+    return _AMBIGUOUS_ANSWER[ambiguous != []](operations, fate, appeared_as, ambiguous)

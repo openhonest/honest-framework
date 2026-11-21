@@ -1,11 +1,14 @@
-Feature: honest-rca — generated, one scenario per function (14 total)
+Feature: honest-rca — generated, one scenario per function (16 total)
 
   honest-rca is the apophatic root-cause solver (spec §1). It builds a causal graph from a
   bounded, hashable evidence set under a versioned method, traces upstream to a fixpoint, and
   attests the negative — never "X is the root", only "under this evidence hash and this method
-  version the chain terminates at X and no upstream factor was identified". It is a pure leaf:
-  no file, clock, network or environment read, and nothing raises. Each scenario's subject is a
-  declared function; the Then is drawn from that function's .hd note.
+  version the chain terminates at X and no upstream factor was identified". Its decision core is
+  a ring of pure functions, but the module is not a pure leaf: it declares foreign-shaped records
+  and so owns a seam with one door, diagnose, that hands its inputs to the one orchestrator,
+  run_rca. No pure function reads a file, clock, network or environment, and nothing raises;
+  faults travel back by return. Each scenario's subject is a declared function; the Then is drawn
+  from that function's .hd note.
 
   Scenario: evidence_hash
     Given items: list<EvidenceItem>
@@ -76,3 +79,13 @@ Feature: honest-rca — generated, one scenario per function (14 total)
     Given item: EvidenceItem
     When terminus_is_design_root is called
     Then it returns true exactly when the item carries a non-empty category — when the terminus is a design decision (a missing invariant, an unowned mutation, an unbounded input, a bug category) rather than a single instance — and false for an ordinary item; it is a pure predicate that reads no world and raises nothing
+
+  Scenario: run_rca
+    Given symptom: Symptom and items: list<EvidenceItem> and method: Method and judgments: list<CausalEdge> and poka_yoke: str
+    When run_rca is called
+    Then it is the one orchestrator, the sequenced RCA path: it takes the inputs the door hands it and runs the pure steps in order, passing each its inputs — evidence_set(items) builds the hashed EvidenceSet, causal_graph(evidence, method, judgments) builds the CausalGraph over that set under the method's enabled signals plus the supplied judgment edges, trace(graph, symptom) follows the graph upstream from the symptom's site to the terminus and returns the chain, attest(symptom, evidence, method, graph, chain, poka_yoke) assembles the Attestation, and validate_attestation(attestation) checks it is a well-formed bounded-completeness statement; symptom is the precise failure the host was handed, items is the EvidenceItem list the host already read at the boundary (run_rca does no collection itself), method is the versioned Method whose signals field names the enabled signal kinds, judgments is the supplied list of marked judgment edges added to the graph only when judgment is enabled in the method, and poka_yoke is the poka-yoke reference for a design-root terminus or the empty string for an ordinary one; it returns the Attestation when validate_attestation finds no faults (a real RCA) and the list of Faults otherwise, so a malformed construction comes back as named data and never as a positive "X is the root" claim; it is pure orchestration, reads no side of the world and raises nothing, carrying validate_attestation's faults back by return
+
+  Scenario: diagnose
+    Given symptom: Symptom and items: list<EvidenceItem> and method: Method and judgments: list<CausalEdge> and poka_yoke: str
+    When diagnose is called
+    Then it is the composition root, the one door, a host-called entry like honest-page's create_app: the host assembles the evidence from honest-observe's log, honest-parse/check's flow facts, and version history, and takes the person's Symptom and the config Method — all boundary I/O that lives outside honest-rca — then calls diagnose with it already in hand; diagnose does no collection and reads no side of the world, it hands the assembled inputs straight to run_rca and returns what run_rca returns; symptom is the person's precise statement of the failure, items is the already-read list of EvidenceItem values the host assembled at the boundary, method is the versioned Method with its enabled signal set and traversal rule, judgments is the supplied list of marked judgment edges, and poka_yoke is the poka-yoke reference for a design-root terminus or the empty string otherwise; it returns the Attestation — the bounded-completeness negative claim — when the attestation is well-formed, or the list of Faults validate_attestation named when it is not, carrying that fault back by return rather than raising, because a malformed attestation is data the host reads, not a condition that must stop the world

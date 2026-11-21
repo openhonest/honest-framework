@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from honest_type import link
 
 from honest_page.request import index, intake, search
 
@@ -27,6 +28,7 @@ _HANDLERS = {
 }
 
 
+@link(boundary=True)
 def read_bundle():
     """The shipped template and static directories, as they ship inside the package (§10.4). A reader
     of the filesystem: the one thing the factory needs that no caller hands it."""
@@ -56,6 +58,7 @@ def assembly(bundle, routes):
     }
 
 
+@link(boundary=True)
 def install(plan):
     """Create the application object and apply the plan (§10.4): mount static so the token stylesheet
     and client scripts load, register the template environment, install the intake middleware ahead of
@@ -79,6 +82,7 @@ def build_app():
     return install(plan)
 
 
+@link(boundary=True)
 def create_app():
     """The composition root the host calls (§10.4): hand off to build_app and return the application the
     ASGI server runs. `from honest_page import create_app; app = create_app()`."""

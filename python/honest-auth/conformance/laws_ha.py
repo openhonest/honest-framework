@@ -139,9 +139,9 @@ def _law_registered_provider():
     r = register_auth_provider(empty_registry(), p)
     if registered_provider(r) is not p:
         bad.append("registered_provider must return the active provider once one is registered")
-    # The bounded absence is disjoint from a fault.
-    if is_fault(registered_provider(empty_registry())):
-        bad.append("NOTHING must not be recognized by is_fault")
+    # No is_fault check on the absence: NOTHING is None, not a Fault dict, so it is outside is_fault's
+    # domain (§12.1 keeps is_fault to dicts) and disjoint from the fault space by construction. The
+    # absence is told apart by `is NOTHING`, already asserted above on the empty registry.
     return bad
 
 

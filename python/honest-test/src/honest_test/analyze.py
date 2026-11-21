@@ -8,7 +8,7 @@ function keeps its own one gherkin scenario and nothing else does. Function-spec
 multi-statement helpers nest inside the one function that uses them.
 """
 
-from honest_parse import line_col, parse, walk
+from honest_parse import parse, walk
 
 from honest_test._util import _choose, _pick, _read_or
 
@@ -27,7 +27,7 @@ _has_numeric_comparison = lambda node: next(filter(lambda c: len(_integer_operan
 _len_comparison = lambda node: next(filter(lambda c: "len" in _simple_call_names(c), _comparisons(node)), None)
 _comparison_tokens = lambda comparison: [_choose("len" in _simple_call_names(child), "LEN", child.text.decode("utf-8")) for child in comparison.children]
 _string_at = lambda n: (_CHARS * ((n // len(_CHARS)) + 1))[:n]
-_location = lambda node: f"{line_col(node)[0]}:{line_col(node)[1]}"
+_location = lambda node: f"{node.start_point}-{node.end_point}"
 _mutant = lambda node, change_kind, replacement: {"location": _location(node), "change_kind": change_kind, "original": node.text.decode("utf-8"), "replacement": replacement}
 
 

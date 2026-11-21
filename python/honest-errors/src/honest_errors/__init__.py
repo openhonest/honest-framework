@@ -17,9 +17,11 @@ isinstance recognizer, and no variable-key table subscript. `pick` is the lazy t
 _util.py. A domain module is the first to carry these locally; that is sanctioned.
 
 Representation of absence. NOTHING is the explicit absent value an optional union arm holds, never
-bare None and never an implicit default. It is the empty tuple: a single immutable value distinct
-from every populated record, severity, mode or timestamp a field legitimately carries, and stable
-under copy.deepcopy in both identity and equality, which the conformance laws rely on.
+an implicit default. It is `None`, the framework's idiomatic null per honest-type-architecture.md
+§5.6 (the Language Mapping table) — the same `NOTHING = None` honest-test, honest-check and
+honest-auth define. `None` is a singleton, so it is one value distinct from every populated record,
+severity, mode or timestamp a field legitimately carries, and stable under copy.deepcopy in both
+identity and equality, which the conformance laws rely on.
 """
 
 from datetime import datetime, timedelta
@@ -52,7 +54,7 @@ def read_or(table, key, default_thunk):
 # The absence sentinel (§4). An optional field holds a value or NOTHING.
 # ---------------------------------------------------------------------------
 
-NOTHING: Any = ()
+NOTHING = None
 
 # ---------------------------------------------------------------------------
 # The bounded vocabularies (§2.1, §4, §5). Closed frozensets, never free str.
@@ -71,7 +73,8 @@ FAULT_CODES = frozenset({"malformed_payload", "unknown_source", "unknown_preset"
 
 # ---------------------------------------------------------------------------
 # The IR records (§2, §4, §5, §7). All TypedDict, no classes. Optional arms are
-# typed `Any` because their absent value is the NOTHING sentinel, not None.
+# typed `Any` because their absent value is the NOTHING sentinel, which is `None`,
+# the framework's idiomatic null (honest-type-architecture.md §5.6).
 # ---------------------------------------------------------------------------
 
 

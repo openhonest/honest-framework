@@ -139,3 +139,57 @@ def postgres_connection():
     admin.execute(f"CREATE DATABASE {name}")
     admin.close()
     return PostgresConn(dsn.replace("dbname=postgres", f"dbname={name}"))
+
+
+# A per-call counter so each postgres_target() gets its own clean database within one process.
+_TARGET_COUNT = {"n": 0}
+
+
+def _host_of(dsn):
+    """The host= value out of a libpq keyword DSN, or None for the default socket."""
+    for field in dsn.split():
+        if field.startswith("host="):
+            return field[len("host="):]
+    return None
+
+
+def _asyncpg_url(name, dsn):
+    """A postgresql:// URL asyncpg accepts for the database `name`, carrying the admin DSN's host so a
+    throwaway cluster on a unix socket is reached as well as a default local server."""
+    host = _host_of(dsn)
+    if host is None:
+        return f"postgresql:///{name}"
+    if host.startswith("/"):
+        return f"postgresql:///{name}?host={host}"
+    return f"postgresql://{host}/{name}"
+
+
+def postgres_target():
+    """A real PostgreSQL target string persist's own opener (asyncpg) connects to, naming a clean, empty
+    test database, or None when no PostgreSQL is available. This is what exercises persist's postgresql
+    driver rows against a real server: the laws hand it to session_open_connection / session_open_writer
+    exactly as a caller would, rather than a pre-built adapter. The database is dropped and recreated so a
+    developer's own data is never touched, and dropped again at process exit."""
+    dsn = _admin_dsn()
+    if dsn is None:
+        return None
+    _TARGET_COUNT["n"] += 1
+    name = f"honest_persist_target_{os.getpid()}_{_TARGET_COUNT['n']}"
+    admin = psycopg.connect(dsn, autocommit=True)
+    admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+    admin.execute(f"CREATE DATABASE {name}")
+    admin.close()
+    _STATE.setdefault("targets", []).append(name)
+    return _asyncpg_url(name, dsn)
+
+
+@atexit.register
+def _drop_targets():
+    """Drop every test database postgres_target() created in this process."""
+    dsn = _STATE.get("admin_dsn")
+    if dsn is None:
+        return
+    admin = psycopg.connect(dsn, autocommit=True)
+    for name in _STATE.get("targets", []):
+        admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+    admin.close()

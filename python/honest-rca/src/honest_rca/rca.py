@@ -11,7 +11,7 @@ functions only by importing them (the .hd entry rows); honest-rca has no door of
 import hashlib
 import json
 
-from honest_type import fault
+from honest_type import fault, link
 
 
 def evidence_hash(items):
@@ -79,9 +79,9 @@ def signal_edges(evidence, kind):
     signal the kind, marked false (a grounded edge is a recorded fact). An absent relation produces no
     edge. judgment is the one SIGNAL_KINDS word the table does not carry: it grounds no edges of its
     own, so it yields the empty list rather than a silent miss. Pure; raises nothing."""
-    if kind not in by_signal:
-        return []  # judgment is the SIGNAL_KINDS word absent from the table; it grounds no edges
-    detector = by_signal[kind]
+    # The merge closes the dispatch: a known kind takes its detector from by_signal; judgment — the one
+    # SIGNAL_KINDS word the table omits — falls to the empty detector, grounding no edges and no silent miss.
+    detector = {kind: lambda item: [], **by_signal}[kind]
 
     def edges_from(item):
         return [
@@ -104,7 +104,7 @@ def causal_graph(evidence, method, judgments):
         for kind in method["signals"]
         for edge in signal_edges(evidence, kind)
     ]
-    enabled_judgments = judgments if "judgment" in method["signals"] else []
+    enabled_judgments = {True: judgments, False: []}["judgment" in method["signals"]]
     return {
         "nodes": [item["id"] for item in evidence["items"]],
         "edges": grounded + enabled_judgments,
@@ -120,10 +120,12 @@ def trace(graph, symptom):
     def next_upstream(node, visited):
         causes = [
             edge["cause"]
-            for edge in graph["edges"]
-            if edge["effect"] == node and edge["cause"] not in visited
+            for edge in filter(
+                lambda edge: edge["effect"] == node and edge["cause"] not in visited,
+                graph["edges"],
+            )
         ]
-        return causes[0] if causes else ""
+        return next(iter(causes), "")
 
     chain = [symptom["site"]]
     seen = {symptom["site"]}
@@ -156,11 +158,13 @@ def bound(evidence, graph):
         for downstream in item[field]
     ]
     grounded_pairs = {(edge["cause"], edge["effect"]) for edge in graph["edges"]}
-    outside = {downstream for _cause, downstream in referenced_pairs if downstream not in item_ids}
+    outside = {
+        downstream
+        for _cause, downstream in filter(lambda pair: pair[1] not in item_ids, referenced_pairs)
+    }
     invisible = {
         f"{cause}->{effect}"
-        for cause, effect in referenced_pairs
-        if (cause, effect) not in grounded_pairs
+        for cause, effect in filter(lambda pair: pair not in grounded_pairs, referenced_pairs)
     }
     return {"outside_evidence": sorted(outside), "invisible_to_method": sorted(invisible)}
 
@@ -168,21 +172,24 @@ def bound(evidence, graph):
 def attest(symptom, evidence, method, graph, chain, poka_yoke):
     """Assemble the negative claim (spec sections 2, 7, 8). It reads the evidence's hash into
     evidence_hash and the method's version into method_version, reads the marked judgment edges from
-    the graph, calls terminus(chain) for the terminus id and bound(evidence, graph) for the Bound,
-    copies the terminus item's category (empty for an ordinary terminus, the named bug category for a
-    design root), and copies the supplied poka_yoke. The record has no field asserting 'X is the root'.
+    the graph, calls terminus(chain) for the terminus id, looks the terminus item up and classifies it
+    with terminus_is_design_root, and calls bound(evidence, graph) for the Bound; a design-root terminus
+    carries its named bug category and an ordinary one carries the empty string, and the supplied
+    poka_yoke is copied. The record has no field asserting 'X is the root'.
     Pure; raises nothing — a construction failure is caught by validate_attestation, not by a raise."""
     terminus_id = terminus(chain)
-    categories = {item["id"]: item["category"] for item in evidence["items"]}
-    category = categories[terminus_id] if terminus_id in categories else ""
+    items_by_id = {item["id"]: item for item in evidence["items"]}
+    terminus_item = {terminus_id: {"category": ""}, **items_by_id}[terminus_id]
+    the_bound = bound(evidence, graph)
+    category = {True: terminus_item["category"], False: ""}[terminus_is_design_root(terminus_item)]
     return {
         "symptom": symptom,
         "evidence_hash": evidence["hash"],
         "method_version": method["version"],
         "terminus": terminus_id,
         "chain": chain,
-        "marked_edges": [edge for edge in graph["edges"] if edge["marked"]],
-        "bound": bound(evidence, graph),
+        "marked_edges": list(filter(lambda edge: edge["marked"], graph["edges"])),
+        "bound": the_bound,
         "category": category,
         "poka_yoke": poka_yoke,
     }
@@ -217,8 +224,7 @@ def validate_attestation(attestation):
     return [
         fault(code=code, message=message, category="client", results=[],
               detail={"field": code.removeprefix("missing_")})
-        for failed, code, message in checks
-        if failed
+        for _failed, code, message in filter(lambda check: check[0], checks)
     ]
 
 
@@ -228,3 +234,33 @@ def terminus_is_design_root(item):
     unowned mutation, an unbounded input, a bug category) rather than a single instance. A pure
     predicate; reads no world and raises nothing."""
     return item["category"] != ""
+
+
+def run_rca(symptom, items, method, judgments, poka_yoke):
+    """The one orchestrator: the sequenced RCA path (spec sections 3-7). It runs the pure steps in
+    order, passing each its inputs — evidence_set(items) builds the hashed EvidenceSet; causal_graph
+    builds the graph over it under the Method's enabled signals plus the supplied judgments; trace
+    follows the graph upstream from the symptom's site to the terminus; attest assembles the
+    Attestation; validate_attestation checks it is well-formed. It returns the attestation when the
+    fault list is empty — a real RCA — and the fault list otherwise, chosen by an eager two-row
+    dict-subscript keyed on whether any fault was named, so a malformed construction comes back as named
+    data (spec section 7; P01). Pure orchestration: it reads no world and raises nothing, carrying
+    faults back by return (spec sections 1.5, 7, 9)."""
+    e = evidence_set(items)
+    graph = causal_graph(e, method, judgments)
+    chain = trace(graph, symptom)
+    attestation = attest(symptom, e, method, graph, chain, poka_yoke)
+    faults = validate_attestation(attestation)
+    return {False: attestation, True: faults}[bool(faults)]
+
+
+@link(boundary=True)
+def diagnose(symptom, items, method, judgments, poka_yoke):
+    """The one door, the composition root the host calls (spec sections 1.3, 1.5). The host assembles
+    the evidence from honest-observe's log, honest-parse/check's flow facts and version history, and
+    takes the person's Symptom and the config Method — all of that is boundary I/O that lives OUTSIDE
+    honest-rca — then calls diagnose with it already in hand. diagnose does no collection and reads no
+    side of the world; it hands the assembled inputs straight to run_rca and returns what run_rca
+    returns: the Attestation when the run is well-formed, or the list of Faults when it is not, carried
+    back by return rather than raised (spec sections 7, 9)."""
+    return run_rca(symptom, items, method, judgments, poka_yoke)
