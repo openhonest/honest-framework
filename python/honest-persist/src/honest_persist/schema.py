@@ -18,17 +18,16 @@ def field(renamed_from, references):
     return {"renamed_from": renamed_from, "references": references}
 
 
-def _table_from_model(model):
-    """One Model becomes one Table (declaration `type Model`, `type Table`; spec 5.1). The target
-    schema names a table by the model's `table`, not its `name`, because a live schema read back from
-    a database names it that way, and carries the model's columns, indexes and constraints as they
-    stand. The model's `name` and `dropping` are the differ's business and are not fields of a table."""
-    return {
-        "name": model["table"],
-        "columns": model["columns"],
-        "indexes": model["indexes"],
-        "constraints": model["constraints"],
-    }
+# One Model becomes one Table (declaration `type Model`, `type Table`; spec 5.1). The target schema
+# names a table by the model's `table`, not its `name`, because a live schema read back from a database
+# names it that way, and carries the model's columns, indexes and constraints as they stand. The model's
+# `name` and `dropping` are the differ's business and are not fields of a table.
+_table_from_model = lambda model: {
+    "name": model["table"],
+    "columns": model["columns"],
+    "indexes": model["indexes"],
+    "constraints": model["constraints"],
+}
 
 
 def schema_from_declared(declared):
@@ -66,84 +65,78 @@ _DESTROYS = {
 }
 
 
-def _operation(kind, name, column, columns, indexes, constraints, copying, values, renamed_to, view):
-    """One operation, carrying everything its kind names and whether it destroys."""
-    return {
-        "kind": kind, "table": name, "column": column, "columns": columns, "indexes": indexes,
-        "constraints": constraints, "copying": copying, "values": values, "renamed_to": renamed_to,
-        "view": view, "destroys": _read_or(_DESTROYS, kind, lambda: False),
-    }
+# One operation, carrying everything its kind names and whether it destroys.
+_operation = lambda kind, name, column, columns, indexes, constraints, copying, values, renamed_to, view: {
+    "kind": kind, "table": name, "column": column, "columns": columns, "indexes": indexes,
+    "constraints": constraints, "copying": copying, "values": values, "renamed_to": renamed_to,
+    "view": view, "destroys": _read_or(_DESTROYS, kind, lambda: False),
+}
 
 
-def _by_name(items):
-    """Tables, columns or views under their own names, so a comparison is three set operations."""
-    return {item["name"]: item for item in items}
+# Tables, columns or views under their own names, so a comparison is three set operations.
+_by_name = lambda items: {item["name"]: item for item in items}
 
 
-def _rules_on(column, table):
-    """Every rule this table declares about this column, as kind and value, sorted so list order is not
-    a difference and nameless, because the engine makes up names for unnamed rules."""
-    return sorted(
-        (rule["kind"], repr(rule["value"]))
-        for rule in filter(lambda r: column in r["columns"], table["constraints"])
-    )
+# Every rule this table declares about this column, as kind and value, sorted so list order is not a
+# difference and nameless, because the engine makes up names for unnamed rules.
+_rules_on = lambda column, table: sorted(
+    (rule["kind"], repr(rule["value"]))
+    for rule in filter(lambda r: column in r["columns"], table["constraints"])
+)
 
 
-def _differs(column, live, target, held, wanted):
-    """Whether the live column and the declared one are the same column: its type and every rule."""
-    return held[column]["declared_type"] != wanted[column]["declared_type"] or _rules_on(column, live) != _rules_on(column, target)
-
-
-def _columns_of(live, target):
-    """What turns one table's live columns into its declared ones."""
-    name = target["name"]
-    held = _by_name(live["columns"])
-    wanted = _by_name(target["columns"])
-    carried_across = list(filter(lambda c: c in held, wanted))
-    added = [
-        _operation("add_column", name, column, [wanted[column]], [], target["constraints"], [], [], None, None)
-        for column in filter(lambda c: c not in held, wanted)
-    ]
-    dropped = [
-        _operation("drop_column", name, column, target["columns"], target["indexes"],
-                   target["constraints"], carried_across, [], None, None)
-        for column in filter(lambda c: c not in wanted, held)
-    ]
-    altered = [
-        _operation("alter_column", name, column, target["columns"], target["indexes"],
-                   target["constraints"], carried_across, [], None, None)
-        for column in filter(lambda c: c in held and _differs(c, live, target, held, wanted), wanted)
-    ]
-    return added + dropped + altered
-
-
-def _views_of(live, target):
-    """What turns the live views into the declared ones; a changed one is a drop and a create."""
-    held = _by_name(live["views"])
-    wanted = _by_name(target["views"])
-    created = [
-        _operation("create_view", name, None, [], [], [], [], [], None, wanted[name])
-        for name in filter(lambda n: n not in held, wanted)
-    ]
-    dropped = [
-        _operation("drop_view", name, None, [], [], [], [], [], None, held[name])
-        for name in filter(lambda n: n not in wanted, held)
-    ]
-    replaced = [
-        operation
-        for name in filter(lambda n: n in held and held[n] != wanted[n], wanted)
-        for operation in (
-            _operation("drop_view", name, None, [], [], [], [], [], None, held[name]),
-            _operation("create_view", name, None, [], [], [], [], [], None, wanted[name]),
-        )
-    ]
-    return created + dropped + replaced
+# Whether the live column and the declared one are the same column: its type and every rule.
+_differs = lambda column, live, target, held, wanted: held[column]["declared_type"] != wanted[column]["declared_type"] or _rules_on(column, live) != _rules_on(column, target)
 
 
 def difference(live, target):
     """Work out which operations turn the live schema into the target (declaration difference): set
     theory over two schemas, what is only in the target created, what is only live dropped, what differs
     altered. No engine appears; the list is in the order it was worked out, not a running order."""
+    def _columns_of(live, target):
+        # What turns one table's live columns into its declared ones.
+        name = target["name"]
+        held = _by_name(live["columns"])
+        wanted = _by_name(target["columns"])
+        carried_across = list(filter(lambda c: c in held, wanted))
+        added = [
+            _operation("add_column", name, column, [wanted[column]], [], target["constraints"], [], [], None, None)
+            for column in filter(lambda c: c not in held, wanted)
+        ]
+        dropped = [
+            _operation("drop_column", name, column, target["columns"], target["indexes"],
+                       target["constraints"], carried_across, [], None, None)
+            for column in filter(lambda c: c not in wanted, held)
+        ]
+        altered = [
+            _operation("alter_column", name, column, target["columns"], target["indexes"],
+                       target["constraints"], carried_across, [], None, None)
+            for column in filter(lambda c: c in held and _differs(c, live, target, held, wanted), wanted)
+        ]
+        return added + dropped + altered
+
+    def _views_of(live, target):
+        # What turns the live views into the declared ones; a changed one is a drop and a create.
+        held = _by_name(live["views"])
+        wanted = _by_name(target["views"])
+        created = [
+            _operation("create_view", name, None, [], [], [], [], [], None, wanted[name])
+            for name in filter(lambda n: n not in held, wanted)
+        ]
+        dropped = [
+            _operation("drop_view", name, None, [], [], [], [], [], None, held[name])
+            for name in filter(lambda n: n not in wanted, held)
+        ]
+        replaced = [
+            operation
+            for name in filter(lambda n: n in held and held[n] != wanted[n], wanted)
+            for operation in (
+                _operation("drop_view", name, None, [], [], [], [], [], None, held[name]),
+                _operation("create_view", name, None, [], [], [], [], [], None, wanted[name]),
+            )
+        ]
+        return created + dropped + replaced
+
     held = _by_name(live["tables"])
     wanted = _by_name(target["tables"])
     created = [
@@ -164,12 +157,10 @@ def difference(live, target):
 
 
 # --- ordering the operations their dependencies allow (declaration order_operations) -----------------
-def _nothing_of_its_own(_operation):
-    return ()
+_nothing_of_its_own = lambda _operation: ()
 
 
-def _its_own_table(operation):
-    return (operation["table"],)
+_its_own_table = lambda operation: (operation["table"],)
 
 
 _MUST_ALREADY_EXIST = {
@@ -181,46 +172,23 @@ _MUST_ALREADY_EXIST = {
 }
 
 
-def _needed_by(operation):
-    """The tables that have to exist while this operation runs."""
-    pointed_at = tuple(sorted({
-        column["references"]["table"]
-        for column in filter(lambda c: c["references"] is not None, operation["columns"])
-    }))
-    return _MUST_ALREADY_EXIST[operation["kind"]](operation) + pointed_at
+# The tables that have to exist while this operation runs.
+_needed_by = lambda operation: _MUST_ALREADY_EXIST[operation["kind"]](operation) + tuple(sorted({
+    column["references"]["table"]
+    for column in filter(lambda c: c["references"] is not None, operation["columns"])
+}))
 
 
-def _positions_of(operations, kind):
-    return {
-        operation["table"]: position
-        for position, operation in filter(lambda io: io[1]["kind"] == kind, enumerate(operations))
-    }
+_positions_of = lambda operations, kind: {
+    operation["table"]: position
+    for position, operation in filter(lambda io: io[1]["kind"] == kind, enumerate(operations))
+}
 
 
-def _needs(operations):
-    return [(position, name) for position, operation in enumerate(operations) for name in _needed_by(operation)]
+_needs = lambda operations: [(position, name) for position, operation in enumerate(operations) for name in _needed_by(operation)]
 
 
-def _must_run_before(operations):
-    """Where each operation was written, and what has to run before it."""
-    makes = _positions_of(operations, "create_table")
-    ends = _positions_of(operations, "drop_table")
-    needs = _needs(operations)
-    edges = [
-        (makes[name], position)
-        for position, name in filter(lambda pn: pn[1] in makes and makes[pn[1]] != pn[0], needs)
-    ] + [
-        (position, ends[name])
-        for position, name in filter(lambda pn: pn[1] in ends and ends[pn[1]] != pn[0], needs)
-    ]
-    earlier = {position: set() for position in range(len(operations))}
-    for before, after in edges:
-        earlier[after].add(before)
-    return earlier
-
-
-def _in_an_order_that_works(operations, placed, _waiting):
-    return [operations[position] for position in placed]
+_in_an_order_that_works = lambda operations, placed, _waiting: [operations[position] for position in placed]
 
 
 def _no_order_works(operations, _placed, waiting):
@@ -240,14 +208,30 @@ def _no_order_works(operations, _placed, waiting):
 _ORDER_ANSWER = {False: _in_an_order_that_works, True: _no_order_works}
 
 
-def _free_positions(waiting):
-    return sorted(position for position, sources in filter(lambda ps: not ps[1], waiting.items()))
+_free_positions = lambda waiting: sorted(position for position, sources in filter(lambda ps: not ps[1], waiting.items()))
 
 
 def order_operations(operations):
     """Put the operations in an order their dependencies allow (declaration order_operations); a cycle
     is a Fault. The same list always answers the same way, because no set is ever iterated: operations
     still free are taken in the order they were written."""
+    def _must_run_before(operations):
+        # Where each operation was written, and what has to run before it.
+        makes = _positions_of(operations, "create_table")
+        ends = _positions_of(operations, "drop_table")
+        needs = _needs(operations)
+        edges = [
+            (makes[name], position)
+            for position, name in filter(lambda pn: pn[1] in makes and makes[pn[1]] != pn[0], needs)
+        ] + [
+            (position, ends[name])
+            for position, name in filter(lambda pn: pn[1] in ends and ends[pn[1]] != pn[0], needs)
+        ]
+        earlier = {position: set() for position in range(len(operations))}
+        for before, after in edges:
+            earlier[after].add(before)
+        return earlier
+
     waiting = _must_run_before(operations)
     placed = []
     free = _free_positions(waiting)
@@ -270,12 +254,10 @@ _LOSES_DATA = {
 }
 
 
-def _the_table(operation):
-    return operation["table"]
+_the_table = lambda operation: operation["table"]
 
 
-def _the_column(operation):
-    return f"{operation['table']}.{operation['column']}"
+_the_column = lambda operation: f"{operation['table']}.{operation['column']}"
 
 
 _NAMES = {
@@ -287,9 +269,8 @@ _NAMES = {
 }
 
 
-def _marked(operation):
-    """The same operation, carrying the answer about itself: a new dict, not a mutated one."""
-    return {**operation, "destroys": _LOSES_DATA[operation["kind"]]}
+# The same operation, carrying the answer about itself: a new dict, not a mutated one.
+_marked = lambda operation: {**operation, "destroys": _LOSES_DATA[operation["kind"]]}
 
 
 def name_what_destroys(operations):
@@ -300,20 +281,17 @@ def name_what_destroys(operations):
     return {"operations": marked, "destroys": [_NAMES[operation["kind"]](operation) for operation in losing]}
 
 
-def _columns_this_table_means_to_lose(table, declared):
-    return [
-        column
-        for model in filter(lambda m: m["table"] == table, declared["models"])
-        for column in model["dropping"]
-    ]
+_columns_this_table_means_to_lose = lambda table, declared: [
+    column
+    for model in filter(lambda m: m["table"] == table, declared["models"])
+    for column in model["dropping"]
+]
 
 
-def _asked_for(_lost, _to_write):
-    return NOTHING
+_asked_for = lambda _lost, _to_write: NOTHING
 
 
-def _nobody_asked(lost, to_write):
-    return (lost, to_write)
+_nobody_asked = lambda lost, to_write: (lost, to_write)
 
 
 _PERMITTED = {True: _asked_for, False: _nobody_asked}
@@ -371,18 +349,15 @@ _HOW_A_LOSS_IS_ASKED_FOR = {
 }
 
 
-def _let_it_run(plan, _undeclared):
-    return plan
+_let_it_run = lambda plan, _undeclared: plan
 
 
-def _refuse_loss(_plan, undeclared):
-    losses = "; ".join(lost for lost, _to_write in undeclared)
-    return refused(
-        "undeclared_loss",
-        f"bringing the database up to your models would destroy {losses}, and no model asked to lose "
-        f"it. {' '.join(to_write for _lost, to_write in undeclared)}",
-        {"losses": [lost for lost, _to in undeclared]},
-    )
+_refuse_loss = lambda _plan, undeclared: refused(
+    "undeclared_loss",
+    f"bringing the database up to your models would destroy {'; '.join(lost for lost, _to_write in undeclared)}, and no model asked to lose "
+    f"it. {' '.join(to_write for _lost, to_write in undeclared)}",
+    {"losses": [lost for lost, _to in undeclared]},
+)
 
 
 _LOSS_ANSWER = {False: _let_it_run, True: _refuse_loss}
@@ -406,8 +381,7 @@ _OWNED_NAMES = {
 }
 
 
-def _nothing_is_wrong(_claims):
-    return NOTHING
+_nothing_is_wrong = lambda _claims: NOTHING
 
 
 def _refuse_owned(claims):
@@ -443,41 +417,37 @@ _BECOMES_A_RENAME = "becomes the rename"
 _FOLDED_IN = "folded into the rename"
 
 
-def _each_of_kind(operations, kind):
-    """Where it sits, its table and its column, for every operation of one kind."""
-    return [
-        (at, operation["table"], str(operation["column"]))
-        for at, operation in filter(lambda io: io[1]["kind"] == kind, enumerate(operations))
-    ]
+# Where it sits, its table and its column, for every operation of one kind.
+_each_of_kind = lambda operations, kind: [
+    (at, operation["table"], str(operation["column"]))
+    for at, operation in filter(lambda io: io[1]["kind"] == kind, enumerate(operations))
+]
 
 
-def _replacements(declared):
-    """(table, the column it replaced) -> the column that replaced it, off the models."""
-    return {
-        (model["table"], str(column["renamed_from"])): column["name"]
-        for model in declared["models"]
-        for column in filter(lambda c: c["renamed_from"] is not NOTHING, model["columns"])
-    }
+# (table, the column it replaced) -> the column that replaced it, off the models.
+_replacements = lambda declared: {
+    (model["table"], str(column["renamed_from"])): column["name"]
+    for model in declared["models"]
+    for column in filter(lambda c: c["renamed_from"] is not NOTHING, model["columns"])
+}
 
 
-def _asked_to_lose(declared):
-    """(table, column) -> the table, for every column a model means to lose."""
-    return {
-        (model["table"], column): model["table"]
-        for model in declared["models"]
-        for column in model["dropping"]
-    }
+# (table, column) -> the table, for every column a model means to lose.
+_asked_to_lose = lambda declared: {
+    (model["table"], column): model["table"]
+    for model in declared["models"]
+    for column in model["dropping"]
+}
 
 
-def _a_rename(operation, appeared):
-    """The one operation that replaces a gone column and the one that appeared."""
-    return {
-        "kind": "rename_column", "table": operation["table"], "column": operation["column"],
-        "columns": operation["columns"], "indexes": operation["indexes"],
-        "constraints": operation["constraints"], "copying": operation["copying"],
-        "values": operation["values"], "renamed_to": appeared, "view": operation["view"],
-        "destroys": False,
-    }
+# The one operation that replaces a gone column and the one that appeared.
+_a_rename = lambda operation, appeared: {
+    "kind": "rename_column", "table": operation["table"], "column": operation["column"],
+    "columns": operation["columns"], "indexes": operation["indexes"],
+    "constraints": operation["constraints"], "copying": operation["copying"],
+    "values": operation["values"], "renamed_to": appeared, "view": operation["view"],
+    "destroys": False,
+}
 
 
 _WHAT_BECOMES_OF_IT = {
@@ -487,12 +457,11 @@ _WHAT_BECOMES_OF_IT = {
 }
 
 
-def _with_renames_made(operations, fate, appeared_as, _ambiguous):
-    return [
-        built
-        for at, operation in enumerate(operations)
-        for built in _WHAT_BECOMES_OF_IT[fate[at]](operation, appeared_as[at])
-    ]
+_with_renames_made = lambda operations, fate, appeared_as, _ambiguous: [
+    built
+    for at, operation in enumerate(operations)
+    for built in _WHAT_BECOMES_OF_IT[fate[at]](operation, appeared_as[at])
+]
 
 
 def _refuse_ambiguous(_operations, _fate, _appeared_as, ambiguous):

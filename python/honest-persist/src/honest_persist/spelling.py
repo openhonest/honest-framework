@@ -15,8 +15,8 @@ NOTHING = None
 _THREE_ENGINES = ("postgresql", "sqlite", "turso")
 
 
-def _quoted(name):
-    return '"' + name.replace('"', '""') + '"'
+# Quote one identifier with ANSI double quotes.
+_quoted = lambda name: '"' + name.replace('"', '""') + '"'
 
 
 # Identifier quoting does not vary by engine: SQLite, PostgreSQL and Turso all quote an
@@ -41,14 +41,14 @@ def _the_first_fault_or(pieces, build):
 _OR_BUILD = {True: lambda faults, _build: faults[0], False: lambda _faults, build: build()}
 
 
-def _is_refusal(piece):
-    return is_fault(piece) or is_no_match(piece)
+_is_refusal = lambda piece: is_fault(piece) or is_no_match(piece)
 
 
-def _no_such_type(declared, engine):
-    return refused("no_storage_class",
-                   f"a column is declared {declared!r}, and this package has no {engine} storage class "
-                   f"for it", {"declared": declared, "engine": engine})
+# A column is declared a type this package has no storage class for.
+_no_such_type = lambda declared, engine: refused(
+    "no_storage_class",
+    f"a column is declared {declared!r}, and this package has no {engine} storage class "
+    f"for it", {"declared": declared, "engine": engine})
 
 
 def type_spelled(declared, engine):
@@ -69,9 +69,10 @@ _BOOLEAN_LITERAL = {
 }
 
 
-def _text_literal(value, _engine):
-    wrapped = value.startswith("(") and value.endswith(")")
-    return _pick(wrapped, lambda: value, lambda: "'" + value.replace("'", "''") + "'")
+# A text default is a bare parenthesised expression passed through, or a quoted string literal.
+_text_literal = lambda value, _engine: _pick(
+    value.startswith("(") and value.endswith(")"),
+    lambda: value, lambda: "'" + value.replace("'", "''") + "'")
 
 _LITERAL = {
     str: _text_literal,
@@ -82,8 +83,7 @@ _LITERAL = {
 }
 
 
-def _literal(value, engine):
-    return _LITERAL_KNOWN[type(value) in _LITERAL](value, engine)
+_literal = lambda value, engine: _LITERAL_KNOWN[type(value) in _LITERAL](value, engine)
 
 
 _LITERAL_KNOWN = {
@@ -102,12 +102,6 @@ def _default_clause(value, engine):
 _STANDARD_ON_DELETE = {"refuse": "ON DELETE NO ACTION", "cascade": "ON DELETE CASCADE", "set_null": "ON DELETE SET NULL"}
 
 
-def _reference_clause(reference, engine):
-    quote = _quoted
-    declared = reference["on_delete"]
-    return _REF_KNOWN[declared in _STANDARD_ON_DELETE](reference, engine, quote, declared)
-
-
 _REF_KNOWN = {
     True: lambda reference, _engine, quote, declared: (
         f"REFERENCES {quote(reference['table'])}({quote(reference['column'])}) {_read_or(_STANDARD_ON_DELETE, declared, lambda: '')}"
@@ -118,8 +112,8 @@ _REF_KNOWN = {
 }
 
 
-def _its_own(column, constraints, kind):
-    return list(filter(lambda c: c["kind"] == kind and column["name"] in c["columns"], constraints))
+_its_own = lambda column, constraints, kind: list(
+    filter(lambda c: c["kind"] == kind and column["name"] in c["columns"], constraints))
 
 
 _COLUMN_CLAUSE = {
@@ -129,6 +123,11 @@ _COLUMN_CLAUSE = {
 
 
 def _definition(column, constraints, engine):
+    def _reference_clause(reference, engine):
+        quote = _quoted
+        declared = reference["on_delete"]
+        return _REF_KNOWN[declared in _STANDARD_ON_DELETE](reference, engine, quote, declared)
+
     pieces = [
         _quoted(column["name"]),
         type_spelled(column["declared_type"], engine),
@@ -160,9 +159,9 @@ _OVER = {
 }
 
 
-def _flat_check(constraint, engine):
-    return refused("check_unsupported", f"the constraint {constraint['name']!r} is a check this reduced "
-                   "speller does not write", {})
+_flat_check = lambda constraint, engine: refused(
+    "check_unsupported", f"the constraint {constraint['name']!r} is a check this reduced "
+    "speller does not write", {})
 
 
 _CONSTRAINT_CLAUSE = {
@@ -175,11 +174,6 @@ _CONSTRAINT_CLAUSE = {
 _COLUMN_KINDS = frozenset({"not_null", "default"})
 
 
-def _constraint_clause(constraint, engine):
-    kind = constraint["kind"]
-    return _CONSTRAINT_KNOWN[kind in _CONSTRAINT_CLAUSE](constraint, engine, kind)
-
-
 _CONSTRAINT_KNOWN = {
     True: lambda constraint, engine, kind: _read_or(_CONSTRAINT_CLAUSE, kind, lambda: _flat_check)(constraint, engine),
     False: lambda constraint, _engine, kind: refused(
@@ -187,11 +181,15 @@ _CONSTRAINT_KNOWN = {
 }
 
 
-def _statement(text, values):
-    return {"text": text, "parameters": {f"p{position}": value for position, value in enumerate(values, start=1)}}
+_statement = lambda text, values: {
+    "text": text, "parameters": {f"p{position}": value for position, value in enumerate(values, start=1)}}
 
 
 def _table_body(operation, engine):
+    def _constraint_clause(constraint, engine):
+        kind = constraint["kind"]
+        return _CONSTRAINT_KNOWN[kind in _CONSTRAINT_CLAUSE](constraint, engine, kind)
+
     constraints = operation["constraints"]
     pieces = [
         *[_definition(column, constraints, engine) for column in operation["columns"]],
@@ -210,14 +208,13 @@ def _index_statement(index, table, engine):
     return _statement(f"CREATE {unique}INDEX {quote(index['name'])} ON {quote(table)} ({columns})", [])
 
 
-def _empty_handed(operation, engine, field):
-    return refused("empty_field", f"a {operation['kind']} on {operation['table']} was handed an empty {field}",
-                   {"field": field})
+_empty_handed = lambda operation, engine, field: refused(
+    "empty_field", f"a {operation['kind']} on {operation['table']} was handed an empty {field}",
+    {"field": field})
 
 
-def _carrying(operation, engine, field, build):
-    held = operation[field]
-    return _CARRYING[held == []](operation, engine, field, build)
+_carrying = lambda operation, engine, field, build: _CARRYING[operation[field] == []](
+    operation, engine, field, build)
 
 
 _CARRYING = {
@@ -237,14 +234,7 @@ def _create_table(operation, engine):
     return _carrying(operation, engine, "columns", spelled)
 
 
-def _drop_table(operation, engine):
-    return [_statement(f"DROP TABLE {_quoted(operation['table'])}", [])]
-
-
-def _named_column(operation, engine):
-    wanted = operation["column"]
-    found = list(filter(lambda c: c["name"] == wanted, operation["columns"]))
-    return _NAMED[found != []](operation, engine, wanted, found)
+_drop_table = lambda operation, engine: [_statement(f"DROP TABLE {_quoted(operation['table'])}", [])]
 
 
 _NAMED = {
@@ -256,6 +246,11 @@ _NAMED = {
 
 def _add_column(operation, engine):
     def spelled():
+        def _named_column(operation, engine):
+            wanted = operation["column"]
+            found = list(filter(lambda c: c["name"] == wanted, operation["columns"]))
+            return _NAMED[found != []](operation, engine, wanted, found)
+
         column = _named_column(operation, engine)
         definition = _the_first_fault_or([column], lambda: _definition(column, operation["constraints"], engine))
         return _the_first_fault_or([column, definition], lambda: [
@@ -264,17 +259,8 @@ def _add_column(operation, engine):
     return _carrying(operation, engine, "columns", spelled)
 
 
-def _drop_column_directly(operation, engine):
-    quote = _quoted
-    return [_statement(f"ALTER TABLE {quote(operation['table'])} DROP COLUMN {quote(operation['column'])}", [])]
-
-
-def _copy(operation, engine):
-    quote = _quoted
-    carried = ", ".join(quote(column) for column in operation["copying"])
-    temporary = quote(f"_honest_persist_tmp_{operation['table']}")
-    table = quote(operation["table"])
-    return _COPY[operation["copying"] == []](temporary, carried, table)
+_drop_column_directly = lambda operation, engine: [
+    _statement(f"ALTER TABLE {_quoted(operation['table'])} DROP COLUMN {_quoted(operation['column'])}", [])]
 
 
 _COPY = {
@@ -286,6 +272,13 @@ _COPY = {
 
 def _rebuild(operation, engine):
     def spelled():
+        def _copy(operation, engine):
+            quote = _quoted
+            carried = ", ".join(quote(column) for column in operation["copying"])
+            temporary = quote(f"_honest_persist_tmp_{operation['table']}")
+            table = quote(operation["table"])
+            return _COPY[operation["copying"] == []](temporary, carried, table)
+
         quote = _quoted
         table = quote(operation["table"])
         temporary = quote(f"_honest_persist_tmp_{operation['table']}")
@@ -302,24 +295,19 @@ def _rebuild(operation, engine):
     return _carrying(operation, engine, "columns", spelled)
 
 
-def _rename_column(operation, engine):
-    quote = _quoted
-    return [_statement(
-        f"ALTER TABLE {quote(operation['table'])} RENAME COLUMN {quote(operation['column'])} "
-        f"TO {quote(operation['renamed_to'])}", [])]
+_rename_column = lambda operation, engine: [_statement(
+    f"ALTER TABLE {_quoted(operation['table'])} RENAME COLUMN {_quoted(operation['column'])} "
+    f"TO {_quoted(operation['renamed_to'])}", [])]
 
 
-def _rename_table(operation, engine):
-    quote = _quoted
-    return [_statement(f"ALTER TABLE {quote(operation['table'])} RENAME TO {quote(operation['renamed_to'])}", [])]
+_rename_table = lambda operation, engine: [_statement(
+    f"ALTER TABLE {_quoted(operation['table'])} RENAME TO {_quoted(operation['renamed_to'])}", [])]
 
 
-def _create_index(operation, engine):
-    return [_index_statement(operation["indexes"][0], operation["table"], engine)]
+_create_index = lambda operation, engine: [_index_statement(operation["indexes"][0], operation["table"], engine)]
 
 
-def _drop_index(operation, engine):
-    return [_statement(f"DROP INDEX {_quoted(operation['indexes'][0]['name'])}", [])]
+_drop_index = lambda operation, engine: [_statement(f"DROP INDEX {_quoted(operation['indexes'][0]['name'])}", [])]
 
 
 def _create_view(operation, engine):
@@ -328,17 +316,12 @@ def _create_view(operation, engine):
         _statement(f"CREATE VIEW {_quoted(operation['view']['name'])} AS {select['text']}", [])])
 
 
-def _drop_view(operation, engine):
-    return [_statement(f"DROP VIEW {_quoted(operation['view']['name'])}", [])]
+_drop_view = lambda operation, engine: [_statement(f"DROP VIEW {_quoted(operation['view']['name'])}", [])]
 
 
-def _enum_values(verb):
-    def spelled(operation, engine):
-        quote = _quoted
-        return [_statement(f"{verb} {quote(operation['table'])} VALUES (?)" , [value])
-                for value in operation["values"]]
-
-    return spelled
+_enum_values = lambda verb: lambda operation, engine: [
+    _statement(f"{verb} {_quoted(operation['table'])} VALUES (?)", [value])
+    for value in operation["values"]]
 
 
 _SHARED = {
@@ -351,8 +334,7 @@ _SQLITE_SPELLING = {**_SHARED, "drop_column": _rebuild, "alter_column": _rebuild
 _POSTGRESQL_SPELLING = {**_SHARED, "drop_column": _drop_column_directly, "alter_column": _drop_column_directly}
 
 
-def _it_cannot_reach_primary(operation, engine):
-    return how_to_spell(operation["kind"], engine, True)
+_it_cannot_reach_primary = lambda operation, engine: how_to_spell(operation["kind"], engine, True)
 
 
 _TURSO_REPLICATED = {**_SHARED, "drop_column": _drop_column_directly, "alter_column": _it_cannot_reach_primary,
@@ -364,21 +346,18 @@ _SPELLING = {
 }
 
 
-def _no_spelling_row(operation, engine):
-    """The no-match row for the spelling tables (P16): a kind no table holds a speller for. Reached only
-    if how_to_spell let a kind through that _SPELLING has no row for, which the shared key set prevents,
-    so it is a program bug reported as a refused Fault rather than a bare KeyError."""
-    return refused(
-        "no_spelling_for_change",
-        f"a {operation['kind']} on {engine} reached the speller with no row to write it",
-        {"kind": operation["kind"], "engine": engine},
-    )
+# The no-match row for the spelling tables (P16): a kind no table holds a speller for. Reached only
+# if how_to_spell let a kind through that _SPELLING has no row for, which the shared key set prevents,
+# so it is a program bug reported as a refused Fault rather than a bare KeyError.
+_no_spelling_row = lambda operation, engine: refused(
+    "no_spelling_for_change",
+    f"a {operation['kind']} on {engine} reached the speller with no row to write it",
+    {"kind": operation["kind"], "engine": engine})
 
 
-def _spell(operation, engine, replicating):
-    by_engine = _read_or(_SPELLING, replicating, lambda: {})
-    spellers = _read_or(by_engine, engine, lambda: {})
-    return _read_or(spellers, operation["kind"], lambda: _no_spelling_row)(operation, engine)
+_spell = lambda operation, engine, replicating: _read_or(
+    _read_or(_read_or(_SPELLING, replicating, lambda: {}), engine, lambda: {}),
+    operation["kind"], lambda: _no_spelling_row)(operation, engine)
 
 
 def spell_operation(operation, engine, replicating):
@@ -401,23 +380,23 @@ _A_VIEW_MAY_STAND_FOR = {
 }
 
 
-def _no_such_engine_view(view, engine):
-    return refused("no_such_engine", f"the view {view['name']!r} was handed to be spelled for {engine!r}",
-                   {"accepted": list(_THREE_ENGINES), "arrived": engine})
+_no_such_engine_view = lambda view, engine: refused(
+    "no_such_engine", f"the view {view['name']!r} was handed to be spelled for {engine!r}",
+    {"accepted": list(_THREE_ENGINES), "arrived": engine})
 
 
-def _not_a_question(view, engine):
-    return refused("view_not_a_question",
-                   f"the view {view['name']!r} stands for a declaration that asks to "
-                   f"{view['declaration']['wanted']}", {})
+_not_a_question = lambda view, engine: refused(
+    "view_not_a_question",
+    f"the view {view['name']!r} stands for a declaration that asks to "
+    f"{view['declaration']['wanted']}", {})
 
 
-def _named_view_fault(view, engine, answer):
-    # answer is a Fault here (not a Statement, not a NoMatch), so it carries honest-type's code,
-    # message and detail fields; the interior trusts that contract (P14) and reads them by subscript.
-    return refused(answer["code"],
-                   f"the view {view['name']!r} cannot be spelled for {engine}: {answer['message']}",
-                   answer["detail"])
+# answer is a Fault here (not a Statement, not a NoMatch), so it carries honest-type's code,
+# message and detail fields; the interior trusts that contract (P14) and reads them by subscript.
+_named_view_fault = lambda view, engine, answer: refused(
+    answer["code"],
+    f"the view {view['name']!r} cannot be spelled for {engine}: {answer['message']}",
+    answer["detail"])
 
 
 def _compiled_view(view, engine):
@@ -435,9 +414,9 @@ _VIEW_REFUSAL = {
 }
 
 
-def _when_stands_for_a_question(view, engine):
-    stands_for = view["declaration"]["wanted"] in _read_or(_A_VIEW_MAY_STAND_FOR, engine, lambda: frozenset())
-    return _pick(stands_for, lambda: _compiled_view(view, engine), lambda: _not_a_question(view, engine))
+_when_stands_for_a_question = lambda view, engine: _pick(
+    view["declaration"]["wanted"] in _read_or(_A_VIEW_MAY_STAND_FOR, engine, lambda: frozenset()),
+    lambda: _compiled_view(view, engine), lambda: _not_a_question(view, engine))
 
 
 _VIEW_ENGINE = {True: _when_stands_for_a_question, False: _no_such_engine_view}
@@ -473,24 +452,25 @@ def _mechanism_operations(freshness, engine, capability):
                                            "on_engine": engine, "built_from": capability["built_from"]}}]
 
 
-def _refuse_mechanism_engine(freshness, engine, _capability):
-    return refused("no_materialized_view",
-                   f"you declared a materialized view {freshness} on {engine}, which has no materialized "
-                   f"view of its own and nothing to build one from", {"freshness": freshness, "engine": engine})
+_refuse_mechanism_engine = lambda freshness, engine, _capability: refused(
+    "no_materialized_view",
+    f"you declared a materialized view {freshness} on {engine}, which has no materialized "
+    f"view of its own and nothing to build one from", {"freshness": freshness, "engine": engine})
 
 
-def _refuse_freshness(freshness, _engine, _capability):
-    return refused("no_such_freshness",
-                   f"you declared a materialized view {freshness!r}, which is not one of "
-                   f"{list(_DECLARED_FRESHNESSES)}", {"accepted": list(_DECLARED_FRESHNESSES), "arrived": freshness})
+_refuse_freshness = lambda freshness, _engine, _capability: refused(
+    "no_such_freshness",
+    f"you declared a materialized view {freshness!r}, which is not one of "
+    f"{list(_DECLARED_FRESHNESSES)}", {"accepted": list(_DECLARED_FRESHNESSES), "arrived": freshness})
 
 
 _MECHANISM_ANSWER = {"native": _mechanism_operations, "built": _mechanism_operations, "nothing": _refuse_mechanism_engine}
 
 
-def _on_freshness(freshness, engine, capability):
-    offers = _OFFERS[(capability["native"], bool(capability["built_from"].strip()))]
-    return _read_or(_MECHANISM_ANSWER, offers, lambda: _refuse_mechanism_engine)(freshness, engine, capability)
+_on_freshness = lambda freshness, engine, capability: _read_or(
+    _MECHANISM_ANSWER,
+    _OFFERS[(capability["native"], bool(capability["built_from"].strip()))],
+    lambda: _refuse_mechanism_engine)(freshness, engine, capability)
 
 
 _ON_FRESHNESS = {True: _on_freshness, False: _refuse_freshness}

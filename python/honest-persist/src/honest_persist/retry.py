@@ -35,39 +35,27 @@ def next_wait(attempt):
     return _pick(attempt <= 1, lambda: 0.0, lambda: _FIRST_WAIT_SECONDS * 2.0 ** (attempt - 2))
 
 
-def _landed(_policy, _outcome, attempt):
-    """A success — an int outcome — lands at once, nothing to retry."""
-    return {"attempt": attempt, "delay": 0.0, "disposition": "landed"}
+# A success — an int outcome — lands at once, nothing to retry.
+_landed = lambda _policy, _outcome, attempt: {"attempt": attempt, "delay": 0.0, "disposition": "landed"}
 
+# A logical fault the caller owns fails identically however often it runs, so it is never retried.
+_give_up_logical = lambda _policy, _outcome, attempt: {"attempt": attempt, "delay": 0.0, "disposition": "give_up_logical"}
 
-def _give_up_logical(_policy, _outcome, attempt):
-    """A logical fault the caller owns fails identically however often it runs, so it is never retried."""
-    return {"attempt": attempt, "delay": 0.0, "disposition": "give_up_logical"}
+# A conflict kept losing the race and the bound is reached; the failure is typed as contention.
+_give_up_contention = lambda _policy, _outcome, attempt: {"attempt": attempt, "delay": 0.0, "disposition": "give_up_contention"}
 
+# A conflict with budget to spare asks for another run at the next attempt, after its backoff.
+_run_again = lambda _policy, _outcome, attempt: {"attempt": attempt + 1, "delay": next_wait(attempt + 1), "disposition": "run"}
 
-def _give_up_contention(_policy, _outcome, attempt):
-    """A conflict kept losing the race and the bound is reached; the failure is typed as contention."""
-    return {"attempt": attempt, "delay": 0.0, "disposition": "give_up_contention"}
-
-
-def _run_again(_policy, _outcome, attempt):
-    """A conflict with budget to spare asks for another run at the next attempt, after its backoff."""
-    nxt = attempt + 1
-    return {"attempt": nxt, "delay": next_wait(nxt), "disposition": "run"}
-
-
-def _on_conflict(policy, outcome, attempt):
-    """A conflict: run again unless the bound is reached, in which case give up on contention."""
-    return _ON_BUDGET[budget_spent(attempt, policy["bound"])](policy, outcome, attempt)
+# A conflict: run again unless the bound is reached, in which case give up on contention.
+_on_conflict = lambda policy, outcome, attempt: _ON_BUDGET[budget_spent(attempt, policy["bound"])](policy, outcome, attempt)
 
 
 _ON_BUDGET = {True: _give_up_contention, False: _run_again}
 _ON_RETRYABLE = {False: _give_up_logical, True: _on_conflict}
 
-
-def _on_fault(policy, outcome, attempt):
-    """A driver Fault: a conflict is worth another attempt, a logical fault is not."""
-    return _ON_RETRYABLE[worth_retrying(outcome)](policy, outcome, attempt)
+# A driver Fault: a conflict is worth another attempt, a logical fault is not.
+_on_fault = lambda policy, outcome, attempt: _ON_RETRYABLE[worth_retrying(outcome)](policy, outcome, attempt)
 
 
 _ON_OUTCOME = {False: _landed, True: _on_fault}
@@ -142,22 +130,17 @@ _DEFAULT_CREW_SIZE = 1
 _DEFAULT_CONNECTIONS = 1
 
 
-def _nobody_said_size(_asked):
-    """The deployment named no crew size, so a default is settled here (declaration crew_size)."""
-    return _DEFAULT_CREW_SIZE
+# The deployment named no crew size, so a default is settled here (declaration crew_size).
+_nobody_said_size = lambda _asked: _DEFAULT_CREW_SIZE
 
+# A crew of none takes tickets and runs nothing, so the caller would wait forever.
+_too_few_drainers = lambda asked: refused(
+    "crew_too_small",
+    f"HONEST_PERSIST_CREW_SIZE is {asked}, so no drainer would run; set it to at least 1",
+    {"asked": asked},
+)
 
-def _too_few_drainers(asked):
-    """A crew of none takes tickets and runs nothing, so the caller would wait forever."""
-    return refused(
-        "crew_too_small",
-        f"HONEST_PERSIST_CREW_SIZE is {asked}, so no drainer would run; set it to at least 1",
-        {"asked": asked},
-    )
-
-
-def _asked_crew_size(asked):
-    return asked
+_asked_crew_size = lambda asked: asked
 
 
 _CREW_SIZE = {
@@ -175,20 +158,15 @@ def crew_size(asked):
     return _CREW_SIZE[(said, said and asked >= 1)](asked)
 
 
-def _nobody_said_connections(_asked):
-    return _DEFAULT_CONNECTIONS
+_nobody_said_connections = lambda _asked: _DEFAULT_CONNECTIONS
 
+_too_few_connections = lambda asked: refused(
+    "connections_too_few",
+    f"HONEST_PERSIST_CONNECTIONS is {asked}, so no connection is permitted; set it to at least 1",
+    {"asked": asked},
+)
 
-def _too_few_connections(asked):
-    return refused(
-        "connections_too_few",
-        f"HONEST_PERSIST_CONNECTIONS is {asked}, so no connection is permitted; set it to at least 1",
-        {"asked": asked},
-    )
-
-
-def _asked_connections(asked):
-    return asked
+_asked_connections = lambda asked: asked
 
 
 _CONNECTIONS = {
@@ -213,14 +191,11 @@ _REFRESH_DISPOSITION = {
 }
 
 
-def _count_came_back(_written, _attempt, _allowed):
-    """A refresh that wrote its rows is always worth running again; the count itself is not read."""
-    return True
+# A refresh that wrote its rows is always worth running again; the count itself is not read.
+_count_came_back = lambda _written, _attempt, _allowed: True
 
-
-def _fault_came_back(written, attempt, allowed):
-    """Ask the kind whether another go is worth it, then whether one is left."""
-    return worth_retrying(written) and not budget_spent(attempt["consecutive_faults"], allowed)
+# Ask the kind whether another go is worth it, then whether one is left.
+_fault_came_back = lambda written, attempt, allowed: worth_retrying(written) and not budget_spent(attempt["consecutive_faults"], allowed)
 
 
 _WHO_READS_THE_OUTCOME = {False: _count_came_back, True: _fault_came_back}
