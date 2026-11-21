@@ -68,6 +68,7 @@ from honest_persist.retry import (
     receipt_for,
     replicates,
     retry_schedule,
+    what_to_do_after_a_refresh,
     writer_waiting,
 )
 from honest_persist.schema import (
@@ -80,13 +81,12 @@ from honest_persist.schema import (
     refuse_undeclared_loss,
     schema_from_declared,
 )
-from honest_persist.types import fault, is_fault, is_no_match, refused
+from honest_persist.types import WRITINGS, fault, is_fault, is_no_match, refused
 
 NOTHING = None
 
 
-def _is_refusal(piece):
-    return is_fault(piece) or is_no_match(piece)
+_is_refusal = lambda piece: is_fault(piece) or is_no_match(piece)
 
 
 async def _skip(_step, carried):
@@ -108,8 +108,7 @@ async def _run_steps(record, steps):
     return carried
 
 
-def _declared_something(declared):
-    return bool(declared["models"] or declared["views"] or declared["dropping_tables"] or declared["dropping_views"])
+_declared_something = lambda declared: bool(declared["models"] or declared["views"] or declared["dropping_tables"] or declared["dropping_views"])
 
 
 # --- session_connect (declaration session_connect) ---------------------------------------------------
@@ -299,16 +298,11 @@ async def session_connect(connecting):
 
 
 # --- lifecycle_catch_up: the driven-generator retry (declaration, spec 7.7) --------------------------
-def _take_ticket(crew, ticket):
-    crew["arrivals"] = list(filter(lambda held: held != ticket, crew["arrivals"]))
-    return ticket
-
-
-def _contention_fault(attempts, policy):
-    return fault("retry_budget_spent",
-                 f"a write lost a race {attempts} times and the bound is {policy['bound']}, so it "
-                 f"stopped being retried; it was never refused, every attempt lost a race",
-                 "budget_spent", [], {"attempts": attempts})
+_contention_fault = lambda attempts, policy: fault(
+    "retry_budget_spent",
+    f"a write lost a race {attempts} times and the bound is {policy['bound']}, so it "
+    f"stopped being retried; it was never refused, every attempt lost a race",
+    "budget_spent", [], {"attempts": attempts})
 
 
 def _finish_write(ctx, touched, failure, attempts):
@@ -368,6 +362,10 @@ async def _drive_one_write(db, writer, crew, ticket):
 
 
 async def _drain_all(db, writer):
+    def _take_ticket(crew, ticket):
+        crew["arrivals"] = list(filter(lambda held: held != ticket, crew["arrivals"]))
+        return ticket
+
     crew = db["crew"]
     result = NOTHING
     while crew["arrivals"] and not _is_refusal(result):
@@ -403,9 +401,9 @@ async def _sync_if_free(draining):
     return await _pick(free, lambda: _a_pass(draining), lambda: _no_pass(draining))
 
 
-def _the_turn_that_ran(catching_up, draining):
-    return {"db": catching_up["db"], "writer": catching_up["writer"], "statement": None,
-            "writer_waiting": writer_waiting(draining["db"]["crew"]), "attempts": catching_up["attempts"]}
+_the_turn_that_ran = lambda catching_up, draining: {
+    "db": catching_up["db"], "writer": catching_up["writer"], "statement": None,
+    "writer_waiting": writer_waiting(draining["db"]["crew"]), "attempts": catching_up["attempts"]}
 
 
 async def _propagate_drain(_catching_up, _draining, drained):
@@ -484,10 +482,7 @@ async def _run_it(read, statement):
     return _answered(read, statement, ran)
 
 
-def _is_write(declaration):
-    from honest_persist.types import WRITINGS
-
-    return declaration["wanted"] in WRITINGS
+_is_write = lambda declaration: declaration["wanted"] in WRITINGS
 
 
 async def _run_read_now(read, statement):
@@ -527,12 +522,10 @@ _HOW_IT_RUNS = {
 _WHETHER_COMPILED = {True: _would_not_compile, False: _run_it}
 
 
-def _answered(read, statement, ran):
-    return _WHAT_RAN[_is_refusal(ran)](read, statement, ran)
+_answered = lambda read, statement, ran: _WHAT_RAN[_is_refusal(ran)](read, statement, ran)
 
 
-def _ran_refused(_read, _statement, ran):
-    return ran
+_ran_refused = lambda _read, _statement, ran: ran
 
 
 def _ran_ok(read, statement, ran):
@@ -543,13 +536,11 @@ def _ran_ok(read, statement, ran):
 _WHAT_RAN = {True: _ran_refused, False: _ran_ok}
 
 
-def _shape_answer(read, ran):
-    return _WHICH_CAME_BACK[_came_back(ran)](read, ran)
+_shape_answer = lambda read, ran: _WHICH_CAME_BACK[_came_back(ran)](read, ran)
 
 
-def _came_back(ran):
-    return _pick(isinstance(ran, list), lambda: "rows",
-                 lambda: _pick(isinstance(ran, dict), lambda: "a receipt", lambda: "a count"))
+_came_back = lambda ran: _pick(isinstance(ran, list), lambda: "rows",
+                               lambda: _pick(isinstance(ran, dict), lambda: "a receipt", lambda: "a count"))
 
 
 _WHICH_CAME_BACK = {
@@ -648,9 +639,8 @@ async def _ticket_known(collecting, _miss):
 _WHETHER_TICKET_KNOWN = {True: _ticket_unknown, False: _ticket_known}
 
 
-def _redeemed(collecting, receipt):
-    return _pick(is_fault(receipt), lambda: receipt,
-                 lambda: {**collecting, "receipt": receipt, "answer": answer_from_receipt(receipt)})
+_redeemed = lambda collecting, receipt: _pick(is_fault(receipt), lambda: receipt,
+                                              lambda: {**collecting, "receipt": receipt, "answer": answer_from_receipt(receipt)})
 
 
 async def query_redeem_ticket(collecting):
@@ -773,15 +763,14 @@ def _said_names(declared):
     return _pick(is_fault(refusal), lambda: refusal, lambda: declared)
 
 
-def _a_schedule_spec(db, view):
-    """One schedule declaration per view: its key, the work that rewrites its table, its cadence, and the
-    rule the scheduler calls after a run."""
-    return {
-        "key": view["name"],
-        "work": lambda: _refresh_work(db, view),
-        "cadence": view["cadence"],
-        "decide": lambda written, attempt: _decide_after(written, attempt, view["attempts_allowed"]),
-    }
+# One schedule declaration per view: its key, the work that rewrites its table, its cadence, and the
+# rule the scheduler calls after a run.
+_a_schedule_spec = lambda db, view: {
+    "key": view["name"],
+    "work": lambda: _refresh_work(db, view),
+    "cadence": view["cadence"],
+    "decide": lambda written, attempt: _decide_after(written, attempt, view["attempts_allowed"]),
+}
 
 
 async def _refresh_work(_db, _view):
@@ -789,10 +778,7 @@ async def _refresh_work(_db, _view):
     return 0
 
 
-def _decide_after(written, attempt, allowed):
-    from honest_persist.retry import what_to_do_after_a_refresh
-
-    return what_to_do_after_a_refresh(written, attempt, allowed)
+_decide_after = lambda written, attempt, allowed: what_to_do_after_a_refresh(written, attempt, allowed)
 
 
 def schema_say_refreshes(db):
