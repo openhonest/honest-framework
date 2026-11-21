@@ -2365,7 +2365,14 @@ def _probe_shutdown_handler():
     saved = {n: signal.getsignal(n) for n in (signal.SIGTERM, signal.SIGINT)}
     real_stop = doorsmod.lifecycle_stop
     bad = []
-    marks = {"displaced": 0}
+    marks = {"displaced": 0, "stop_ran": 0}
+
+    async def _async_noop_stop(*_a, **_k):
+        # The real door is async; the stub matches that contract so the handler drives a real coroutine,
+        # not a sync value production never yields. A sync stub here is what hid the dropped-await bug.
+        # It records that it ran so the law reads the shutdown actually fired, not just that it chained.
+        marks["stop_ran"] += 1
+        return None
 
     def _previous(_number, _frame):
         marks["displaced"] += 1
@@ -2384,7 +2391,7 @@ def _probe_shutdown_handler():
         if not (hp.is_fault(refused_it) and refused_it.get("code") == "handler_refused"):
             bad.append(f"installing from a non-main thread should be refused handler_refused: {refused_it}")
 
-        doorsmod.lifecycle_stop = lambda *a, **k: None  # the door calls this; a sync stub keeps it off the loop
+        doorsmod.lifecycle_stop = _async_noop_stop  # the door calls this; an async stub matches the real contract
         signal.signal(signal.SIGTERM, _previous)   # a callable previous handler, to cover the displaced arm
         signal.signal(signal.SIGINT, signal.SIG_DFL)  # the default, not callable, to cover the no-displaced arm
         installed = lifecycle_install_handler()
@@ -2401,6 +2408,76 @@ def _probe_shutdown_handler():
         ours_int(signal.SIGINT, None)     # the door, then nothing displaced (default was not callable)
         if marks["displaced"] != 1:
             bad.append(f"the chained handler should run the displaced handler once, ran {marks['displaced']}")
+        if marks["stop_ran"] != 2:
+            bad.append(f"firing both handlers should drive the async shutdown twice, ran {marks['stop_ran']}")
+    finally:
+        doorsmod.lifecycle_stop = real_stop
+        for number, handler in saved.items():
+            signal.signal(number, handler)
+    return bad
+
+
+def _probe_signal_handler_drives_shutdown():
+    """The installed SIGTERM/SIGINT handler must actually drive the async shutdown, not build a coroutine
+    and drop it (bead honest-framework-smt). The handler is sync, because a signal handler is, and
+    lifecycle_stop is async, so the handler has to hand the shutdown to the asyncio loop the module already
+    names as its process output: run it when no loop is running, and schedule it onto the loop when one is.
+    This law replaces the real door with an async sentinel-setting stub and fires the real installed handler
+    in both cases, then checks the stub ran. With the dropped-coroutine bug the stub never runs, so this is
+    the regression guard the earlier handler law could not be — that one stubbed the door with a sync no-op,
+    which cannot expose a dropped await."""
+    import asyncio
+    import signal
+    import honest_persist.doors as doorsmod
+    _need("lifecycle_install_handler")  # surface guard: red backbone when the function is not built yet
+    saved = {n: signal.getsignal(n) for n in (signal.SIGTERM, signal.SIGINT)}
+    real_stop = doorsmod.lifecycle_stop
+    bad = []
+    ran = {"count": 0}
+    marks = {"displaced": 0}
+
+    async def _sentinel_stop():
+        ran["count"] += 1
+        return None
+
+    def _prev(_number, _frame):
+        marks["displaced"] += 1
+        return True
+
+    try:
+        doorsmod.lifecycle_stop = _sentinel_stop
+        signal.signal(signal.SIGTERM, _prev)
+        signal.signal(signal.SIGINT, _prev)
+        installed = _need("lifecycle_install_handler")()
+        if installed is not None:
+            bad.append(f"installing the handler should answer NOTHING: {installed}")
+
+        # 1. No loop running: firing the handler must run the async shutdown to completion.
+        ran["count"] = 0
+        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+        if ran["count"] != 1:
+            bad.append(f"firing the handler with no running loop should drive the async shutdown once, "
+                       f"ran {ran['count']} (the coroutine was built and dropped)")
+
+        # 2. A loop running (the server case): firing the handler must schedule the shutdown onto the loop
+        #    and let it run, without raising.
+        async def _fire_inside_loop():
+            ran["count"] = 0
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+            for _ in range(20):
+                await asyncio.sleep(0)
+            return ran["count"]
+
+        count_in_loop = asyncio.run(_fire_inside_loop())
+        if count_in_loop != 1:
+            bad.append(f"firing the handler inside a running loop should drive the async shutdown once, "
+                       f"ran {count_in_loop} (the coroutine was built and dropped)")
+
+        # Driving the async shutdown must not cost the chaining: the displaced handler still ran on each
+        # of the two firings above.
+        if marks["displaced"] != 2:
+            bad.append(f"the chained displaced handler should run once per firing (twice), "
+                       f"ran {marks['displaced']}")
     finally:
         doorsmod.lifecycle_stop = real_stop
         for number, handler in saved.items():
@@ -3703,6 +3780,7 @@ _PROBES = [
     _probe_turso_mvcc,
     _probe_crew_lifecycle_paths,
     _probe_shutdown_handler,
+    _probe_signal_handler_drives_shutdown,
     _probe_door_paths,
     _probe_pure_edges,
     _probe_fail_closed_rows,

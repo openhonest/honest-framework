@@ -236,10 +236,46 @@ def _nothing_displaced(_previous, _number, _frame):
 _RUN_THE_DISPLACED = {True: _run_displaced, False: _nothing_displaced}
 
 
+def _detect_loop():
+    """The asyncio loop already on the stack, or NOTHING when none is running. A signal can land with the
+    server's loop running (the main thread was inside it, so this returns that loop) or with no loop at all
+    (a plain process, so asyncio.get_running_loop() raises RuntimeError). That raise is resolved here into a
+    value, so the caller dispatches on data — a loop or NOTHING — and never on a thrown exception."""
+    try:  # honest: ignore HC-P002: asking the runtime whether a loop is running is the asyncio boundary; the no-loop RuntimeError resolves into NOTHING, a first-class tested outcome, not a swallowed error
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return NOTHING
+
+
+def _run_the_shutdown_now(_loop, coro):
+    """No loop is running, so run the shutdown coroutine to completion right here, where this handler is the
+    only thing on the stack."""
+    asyncio.run(coro)
+    return NOTHING
+
+
+def _hand_the_shutdown_to_the_loop(loop, coro):
+    """A loop is running, so hand the already-built shutdown coroutine to it as a task and return at once. The
+    task is created on the loop's own thread inside the scheduled callback, so the coroutine is always awaited
+    and never dropped, and call_soon_threadsafe returns immediately so the chained handler can run the
+    displaced handler afterward."""
+    loop.call_soon_threadsafe(loop.create_task, coro)
+    return NOTHING
+
+
+_A_LOOP_IS_RUNNING = {False: _run_the_shutdown_now, True: _hand_the_shutdown_to_the_loop}
+
+
 def _the_door(_number, _frame):
+    """Drive the async shutdown from the sync signal handler (declaration lifecycle_stop, reached through the
+    signal entry). lifecycle_stop is a coroutine, so a sync handler cannot just call and forget it: it builds
+    the coroutine and drives it — onto the running loop when a server loop is on the stack, else to completion
+    in a fresh loop. Either way this returns so the chained handler runs the displaced handler afterward."""
     from honest_persist.doors import lifecycle_stop
 
-    lifecycle_stop()
+    coro = lifecycle_stop()
+    loop = _detect_loop()
+    return _A_LOOP_IS_RUNNING[loop is not NOTHING](loop, coro)
 
 
 def _a_handler_that_chains(displaced):
