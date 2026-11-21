@@ -27,25 +27,21 @@ _SCHEME_ENGINES = {
 # no-scheme row (None), which is a bare path rather than a scheme a caller types.
 _ACCEPTED_SCHEMES = sorted(set(_SCHEME_ENGINES) - {None})
 
+# The scheme a target names, or None when it names none. The scheme is the text before `://`; a target
+# with no `://` is a bare path and names no scheme.
+_scheme_of = lambda target: _pick("://" in target, lambda: target.split("://", 1)[0], lambda: None)
 
-def _scheme_of(target):
-    """The scheme a target names, or None when it names none. The scheme is the text before `://`; a
-    target with no `://` is a bare path and names no scheme."""
-    return _pick("://" in target, lambda: target.split("://", 1)[0], lambda: None)
-
-
-def _no_engine(target, scheme):
-    """The no-match row of the scheme dispatch: a scheme no engine ships a row for. A refused Fault —
-    the request itself is wrong, change it — naming the schemes that would have worked and the one that
-    arrived, as data a caller reads from `detail` without parsing the message."""
-    return fault(
-        "unknown_engine",
-        f"target {target!r} names scheme {scheme!r}, which no engine ships a row for; "
-        f"name one of the schemes {_ACCEPTED_SCHEMES}, or a bare path for sqlite",
-        "refused",
-        [],
-        {"accepted": _ACCEPTED_SCHEMES, "arrived": scheme, "target": target},
-    )
+# The no-match row of the scheme dispatch: a scheme no engine ships a row for. A refused Fault — the
+# request itself is wrong, change it — naming the schemes that would have worked and the one that
+# arrived, as data a caller reads from `detail` without parsing the message.
+_no_engine = lambda target, scheme: fault(
+    "unknown_engine",
+    f"target {target!r} names scheme {scheme!r}, which no engine ships a row for; "
+    f"name one of the schemes {_ACCEPTED_SCHEMES}, or a bare path for sqlite",
+    "refused",
+    [],
+    {"accepted": _ACCEPTED_SCHEMES, "arrived": scheme, "target": target},
+)
 
 
 def engine_of(target):
@@ -68,18 +64,16 @@ _TRANSACTING = {
 
 _THREE_ENGINES_FROM_TRANSACTING = sorted(_TRANSACTING)
 
-
-def _no_engine_row(engine):
-    """The no-match row for a per-engine table read by the Engine vocabulary (P16): the key is bounded
-    to the three engines at construction, so a miss is a program bug, reported as a refused Fault naming
-    the engines there are and the one that arrived rather than a bare KeyError."""
-    return fault(
-        "no_such_engine",
-        f"no engine here is called {engine!r}; this package ships {_THREE_ENGINES_FROM_TRANSACTING}",
-        "server",
-        [],
-        {"accepted": _THREE_ENGINES_FROM_TRANSACTING, "arrived": engine},
-    )
+# The no-match row for a per-engine table read by the Engine vocabulary (P16): the key is bounded to the
+# three engines at construction, so a miss is a program bug, reported as a refused Fault naming the
+# engines there are and the one that arrived rather than a bare KeyError.
+_no_engine_row = lambda engine: fault(
+    "no_such_engine",
+    f"no engine here is called {engine!r}; this package ships {_THREE_ENGINES_FROM_TRANSACTING}",
+    "server",
+    [],
+    {"accepted": _THREE_ENGINES_FROM_TRANSACTING, "arrived": engine},
+)
 
 
 def how_to_write(engine):
@@ -117,10 +111,8 @@ _CARRYING_NONE = {
     "copying": False, "values": False, "renamed_to": False, "view": False,
 }
 
-
-def _filling(named):
-    """One row of the operations table, saying which fields it fills and the rest false."""
-    return {**_CARRYING_NONE, **named}
+# One row of the operations table, saying which fields it fills and the rest false.
+_filling = lambda named: {**_CARRYING_NONE, **named}
 
 
 _CARRIES = {
@@ -143,18 +135,16 @@ _CARRIES = {
 
 _OPERATION_KINDS_CARRIED = sorted(_CARRIES)
 
-
-def _no_kind_row(kind):
-    """The no-match row for the operations table read by the OperationKind vocabulary (P16): the key is
-    bounded to the fourteen kinds at construction, so a miss is a program bug, reported as a refused
-    Fault naming the kinds there are and the one that arrived rather than a bare KeyError."""
-    return fault(
-        "no_such_operation_kind",
-        f"no schema change here is called {kind!r}; this package emits {_OPERATION_KINDS_CARRIED}",
-        "server",
-        [],
-        {"accepted": _OPERATION_KINDS_CARRIED, "arrived": kind},
-    )
+# The no-match row for the operations table read by the OperationKind vocabulary (P16): the key is
+# bounded to the fourteen kinds at construction, so a miss is a program bug, reported as a refused Fault
+# naming the kinds there are and the one that arrived rather than a bare KeyError.
+_no_kind_row = lambda kind: fault(
+    "no_such_operation_kind",
+    f"no schema change here is called {kind!r}; this package emits {_OPERATION_KINDS_CARRIED}",
+    "server",
+    [],
+    {"accepted": _OPERATION_KINDS_CARRIED, "arrived": kind},
+)
 
 
 def what_an_operation_carries(kind):
@@ -233,63 +223,58 @@ _CASE_WORD = {
 _THREE_ENGINES = sorted(_CASE_WORD)
 _FIFTEEN_OPERATORS = sorted(_COMPARISONS)
 
-
-def _no_operator_row(operator):
-    """The no-match row for the comparisons table read by the Operator vocabulary (P16): the key is
-    bounded to the fifteen operators at construction, so a miss is a program bug, reported as a refused
-    Fault naming the operators there are and the one that arrived rather than a bare KeyError."""
-    return fault(
-        "no_such_operator",
-        f"no comparison here is called {operator!r}; this package writes {_FIFTEEN_OPERATORS}",
-        "server",
-        [],
-        {"accepted": _FIFTEEN_OPERATORS, "arrived": operator},
-    )
-
-
-def _comparing_row(operator, engine):
-    """The shared comparison row, with this engine's own case word where it has one. Reached only from
-    how_to_compare once both vocabularies have matched, so each read is a guaranteed hit; the reads go
-    through _read_or so the subscript is on a local, never on a module dispatch dict by a bare key."""
-    case_words = _read_or(_CASE_WORD, engine, lambda: {})
-    comparison = _read_or(_COMPARISONS, operator, lambda: _no_operator_row(operator))
-    said_differently = operator in case_words
-    return {
-        **comparison,
-        "ignoring_case": _pick(
-            said_differently,
-            lambda: case_words[operator],
-            lambda: comparison["ignoring_case"],
-        ),
-    }
-
-
-def _compare_miss(operator, engine):
-    """The no-match row (declaration how_to_compare): a NoMatch differing by which table missed, an
-    engine the package ships no row for, or an operator this table holds no row for."""
-    engine_known = engine in _CASE_WORD
-    return _pick(
-        engine_known,
-        lambda: no_match("operators", [operator], _FIFTEEN_OPERATORS, "no_row_for_the_key",
-                         f"operator {operator!r} on engine {engine!r}"),
-        lambda: no_match("engines", [engine], _THREE_ENGINES, "no_row_for_the_key",
-                         f"engine {engine!r}"),
-    )
+# The no-match row for the comparisons table read by the Operator vocabulary (P16): the key is bounded
+# to the fifteen operators at construction, so a miss is a program bug, reported as a refused Fault
+# naming the operators there are and the one that arrived rather than a bare KeyError.
+_no_operator_row = lambda operator: fault(
+    "no_such_operator",
+    f"no comparison here is called {operator!r}; this package writes {_FIFTEEN_OPERATORS}",
+    "server",
+    [],
+    {"accepted": _FIFTEEN_OPERATORS, "arrived": operator},
+)
 
 
 def how_to_compare(operator, engine):
     """How this engine writes this comparison (declaration how_to_compare). It names no Fault at all:
     both arguments are vocabularies, so the only two ways it can fail are the two misses, each a NoMatch
     naming the table that had no row."""
+    def _comparing_row(operator, engine):
+        # The shared comparison row, with this engine's own case word where it has one. Reached only once
+        # both vocabularies have matched, so each read is a guaranteed hit; the reads go through _read_or
+        # so the subscript is on a local, never on a module dispatch dict by a bare key.
+        case_words = _read_or(_CASE_WORD, engine, lambda: {})
+        comparison = _read_or(_COMPARISONS, operator, lambda: _no_operator_row(operator))
+        said_differently = operator in case_words
+        return {
+            **comparison,
+            "ignoring_case": _pick(
+                said_differently,
+                lambda: case_words[operator],
+                lambda: comparison["ignoring_case"],
+            ),
+        }
+
+    def _compare_miss(operator, engine):
+        # The no-match row: a NoMatch differing by which table missed, an engine the package ships no row
+        # for, or an operator this table holds no row for.
+        engine_known = engine in _CASE_WORD
+        return _pick(
+            engine_known,
+            lambda: no_match("operators", [operator], _FIFTEEN_OPERATORS, "no_row_for_the_key",
+                             f"operator {operator!r} on engine {engine!r}"),
+            lambda: no_match("engines", [engine], _THREE_ENGINES, "no_row_for_the_key",
+                             f"engine {engine!r}"),
+        )
+
     written_down = engine in _CASE_WORD and operator in _COMPARISONS
     return _pick(written_down, lambda: _comparing_row(operator, engine),
                  lambda: _compare_miss(operator, engine))
 
 
 # --- how one engine writes one schema change (declaration how_to_spell) ------------------------------
-def _one_statement(statement):
-    """A change one statement carries out, on an engine that alters in place."""
-    return {"statements": [statement], "rebuilds": False, "commits_between": False}
+# A change one statement carries out, on an engine that alters in place.
+_one_statement = lambda statement: {"statements": [statement], "rebuilds": False, "commits_between": False}
 
 
 _SPELL_SAME = {
@@ -346,55 +331,47 @@ _OUT_OF_REACH = {False: _OUT_OF_REACH_LOCAL, True: _OUT_OF_REACH_REPLICA}
 
 _SPELL_KINDS = sorted(_SPELL_SAME)
 
+_spell_cannot_reach = lambda kind, engine: refused(
+    "change_cannot_reach_primary",
+    f"a {kind} on {engine} cannot reach the primary: {engine} alters a column by rebuilding the "
+    f"table, and the rename that ends a rebuild runs locally and sends nothing. Declare the change "
+    f"as a new column and a dropping line rather than as a change to the column that is there.",
+    {"kind": kind, "engine": engine},
+)
 
-def _spell_row(kind, engine, replicating):
-    """The shared row, or this engine's own where it has one. Reached only once how_to_spell has matched
-    both vocabularies, so each read is a guaranteed hit; the reads go through _read_or so the subscript
-    is on a local, never on a module dispatch dict by a bare key."""
-    own_by_engine = _read_or(_SPELL_OWN, replicating, lambda: {})
-    own = _read_or(own_by_engine, engine, lambda: {})
-    return _pick(kind in own, lambda: own[kind],
-                 lambda: _read_or(_SPELL_SAME, kind, lambda: _spell_no_row(kind, engine)))
+_spell_no_row = lambda kind, engine: refused(
+    "no_spelling_for_change",
+    f"there is no rule for writing {kind!r} on {engine!r}; this library emits "
+    f"{len(_SPELL_SAME)} kinds of schema change and that is not one of them (accepted {_SPELL_KINDS})",
+    {"accepted": _SPELL_KINDS, "arrived": kind, "engine": engine},
+)
 
-
-def _spell_cannot_reach(kind, engine):
-    return refused(
-        "change_cannot_reach_primary",
-        f"a {kind} on {engine} cannot reach the primary: {engine} alters a column by rebuilding the "
-        f"table, and the rename that ends a rebuild runs locally and sends nothing. Declare the change "
-        f"as a new column and a dropping line rather than as a change to the column that is there.",
-        {"kind": kind, "engine": engine},
-    )
-
-
-def _spell_no_row(kind, engine):
-    return refused(
-        "no_spelling_for_change",
-        f"there is no rule for writing {kind!r} on {engine!r}; this library emits "
-        f"{len(_SPELL_SAME)} kinds of schema change and that is not one of them (accepted {_SPELL_KINDS})",
-        {"accepted": _SPELL_KINDS, "arrived": kind, "engine": engine},
-    )
-
-
-def _spell_no_engine(kind, engine):
-    return refused(
-        "no_such_engine",
-        f"no engine here is called {engine!r}; this package ships {_THREE_ENGINES}",
-        {"accepted": _THREE_ENGINES, "arrived": engine},
-    )
-
-
-def _spell_written_down(kind, engine, replicating):
-    out_of_reach_by_engine = _read_or(_OUT_OF_REACH, replicating, lambda: {})
-    out_of_reach = kind in _read_or(out_of_reach_by_engine, engine, lambda: frozenset())
-    return _pick(out_of_reach, lambda: _spell_cannot_reach(kind, engine),
-                 lambda: _spell_row(kind, engine, replicating))
+_spell_no_engine = lambda kind, engine: refused(
+    "no_such_engine",
+    f"no engine here is called {engine!r}; this package ships {_THREE_ENGINES}",
+    {"accepted": _THREE_ENGINES, "arrived": engine},
+)
 
 
 def how_to_spell(kind, engine, replicating):
     """How this engine writes this schema change, here, on this database (declaration how_to_spell).
     `replicating` is part of the question because a statement that runs on the local copy is not a
     statement that reaches the primary."""
+    def _spell_written_down(kind, engine, replicating):
+        def _spell_row(kind, engine, replicating):
+            # The shared row, or this engine's own where it has one. Reached only once how_to_spell has
+            # matched both vocabularies, so each read is a guaranteed hit; the reads go through _read_or
+            # so the subscript is on a local, never on a module dispatch dict by a bare key.
+            own_by_engine = _read_or(_SPELL_OWN, replicating, lambda: {})
+            own = _read_or(own_by_engine, engine, lambda: {})
+            return _pick(kind in own, lambda: own[kind],
+                         lambda: _read_or(_SPELL_SAME, kind, lambda: _spell_no_row(kind, engine)))
+
+        out_of_reach_by_engine = _read_or(_OUT_OF_REACH, replicating, lambda: {})
+        out_of_reach = kind in _read_or(out_of_reach_by_engine, engine, lambda: frozenset())
+        return _pick(out_of_reach, lambda: _spell_cannot_reach(kind, engine),
+                     lambda: _spell_row(kind, engine, replicating))
+
     key = (kind in _SPELL_SAME, engine in _SPELL_LOCAL)
     return {
         (True, True): _spell_written_down,
@@ -405,12 +382,9 @@ def how_to_spell(kind, engine, replicating):
 
 
 # --- the six questions one engine answers about itself (declaration how_to_inspect) ------------------
-def _asked(text):
-    return {"text": text, "parameters": {}}
+_asked = lambda text: {"text": text, "parameters": {}}
 
-
-def _about_table(text):
-    return {"text": text, "parameters": {"table": ""}}
+_about_table = lambda text: {"text": text, "parameters": {"table": ""}}
 
 
 _SQLITE_TYPES = {
