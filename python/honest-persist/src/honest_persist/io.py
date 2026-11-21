@@ -55,9 +55,7 @@ _NAMED_LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": loggin
                  "error": logging.ERROR, "critical": logging.CRITICAL}
 _LEVELS = {None: logging.INFO, **_NAMED_LEVELS}
 
-
-def _as_words(facts):
-    return " ".join(f"{name}={value}" for name, value in facts.items())
+_as_words = lambda facts: " ".join(f"{name}={value}" for name, value in facts.items())
 
 
 def log_write(event):
@@ -71,10 +69,10 @@ def log_write(event):
 
 
 # --- session_open_connection (declaration) -----------------------------------------------------------
-def _could_not_open(target, said):
-    return refused("could_not_reach",
-                   f"the database at {target} could not be opened. The driver said: "
-                   f"{type(said).__name__}: {said}", {"target": target})
+_could_not_open = lambda target, said: refused(
+    "could_not_reach",
+    f"the database at {target} could not be opened. The driver said: {type(said).__name__}: {said}",
+    {"target": target})
 
 
 async def _no_engine_driver(*_args):
@@ -122,18 +120,10 @@ async def _maybe_await(value):
     return await _AWAITABLE[hasattr(value, "__await__")](value)
 
 
-async def _open_what_the_target_named(target, engine, connections):
-    try:  # honest: ignore HC-P002: the connection boundary catches the driver's throw and returns it as a could_not_reach Fault value (P08)
-        opened = _read_or(_OPEN, engine, lambda: None)(target, connections)
-        return await _maybe_await(opened)
-    except Exception as unreachable:  # noqa: BLE001
-        return _could_not_open(target, unreachable)
-
-
-def _no_connection_permitted(target, connections):
-    return refused("no_connection_permitted",
-                   f"this database may hold {connections} connections, so there is none left to read "
-                   f"{target} on; state a bound of at least one", {"connections": connections})
+_no_connection_permitted = lambda target, connections: refused(
+    "no_connection_permitted",
+    f"this database may hold {connections} connections, so there is none left to read "
+    f"{target} on; state a bound of at least one", {"connections": connections})
 
 
 async def session_open_connection(target, engine, connections):
@@ -143,7 +133,11 @@ async def session_open_connection(target, engine, connections):
 
 
 async def _ask_driver(target, engine, connections):
-    return await _open_what_the_target_named(target, engine, connections)
+    try:  # honest: ignore HC-P002: the connection boundary catches the driver's throw and returns it as a could_not_reach Fault value (P08)
+        opened = _read_or(_OPEN, engine, lambda: None)(target, connections)
+        return await _maybe_await(opened)
+    except Exception as unreachable:  # noqa: BLE001
+        return _could_not_open(target, unreachable)
 
 
 async def _refuse_bound(target, _engine, connections):
@@ -154,8 +148,7 @@ _PERMITS_ONE = {True: _ask_driver, False: _refuse_bound}
 
 
 # --- session_open_writer (declaration) ---------------------------------------------------------------
-def _open_sqlite_writer(target):
-    return sqlite3.connect(_path_in(target), isolation_level=None, timeout=0)
+_open_sqlite_writer = lambda target: sqlite3.connect(_path_in(target), isolation_level=None, timeout=0)
 
 
 def _open_postgresql_writer(target):
@@ -225,15 +218,13 @@ def _rows_from(cursor):
     return [dict(zip(names, row, strict=True)) for row in cursor.fetchall()]
 
 
-def _refused_statement(said):
-    return refused("statement_refused", f"the engine refused the statement: {said}", {})
+_refused_statement = lambda said: refused("statement_refused", f"the engine refused the statement: {said}", {})
+
+_cursor_answer = lambda cursor: _pick(
+    cursor.description is not None, lambda: _rows_from(cursor), lambda: max(int(cursor.rowcount), 0))
 
 
-def _cursor_answer(cursor):
-    return _pick(cursor.description is not None, lambda: _rows_from(cursor), lambda: max(int(cursor.rowcount), 0))
-
-
-def _run_sqlite_statement(connection, statement):
+async def _on_sqlite_statement(connection, statement):
     try:  # honest: ignore HC-P002: the statement boundary catches the sqlite driver's throw and returns it as a statement_refused Fault value (P08)
         cursor = connection.execute(statement["text"], _bind(statement))
         answer = _cursor_answer(cursor)
@@ -241,10 +232,6 @@ def _run_sqlite_statement(connection, statement):
         return answer
     except sqlite3.Error as said:
         return _refused_statement(said)
-
-
-async def _on_sqlite_statement(connection, statement):
-    return _run_sqlite_statement(connection, statement)
 
 
 async def _on_postgresql_statement(connection, statement):
@@ -297,11 +284,10 @@ _TURSO_ANSWER = {True: _turso_rows, False: _turso_count}
 
 _RUN_STATEMENT = {"sqlite": _on_sqlite_statement, "postgresql": _on_postgresql_statement, "turso": _on_turso_statement}
 
-
-def _no_statement_engine(engine):
-    return refused("no_such_engine",
-                   f"no engine here is called {engine!r}, so there is no driver to put this statement to",
-                   {"accepted": list(_THREE_ENGINES), "arrived": engine})
+_no_statement_engine = lambda engine: refused(
+    "no_such_engine",
+    f"no engine here is called {engine!r}, so there is no driver to put this statement to",
+    {"accepted": list(_THREE_ENGINES), "arrived": engine})
 
 
 def _emit_query(connection, engine, statement, rows_or_count, nanoseconds):
@@ -340,7 +326,15 @@ _WHEN_STATEMENT_ENGINE = {True: _run_statement, False: _refuse_statement_engine}
 
 
 # --- query_run_together (declaration) ----------------------------------------------------------------
-def _run_sqlite_together(writer, statements):
+def _rollback_quiet(connection):
+    try:  # honest: ignore HC-P002: a rollback on a connection with nothing to roll back is a no-op, so the quiet boundary returns NOTHING either way (P08)
+        connection.rollback()
+    except sqlite3.Error:
+        return NOTHING
+    return NOTHING
+
+
+async def _on_sqlite_together(writer, statements, _transacting):
     try:  # honest: ignore HC-P002: the group boundary catches the sqlite driver's throw, rolls back, and returns it as a group_refused Fault value (P08)
         writer.execute("BEGIN")
         counted = [max(int(writer.execute(one["text"], _bind(one)).rowcount), 0) for one in statements]
@@ -351,18 +345,6 @@ def _run_sqlite_together(writer, statements):
         return refused("group_refused",
                        f"the engine refused one of the {len(statements)} statements this group asked to "
                        f"land together: {said}", {})
-
-
-def _rollback_quiet(connection):
-    try:  # honest: ignore HC-P002: a rollback on a connection with nothing to roll back is a no-op, so the quiet boundary returns NOTHING either way (P08)
-        connection.rollback()
-    except sqlite3.Error:
-        return NOTHING
-    return NOTHING
-
-
-async def _on_sqlite_together(writer, statements, _transacting):
-    return _run_sqlite_together(writer, statements)
 
 
 async def _on_postgresql_together(writer, statements, _transacting):
@@ -376,14 +358,13 @@ async def _on_postgresql_together(writer, statements, _transacting):
         return refused("group_refused", f"the engine refused one of the group: {said}", {})
 
 
-async def _turso_touched(cursor, one):
-    """Run one statement of a group on the open cursor and answer the rows it touched, never below zero."""
-    await cursor.execute(one["text"], list(one["parameters"].values()))
-    return max(int(cursor.rowcount), 0)
-
-
 async def _on_turso_together(writer, statements, _transacting):
     import turso  # type: ignore[import-not-found]
+
+    async def _turso_touched(cursor, one):
+        """Run one statement of a group on the open cursor and answer the rows it touched, never below zero."""
+        await cursor.execute(one["text"], list(one["parameters"].values()))
+        return max(int(cursor.rowcount), 0)
 
     try:  # honest: ignore HC-P002: the group boundary catches the turso driver's throw, rolls back, and returns it as a group_refused Fault value (P08)
         cursor = writer.cursor()
@@ -419,22 +400,19 @@ _WHEN_TOGETHER_ENGINE = {True: _run_together, False: _refuse_together_engine}
 
 
 # --- crew_run_write (declaration crew_run_write, spec 7.7) -------------------------------------------
-def _as_driver_fault(category, statement, said):
-    return fault("write_" + category, f"the engine {category} the write {statement['text']!r}: {said}",
-                 category, [], {"driver": str(said)})
+_as_driver_fault = lambda category, statement, said: fault(
+    "write_" + category, f"the engine {category} the write {statement['text']!r}: {said}",
+    category, [], {"driver": str(said)})
+
+_commit_if = lambda writer, commits: _pick(commits, lambda: writer.commit(), lambda: NOTHING)
 
 
-def _sqlite_kind(said):
-    named = str(getattr(said, "sqlite_errorname", ""))
-    lost = named.startswith("SQLITE_BUSY") or named.startswith("SQLITE_LOCKED")
-    return _pick(lost, lambda: "conflict", lambda: "refused")
+async def _on_sqlite_write(writer, statement, transacting):
+    def _sqlite_kind(said):
+        named = str(getattr(said, "sqlite_errorname", ""))
+        lost = named.startswith("SQLITE_BUSY") or named.startswith("SQLITE_LOCKED")
+        return _pick(lost, lambda: "conflict", lambda: "refused")
 
-
-def _commit_if(writer, commits):
-    return _pick(commits, lambda: writer.commit(), lambda: NOTHING)
-
-
-def _run_sqlite_write(writer, statement, transacting):
     try:  # honest: ignore HC-P002: the write boundary catches the sqlite driver's throw, rolls back, and returns it as a typed conflict-or-refused Fault value (P08, spec 7.7)
         writer.execute(transacting["begin"])
         cursor = writer.execute(statement["text"], _bind(statement))
@@ -444,10 +422,6 @@ def _run_sqlite_write(writer, statement, transacting):
     except sqlite3.Error as said:
         _rollback_quiet(writer)
         return _as_driver_fault(_sqlite_kind(said), statement, said)
-
-
-async def _on_sqlite_write(writer, statement, transacting):
-    return _run_sqlite_write(writer, statement, transacting)
 
 
 async def _on_postgresql_write(writer, statement, _transacting):

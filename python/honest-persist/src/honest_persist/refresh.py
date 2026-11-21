@@ -16,16 +16,13 @@ _WHAT_IT_MUST_NAME = {
 }
 
 
-def _wants_a_clock(view):
-    return view["freshness"] == _ASKED_FOR_A_CLOCK
+_wants_a_clock = lambda view: view["freshness"] == _ASKED_FOR_A_CLOCK
 
 
-def _what_it_left_out(view):
-    return list(filter(lambda field: view.get(field) is None, _WHAT_IT_MUST_NAME))
+_what_it_left_out = lambda view: list(filter(lambda field: view.get(field) is None, _WHAT_IT_MUST_NAME))
 
 
-def _nothing_was_left_out(_incomplete, wanted):
-    return wanted
+_nothing_was_left_out = lambda _incomplete, wanted: wanted
 
 
 def _refuse_incomplete(incomplete, _wanted):

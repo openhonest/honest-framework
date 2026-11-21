@@ -34,10 +34,9 @@ def _take_a_ticket(crew, statement):
     return ticket
 
 
-def _refuse_empty_write(_crew, statement):
-    return refused("empty_write",
-                   f"you handed over a write whose text is {statement['text']!r}; there is nothing to "
-                   f"run", {})
+_refuse_empty_write = lambda _crew, statement: refused(
+    "empty_write",
+    f"you handed over a write whose text is {statement['text']!r}; there is nothing to run", {})
 
 
 _DEPOSIT = {True: _take_a_ticket, False: _refuse_empty_write}
@@ -73,18 +72,14 @@ async def crew_release_ticket(crew, ticket):
 
 
 # --- refuse_an_unknown_ticket (declaration, spec 8.6) ------------------------------------------------
-def _tickets_held_by(crew):
-    """Every ticket the crew is holding: the keys of the writes that arrived and the waiters parked on
-    them. Only dict keys are read, never a Waiter handle, which is why this is pure."""
-    return sorted(set(crew["writes"]) | set(crew["waiting"]))
+# Every ticket the crew is holding: the keys of the writes that arrived and the waiters parked on them.
+# Only dict keys are read, never a Waiter handle, which is why this is pure.
+_tickets_held_by = lambda crew: sorted(set(crew["writes"]) | set(crew["waiting"]))
 
+_crew_holds_it = lambda _crew, _ticket: NOTHING
 
-def _crew_holds_it(_crew, _ticket):
-    return NOTHING
-
-
-def _crew_does_not_hold_it(crew, ticket):
-    return no_match("tickets", [ticket], _tickets_held_by(crew), "no_row_for_the_key", ticket)
+_crew_does_not_hold_it = lambda crew, ticket: no_match(
+    "tickets", [ticket], _tickets_held_by(crew), "no_row_for_the_key", ticket)
 
 
 _CREW_HOLDS = {True: _crew_holds_it, False: _crew_does_not_hold_it}
@@ -111,18 +106,15 @@ def _fill_it(crew, ticket, receipt):
     return NOTHING
 
 
-def _already_filled(_crew, ticket, _receipt):
-    return refused("double_receipt",
-                   f"an outcome has already been posted for ticket {ticket!r}; two drainers ran one "
-                   f"write", {})
+_already_filled = lambda _crew, ticket, _receipt: refused(
+    "double_receipt",
+    f"an outcome has already been posted for ticket {ticket!r}; two drainers ran one write", {})
 
 
 _WAITER_STILL_EMPTY = {False: _fill_it, True: _already_filled}
 
-
-def _hand_it_to_the_waiter(crew, ticket, receipt):
-    waiter = crew["waiting"][ticket]
-    return _WAITER_STILL_EMPTY[waiter.done()](crew, ticket, receipt)
+_hand_it_to_the_waiter = lambda crew, ticket, receipt: _WAITER_STILL_EMPTY[
+    crew["waiting"][ticket].done()](crew, ticket, receipt)
 
 
 def _nobody_is_waiting(crew, ticket, receipt):
@@ -144,15 +136,12 @@ def crew_post_receipt(crew, ticket, receipt):
 # --- crew_start, crew_stop (declaration) -------------------------------------------------------------
 _HOW_LONG_AN_IDLE_DRAINER_SLEEPS = 1.0
 
+_draining = lambda db, writer: {
+    "db": db, "writer": writer, "stop": db["crew"]["stop"], "idle": _HOW_LONG_AN_IDLE_DRAINER_SLEEPS}
 
-def _draining(db, writer):
-    return {"db": db, "writer": writer, "stop": db["crew"]["stop"], "idle": _HOW_LONG_AN_IDLE_DRAINER_SLEEPS}
-
-
-def _already_running(db, _turn):
-    crew = db["crew"]
-    return refused("crew_already_running",
-                   f"this crew is already running {len(crew['drainers'])} drainers", {})
+_already_running = lambda db, _turn: refused(
+    "crew_already_running",
+    f"this crew is already running {len(db['crew']['drainers'])} drainers", {})
 
 
 def _start_one_per_writer(db, turn):
@@ -171,14 +160,12 @@ async def crew_start(db, turn):
     return _IS_ALREADY_RUNNING[db["crew"]["drainers"] != []](db, turn)
 
 
-def _one_did_not_stop(said):
-    return refused("drainer_would_not_stop",
-                   f"{len(said)} of the crew's drainers did not stop cleanly: "
-                   + "; ".join(f"{type(one).__name__}: {one}" for one in said), {})
+_one_did_not_stop = lambda said: refused(
+    "drainer_would_not_stop",
+    f"{len(said)} of the crew's drainers did not stop cleanly: "
+    + "; ".join(f"{type(one).__name__}: {one}" for one in said), {})
 
-
-def _all_stopped(_said):
-    return NOTHING
+_all_stopped = lambda _said: NOTHING
 
 
 _ANY_RAISED = {True: _one_did_not_stop, False: _all_stopped}
@@ -229,22 +216,10 @@ def _run_displaced(previous, number, frame):
     return True
 
 
-def _nothing_displaced(_previous, _number, _frame):
-    return False
+_nothing_displaced = lambda _previous, _number, _frame: False
 
 
 _RUN_THE_DISPLACED = {True: _run_displaced, False: _nothing_displaced}
-
-
-def _detect_loop():
-    """The asyncio loop already on the stack, or NOTHING when none is running. A signal can land with the
-    server's loop running (the main thread was inside it, so this returns that loop) or with no loop at all
-    (a plain process, so asyncio.get_running_loop() raises RuntimeError). That raise is resolved here into a
-    value, so the caller dispatches on data — a loop or NOTHING — and never on a thrown exception."""
-    try:  # honest: ignore HC-P002: asking the runtime whether a loop is running is the asyncio boundary; the no-loop RuntimeError resolves into NOTHING, a first-class tested outcome, not a swallowed error
-        return asyncio.get_running_loop()
-    except RuntimeError:
-        return NOTHING
 
 
 def _run_the_shutdown_now(_loop, coro):
@@ -273,6 +248,16 @@ def _the_door(_number, _frame):
     in a fresh loop. Either way this returns so the chained handler runs the displaced handler afterward."""
     from honest_persist.doors import lifecycle_stop
 
+    def _detect_loop():
+        """The asyncio loop already on the stack, or NOTHING when none is running. A signal can land with the
+        server's loop running (the main thread was inside it, so this returns that loop) or with no loop at all
+        (a plain process, so asyncio.get_running_loop() raises RuntimeError). That raise is resolved here into a
+        value, so the caller dispatches on data — a loop or NOTHING — and never on a thrown exception."""
+        try:  # honest: ignore HC-P002: asking the runtime whether a loop is running is the asyncio boundary; the no-loop RuntimeError resolves into NOTHING, a first-class tested outcome, not a swallowed error
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            return NOTHING
+
     coro = lifecycle_stop()
     loop = _detect_loop()
     return _A_LOOP_IS_RUNNING[loop is not NOTHING](loop, coro)
@@ -287,8 +272,7 @@ def _a_handler_that_chains(displaced):
     return handler
 
 
-def _leave_it_alone(_number):
-    return False
+_leave_it_alone = lambda _number: False
 
 
 def _put_ours_in_front(number):
@@ -320,17 +304,15 @@ def _put_on_the_list(db):
     return NOTHING
 
 
-def _leave_off_the_list(_db):
-    return NOTHING
+_leave_off_the_list = lambda _db: NOTHING
 
 
 _WHAT_TO_DO_WITH_IT = {"replicate_then_exit": _put_on_the_list, "exit_immediately": _leave_off_the_list}
 
-
-def _no_word_for_shutdown(db):
-    return refused("no_such_shutdown",
-                   f"this handle asks for {db['shutdown']!r} at shutdown, and there is no such shutdown",
-                   {"arrived": db["shutdown"]})
+_no_word_for_shutdown = lambda db: refused(
+    "no_such_shutdown",
+    f"this handle asks for {db['shutdown']!r} at shutdown, and there is no such shutdown",
+    {"arrived": db["shutdown"]})
 
 
 def lifecycle_register(db):

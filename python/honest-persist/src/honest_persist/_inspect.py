@@ -21,9 +21,8 @@ _WHAT_SQL_CALLS_IT = {"CHECK": "check", "PRIMARY KEY": "primary_key", "UNIQUE": 
 _WHAT_POSTGRESQL_CALLS_IT = {"c": "check", "p": "primary_key", "u": "unique", "f": "check"}
 
 
-def _refused_inspect(asked, said):
-    return refused("inspection_refused",
-                   f"a database could not be asked what {asked} it holds: {said['message']}", {})
+_refused_inspect = lambda asked, said: refused(
+    "inspection_refused", f"a database could not be asked what {asked} it holds: {said['message']}", {})
 
 
 async def _ask(query_run_statement, connection, engine, question, about):
@@ -31,26 +30,17 @@ async def _ask(query_run_statement, connection, engine, question, about):
     return await query_run_statement(connection, engine, asked)
 
 
-def _plainly(spelled):
-    return spelled.split("(")[0].strip().lower()
+_plainly = lambda spelled: spelled.split("(")[0].strip().lower()
 
 
-def _no_word_for_it(spelled, table, _types):
-    return refused("no_word_for_type",
-                   f"the column in {table!r} is a {spelled!r}, and this package has no word for it", {})
+_no_word_for_it = lambda spelled, table, _types: refused(
+    "no_word_for_type", f"the column in {table!r} is a {spelled!r}, and this package has no word for it", {})
 
 
-def _the_word(spelled, _table, types):
-    return types[_plainly(spelled)]
+_the_word = lambda spelled, _table, types: types[_plainly(spelled)]
 
 
 _TYPE_KNOWN = {True: _the_word, False: _no_word_for_it}
-
-
-def _a_column(row, table, types):
-    spelled = str(row["declared_type"])
-    held = _TYPE_KNOWN[_plainly(spelled) in types](spelled, table, types)
-    return _COLUMN_READ[is_fault(held)](row, held)
 
 
 _COLUMN_READ = {
@@ -60,28 +50,25 @@ _COLUMN_READ = {
 }
 
 
-def _an_index(row):
-    return {"name": str(row["name"]), "columns": [], "unique": bool(row["is_unique"])}
+_an_index = lambda row: {"name": str(row["name"]), "columns": [], "unique": bool(row["is_unique"])}
 
 
-def _a_rule(name, kind, columns):
-    return {"name": name, "kind": kind, "columns": columns, "rule": _NARROWS_BY_NOTHING, "value": None}
+_a_rule = lambda name, kind, columns: {
+    "name": name, "kind": kind, "columns": columns, "rule": _NARROWS_BY_NOTHING, "value": None}
 
 
-def _the_rules_the_columns_carry(columns):
-    return [
-        _a_rule(f"{under}_{row['name']}", under, [str(row["name"])])
-        for row in columns
-        for under, held in filter(lambda uh: bool(row[uh[1]]),
-                                  (("not_null", "must_hold_something"), ("primary_key", "is_key")))
-    ]
+_the_rules_the_columns_carry = lambda columns: [
+    _a_rule(f"{under}_{row['name']}", under, [str(row["name"])])
+    for row in columns
+    for under, held in filter(lambda uh: bool(row[uh[1]]),
+                              (("not_null", "must_hold_something"), ("primary_key", "is_key")))
+]
 
 
-def _the_rules_in_the_ddl(spelled_out):
-    return [
-        _a_rule(found.group("name"), _WHAT_SQL_CALLS_IT[" ".join(found.group("kind").upper().split())], [])
-        for found in _A_NAMED_RULE.finditer(spelled_out)
-    ]
+_the_rules_in_the_ddl = lambda spelled_out: [
+    _a_rule(found.group("name"), _WHAT_SQL_CALLS_IT[" ".join(found.group("kind").upper().split())], [])
+    for found in _A_NAMED_RULE.finditer(spelled_out)
+]
 
 
 def _the_rules_a_catalogue_carries(row):
@@ -95,23 +82,17 @@ _WHERE_THE_RULES_ARE = {
 }
 
 
-def _the_rules_in(constraints, columns):
-    return [
-        *_the_rules_the_columns_carry(columns),
-        *[rule for row in constraints for rule in _WHERE_THE_RULES_ARE[str(row["kind"]) == _IN_THE_DDL](row)],
-    ]
-
-
-async def _one_table(query_run_statement, connection, engine, inspecting, name):
-    asked = {
-        about: await _ask(query_run_statement, connection, engine, inspecting[about], name)
-        for about in ("columns", "indexes", "constraints")
-    }
-    refused_qs = [_refused_inspect(about, answer) for about, answer in filter(lambda aa: is_fault(aa[1]), asked.items())]
-    return _FIRST_REFUSAL_OR[refused_qs != []](refused_qs, asked, name, inspecting["types"])
+_the_rules_in = lambda constraints, columns: [
+    *_the_rules_the_columns_carry(columns),
+    *[rule for row in constraints for rule in _WHERE_THE_RULES_ARE[str(row["kind"]) == _IN_THE_DDL](row)],
+]
 
 
 def _a_table_out_of_the_answers(_refused, asked, name, types):
+    def _a_column(row, table, types):
+        spelled = str(row["declared_type"])
+        held = _TYPE_KNOWN[_plainly(spelled) in types](spelled, table, types)
+        return _COLUMN_READ[is_fault(held)](row, held)
     columns = asked["columns"]
     read = [_a_column(row, name, types) for row in columns]
     unreadable = list(filter(is_fault, read))
@@ -133,9 +114,8 @@ _FIRST_REFUSAL_OR = {
 }
 
 
-def _a_view(row):
-    return {"name": str(row["name"]), "declaration": NOTHING, "freshness": NOTHING,
-            "cadence": NOTHING, "attempts_allowed": NOTHING}
+_a_view = lambda row: {"name": str(row["name"]), "declaration": NOTHING, "freshness": NOTHING,
+                       "cadence": NOTHING, "attempts_allowed": NOTHING}
 
 
 async def schema_inspect(connection, engine, inspecting):
@@ -143,6 +123,14 @@ async def schema_inspect(connection, engine, inspecting):
     schema_inspect). A database with nothing in it comes back as a schema with nothing in it; a question
     the engine refused comes back as a Fault."""
     from honest_persist.io import query_run_statement
+
+    async def _one_table(query_run_statement, connection, engine, inspecting, name):
+        asked = {
+            about: await _ask(query_run_statement, connection, engine, inspecting[about], name)
+            for about in ("columns", "indexes", "constraints")
+        }
+        refused_qs = [_refused_inspect(about, answer) for about, answer in filter(lambda aa: is_fault(aa[1]), asked.items())]
+        return _FIRST_REFUSAL_OR[refused_qs != []](refused_qs, asked, name, inspecting["types"])
 
     tables = await _ask(query_run_statement, connection, engine, inspecting["tables"], "")
     views = await _ask(query_run_statement, connection, engine, inspecting["views"], "")
