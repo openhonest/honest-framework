@@ -26,40 +26,19 @@ _ENGINE = {
 }
 
 
-def _engine_row(engine):
-    """One engine's placeholder and quote functions. Reached only after compile_statement matched the
-    engine against the three it ships, so the read is a guaranteed hit; it goes through _read_or so the
-    subscript is on a local, never on a module dispatch dict by a bare key (P16)."""
-    return _read_or(_ENGINE, engine, lambda: _ENGINE["sqlite"])
+# One engine's placeholder and quote functions. Reached only after compile_statement matched the engine
+# against the three it ships, so the read is a guaranteed hit; it goes through _read_or so the subscript
+# is on a local, never on a module dispatch dict by a bare key (P16).
+_engine_row = lambda engine: _read_or(_ENGINE, engine, lambda: _ENGINE["sqlite"])
 
 
-def _binder(engine):
-    """A way to put a value beside the statement and get back its placeholder."""
-    kept = {}
-    spell = _engine_row(engine)["placeholder"]
-
-    def bind(value):
-        kept[f"p{len(kept) + 1}"] = value
-        return spell(len(kept))
-
-    return bind, kept
+_said = lambda word, clause: {True: "", False: f"{word} {clause}"}[clause == ""]
 
 
-def _said(word, clause):
-    return {True: "", False: f"{word} {clause}"}[clause == ""]
+_bracketed = lambda clause: {True: "", False: f"({clause})"}[clause == ""]
 
 
-def _joined(word, parts):
-    kept = list(filter(None, parts))
-    return {True: "", False: "(" + f" {word} ".join(kept) + ")"}[kept == []]
-
-
-def _bracketed(clause):
-    return {True: "", False: f"({clause})"}[clause == ""]
-
-
-def _sentence(*pieces):
-    return " ".join(filter(None, pieces))
+_sentence = lambda *pieces: " ".join(filter(None, pieces))
 
 
 _HOW_MANY_VALUES = {
@@ -88,41 +67,28 @@ _WHEN_CASE_DOES_NOT_MATTER = {
 _CASE = {False: lambda sql: sql, True: lambda sql: f"LOWER({sql})"}
 
 
-def _comparer(engine, quote, bind):
-    def compared(column, asked):
-        return _compared(column, asked, engine, quote, bind)
-
-    return compared
-
-
-def _compared(column, asked, engine, quote, bind):
-    how = how_to_compare(asked["operator"], engine)
-    symbol, fold = _WHEN_CASE_DOES_NOT_MATTER[asked["ignore_case"] and bool(how["ignoring_case"])](
-        how["symbol"], how["ignoring_case"], _CASE[asked["ignore_case"]],
-    )
-    return _HOW_MANY_VALUES[how["shape"]](
-        fold(quote(column)), symbol, asked, lambda value: fold(bind(value)), how["wraps"],
-    )
-
-
 def _narrowing(condition, compare):
+    def _joined(word, parts):
+        kept = list(filter(None, parts))
+        return {True: "", False: "(" + f" {word} ".join(kept) + ")"}[kept == []]
+
     each = [compare(column, asked) for column, asked in condition["each"].items()]
     any_of = [_joined("OR", [_bracketed(_narrowing(one, compare)) for one in condition["any_of"]])]
     none_of = [_said("NOT", _joined("AND", [_bracketed(_narrowing(one, compare)) for one in condition["none_of"]]))]
     return " AND ".join(filter(None, each + any_of + none_of))
 
 
-def _asks_for_nothing(condition):
-    return condition["each"] == {} and condition["any_of"] == [] and condition["none_of"] == []
+_asks_for_nothing = lambda condition: (
+    condition["each"] == {} and condition["any_of"] == [] and condition["none_of"] == []
+)
 
 
-def _across(declaration, quote):
-    return " ".join(
-        f"INNER JOIN {quote(join['model'])} ON "
-        f"{quote(declaration['model'])}.{quote(join['by_column'])} = "
-        f"{quote(join['model'])}.{quote(join['to_column'])}"
-        for join in declaration["across"] or ()
-    )
+_across = lambda declaration, quote: " ".join(
+    f"INNER JOIN {quote(join['model'])} ON "
+    f"{quote(declaration['model'])}.{quote(join['by_column'])} = "
+    f"{quote(join['model'])}.{quote(join['to_column'])}"
+    for join in declaration["across"] or ()
+)
 
 
 def _order(declaration, quote):
@@ -132,29 +98,31 @@ def _order(declaration, quote):
     ))
 
 
-def _grouping(declaration, quote):
-    return _said("GROUP BY", ", ".join(quote(column) for column in declaration["grouping"]))
+_grouping = lambda declaration, quote: _said(
+    "GROUP BY", ", ".join(quote(column) for column in declaration["grouping"])
+)
 
 
-def _columns(declaration, quote):
-    return ", ".join(quote(column) for column in declaration["columns"]) or "*"
+_columns = lambda declaration, quote: ", ".join(
+    quote(column) for column in declaration["columns"]
+) or "*"
 
 
-def _measured(declaration, quote):
-    return ", ".join(quote(column) for column in declaration["columns"][:1]) or "*"
+_measured = lambda declaration, quote: ", ".join(
+    quote(column) for column in declaration["columns"][:1]
+) or "*"
 
 
-def _reading(declaration, quote, _bind, compare, select_list, tail):
-    return _sentence(
-        f"SELECT {select_list}",
-        f"FROM {quote(declaration['model'])}",
-        _across(declaration, quote),
-        _said("WHERE", _narrowing(declaration["condition"], compare)),
-        _grouping(declaration, quote),
-        _said("HAVING", _narrowing(declaration["having"], compare)),
-        _order(declaration, quote),
-        tail,
-    )
+_reading = lambda declaration, quote, _bind, compare, select_list, tail: _sentence(
+    f"SELECT {select_list}",
+    f"FROM {quote(declaration['model'])}",
+    _across(declaration, quote),
+    _said("WHERE", _narrowing(declaration["condition"], compare)),
+    _grouping(declaration, quote),
+    _said("HAVING", _narrowing(declaration["having"], compare)),
+    _order(declaration, quote),
+    tail,
+)
 
 
 _MEASURE = {
@@ -172,16 +140,19 @@ def _measuring(word):
     return built
 
 
-def _all(declaration, quote, bind, compare):
-    return _reading(declaration, quote, bind, compare, _columns(declaration, quote), "")
+_all = lambda declaration, quote, bind, compare: _reading(
+    declaration, quote, bind, compare, _columns(declaration, quote), "",
+)
 
 
-def _one(declaration, quote, bind, compare):
-    return _reading(declaration, quote, bind, compare, _columns(declaration, quote), "LIMIT 2")
+_one = lambda declaration, quote, bind, compare: _reading(
+    declaration, quote, bind, compare, _columns(declaration, quote), "LIMIT 2",
+)
 
 
-def _first(declaration, quote, bind, compare):
-    return _reading(declaration, quote, bind, compare, _columns(declaration, quote), "LIMIT 1")
+_first = lambda declaration, quote, bind, compare: _reading(
+    declaration, quote, bind, compare, _columns(declaration, quote), "LIMIT 1",
+)
 
 
 def _page(declaration, quote, bind, compare):
@@ -191,16 +162,15 @@ def _page(declaration, quote, bind, compare):
     return _reading(declaration, quote, bind, compare, _columns(declaration, quote), f"LIMIT {size} OFFSET {skipped}")
 
 
-def _distinct(declaration, quote, bind, compare):
-    return _reading(declaration, quote, bind, compare, f"DISTINCT {_columns(declaration, quote)}", "")
+_distinct = lambda declaration, quote, bind, compare: _reading(
+    declaration, quote, bind, compare, f"DISTINCT {_columns(declaration, quote)}", "",
+)
 
 
-def _exists(declaration, quote, _bind, compare):
-    inner = _sentence(
-        "SELECT 1", f"FROM {quote(declaration['model'])}", _across(declaration, quote),
-        _said("WHERE", _narrowing(declaration["condition"], compare)), "LIMIT 1",
-    )
-    return f"SELECT EXISTS({inner})"
+_exists = lambda declaration, quote, _bind, compare: "SELECT EXISTS(" + _sentence(
+    "SELECT 1", f"FROM {quote(declaration['model'])}", _across(declaration, quote),
+    _said("WHERE", _narrowing(declaration["condition"], compare)), "LIMIT 1",
+) + ")"
 
 
 def _add(declaration, quote, bind, _compare):
@@ -218,9 +188,10 @@ def _change(declaration, quote, bind, compare):
                      _said("WHERE", _narrowing(declaration["condition"], compare)))
 
 
-def _remove(declaration, quote, _bind, compare):
-    return _sentence(f"DELETE FROM {quote(declaration['model'])}",
-                     _said("WHERE", _narrowing(declaration["condition"], compare)))
+_remove = lambda declaration, quote, _bind, compare: _sentence(
+    f"DELETE FROM {quote(declaration['model'])}",
+    _said("WHERE", _narrowing(declaration["condition"], compare)),
+)
 
 
 _SHAPE = {
@@ -269,25 +240,30 @@ _NEEDS = {
 }
 
 
-def _not_a_declaration(declaration, _engine):
-    return refused("not_a_declaration",
-                   f"the renderer was handed a {type(declaration).__name__} and it compiles a declaration",
-                   {"arrived": type(declaration).__name__})
+_not_a_declaration = lambda declaration, _engine: refused(
+    "not_a_declaration",
+    f"the renderer was handed a {type(declaration).__name__} and it compiles a declaration",
+    {"arrived": type(declaration).__name__},
+)
 
 
-def _no_such_engine(_declaration, engine):
-    return refused("no_such_engine",
-                   f"no engine here is called {engine!r}; this package compiles for {_THREE_ENGINES}",
-                   {"accepted": list(_THREE_ENGINES), "arrived": engine})
+_no_such_engine = lambda _declaration, engine: refused(
+    "no_such_engine",
+    f"no engine here is called {engine!r}; this package compiles for {_THREE_ENGINES}",
+    {"accepted": list(_THREE_ENGINES), "arrived": engine},
+)
 
 
-def _no_such_word(declaration, _engine):
-    return no_match("asking_words", [declaration["wanted"]], sorted(WANTED), "no_row_for_the_key",
-                    f"wanted {declaration['wanted']!r}")
+_no_such_word = lambda declaration, _engine: no_match(
+    "asking_words", [declaration["wanted"]], sorted(WANTED), "no_row_for_the_key",
+    f"wanted {declaration['wanted']!r}",
+)
 
 
-def _unmet(declaration):
-    return list(filter(lambda need: not _read_or(_MET, need, lambda: lambda _d: False)(declaration), _NEEDS[declaration["wanted"]]))
+_unmet = lambda declaration: list(filter(
+    lambda need: not _read_or(_MET, need, lambda: lambda _d: False)(declaration),
+    _NEEDS[declaration["wanted"]],
+))
 
 
 def _short_of_what_it_needs(declaration, _engine):
@@ -298,6 +274,30 @@ def _short_of_what_it_needs(declaration, _engine):
 
 
 def _compiled(declaration, engine):
+    # A way to put each value beside the statement and get back its placeholder; the kept dict lives only
+    # for this compile.
+    def _binder(engine):
+        kept = {}
+        spell = _engine_row(engine)["placeholder"]
+
+        def bind(value):
+            kept[f"p{len(kept) + 1}"] = value
+            return spell(len(kept))
+
+        return bind, kept
+
+    def _comparer(engine, quote, bind):
+        def compared(column, asked):
+            how = how_to_compare(asked["operator"], engine)
+            symbol, fold = _WHEN_CASE_DOES_NOT_MATTER[asked["ignore_case"] and bool(how["ignoring_case"])](
+                how["symbol"], how["ignoring_case"], _CASE[asked["ignore_case"]],
+            )
+            return _HOW_MANY_VALUES[how["shape"]](
+                fold(quote(column)), symbol, asked, lambda value: fold(bind(value)), how["wraps"],
+            )
+
+        return compared
+
     quote = _engine_row(engine)["quote"]
     bind, parameters = _binder(engine)
     return {"text": _SHAPE[declaration["wanted"]](declaration, quote, bind, _comparer(engine, quote, bind)),
@@ -307,29 +307,31 @@ def _compiled(declaration, engine):
 _WHEN_IT_HAS_WHAT_IT_NEEDS = {True: _compiled, False: _short_of_what_it_needs}
 
 
-def _with_a_declared_word(declaration, engine):
-    return _WHEN_IT_HAS_WHAT_IT_NEEDS[_unmet(declaration) == []](declaration, engine)
+_with_a_declared_word = lambda declaration, engine: _WHEN_IT_HAS_WHAT_IT_NEEDS[
+    _unmet(declaration) == []
+](declaration, engine)
 
 
 _WHEN_THE_WORD_IS_DECLARED = {True: _with_a_declared_word, False: _no_such_word}
 
 
-def _with_a_declared_engine(declaration, engine):
-    return _WHEN_THE_WORD_IS_DECLARED[declaration["wanted"] in _SHAPE](declaration, engine)
+_with_a_declared_engine = lambda declaration, engine: _WHEN_THE_WORD_IS_DECLARED[
+    declaration["wanted"] in _SHAPE
+](declaration, engine)
 
 
 _WHEN_THE_ENGINE_IS_DECLARED = {True: _with_a_declared_engine, False: _no_such_engine}
 
 
-def _with_a_declaration(declaration, engine):
-    return _WHEN_THE_ENGINE_IS_DECLARED[engine in _THREE_ENGINES](declaration, engine)
+_with_a_declaration = lambda declaration, engine: _WHEN_THE_ENGINE_IS_DECLARED[
+    engine in _THREE_ENGINES
+](declaration, engine)
 
 
 _WHEN_IT_IS_A_DECLARATION = {True: _with_a_declaration, False: _not_a_declaration}
 
 
-def _is_a_declaration(declaration):
-    return isinstance(declaration, dict) and frozenset(declaration) >= _A_DECLARATION_HAS
+_is_a_declaration = lambda declaration: isinstance(declaration, dict) and frozenset(declaration) >= _A_DECLARATION_HAS
 
 
 def compile_statement(declaration, engine):

@@ -28,8 +28,8 @@ from honest_persist.types import fault, is_fault, is_no_match, refused
 NOTHING = None
 
 
-def _is_refusal(piece):
-    return is_fault(piece) or is_no_match(piece)
+# a piece the library read but refused, either a Fault or a NoMatch
+_is_refusal = lambda piece: is_fault(piece) or is_no_match(piece)
 
 
 # --- session_open: the one door that raises (declaration session_open) -------------------------------
@@ -45,84 +45,63 @@ class CouldNotOpen(Exception):
 _STATES = {"HONEST_PERSIST_CONNECTIONS": "connections_asked", "HONEST_PERSIST_CREW_SIZE": "crew_asked"}
 
 
-def _read_count(name):
-    written = os.environ.get(name)
-    return _pick(written is None, lambda: _nothing_set(), lambda: _as_count(name, written))
+_not_a_number = lambda name, written: refused(
+    "env_not_a_number", f"{name} is set to {written!r}, which is not a whole number",
+    {"name": name, "written": written})
 
 
-def _nothing_set():
-    return NOTHING
+# a whole number the env names, or a NoMatch when what is set is not a whole number
+_as_count = lambda name, written: _pick(
+    written.lstrip("-").isdigit(), lambda: int(written), lambda: _not_a_number(name, written))
 
 
-def _as_count(name, written):
-    return _pick(written.lstrip("-").isdigit(), lambda: int(written), lambda: _not_a_number(name, written))
-
-
-def _not_a_number(name, written):
-    return refused("env_not_a_number", f"{name} is set to {written!r}, which is not a whole number",
-                   {"name": name, "written": written})
-
-
-def _machine():
-    return {fills: _read_count(name) for name, fills in _STATES.items()}
-
-
-def _nothing_opened_yet(target, shutdown, primary, token, machine):
-    return {
-        "target": target, "shutdown": shutdown, "primary": primary, "token": token, **machine,
-        "copy_was_here": False, "settings": {}, "permitted": 0, "crew_size": 0, "writers": [],
-        "connections": [], "channel": NOTHING,
-        "declared": {"models": [], "views": [], "dropping_tables": [], "dropping_views": []},
-        "live": {"tables": [], "views": []}, "wanted_schema": {"tables": [], "views": []},
-        "needs_migration": False, "migration": {"plan": {"operations": [], "destroys": []}, "applied": 0},
-        "database": NOTHING,
-    }
+_nothing_opened_yet = lambda target, shutdown, primary, token, machine: {
+    "target": target, "shutdown": shutdown, "primary": primary, "token": token, **machine,
+    "copy_was_here": False, "settings": {}, "permitted": 0, "crew_size": 0, "writers": [],
+    "connections": [], "channel": NOTHING,
+    "declared": {"models": [], "views": [], "dropping_tables": [], "dropping_views": []},
+    "live": {"tables": [], "views": []}, "wanted_schema": {"tables": [], "views": []},
+    "needs_migration": False, "migration": {"plan": {"operations": [], "destroys": []}, "applied": 0},
+    "database": NOTHING,
+}
 
 
 async def session_open(target, shutdown, primary, token):
     """Open the database the target names, and hand back what every later call reads (declaration
     session_open). Anything that refused the open raises CouldNotOpen carrying the Fault, so a deployment
     cannot bring a server up on a database it never got; inside the package a failure is still a value."""
-    machine = _machine()
+    def _read_count(name):
+        written = os.environ.get(name)
+        return _pick(written is None, lambda: NOTHING, lambda: _as_count(name, written))
+
+    def _whatever_refused_it(opened):
+        raise CouldNotOpen(opened)
+
+    open_was_refused = {True: _whatever_refused_it, False: lambda opened: opened["database"]}
+
+    async def _machine_wrong(_target, _shutdown, _primary, _token, _machine, refused_m):
+        raise CouldNotOpen(refused_m[0])
+
+    async def _go_and_open(target, shutdown, primary, token, machine, _refused):
+        opened = await session_connect(_nothing_opened_yet(target, shutdown, primary, token, machine))
+        return open_was_refused[_is_refusal(opened)](opened)
+
+    made_sense = {True: _machine_wrong, False: _go_and_open}
+    machine = {fills: _read_count(name) for name, fills in _STATES.items()}
     refused_m = list(filter(is_fault, machine.values()))
-    return await _MACHINE_MADE_SENSE[refused_m != []](target, shutdown, primary, token, machine, refused_m)
-
-
-async def _machine_wrong(_target, _shutdown, _primary, _token, _machine, refused_m):
-    raise CouldNotOpen(refused_m[0])
-
-
-async def _go_and_open(target, shutdown, primary, token, machine, _refused):
-    opened = await session_connect(_nothing_opened_yet(target, shutdown, primary, token, machine))
-    return _OPEN_WAS_REFUSED[_is_refusal(opened)](opened)
-
-
-_MACHINE_MADE_SENSE = {True: _machine_wrong, False: _go_and_open}
-
-
-def _whatever_refused_it(opened):
-    raise CouldNotOpen(opened)
-
-
-def _the_handle_in_it(opened):
-    return opened["database"]
-
-
-_OPEN_WAS_REFUSED = {True: _whatever_refused_it, False: _the_handle_in_it}
+    return await made_sense[refused_m != []](target, shutdown, primary, token, machine, refused_m)
 
 
 # --- query_ask (declaration query_ask) ---------------------------------------------------------------
-def _answering(db, model, written):
-    return {"db": db, "model": model, "grammar": NOTHING, "written": written, "declaration": NOTHING,
-            "statement": NOTHING, "ticket": "", "receipt": NOTHING, "rows": [], "answer": NOTHING}
+_answering = lambda db, model, written: {
+    "db": db, "model": model, "grammar": NOTHING, "written": written, "declaration": NOTHING,
+    "statement": NOTHING, "ticket": "", "receipt": NOTHING, "rows": [], "answer": NOTHING}
 
 
-def _the_answer_inside(answered):
-    return answered["answer"]
+_the_answer_inside = lambda answered: answered["answer"]
 
 
-def _the_refusal_itself(answered):
-    return answered
+_the_refusal_itself = lambda answered: answered
 
 
 _WHAT_CAME_BACK = {True: _the_refusal_itself, False: _the_answer_inside}
@@ -148,17 +127,15 @@ async def query_ask(db, model, written):
 # leaves a waiter and returns a ticket at once, running nothing, and the read → column-check → compile
 # prefix is pure sync functions — nothing on this path awaits. An async host calls it without `await`,
 # and crew_deposit's create_future finds the running loop the caller is already inside (spec 8.6).
-def _depositing(db, model, written):
-    return {"db": db, "model": model, "written": written, "declaration": NOTHING,
-            "statement": NOTHING, "ticket": ""}
+_depositing = lambda db, model, written: {
+    "db": db, "model": model, "written": written, "declaration": NOTHING,
+    "statement": NOTHING, "ticket": ""}
 
 
-def _the_ticket_inside(prepared):
-    return prepared["ticket"]
+_the_ticket_inside = lambda prepared: prepared["ticket"]
 
 
-def _the_deposit_refusal(prepared):
-    return prepared
+_the_deposit_refusal = lambda prepared: prepared
 
 
 _WHAT_DEPOSIT_CAME_BACK = {True: _the_deposit_refusal, False: _the_ticket_inside}
@@ -176,16 +153,13 @@ def query_deposit(db, model, written):
     return _WHAT_DEPOSIT_CAME_BACK[_is_refusal(prepared)](prepared)
 
 
-def _collecting(db, ticket):
-    return {"db": db, "ticket": ticket, "receipt": NOTHING, "answer": NOTHING}
+_collecting = lambda db, ticket: {"db": db, "ticket": ticket, "receipt": NOTHING, "answer": NOTHING}
 
 
-def _the_collect_answer(redeemed):
-    return redeemed["answer"]
+_the_collect_answer = lambda redeemed: redeemed["answer"]
 
 
-def _the_collect_refusal(redeemed):
-    return redeemed
+_the_collect_refusal = lambda redeemed: redeemed
 
 
 _WHAT_COLLECT_CAME_BACK = {True: _the_collect_refusal, False: _the_collect_answer}
@@ -202,6 +176,15 @@ async def query_collect(db, ticket):
 
 
 # --- lifecycle_stop, lifecycle_turn (declaration) ---------------------------------------------------
+_shutdown_finished = lambda _answered: NOTHING
+
+
+_shutdown_failed = lambda answered: answered
+
+
+_SHUTDOWN_SAID = {False: _shutdown_finished, True: _shutdown_failed}
+
+
 async def lifecycle_stop():
     """Receive the platform's shutdown signal and hand the shutdown off (declaration lifecycle_stop);
     answer NOTHING when the drain finished or a Fault when it could not."""
@@ -215,15 +198,13 @@ async def lifecycle_stop():
         return stopped
 
 
-def _shutdown_finished(_answered):
-    return NOTHING
+_turn_worked = lambda _answered: NOTHING
 
 
-def _shutdown_failed(answered):
-    return answered
+_turn_stopped = lambda answered: answered
 
 
-_SHUTDOWN_SAID = {False: _shutdown_finished, True: _shutdown_failed}
+_TURN_SAID = {False: _turn_worked, True: _turn_stopped}
 
 
 async def lifecycle_turn(draining):
@@ -241,23 +222,21 @@ async def lifecycle_turn(draining):
         return stopped
 
 
-def _turn_worked(_answered):
-    return NOTHING
-
-
-def _turn_stopped(answered):
-    return answered
-
-
-_TURN_SAID = {False: _turn_worked, True: _turn_stopped}
-
-
 # --- migration_plan, schema_live, schema_declared, view_refreshes (declaration) ---------------------
-def _nothing_worked_out_yet(target):
-    return {"target": target, "connection": NOTHING,
-            "declared": {"models": [], "views": [], "dropping_tables": [], "dropping_views": []},
-            "live": {"tables": [], "views": []}, "wanted_schema": {"tables": [], "views": []},
-            "needs_migration": False, "plan": {"operations": [], "destroys": []}}
+_nothing_worked_out_yet = lambda target: {
+    "target": target, "connection": NOTHING,
+    "declared": {"models": [], "views": [], "dropping_tables": [], "dropping_views": []},
+    "live": {"tables": [], "views": []}, "wanted_schema": {"tables": [], "views": []},
+    "needs_migration": False, "plan": {"operations": [], "destroys": []}}
+
+
+_compared_refused = lambda compared: compared
+
+
+_the_plan_in_it = lambda compared: compared["plan"]
+
+
+_COMPARISON_REFUSED = {True: _compared_refused, False: _the_plan_in_it}
 
 
 async def migration_plan(target):
@@ -267,19 +246,16 @@ async def migration_plan(target):
     return _COMPARISON_REFUSED[_is_refusal(compared)](compared)
 
 
-def _compared_refused(compared):
-    return compared
+_nothing_read_yet = lambda target: {"target": target, "connection": NOTHING, "live": NOTHING}
 
 
-def _the_plan_in_it(compared):
-    return compared["plan"]
+_reading_refused = lambda looked: looked
 
 
-_COMPARISON_REFUSED = {True: _compared_refused, False: _the_plan_in_it}
+_the_live_in_it = lambda looked: looked["live"]
 
 
-def _nothing_read_yet(target):
-    return {"target": target, "connection": NOTHING, "live": NOTHING}
+_READING_REFUSED = {True: _reading_refused, False: _the_live_in_it}
 
 
 async def schema_live(target):
@@ -287,17 +263,6 @@ async def schema_live(target):
     nothing answers an empty schema; a failure comes back as a value."""
     looked = await schema_read_live(_nothing_read_yet(target))
     return _READING_REFUSED[_is_refusal(looked)](looked)
-
-
-def _reading_refused(looked):
-    return looked
-
-
-def _the_live_in_it(looked):
-    return looked["live"]
-
-
-_READING_REFUSED = {True: _reading_refused, False: _the_live_in_it}
 
 
 def schema_declared():

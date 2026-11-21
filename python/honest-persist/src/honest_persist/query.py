@@ -22,22 +22,19 @@ from honest_persist.types import (
 NOTHING = None
 
 
-def _is_refusal(built):
-    """Whether a step handed back a refusal rather than what it was asked for: a Fault or a NoMatch."""
-    return is_fault(built) or is_no_match(built)
+# Whether a step handed back a refusal rather than what it was asked for: a Fault or a NoMatch.
+_is_refusal = lambda built: is_fault(built) or is_no_match(built)
 
 
 # --- grammar_of: which spelling, read off the shape (declaration grammar_of) --------------------------
 _MARKS = {"django": ".objects.", "sqlalchemy": ".query.", "prisma": "find_many("}
 
 
-def _first_mark(marked, _written):
-    return marked[0]
+_first_mark = lambda marked, _written: marked[0]
 
 
-def _no_mark(_marked, written):
-    """Nothing marked it, so it is this library's own spelling or it is a miss."""
-    return _PSEUDO_OR_MISS["." in written and "(" in written](written)
+# Nothing marked it, so it is this library's own spelling or it is a miss.
+_no_mark = lambda _marked, written: _PSEUDO_OR_MISS["." in written and "(" in written](written)
 
 
 _PSEUDO_OR_MISS = {
@@ -76,9 +73,8 @@ _ANY_OF = "or"
 _NONE_OF = "not"
 
 
-def _a_bare_value(written):
-    """`{"name": "bob"}`. A bare value means eq, so this is where it says so."""
-    return {"operator": "eq", "value": written, "ignore_case": False}
+# `{"name": "bob"}`. A bare value means eq, so this is where it says so.
+_a_bare_value = lambda written: {"operator": "eq", "value": written, "ignore_case": False}
 
 
 _IGNORE_CASE = {
@@ -97,20 +93,19 @@ def _the_comparison(written, named):
     }
 
 
-def _an_operator_nobody_declared(written, named):
-    """A key inside a comparison that is not one of the fifteen: a NoMatch naming operators."""
-    invented = list(filter(lambda word: word not in OPERATORS, named))
-    return no_match("operators", invented, sorted(OPERATORS), "no_row_for_the_key", repr(written))
+# A key inside a comparison that is not one of the fifteen: a NoMatch naming operators.
+_an_operator_nobody_declared = lambda written, named: no_match(
+    "operators", list(filter(lambda word: word not in OPERATORS, named)), sorted(OPERATORS),
+    "no_row_for_the_key", repr(written))
 
 
-def _not_exactly_one_operator(_written, named):
-    """A comparison holds one operator and one value, so a second has nowhere to go and a zeroth leaves
-    the value with nothing to compare by: a Fault, because nothing was looked up."""
-    return refused(
-        "comparison_operator_count",
-        f"a comparison names one operator and one value, and this one names {len(named)}: {named}",
-        {"named": named},
-    )
+# A comparison holds one operator and one value, so a second has nowhere to go and a zeroth leaves the
+# value with nothing to compare by: a Fault, because nothing was looked up.
+_not_exactly_one_operator = lambda _written, named: refused(
+    "comparison_operator_count",
+    f"a comparison names one operator and one value, and this one names {len(named)}: {named}",
+    {"named": named},
+)
 
 
 _ONE_DECLARED_OPERATOR = {
@@ -151,23 +146,20 @@ _COMBINED = {
 }
 
 
-def _conditions_under(written):
-    return _COMBINED[type(written) in _MANY_CONDITIONS](written)
+_conditions_under = lambda written: _COMBINED[type(written) in _MANY_CONDITIONS](written)
 
 
 _NOT_A_COLUMN = {_ANY_OF: _conditions_under, _NONE_OF: _conditions_under}
 
 
-def _assembled(built, _refusals):
-    return {
-        "each": {key: one for key, one in filter(lambda ko: ko[0] not in _NOT_A_COLUMN, built.items())},
-        "any_of": built[_ANY_OF],
-        "none_of": built[_NONE_OF],
-    }
+_assembled = lambda built, _refusals: {
+    "each": {key: one for key, one in filter(lambda ko: ko[0] not in _NOT_A_COLUMN, built.items())},
+    "any_of": built[_ANY_OF],
+    "none_of": built[_NONE_OF],
+}
 
 
-def _the_first_refusal(_built, refusals):
-    return refusals[0]
+_the_first_refusal = lambda _built, refusals: refusals[0]
 
 
 _CONDITION_ANSWER = {False: _assembled, True: _the_first_refusal}
@@ -187,12 +179,10 @@ def _each_key_of(written):
     return _CONDITION_ANSWER[refusals != []](built, refusals)
 
 
-def _a_comparison_for(written):
-    return _built_from("comparison", written)
+_a_comparison_for = lambda written: _built_from("comparison", written)
 
 
-def _narrowed_by_nothing(_written):
-    return {"each": {}, "any_of": [], "none_of": []}
+_narrowed_by_nothing = lambda _written: {"each": {}, "any_of": [], "none_of": []}
 
 
 _SHAPES = {
@@ -216,12 +206,11 @@ _WHAT_IT_IS = {
 }
 
 
-def _nothing_to_do_with(what, written):
-    return refused(
-        "narrowing_shape",
-        f"{_read_or(_WHAT_IT_IS, what, lambda: 'a narrowing')}, and this one arrived as {type(written).__name__}: {written!r}",
-        {"shape": type(written).__name__},
-    )
+_nothing_to_do_with = lambda what, written: refused(
+    "narrowing_shape",
+    f"{_read_or(_WHAT_IT_IS, what, lambda: 'a narrowing')}, and this one arrived as {type(written).__name__}: {written!r}",
+    {"shape": type(written).__name__},
+)
 
 
 _A_SHAPE_WITH_A_ROW = {
@@ -230,8 +219,7 @@ _A_SHAPE_WITH_A_ROW = {
 }
 
 
-def _built_from(what, written):
-    return _A_SHAPE_WITH_A_ROW[type(written) in _read_or(_SHAPES, what, lambda: {})](what, written)
+_built_from = lambda what, written: _A_SHAPE_WITH_A_ROW[type(written) in _read_or(_SHAPES, what, lambda: {})](what, written)
 
 
 def condition_from_narrowing(narrowing):
@@ -243,10 +231,10 @@ def condition_from_narrowing(narrowing):
 
 
 # --- refuse_undeclared_columns, refuse_some_columns_as_an_object, travels_together --------------------
-def _named_in(condition):
-    """Every column a condition names, however deep it is nested."""
-    nested = condition["any_of"] + condition["none_of"]
-    return list(condition["each"]) + [name for inner in nested for name in _named_in(inner)]
+# Every column a condition names, however deep it is nested.
+_named_in = lambda condition: list(condition["each"]) + [
+    name for inner in condition["any_of"] + condition["none_of"] for name in _named_in(inner)
+]
 
 
 _WHERE_COLUMNS_ARE_NAMED = {
@@ -258,18 +246,16 @@ _WHERE_COLUMNS_ARE_NAMED = {
 }
 
 
-def _nothing_undeclared(_model, _declaration, _unknown):
-    return NOTHING
+_nothing_undeclared = lambda _model, _declaration, _unknown: NOTHING
 
 
-def _refuse_undeclared(model, _declaration, unknown):
-    return refused(
-        "undeclared_column",
-        f"{model['name']} declares no column {sorted(unknown)}; its columns are "
-        f"{[column['name'] for column in model['columns']]}",
-        {"model": model["name"], "unknown": sorted(unknown),
-         "declares": [column["name"] for column in model["columns"]]},
-    )
+_refuse_undeclared = lambda model, _declaration, unknown: refused(
+    "undeclared_column",
+    f"{model['name']} declares no column {sorted(unknown)}; its columns are "
+    f"{[column['name'] for column in model['columns']]}",
+    {"model": model["name"], "unknown": sorted(unknown),
+     "declares": [column["name"] for column in model["columns"]]},
+)
 
 
 _UNDECLARED_ANSWER = {False: _nothing_undeclared, True: _refuse_undeclared}
@@ -288,8 +274,7 @@ def refuse_undeclared_columns(model, declaration):
     return _UNDECLARED_ANSWER[unknown != set()](model, declaration, unknown)
 
 
-def _nothing_to_refuse(_declaration):
-    return NOTHING
+_nothing_to_refuse = lambda _declaration: NOTHING
 
 
 def _a_part_cannot_be_the_whole(declaration):
@@ -321,8 +306,7 @@ def travels_together(declaration):
 
 
 # --- refuse_a_read: the deposit door stays write-only (declaration refuse_a_read, spec 8.6) -----------
-def _a_write_is_deferrable(_declaration):
-    return NOTHING
+_a_write_is_deferrable = lambda _declaration: NOTHING
 
 
 def _a_read_cannot_be_deposited(declaration):
@@ -348,49 +332,40 @@ def refuse_a_read(declaration):
 
 
 # --- the answer shapers (declaration answer_from_rows, answer_from_receipt) ---------------------------
-def _rows_of_the_model(_model, rows, _declaration):
-    """all / distinct / page / the groups: the rows as they came, dictionaries."""
-    return rows
+# all / distinct / page / the groups: the rows as they came, dictionaries.
+_rows_of_the_model = lambda _model, rows, _declaration: rows
 
 
-def _one_refusal(rows):
-    return refused("not_exactly_one", f"one asked for exactly one row and {len(rows)} matched", {"matched": len(rows)})
+_one_refusal = lambda rows: refused("not_exactly_one", f"one asked for exactly one row and {len(rows)} matched", {"matched": len(rows)})
 
 
 _ONE_OF = {0: lambda _rows: NOTHING, 1: lambda rows: rows[0]}
 
 
-def _read_count(count):
-    return _pick(count in (0, 1), lambda: _read_or(_ONE_OF, count, lambda: _one_refusal), lambda: _one_refusal)
+_read_count = lambda count: _pick(count in (0, 1), lambda: _read_or(_ONE_OF, count, lambda: _one_refusal), lambda: _one_refusal)
 
 
-def _exactly_one(_model, rows, _declaration):
-    """one: exactly one row, an absence, or a refusal naming how many matched."""
-    return _read_count(len(rows))(rows)
+# one: exactly one row, an absence, or a refusal naming how many matched.
+_exactly_one = lambda _model, rows, _declaration: _read_count(len(rows))(rows)
 
 
-def _the_first(_model, rows, _declaration):
-    """first: the first row, or NOTHING."""
-    return next(iter(rows), NOTHING)
+# first: the first row, or NOTHING.
+_the_first = lambda _model, rows, _declaration: next(iter(rows), NOTHING)
 
 
-def _true_or_false(_model, rows, _declaration):
-    """exists: true or false, read off the single EXISTS column the engine answered."""
-    return bool(next(iter(next(iter(rows), {}).values()), False))
+# exists: true or false, read off the single EXISTS column the engine answered.
+_true_or_false = lambda _model, rows, _declaration: bool(next(iter(next(iter(rows), {}).values()), False))
 
 
-def _a_number(_model, rows, _declaration):
-    """count / sum / average / smallest / largest / count_distinct: the one number."""
-    values = [value for row in rows for value in row.values()]
-    return next(iter(values), 0)
+# count / sum / average / smallest / largest / count_distinct: the one number.
+_a_number = lambda _model, rows, _declaration: next(iter([value for row in rows for value in row.values()]), 0)
 
 
-def _not_a_read(model, _rows, declaration):
-    return refused(
-        "write_has_no_rows",
-        f"`{declaration['wanted']}` writes to {model['table']}, and a write has no rows to shape",
-        {"wanted": declaration["wanted"]},
-    )
+_not_a_read = lambda model, _rows, declaration: refused(
+    "write_has_no_rows",
+    f"`{declaration['wanted']}` writes to {model['table']}, and a write has no rows to shape",
+    {"wanted": declaration["wanted"]},
+)
 
 
 _BY_READING_WORD = {
@@ -410,12 +385,10 @@ def answer_from_rows(model, rows, declaration):
     return _ANSWER_SHAPE[declaration["wanted"]](model, rows, declaration)
 
 
-def _how_many_rows_it_touched(receipt):
-    return receipt["touched"]
+_how_many_rows_it_touched = lambda receipt: receipt["touched"]
 
 
-def _the_failure_it_carries(receipt):
-    return receipt["failure"]
+_the_failure_it_carries = lambda receipt: receipt["failure"]
 
 
 _FROM_RECEIPT = {True: _how_many_rows_it_touched, False: _the_failure_it_carries}
@@ -441,10 +414,9 @@ def _keys_declared_by(pointing, pointed_at):
     )
 
 
-def _keys_between(near, far):
-    return _keys_declared_by(near, far) + [
-        (on_near, on_far) for on_far, on_near in _keys_declared_by(far, near)
-    ]
+_keys_between = lambda near, far: _keys_declared_by(near, far) + [
+    (on_near, on_far) for on_far, on_near in _keys_declared_by(far, near)
+]
 
 
 def _the_key_declared(keys, _near, far, condition):
@@ -452,13 +424,12 @@ def _the_key_declared(keys, _near, far, condition):
     return {"model": far["table"], "by_column": by_column, "to_column": to_column, "condition": condition}
 
 
-def _no_key_joins_them(_keys, near, far, _condition):
-    return refused(
-        "no_join",
-        f"no key joins {near['table']} and {far['table']}; neither model declares a column that "
-        f"references the other",
-        {"near": near["table"], "far": far["table"]},
-    )
+_no_key_joins_them = lambda _keys, near, far, _condition: refused(
+    "no_join",
+    f"no key joins {near['table']} and {far['table']}; neither model declares a column that "
+    f"references the other",
+    {"near": near["table"], "far": far["table"]},
+)
 
 
 _JOIN_ANSWER = {True: _the_key_declared, False: _no_key_joins_them}
