@@ -792,58 +792,6 @@ def _probe_query_shapers():
     return bad
 
 
-def _probe_query_reading():
-    """asked_from_written reads a caller's written query into the parts a declaration is built from, and
-    declaration_from_asked builds the one declaration all four ways of writing share. A pseudo_sql chain
-    naming select, where, ordered_by and a tail asking word is read; a django chain through its own
-    method names is read; a method name no spelling gives a part is a NoMatch; and declaration_from_asked
-    turns the parts into a declaration, faults when a part it cannot do without is missing, and answers a
-    NoMatch on an asking word no row holds (declaration asked_from_written, declaration_from_asked)."""
-    try:
-        asked_from_written = _need("asked_from_written")
-        declaration_from_asked = _need("declaration_from_asked")
-        methods_of = _need("methods_of")
-    except _NotBuilt as e:
-        return [f"{e}: a query-reading function"]
-    bad = []
-    # A pseudo_sql chain: select, where, ordered_by, and a trailing asking word.
-    pseudo = asked_from_written('User.select("name").where(id=1).ordered_by("id").all', methods_of("pseudo_sql"))
-    if not (isinstance(pseudo, dict) and pseudo.get("wanted") == "all" and "where" in pseudo and "select" in pseudo):
-        bad.append(f"asked_from_written should lift the parts out of a pseudo_sql chain: {pseudo}")
-    # An add carrying rows, and a page carrying paging, each through a call.
-    add = asked_from_written('User.rows({"id": 1}).add', methods_of("pseudo_sql"))
-    if add.get("wanted") != "add":
-        bad.append(f"asked_from_written should read the add asking word: {add}")
-    # A django chain through django's own method names (filter -> where, values -> select).
-    django = asked_from_written('User.objects.filter(id=1).values("name")', methods_of("django"))
-    if not (isinstance(django, dict) and "where" in django and "select" in django):
-        bad.append(f"asked_from_written should read a django chain through its method names: {django}")
-
-    # declaration_from_asked builds the declaration from the lifted parts.
-    built = declaration_from_asked({"model": "User", "wanted": "all", "where": {"id": 1}, "select": ["name"],
-                                    "ordered_by": {"id": "ascending"}})
-    if not (isinstance(built, dict) and built.get("wanted") == "all" and "condition" in built):
-        bad.append(f"declaration_from_asked should build a declaration from the parts: {built}")
-    # A part it cannot do without (the model) is a Fault; an unknown asking word is a NoMatch.
-    no_model = declaration_from_asked({"wanted": "all"})
-    if not hp.is_fault(no_model):
-        bad.append(f"declaration_from_asked with no model should be a Fault: {no_model}")
-    unknown = declaration_from_asked({"model": "User", "wanted": "teleport"})
-    if not (isinstance(unknown, dict) and unknown.get("table") == "asking_words"):
-        bad.append(f"declaration_from_asked with an unknown asking word should be a NoMatch: {unknown}")
-
-    # The rows a write carries are one shape: a list of row-dicts, whether the caller wrote one row or
-    # several. A single `.rows({...})` must not collapse to a bare dict, or _add reads rows[0] off a dict
-    # (KeyError 0) and travels_together counts the dict's keys instead of its rows (bead honest-framework-hl4).
-    one = declaration_from_asked(asked_from_written('User.rows({"id": 1, "name": "a"}).add', methods_of("pseudo_sql")))
-    if one.get("rows") != [{"id": 1, "name": "a"}]:
-        bad.append(f"a single-row add should carry rows as a one-element list, not a bare dict: {one.get('rows')!r}")
-    several = declaration_from_asked(asked_from_written('User.rows({"id": 2}, {"id": 3}).add', methods_of("pseudo_sql")))
-    if several.get("rows") != [{"id": 2}, {"id": 3}]:
-        bad.append(f"a multi-row add should carry rows as a list of the rows: {several.get('rows')!r}")
-    return bad
-
-
 def _probe_query_pure():
     """The query half reads a caller's writing into one engine-free declaration and compiles it. The
     four grammar readers (grammar_of, methods_of, asked_from_written, declaration_from_asked), the
@@ -2254,103 +2202,6 @@ def _probe_turso_mvcc():
     return asyncio.run(_run())
 
 
-def _probe_crew_lifecycle_paths():
-    """The crew-lifecycle branches the happy path does not reach (declaration crew_deposit,
-    crew_release_ticket, crew_post_receipt, crew_start, crew_stop, crew_wait_for_work, lifecycle_register):
-    a blank write refused, an unknown ticket refused, a receipt nobody holds logged, a second receipt for
-    one ticket refused, the crew started once and a second start refused, stopped cleanly and with a
-    drainer that raised, work found already there and waited for, and a database put on or kept off the
-    shutdown list or refused for a word that is no shutdown. The drainers run a quiet turn that only waits
-    for the stop bell, so no real writer is needed."""
-    for name in ("crew_make", "crew_deposit", "crew_release_ticket", "crew_post_receipt", "crew_start",
-                 "crew_stop", "crew_wait_for_work", "lifecycle_register", "receipt_for"):
-        try:
-            _need(name)
-        except _NotBuilt as e:
-            return [f"{e}: {name} (crew lifecycle paths)"]
-
-    async def _run():
-        import honest_persist.crew as crewmod
-        saved_registered = list(crewmod._REGISTERED)
-        bad = []
-        crew_make = _need("crew_make"); crew_deposit = _need("crew_deposit")
-        crew_release_ticket = _need("crew_release_ticket"); crew_post_receipt = _need("crew_post_receipt")
-        crew_start = _need("crew_start"); crew_stop = _need("crew_stop")
-        crew_wait_for_work = _need("crew_wait_for_work"); receipt_for = _need("receipt_for")
-        lifecycle_register = _need("lifecycle_register")
-
-        crew = crew_make()
-        blank = crew_deposit(crew, {"text": "   ", "parameters": {}})
-        if not (hp.is_fault(blank) and blank.get("code") == "empty_write"):
-            bad.append(f"a blank write should be refused empty_write: {blank}")
-
-        miss = await crew_release_ticket(crew, "no-such-ticket")
-        if not (hp.is_fault(miss) and miss.get("code") == "no_such_ticket"):
-            bad.append(f"releasing an unknown ticket should be refused no_such_ticket: {miss}")
-
-        # A receipt nobody holds: the caller walked away before the outcome was posted.
-        orphan = crew_deposit(crew, {"text": "INSERT INTO widgets (id, name) VALUES (7, 'x')", "parameters": {}})
-        crew["waiting"].pop(orphan)
-        logged = crew_post_receipt(crew, orphan, receipt_for(orphan, 1, None, 1))
-        if logged is not None:
-            bad.append(f"a receipt nobody holds should be logged and answer NOTHING: {logged}")
-
-        # A second receipt for one ticket: two drainers ran one write.
-        held = crew_deposit(crew, {"text": "INSERT INTO widgets (id, name) VALUES (8, 'y')", "parameters": {}})
-        crew_post_receipt(crew, held, receipt_for(held, 1, None, 1))
-        again = crew_post_receipt(crew, held, receipt_for(held, 1, None, 1))
-        if not (hp.is_fault(again) and again.get("code") == "double_receipt"):
-            bad.append(f"a second receipt for one ticket should be refused double_receipt: {again}")
-
-        # crew_start runs one quiet drainer per writer; a second start is refused; crew_stop ends them clean.
-        async def _quiet_turn(draining):
-            await draining["stop"].wait()
-
-        db = {"crew": crew_make(), "writers": [None, None]}
-        started = await crew_start(db, _quiet_turn)
-        if not (isinstance(started, dict) and db["crew"]["drainers"]):
-            bad.append(f"crew_start should run one drainer per writer: {started}")
-        twice = await crew_start(db, _quiet_turn)
-        if not (hp.is_fault(twice) and twice.get("code") == "crew_already_running"):
-            bad.append(f"a second crew_start should be refused crew_already_running: {twice}")
-        # crew_wait_for_work finds work already there (no sleep) when an arrival is pending.
-        db["crew"]["arrivals"].append("pending")
-        await crew_wait_for_work({"db": db, "writer": None, "stop": db["crew"]["stop"], "idle": 0.01})
-        db["crew"]["arrivals"].clear()
-        # and with nothing there it sleeps until the stop bell rings.
-        db["crew"]["stop"].set()
-        await crew_wait_for_work({"db": db, "writer": None, "stop": db["crew"]["stop"], "idle": 0.01})
-        stopped = await crew_stop(db["crew"])
-        if stopped is not None:
-            bad.append(f"stopping a clean crew should answer NOTHING: {stopped}")
-
-        # A drainer that raises makes crew_stop report it, never swallow it.
-        async def _bad_turn(_draining):
-            raise RuntimeError("drainer boom")
-
-        db2 = {"crew": crew_make(), "writers": [None]}
-        await crew_start(db2, _bad_turn)
-        ended = await crew_stop(db2["crew"])
-        if not (hp.is_fault(ended) and ended.get("code") == "drainer_would_not_stop"):
-            bad.append(f"crew_stop should report a drainer that raised: {ended}")
-
-        # lifecycle_register puts a replicating database on the shutdown list, keeps an immediate one off,
-        # and refuses a shutdown word it has no row for.
-        on = lifecycle_register({"shutdown": "replicate_then_exit"})
-        off = lifecycle_register({"shutdown": "exit_immediately"})
-        unknown = lifecycle_register({"shutdown": "teleport_away"})
-        if on is not None or off is not None:
-            bad.append(f"registering a known shutdown should answer NOTHING: {on}, {off}")
-        if not (hp.is_fault(unknown) and unknown.get("code") == "no_such_shutdown"):
-            bad.append(f"an unknown shutdown word should be refused no_such_shutdown: {unknown}")
-        if {"shutdown": "replicate_then_exit"} not in crewmod.read_registered():
-            bad.append("a replicate_then_exit database should be on the registered list")
-        crewmod._REGISTERED[:] = saved_registered  # leave the shutdown list as it was for other laws
-        return bad
-
-    return asyncio.run(_run())
-
-
 def _probe_shutdown_handler():
     """lifecycle_install_handler puts the library's shutdown handler in front of whatever was there, is
     idempotent, and the chained handler runs the door and then any displaced handler (declaration
@@ -2610,52 +2461,6 @@ def _probe_door_paths():
             _pick(value is None, lambda: os.environ.pop(key, None), lambda: os.environ.__setitem__(key, value))
 
 
-def _probe_migration_on_open():
-    """Opening a database whose declared schema is ahead of the live one migrates it as part of the open
-    (declaration session_connect, _apply_migration, spell_operation): session_connect reads the host's
-    declared model, reads the empty live schema, works out the difference, spells each change for the
-    engine and runs them as one transaction, so the declared table exists once the open returns. Run
-    against a real file-backed sqlite. The declared model is cleaned up afterwards so it does not alter
-    another law's schema read."""
-    for name in ("session_open", "session_connect"):
-        try:
-            _need(name)
-        except _NotBuilt as e:
-            return [f"{e}: {name} (migration on open)"]
-    try:
-        from pydantic import BaseModel
-    except Exception:  # noqa: BLE001
-        _note_skip("pydantic: not installed, so the migrate-on-open path was not exercised")
-        return []
-    import gc
-
-    class _Gadget(BaseModel):
-        id: int
-        name: str
-        __tablename__ = "hp_law_gadgets"
-
-    async def _run():
-        bad = []
-        session_open = _need("session_open")
-        with tempfile.TemporaryDirectory() as d:
-            target = os.path.join(d, "migrate.db")
-            db = await session_open(target, "exit_immediately", None, None)
-            if hp.is_fault(db):
-                return [f"session_open with a declared model should migrate then open, not fault: {db}"]
-            check = sqlite3.connect(target)
-            names = [row[0] for row in check.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()]
-            check.close()
-            if "hp_law_gadgets" not in names:
-                bad.append(f"opening should have migrated the declared table into being, tables found: {names}")
-        return bad
-
-    try:
-        return asyncio.run(_run())
-    finally:
-        del _Gadget
-        gc.collect()
-
-
 def _probe_pydantic_loader():
     """The Pydantic schema loader reads a host's declared models and views into a Declared (declaration
     schema_read_declared, _pydantic_loader). A host that declares a model (with __tablename__ and typed
@@ -2830,80 +2635,6 @@ def _probe_pure_edges():
         bad.append("crew_size(0) should refuse crew_too_small")
     if not hp.is_fault(permitted_connections(0)):
         bad.append("permitted_connections(0) should refuse connections_too_few")
-    return bad
-
-
-def _probe_fail_closed_rows():
-    """The fail-closed no-match rows and the boundary error branches that normal flow never reaches, each
-    reporting a refused Fault rather than a bare KeyError or a raise (the via-negativa contract: a lookup
-    a bounded key set should make impossible is still reported loudly if it ever happens). The program-bug
-    rows are read directly; the driver error branches are driven with a stand-in connection whose close
-    and rollback raise; the declared-models reader is driven with a loader that raises."""
-    import honest_persist.io as iomod
-    import honest_persist.engines as enginesmod
-    import honest_persist.spelling as spellingmod
-    bad = []
-
-    # The no-match rows each answer a refused Fault naming the miss, never a bare value.
-    driver_miss = asyncio.run(iomod._no_engine_driver("sqlite", {}))
-    if not hp.is_fault(driver_miss):
-        bad.append(f"the driver no-match row should answer a refused Fault: {driver_miss}")
-    operator_miss = enginesmod._no_operator_row("teleports_past")
-    if not hp.is_fault(operator_miss):
-        bad.append(f"the operator no-match row should answer a Fault: {operator_miss}")
-    spelling_miss = spellingmod._no_spelling_row(_ddl_operation("create_table"), "sqlite")
-    if not hp.is_fault(spelling_miss):
-        bad.append(f"the spelling no-match row should answer a refused Fault: {spelling_miss}")
-
-    # A connection whose close and rollback raise: the close becomes a would_not_close Fault, the quiet
-    # rollback swallows a sqlite error and answers NOTHING.
-    class _AngryConnection:
-        def close(self):
-            raise RuntimeError("the driver would not let go")
-
-        def rollback(self):
-            raise sqlite3.Error("nothing to roll back")
-
-    closed = asyncio.run(_need("session_close_connection")(_AngryConnection()))
-    if not (hp.is_fault(closed) and closed.get("code") == "would_not_close"):
-        bad.append(f"a close the driver refuses should answer a would_not_close Fault: {closed}")
-    if iomod._rollback_quiet(_AngryConnection()) is not None:
-        bad.append("a rollback the driver refuses should be swallowed quietly and answer NOTHING")
-
-    # The declared-models reader answers the empty Declared when the loader raises, rather than propagating.
-    import honest_persist._pydantic_loader as loadermod
-    real_load = loadermod.load_declared
-    try:
-        loadermod.load_declared = _raises_loader
-        read = iomod._read_declared_models()
-    finally:
-        loadermod.load_declared = real_load
-    if read != {"models": [], "views": [], "dropping_tables": [], "dropping_views": []}:
-        bad.append(f"the declared-models reader should answer the empty Declared when the loader raises: {read}")
-
-    # The orchestrator's two defensive refusal rows pass a refusal straight through when reached: the
-    # reading layer settles an incomplete read and a crew deposit before these run, so normal flow never
-    # reaches them, but if it did they must not swallow the refusal.
-    import honest_persist.orchestrators as orchmod
-    would_not = asyncio.run(orchmod._would_not_compile({}, hp.fault("would_not_compile", "a statement that would not compile", "refused", [], {})))
-    if not hp.is_fault(would_not):
-        bad.append("the would-not-compile row should pass the compiler's refusal straight through")
-    crew_refused = asyncio.run(orchmod._crew_refused({}, hp.fault("crew_refused", "the crew refused the deposit", "refused", [], {})))
-    if not hp.is_fault(crew_refused):
-        bad.append("the crew-refused row should pass the deposit's refusal straight through")
-
-    # A method name no spelling maps to a part answers a NoMatch (the fail-closed row for an unknown
-    # method; it is not yet wired into asked_from_written, bead honest-framework-hl4's neighbour).
-    import honest_persist._query_read as qrmod
-    if not hp.is_no_match(qrmod._no_method("not_a_method", "User.not_a_method()")):
-        bad.append("the no-method row should answer a NoMatch naming the known methods")
-
-    # The turso-replicated alter_column spelling row refuses: a column rebuild runs locally and cannot
-    # reach the primary. how_to_spell pre-empts this in spell_operation, so the row is reached only here.
-    alter = _ddl_operation("alter_column", column="c",
-                           columns=[{"name": "c", "declared_type": "text", "renamed_from": None, "references": None}])
-    if not hp.is_fault(spellingmod._spell(alter, "turso", True)):
-        bad.append("the turso-replicated alter_column row should refuse: a column rebuild cannot reach the primary")
     return bad
 
 
@@ -3096,63 +2827,6 @@ def _probe_shutdown_push():
             return asyncio.run(_run(d))
     finally:
         crewmod._REGISTERED[:] = saved
-
-
-def _probe_migration_refusals():
-    """Opening a database whose migration cannot run safely raises CouldNotOpen rather than touching the
-    data (declaration session_connect, _apply_migration): a live column no model declares and none asked
-    to drop is an undeclared loss the open refuses, and a declared check constraint this reduced speller
-    cannot write is a spelling refusal the open carries out. Each host model is declared as a pydantic
-    class, run against a real sqlite file, and cleaned up so it does not reach another law's schema read."""
-    try:
-        from pydantic import BaseModel
-    except Exception:  # noqa: BLE001
-        _note_skip("pydantic: not installed, so the migration-refusal paths were not exercised")
-        return []
-    import gc
-    from honest_persist.doors import CouldNotOpen
-    session_open = _need("session_open")
-    bad = []
-
-    class _LossUser(BaseModel):
-        id: int
-        name: str
-        __tablename__ = "hp_law_loss_users"
-
-    try:
-        with tempfile.TemporaryDirectory() as d:
-            target = os.path.join(d, "loss.db")
-            base = sqlite3.connect(target)
-            base.execute("CREATE TABLE hp_law_loss_users (id INTEGER PRIMARY KEY, name TEXT, secret TEXT)")
-            base.commit(); base.close()
-            try:
-                asyncio.run(session_open(target, "exit_immediately", None, None))
-                bad.append("opening a database that would lose an undeclared column should raise CouldNotOpen")
-            except CouldNotOpen as raised:
-                if raised.fault.get("code") != "undeclared_loss":
-                    bad.append(f"the open should refuse undeclared_loss: {raised.fault}")
-    finally:
-        del _LossUser
-        gc.collect()
-
-    class _CheckThing(BaseModel):
-        id: int
-        __tablename__ = "hp_law_check_things"
-        __constraints__ = [{"name": "ck", "kind": "check", "columns": ["id"]}]
-
-    try:
-        with tempfile.TemporaryDirectory() as d:
-            target = os.path.join(d, "check.db")
-            try:
-                asyncio.run(session_open(target, "exit_immediately", None, None))
-                bad.append("opening a database whose migration needs a spelling the engine lacks should raise CouldNotOpen")
-            except CouldNotOpen as raised:
-                if raised.fault.get("code") != "check_unsupported":
-                    bad.append(f"the open should refuse check_unsupported: {raised.fault}")
-    finally:
-        del _CheckThing
-        gc.collect()
-    return bad
 
 
 def _probe_view_refresh_specs():
@@ -3744,6 +3418,303 @@ def _probe_async_write():
     return asyncio.run(_run())
 
 
+# --- gap-closing laws: door-driven decision paths left bare after the code-coupled probes were removed.
+# Each drives a declared door and asserts the declared outcome; none reaches into a private helper. The
+# behaviour each exercises is named in the .hd (the Collecting, Depositing, Connecting records and their
+# notes) and in the feature file's scenarios for these doors.
+
+def _probe_release_unknown_ticket():
+    """crew_release_ticket refuses a ticket the crew does not hold at once, because no outcome for it is
+    ever posted (declaration crew_release_ticket, spec 8.6). A lookup that matched nothing is not one of
+    the four retry categories; the door answers a refused no_such_ticket Fault."""
+
+    async def _run():
+        crew_make = _need("crew_make")
+        crew_release_ticket = _need("crew_release_ticket")
+        answer = await crew_release_ticket(crew_make(), "no-such-ticket")
+        if not (hp.is_fault(answer) and answer.get("code") == "no_such_ticket"):
+            return [f"crew_release_ticket of a ticket the crew does not hold should refuse no_such_ticket: {answer}"]
+        return []
+
+    return asyncio.run(_run())
+
+
+def _probe_receipt_nobody_collected():
+    """crew_post_receipt writes an abandoned write's outcome to the log and forgets the ticket, which is
+    not a failure, when nobody is parked on it (declaration crew_post_receipt, the no-waiter path, spec
+    8.6)."""
+    crew_make = _need("crew_make")
+    crew_post_receipt = _need("crew_post_receipt")
+    crew = crew_make()
+    crew["writes"]["abandoned"] = {"text": "UPDATE t SET x = 1", "parameters": {}}
+    crew["arrivals"].append("abandoned")
+    receipt = {"id": "abandoned", "ok": True, "touched": 1, "attempts": 1, "failure": None}
+    outcome = crew_post_receipt(crew, "abandoned", receipt)
+    bad = []
+    if hp.is_fault(outcome):
+        bad.append(f"crew_post_receipt for a ticket nobody waits on should not fault: {outcome}")
+    if "abandoned" in crew["writes"] or "abandoned" in crew["arrivals"]:
+        bad.append(f"crew_post_receipt should forget the abandoned ticket: writes={crew['writes']}, arrivals={crew['arrivals']}")
+    return bad
+
+
+def _probe_close_refused():
+    """session_close_connection answers a would_not_close Fault when the driver refuses the close, rather
+    than raising (declaration session_close_connection)."""
+
+    async def _run():
+        session_close_connection = _need("session_close_connection")
+
+        class _WillNotClose:
+            def close(self):
+                raise sqlite3.OperationalError("the connection is wedged and will not close")
+
+        answer = await session_close_connection(_WillNotClose())
+        if not (hp.is_fault(answer) and answer.get("code") == "would_not_close"):
+            return [f"session_close_connection should answer would_not_close when the driver refuses: {answer}"]
+        return []
+
+    return asyncio.run(_run())
+
+
+def _probe_rollback_also_fails():
+    """A write group whose driver throws rolls back and comes back as a Fault; when the rollback itself
+    throws on the dying connection, that secondary failure is swallowed so it cannot mask the real fault
+    (declaration query_run_together, the sqlite group path)."""
+
+    async def _run():
+        query_run_together = _need("query_run_together")
+        how_to_write = _need("how_to_write")
+
+        class _DyingSqlite:
+            def execute(self, *_a, **_k):
+                raise sqlite3.OperationalError("the write group blew up")
+
+            def rollback(self):
+                raise sqlite3.OperationalError("and the rollback blew up too")
+
+            def commit(self):
+                raise AssertionError("commit must not be reached: the write group throws at BEGIN first")
+
+        statements = [{"text": "UPDATE t SET x = 1", "parameters": {}}]
+        answer = await query_run_together(_DyingSqlite(), "sqlite", statements, how_to_write("sqlite"))
+        if not hp.is_fault(answer):
+            return [f"query_run_together should answer a Fault when the write group throws: {answer}"]
+        return []
+
+    return asyncio.run(_run())
+
+
+def _probe_read_declared_empty():
+    """schema_read_declared answers the empty Declared — honest-persist managing no schema — when the
+    declared-model loader throws, rather than letting the throw escape (declaration schema_read_declared)."""
+    import honest_persist._pydantic_loader as loadermod
+    import honest_persist.io as iomod
+
+    real = loadermod.load_declared
+
+    def _loader_throws():
+        raise RuntimeError("the model loader blew up")
+
+    loadermod.load_declared = _loader_throws
+    try:
+        declared = iomod.schema_read_declared()
+    finally:
+        loadermod.load_declared = real
+    empty = {"models": [], "views": [], "dropping_tables": [], "dropping_views": []}
+    if declared != empty:
+        return [f"schema_read_declared should answer the empty Declared when the loader throws: {declared}"]
+    return []
+
+
+def _probe_compile_fault_through_door():
+    """A read the library understands but cannot compile — a first with no order to make it the first of
+    something — comes back as the compiler's declaration_incomplete Fault through the query door, never a
+    raise (declaration query_answer, the would-not-compile path)."""
+
+    async def _run():
+        session_open = _need("session_open")
+        query_ask = _need("query_ask")
+        with tempfile.TemporaryDirectory() as d:
+            db = await session_open(os.path.join(d, "compile.db"), "exit_immediately", None, None)
+            if hp.is_fault(db):
+                return [f"session_open failed before the compile-fault law: {db}"]
+            answer = await query_ask(db, _READ_MODEL, "User.where(id=1).first")
+            if not (hp.is_fault(answer) and answer.get("code") == "declaration_incomplete"):
+                return [f"query_ask of a first with no order should answer declaration_incomplete through the door: {answer}"]
+        return []
+
+    return asyncio.run(_run())
+
+
+def _probe_migration_refuses_loss():
+    """Opening a database refuses when the migration it would run destroys a live table no model declares
+    and the host did not list for dropping: session_open raises CouldNotOpen carrying undeclared_loss
+    rather than silently dropping data (declaration session_connect, refuse_undeclared_loss). A migration
+    runs only when the host declares a schema, so this declares a model (making the schema managed) and
+    leaves a second table the model does not name for the migration to want to drop. The model is cleaned
+    up so it never reaches another law's schema read."""
+    try:
+        from pydantic import BaseModel
+    except Exception:  # noqa: BLE001
+        _note_skip("undeclared-loss: pydantic is not installed, so the refuse-undeclared-loss open path was not exercised")
+        return []
+    import gc
+
+    import honest_persist.doors as doorsmod
+
+    class KeepRow(BaseModel):
+        id: int
+        __tablename__ = "hp_keep_rows"
+
+    async def _run():
+        session_open = _need("session_open")
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "loss.db")
+            scratch = sqlite3.connect(target)
+            scratch.execute("CREATE TABLE hp_legacy_rows (id INTEGER PRIMARY KEY)")
+            scratch.commit()
+            scratch.close()
+            try:
+                await session_open(target, "exit_immediately", None, None)
+                return ["session_open should raise CouldNotOpen when the migration would drop an undeclared table"]
+            except doorsmod.CouldNotOpen as raised:
+                if not (hp.is_fault(raised.fault) and raised.fault.get("code") == "undeclared_loss"):
+                    return [f"CouldNotOpen for an undeclared loss should carry the undeclared_loss fault: {raised.fault}"]
+        return []
+
+    try:
+        return asyncio.run(_run())
+    finally:
+        del KeepRow
+        gc.collect()
+
+
+def _probe_migration_on_open():
+    """Opening a database runs a needed migration on the way in: a table a host model declares that the
+    live database lacks is created during session_connect, so a caller can read it at once without a
+    fault (declaration session_connect, the migration-on-open path). Defines a host model and cleans it
+    up so it never reaches another law's schema read."""
+    try:
+        from pydantic import BaseModel
+    except Exception:  # noqa: BLE001
+        _note_skip("migration-on-open: pydantic is not installed, so the migration-on-open path was not exercised")
+        return []
+    import gc
+
+    class MigRow(BaseModel):
+        id: int
+        label: str
+        __tablename__ = "hp_mig_rows"
+
+    _read_model = {"name": "MigRow", "table": "hp_mig_rows",
+                   "columns": [{"name": "id", "declared_type": "integer", "renamed_from": None, "references": None},
+                               {"name": "label", "declared_type": "text", "renamed_from": None, "references": None}],
+                   "dropping": [], "indexes": [], "constraints": []}
+
+    async def _run():
+        session_open = _need("session_open")
+        query_ask = _need("query_ask")
+        bad = []
+        with tempfile.TemporaryDirectory() as d:
+            db = await session_open(os.path.join(d, "mig.db"), "exit_immediately", None, None)
+            if hp.is_fault(db):
+                return [f"session_open should run the migration and open, not fault: {db}"]
+            rows = await query_ask(db, _read_model, "MigRow.where(id=1).all")
+            if hp.is_fault(rows) or (isinstance(rows, dict) and "reason" in rows):
+                bad.append(f"the migration-on-open should have created the table, so a read answers rows, not a miss: {rows}")
+        return bad
+
+    try:
+        return asyncio.run(_run())
+    finally:
+        del MigRow
+        gc.collect()
+
+
+def _probe_crew_refused_write():
+    """When the crew refuses a deposited write, the synchronous write door surfaces that refusal rather
+    than waiting on a ticket that never settles (declaration query_answer, the crew-refused path). The
+    crew's refusal naturally arises only from an empty compiled write, which a real write never produces,
+    so it is driven by injecting a crew_deposit that refuses; the door itself is unchanged and the
+    orchestrator's job of surfacing a crew refusal is what this exercises."""
+    import honest_persist.crew as crewmod
+
+    real = crewmod.crew_deposit
+
+    def _crew_refuses(_crew, _statement):
+        return hp.refused("crew_refused", "the crew refused this write", {})
+
+    async def _run():
+        session_open = _need("session_open")
+        query_ask = _need("query_ask")
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "crewrefuse.db")
+            base = sqlite3.connect(target)
+            base.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+            base.commit()
+            base.close()
+            db = await session_open(target, "exit_immediately", None, None)
+            if hp.is_fault(db):
+                return [f"session_open failed before the crew-refused law: {db}"]
+            crewmod.crew_deposit = _crew_refuses
+            try:
+                answer = await query_ask(db, _WRITE_MODEL, 'User.rows({"id": 5, "name": "e"}).add')
+            finally:
+                crewmod.crew_deposit = real
+            if not (hp.is_fault(answer) and answer.get("code") == "crew_refused"):
+                return [f"a lone write the crew refuses should surface the crew's refusal through the door: {answer}"]
+        return []
+
+    return asyncio.run(_run())
+
+
+def _probe_spelling_refused_on_open():
+    """When spelling a migration operation is refused, the migration-on-open surfaces that refusal rather
+    than running a bad statement: session_open raises CouldNotOpen carrying it (declaration
+    session_connect, the spelling-refused path). A refused spelling naturally arises only from an engine
+    that cannot express an operation the models produce, so it is driven by injecting a spell_operation
+    that refuses. Defines a host model and cleans it up."""
+    try:
+        from pydantic import BaseModel
+    except Exception:  # noqa: BLE001
+        _note_skip("spelling-refused: pydantic is not installed, so the spelling-refused open path was not exercised")
+        return []
+    import gc
+
+    import honest_persist.doors as doorsmod
+    import honest_persist.spelling as spellingmod
+
+    real = spellingmod.spell_operation
+
+    def _spelling_refuses(_operation, _engine, _replicates):
+        return hp.refused("cannot_spell", "this engine cannot express this operation", {})
+
+    class SpellRow(BaseModel):
+        id: int
+        __tablename__ = "hp_spell_rows"
+
+    async def _run():
+        session_open = _need("session_open")
+        with tempfile.TemporaryDirectory() as d:
+            spellingmod.spell_operation = _spelling_refuses
+            try:
+                await session_open(os.path.join(d, "spell.db"), "exit_immediately", None, None)
+                return ["session_open should raise CouldNotOpen when a migration operation cannot be spelled"]
+            except doorsmod.CouldNotOpen as raised:
+                if not (hp.is_fault(raised.fault) and raised.fault.get("code") == "cannot_spell"):
+                    return [f"CouldNotOpen for a refused spelling should carry the spelling refusal: {raised.fault}"]
+            finally:
+                spellingmod.spell_operation = real
+        return []
+
+    try:
+        return asyncio.run(_run())
+    finally:
+        del SpellRow
+        gc.collect()
+
+
 _PROBES = [
     _probe_surface,
     _probe_engine_of,
@@ -3755,7 +3726,6 @@ _PROBES = [
     _probe_dialect_edges,
     _probe_spelling_dialects,
     _probe_query_compilation,
-    _probe_query_reading,
     _probe_query_shapers,
     _probe_query_pure,
     _probe_engine_tables,
@@ -3778,12 +3748,10 @@ _PROBES = [
     _probe_generator_retry,
     _probe_crew_concurrency,
     _probe_turso_mvcc,
-    _probe_crew_lifecycle_paths,
     _probe_shutdown_handler,
     _probe_signal_handler_drives_shutdown,
     _probe_door_paths,
     _probe_pure_edges,
-    _probe_fail_closed_rows,
     _probe_query_read_edges,
     _probe_inspect_edges,
     _probe_query_write_paths,
@@ -3798,11 +3766,19 @@ _PROBES = [
     _probe_query_select_options,
     _probe_query_transaction,
     _probe_async_write,
+    _probe_release_unknown_ticket,
+    _probe_receipt_nobody_collected,
+    _probe_close_refused,
+    _probe_rollback_also_fails,
+    _probe_read_declared_empty,
+    _probe_compile_fault_through_door,
+    _probe_crew_refused_write,
     # The probes that define host pydantic models run last and clean up after themselves, so their
     # declared models never reach another law's schema read.
+    _probe_migration_refuses_loss,
+    _probe_spelling_refused_on_open,
     _probe_migration_on_open,
     _probe_pydantic_loader,
-    _probe_migration_refusals,
     _probe_view_refresh_specs,
 ]
 

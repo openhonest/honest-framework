@@ -1,4 +1,4 @@
-Feature: honest-persist — generated, one scenario per function (103 total)
+Feature: honest-persist — one scenario per function (103), plus one per orchestrator decision path (10 more, 113 total)
 
   Scenario: session_open opens a database for a caller and raises if it will not open
     Given target: str and shutdown: Shutdown and primary: str | NOTHING and token: str | NOTHING
@@ -662,3 +662,59 @@ Feature: honest-persist — generated, one scenario per function (103 total)
     And it reads whether the ticket is among the tickets the crew holds — the keys of its writes and waiting, the writes that arrived and the waiters parked on them — answering NOTHING when the crew holds it and a NoMatch when it does not
     And the NoMatch names tickets as the table, the ticket as looked_for, every ticket the crew is holding as rows, and no_row_for_the_key as the reason, and that same miss against a crew holding no tickets at all leaves rows empty
     And it reads only the dict keys and never a Waiter handle, which is why it is pure, and the same unknown ticket misses identically so it is never retryable
+
+  # --- decision paths: the fault and edge branches of the orchestrator doors, one scenario per path,
+  # derived from the .hd (the Collecting, Depositing, Connecting and Looking records and their notes).
+  # Each is exercised through its declared door by a law in conformance/laws_hp.py.
+
+  Scenario: crew_release_ticket refuses a ticket the crew does not hold
+    Given crew: Crew and ticket: Ticket
+    When crew_release_ticket is called with a ticket the crew is not holding
+    Then it refuses no_such_ticket at once, because no outcome for that ticket is ever posted (spec 8.6)
+    And the refusal is a Fault value, not a raise, and a lookup that matched nothing is never one of the four retry categories
+
+  Scenario: crew_post_receipt logs an abandoned write nobody collected and forgets the ticket
+    Given crew: Crew and ticket: Ticket and receipt: Receipt
+    When crew_post_receipt is called for a ticket nobody is waiting on
+    Then it writes the outcome to the log as receipt_nobody_collected, which is not a failure, and forgets the ticket
+    And it answers NOTHING
+
+  Scenario: session_close_connection answers would_not_close when the driver refuses the close
+    Given connection: Connection the driver will not close
+    When session_close_connection is called
+    Then it answers a would_not_close Fault carrying the driver's own text, rather than raising
+
+  Scenario: query_run_together swallows a rollback that also fails so it cannot mask the group fault
+    Given writer: Connection whose write group throws and whose rollback then throws
+    When query_run_together is called
+    Then it rolls back, swallows the rollback's own failure, and answers the group's Fault, which the secondary failure never masks
+
+  Scenario: schema_read_declared answers the empty Declared when the model loader throws
+    Given the declared-model loader throws rather than returning
+    When schema_read_declared is called
+    Then it answers the empty Declared — honest-persist managing no schema — rather than letting the throw escape
+
+  Scenario: query_answer surfaces the compiler's declaration_incomplete when a read will not compile
+    Given db: Database and model: Model and a read the library understands but cannot compile, a first with no order
+    When query_answer runs the read through the query_ask door
+    Then it answers the compiler's declaration_incomplete Fault, never a raise
+
+  Scenario: query_answer surfaces the crew's refusal when a deposited write is refused
+    Given db: Database and model: Model and a lone write whose crew refuses the deposit
+    When query_answer runs the write through the query_ask door
+    Then it surfaces the crew's refusal as the answer, rather than waiting on a ticket that never settles
+
+  Scenario: session_connect runs a needed migration on the way in so a caller can read the table at once
+    Given a host model declares a table the live database lacks
+    When session_connect opens the database
+    Then it works out the migration, spells it, runs it as one transaction, and opens, so a read of the new table answers rows rather than a miss
+
+  Scenario: session_connect refuses a migration that would drop a live table no model declares
+    Given a live table no model declares and the host did not list for dropping
+    When session_connect opens the database
+    Then it refuses undeclared_loss and session_open raises CouldNotOpen carrying it, rather than silently dropping the data
+
+  Scenario: session_connect surfaces a refused spelling rather than running a bad statement
+    Given a migration operation an engine cannot express, so spelling it is refused
+    When session_connect opens the database
+    Then it surfaces the spelling's refusal and session_open raises CouldNotOpen carrying it, running no statement
