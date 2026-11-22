@@ -1016,38 +1016,11 @@ FUNCTION execute(query, conn):
         RAISE exception
 ```
 
-**The `emit_internal()` wrapper and the event-log connection.** `emit_internal(observe, event_type, payload)` is persist's thin wrapper over honest-observe's one door, `emit`. It fills the three envelope inputs the query site does not carry — `context`, `event_version`, and the event-log connection — and calls `emit` with the full contract honest-observe declares, `emit(event_type, aggregate_type, aggregate_id, payload, context, event_version, conn)`:
-
-```
-FUNCTION emit_internal(observe, event_type, payload):
-    IF observe IS absent:                    -- observe_queries off, or no event-log target: zero overhead
-        RETURN
-    TRY:
-        await emit(                          -- honest_observe.emit, the one door
-            event_type,                      -- "hf.persist.query"
-            "persist",                       -- aggregate_type
-            payload.db_id + ":" + payload.table_name,   -- aggregate_id
-            payload,
-            {},                              -- context: an infra event carries no auth or meta partition
-            "1.0",                           -- event_version of hf.persist.query
-            observe.conn,                    -- the event-log connection, handed to execute
-        )
-    CATCH exception:
-        log_to_stderr(exception)             -- swallowed; never fails the query
-```
-
-`execute()` is an I/O boundary terminus: it cannot reach a pool or open a connection, so it is *handed* the event-log connection the same way it is handed the query connection. The connection is the honest-observe event-log store's own connection, established once in `session_connect` where every connection and the write crew are built, carried in the `Database` handle alongside the engine's connections, and passed into `execute()` by the query orchestrator that holds the handle. It is never the query's connection — writing the event on the query connection would entangle it with the query's transaction and target the application database rather than the event log. persist stores the event log, so persist holds this connection; it imports `honest_observe.emit` and passes the connection in. The coupling is one-way: observe never imports persist, so no cycle is possible. When `observe_queries = false`, or the host configured no event-log target, the handle carries absence (`observe` is NOTHING); the single `observe IS absent` test is the zero-overhead no-op, and no event-log connection is opened at all. `context` is the empty map because `hf.persist.query` is a framework infrastructure event with no auth or metadata partition to carry; `extract_auth` and `extract_meta` read an empty map and attach nothing. `event_version` is `"1.0"`, the schema version of the `hf.persist.query` type. honest-observe's `emit` returns `Event | Fault` as a bare union and does not raise; `emit_internal` ignores the return entirely, because the emission is best-effort — a returned `Fault`, a raised exception reaching the event log, or an absent connection all leave the query untouched. It never blocks the query result. A failure anywhere in `emit_internal()` is logged to stderr and swallowed — it must never cause a query to fail.
+`emit_internal()` writes directly to the honest-observe event log. It never blocks the query result. A failure in `emit_internal()` is logged to stderr and swallowed — it must never cause a query to fail.
 
 `current_request_id()` reads the request ID from a context variable set by the honest-py intake middleware at the start of each request. This is the join key that allows `@catch_at_boundary` to sum `query_count` and `query_duration_ns` across all queries in a single request when assembling the `hf.request.canonical` event.
 
 **Zero overhead when disabled.** When `observe_queries = false` in config, `emit_internal()` is a no-op. The check is a single boolean test before any work is done.
-
-**Where the two settings come from.** persist reads its configuration from the environment at the one session-open door, the same place it reads the write-crew size and connection count. Two environment settings govern query instrumentation, both optional and both resolved at `session_open`:
-
-- `HONEST_PERSIST_OBSERVE_QUERIES` — the boolean toggle. Absent or false means query instrumentation is off: `session_connect` opens no event-log connection, the `Database` handle carries absence, and the seam is the zero-overhead no-op above.
-- `HONEST_PERSIST_OBSERVE_LOG` — the event-log target, the address `session_connect` opens the event-log connection against when the toggle is on. Absent while the toggle is on is a misconfiguration the host resolves; persist treats an unopenable or absent target as observe-off and carries absence rather than failing the open, because instrumentation must never stop a database from opening.
-
-Both are read only at `session_open`, placed into the connecting record, and never read again; the resolved connection, or its absence, then travels in the `Database` handle for the life of the session.
 
 ### 8.6 The Write Queue Is the Asynchronous Path
 
