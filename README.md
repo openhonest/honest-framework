@@ -1,5 +1,7 @@
 # Honest Framework
 
+**Formal methods for Humans.** Engineered for AI to write, built for you to read.
+
 **Honest Framework isn't a framework you switch to. It's a discipline you switch on, inside the one you already use.**
 
 Keep the framework you build on — Rails, Django, Spring. Move your business logic out of your models and into plain functions, drop the callbacks and signals that bite you at 3am, and let a checker keep you honest. Whole classes of bug stop happening, and your tests stop needing a database. Nothing new to learn — a few habits to unlearn.
@@ -23,6 +25,18 @@ This is enforced at commit time: a pre-commit hook runs `honest-check` over ever
 It points git at the in-repo hooks, verifies `uv`, and syncs the workspace. Idempotent.
 
 **The scope, stated honestly.** The gate enforces the *structural* half of Honest Code: what is decidable from source. Behavioural honesty (purity, idempotency, correctness over every bounded input) is verified by `honest-test`'s auto-generated suite. Full honesty is `honest-check` **and** `honest-test` together.
+
+## Is this really a formal method? Yes. A complete one, not a lightweight one.
+
+A formal method is a specification language with defined semantics, plus a mechanical procedure that checks a system against it. Honest Framework has both. The `.hd` declaration is the specification. It is a type, and under the Curry-Howard correspondence a type is a proposition. It is a far richer type than a conventional signature: it states a function's role, its effects, its faults, its boundaries, and its call graph. The function of that type is its proof. `honest-check` is the proof-checker. It discharges the structural obligations statically, at commit time, the way a type checker discharges a type, and the boundary recognizers discharge them again at runtime, holding live input to the same declared domain. Behaviour is proved by exhaustion over the closed, finite input space the boundaries define. That is a proof, not a sample. An explicit-state model checker proves a property the same way, by exploring every reachable state.
+
+This places it in the model-checking family of formal methods, alongside TLA+, Alloy, and SPIN. It is not in the interactive-theorem-proving family of Lean, Coq, and Agda. Both are formal methods. The difference is what you have to write. A proof assistant makes you write the proof yourself, in mathematics. Honest Framework requires only a human-readable specification with no mathematics in it, and generates the proof and the validation from it.
+
+It is not lightweight. Lightweight formal methods apply formal techniques to selected, critical fragments. Honest Framework specifies the whole module and verifies the whole module. It needs no proof-assistant mathematics because of the proof technique, exhaustion over a closed boundary, not because it verifies less.
+
+It also verifies where a proof assistant cannot. At commit time it does everything a compiler's type checker does, and more, because it also runs the code, which is a behavioural proof a static checker never executes. At runtime the boundary recognizers enforce the specified domain on live input, and the event log ties what happened back to the function that was proved. A proof assistant verifies once, at compile time, and then erases. This verifies the interior at commit and the live edge at runtime.
+
+The honest bound: this is a proof wherever the boundary is genuinely closed and its vocabulary partitions the input into sound equivalence classes. Where a boundary stays open to unbounded input, that function is exhaustively tested, not proved, and the framework tells you which is which.
 
 ## What's here
 

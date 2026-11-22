@@ -5,6 +5,7 @@ Feature: honest-persist — one scenario per function (103), plus one per orches
     When session_open is called
     Then it opens a database for a caller and returns the Database, reading the engine off the target so nobody names one
     And it reads env:HONEST_PERSIST_CREW_SIZE and env:HONEST_PERSIST_CONNECTIONS, and it is awaited
+    And it reads env:HONEST_PERSIST_OBSERVE_QUERIES and env:HONEST_PERSIST_OBSERVE_LOG and resolves the two query-instrumentation settings here, placing them in the connecting record, where HONEST_PERSIST_OBSERVE_QUERIES is on only when its value is "true" compared case-insensitively and absent, empty or any other value resolves to observe off, and an absent HONEST_PERSIST_OBSERVE_LOG resolves to no event-log target
     And it invokes session_connect
     And it is the one door that raises rather than returning a value: on could_not_open a server cannot start on a database that would not open
     And it is the one door a NoMatch does not come back through as a value: session_connect carries a NoMatch out to here and could_not_open is what the raise leaves on, carrying that record
@@ -81,6 +82,9 @@ Feature: honest-persist — one scenario per function (103), plus one per orches
     And the NoMatch spell_operation answers travels out through this return as it stands, arriving while the migration is being spelled rather than run, stopping the open at the first attempt and handing up the list of words a view may name
     And it asks the disk whether a copy is already there so filling one is chosen rather than assumed
     And on a replicated database it pushes before it pulls and refuses the open if the push did not land, because the live schema read afterwards is the local copy
+    And when observe_queries is on and an event-log target is configured it opens that connection as sqlite, creates the honest_event_log table on it from honest-observe's declared event_log_schema if it is not already there, and assembles the Observe the Database handle carries, wrapping that Connection together with the db_id, which is the session's target; and when observe is off or no event-log target is configured it carries NOTHING so a database still opens
+    And when observe_queries is on and an event-log target is named but session_open_connection returns a Fault for it, it treats the unopenable target as observe-off, drops that Fault, carries NOTHING, and lets the database open normally, because instrumentation must never stop a database from opening
+    And it hands NOTHING as the observe to every query_run_statement and query_run_together it runs while applying the migration, because those emit hf.persist.migration elsewhere and never hf.persist.query
 
   Scenario: query_answer turns a caller's question into rows or a number
     Given asking: Answering
@@ -89,6 +93,7 @@ Feature: honest-persist — one scenario per function (103), plus one per orches
     And it invokes grammar_of, methods_of, asked_from_written, declaration_from_asked, refuse_undeclared_columns, refuse_some_columns_as_an_object, join_between, compile_statement, travels_together, query_run_statement, query_run_together, crew_deposit, crew_release_ticket, refusal_reaches_caller, answer_from_rows, answer_from_receipt and log_write
     And four cards can answer a NoMatch and this return carries each out as it stands: grammar_of when the text marks no spelling, asked_from_written when it calls a method no spelling gives, declaration_from_asked when it asks for a word that is not one of the eighteen, and compile_statement when the compiler or the comparison table has no row
     And all four are settled before a statement reaches a driver and before a write is deposited, so the question ran nothing: no row read, no write deposited, no ticket taken, nothing to undo
+    And it threads asking.db.observe into query_run_statement on the request-time path, so a query emits hf.persist.query while a migration does not
 
   Scenario: migration_compare works out what a migration would change and stops there
     Given planning: Planning
@@ -150,11 +155,13 @@ Feature: honest-persist — one scenario per function (103), plus one per orches
     Then it asks the driver for a connection and answers Connection | Fault, awaited, reading and writing database
 
   Scenario: query_run_statement runs one statement on the connection it is handed and emits an event
-    Given connection: Connection and engine: Engine and statement: Statement
+    Given connection: Connection and engine: Engine and statement: Statement and observe: Observe | NOTHING
     When query_run_statement is called
     Then it runs one statement on the connection it is handed and on no other, answering the rows a read returned or the count a write touched, as Rows | int | Fault, awaited, reading and writing database and writing honest-observe.emit
-    And it is execute, the one I/O boundary instrumented: after every statement it emits hf.persist.query through the honest-observe.emit seam, carrying db_id and table, the operation, the row count, the duration in nanoseconds, a hash of the sql, and the request id, with the full sql only in development
-    And the emission is best-effort: a failure to emit is logged to stderr and swallowed, never fails the query, and is a no-op when observe_queries is off
+    And it is execute, the one I/O boundary instrumented: when it is handed an Observe it emits hf.persist.query through the honest-observe.emit seam, calling honest_observe.emit with event_type hf.persist.query, aggregate_type persist, aggregate_id db_id + ":" + table, the payload, an empty context, event_version 1.0, and observe.conn
+    And the payload carries db_id, which query_run_statement reads off the Observe it is handed and is the session's target, and table, the operation, the row count, the duration in nanoseconds, a sha-256 hash of the statement text and never the full SQL, because persist defines no development mode, the request id read from a context variable persist owns and null until honest-py intake sets it, and a fault code when the statement failed
+    And honest_observe.emit is a world sink it writes to and never a card it invokes, and the emission is best-effort: a failure to emit is logged to stderr and swallowed and never fails the query
+    And it is a no-op when the observe it is handed is NOTHING, which is how the migration path and observe-off both reach it
 
   Scenario: channel_pull brings down what the primary has and this copy does not
     Given channel: Channel
