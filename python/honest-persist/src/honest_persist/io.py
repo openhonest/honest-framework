@@ -75,13 +75,6 @@ _could_not_open = lambda target, said: refused(
     {"target": target})
 
 
-async def _no_engine_driver(*_args):
-    """The no-match row for a per-engine driver dispatch (P16). Reached only if a driver dispatcher is
-    entered with an engine word its table holds no row for, which the caller's `engine in <table>` guard
-    prevents, so it is a program bug reported as a refused Fault value rather than a bare KeyError."""
-    return refused("no_such_engine", "a driver dispatch was reached with an engine word it holds no row for", {})
-
-
 def _open_sqlite(target, _connections):
     path = _path_in(target)
     conn = sqlite3.connect(path, isolation_level=None)
@@ -315,7 +308,7 @@ async def query_run_statement(connection, engine, statement):
 
 
 async def _run_statement(connection, engine, statement):
-    return await _read_or(_RUN_STATEMENT, engine, lambda: _no_engine_driver)(connection, statement)
+    return await _RUN_STATEMENT[engine](connection, statement)  # honest: ignore HC-P020: query_run_statement reaches here only through _WHEN_STATEMENT_ENGINE[engine in _RUN_STATEMENT]==True, so the key is proven present and this subscript cannot miss (P16)
 
 
 async def _refuse_statement_engine(_connection, engine, _statement):
@@ -387,7 +380,7 @@ async def query_run_together(writer, engine, statements, transacting):
 
 
 async def _run_together(writer, engine, statements, transacting):
-    return await _read_or(_RUN_TOGETHER, engine, lambda: _no_engine_driver)(writer, statements, transacting)
+    return await _RUN_TOGETHER[engine](writer, statements, transacting)  # honest: ignore HC-P020: query_run_together reaches here only through _WHEN_TOGETHER_ENGINE[engine in _RUN_TOGETHER]==True, so the key is proven present and this subscript cannot miss (P16)
 
 
 async def _refuse_together_engine(_writer, engine, statements, _transacting):
@@ -465,7 +458,7 @@ async def crew_run_write(writer, engine, statement, transacting):
 
 
 async def _run_write(writer, engine, statement, transacting):
-    return await _read_or(_RUN_WRITE, engine, lambda: _no_engine_driver)(writer, statement, transacting)
+    return await _RUN_WRITE[engine](writer, statement, transacting)  # honest: ignore HC-P020: crew_run_write reaches here only through _WHEN_WRITE_ENGINE[engine in _RUN_WRITE]==True, so the key is proven present and this subscript cannot miss (P16)
 
 
 async def _no_driver(_writer, engine, _statement, _transacting):
