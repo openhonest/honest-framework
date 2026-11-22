@@ -3,3 +3,12 @@
 .coverage.*
 htmlcov/
 coverage.xml
+
+# Stray turso replica trees the replication conformance leaves under the
+# working directory. An absolute temp path like /tmp/x (Linux) or
+# /var/folders/x (macOS) given with a libsql:// scheme is relativized to
+# tmp/x or var/folders/x and created here by session_open_channel's mkdir.
+# Ignored so a `git add -A` cannot commit one. The placement bug itself is
+# tracked separately.
+tmp/
+var/

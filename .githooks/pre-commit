@@ -48,7 +48,8 @@ fi
 # The slop-audit gate: the sister measure (Slop Audit's L1 analyzer) run against the active source. It
 # fails the commit on a production god-file or promiscuous, non-finitely-testable state — a regression
 # the honest-check gate above does not catch. It audits python/ only (not python.botched/, the archive).
-# Skipped, not failed, when slop-audit is not checked out alongside honest-framework.
+# Fails, not skips, when slop-audit is not checked out alongside honest-framework: an absent gate that
+# reports the source clean without measuring it is a vacuous pass, the same fault as a broken one.
 if [ -n "$py" ]; then
     l1="$root/../slop-audit/tools/l1_analyzer"
     if [ -d "$l1" ]; then
@@ -71,7 +72,14 @@ if [ -n "$py" ]; then
             exit 1
         fi
     else
-        echo "slop-audit gate skipped: l1_analyzer not found at $l1 (clone slop-audit beside honest-framework to enable it)." >&2
+        # slop-audit is not checked out, so the gate cannot run. An absent gate must not pass quietly
+        # any more than a broken one (above): a skip reports the source clean without measuring it,
+        # which is a vacuous pass. Fail rather than skip.
+        echo "slop-audit gate NOT RUN: l1_analyzer not found at $l1." >&2
+        echo "  The sister measure is absent, so this gate fails rather than skipping." >&2
+        echo "  Clone slop-audit beside honest-framework (at $root/../slop-audit) to enable it," >&2
+        echo "  or use git commit --no-verify to bypass this one commit." >&2
+        exit 1
     fi
 fi
 
