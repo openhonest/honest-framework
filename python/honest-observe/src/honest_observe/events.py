@@ -1,44 +1,55 @@
-"""The event envelope (section 2): every event in the log shares one shape.
+"""Pure event-shaping functions: pull the auth and meta partitions out of the manifest, and build one
+immutable event envelope from its already-computed parts (honest-observe.hd, sections 2, 3).
 
-An event is plain data — a dict with framework fields, an open `payload`, an `auth` partition
-owned by the auth layer, and optional `meta`. `build_event` assembles a validated envelope and
-is **pure**: the three impure fields (`event_id`, `timestamp`, `sequence`) are generated at the
-emit boundary and passed in, so assembly itself reads nothing from the outside world. A missing
-required field is a fault as data, never an exception.
-
-`extract_auth` / `extract_meta` pull the auth and meta partitions out of a request context by
-the configured field names (section 2.2, 2.3). The framework never interprets `auth.*` — it only
-carries it forward.
+build_event is the one place the envelope is built and validated, so the event shape is stated once.
+Validation is a fault as data, not an exception: an empty required field returns the Fault arm, never
+raises. extract_auth and extract_meta copy a block verbatim and inspect no field.
 """
 
-from typing import Any, TypedDict
+from honest_observe._util import _get, _pick
+from honest_observe.types import Event, Fault, observe_fault
 
-from honest_type import err, fault, ok
+# The context partition keys: auth is carried verbatim and never read by the framework for anything
+# but attaching it; meta is the optional application metadata (section 2.2, 2.3). Named here so the
+# one place the partition boundary is decided is the one place these keys are written.
+_AUTH_KEY = "auth"
+_META_KEY = "meta"
+
+# The envelope's required string fields: the identity and provenance of the event, each of which
+# names what the event is and which one, so an empty one leaves the envelope unidentifiable (section
+# 2.1). payload, auth and meta are open maps that may legitimately be empty, so they are not required
+# to be non-empty; sequence is an int the orchestrator assigns, not an emptiable string.
+_REQUIRED_STRING_FIELDS = (
+    "event_type",
+    "event_version",
+    "aggregate_type",
+    "aggregate_id",
+    "event_id",
+    "timestamp",
+)
 
 
-class Event(TypedDict, total=False):
-    event_id: str
-    event_type: str
-    event_version: str
-    timestamp: str
-    sequence: int
-    aggregate_type: str
-    aggregate_id: str
-    payload: dict[str, Any]
-    auth: dict[str, Any]
-    meta: dict[str, Any]
+def extract_auth(context):
+    """Pull the auth partition out of the current manifest at the context's auth key, copied verbatim
+    for attachment to the envelope, returning the empty dict when absent (section 2.2). Pure: a map
+    read, no world, no fault."""
+    return _get(context, _AUTH_KEY, {})
 
 
-# Fields an event cannot be valid without — non-empty strings, all of them. `sequence` (which
-# may legitimately be 0) and `payload` (which may be empty) are deliberately not in this set.
-_REQUIRED = ("event_id", "event_type", "event_version", "timestamp", "aggregate_type", "aggregate_id")
+def extract_meta(context):
+    """Pull the optional application-metadata partition out of the current manifest at the context's
+    meta key, carried verbatim, returning the empty dict when absent (section 2.3). Pure: a map read,
+    no world, no fault."""
+    return _get(context, _META_KEY, {})
 
 
-def build_event(event_type, event_version, aggregate_type, aggregate_id, payload, event_id, timestamp, sequence, auth=None, meta=None):
-    """Assemble a validated event envelope (section 2). Pure. Returns ok(Event), or
-    err(fault 'invalid_event') listing any required field left empty. `auth`/`meta` are attached
-    only when supplied (a no-auth event omits the key, section 2.2)."""
-    event = {
+def build_event(event_type, event_version, aggregate_type, aggregate_id, payload, auth, meta, event_id, timestamp, sequence):
+    """Assemble one immutable Event envelope from its already-computed parts and validate it, returning
+    the Event or a Fault with code empty_required_field when a required string field is empty (section
+    2, 3). The impure parts -- event_id, timestamp, sequence -- and the extracted auth and meta are
+    passed in, so this is a pure constructor that runs without a clock, a random source or a database.
+    An empty required field returns the Fault arm, never raises."""
+    envelope: Event = {
         "event_id": event_id,
         "event_type": event_type,
         "event_version": event_version,
@@ -47,26 +58,16 @@ def build_event(event_type, event_version, aggregate_type, aggregate_id, payload
         "aggregate_type": aggregate_type,
         "aggregate_id": aggregate_id,
         "payload": payload,
+        "auth": auth,
+        "meta": meta,
     }
-    if auth is not None:
-        event["auth"] = auth
-    if meta is not None:
-        event["meta"] = meta
-    missing = [name for name in _REQUIRED if not event[name]]
-    if missing:
-        return err(fault("invalid_event", f"Event is missing required field(s): {missing}", "server", [], {"missing": missing}))
-    return ok(event)
-
-
-def extract_auth(context, auth_fields):
-    """The auth partition for an event (section 2.2): the configured `auth_fields` present in the
-    request context, in order. None when no field is present (a no-auth event). Pure."""
-    auth = {name: context[name] for name in auth_fields if name in context}
-    return auth or None
-
-
-def extract_meta(context, meta_fields):
-    """The meta partition for an event (section 2.3): the configured `meta_fields` present in the
-    request context, in order. None when no field is present. Pure."""
-    meta = {name: context[name] for name in meta_fields if name in context}
-    return meta or None
+    empty = list(filter(lambda field: envelope[field] == "", _REQUIRED_STRING_FIELDS))
+    return _pick(
+        not empty,
+        lambda: envelope,
+        lambda: observe_fault(
+            code="empty_required_field",
+            message=f"the event envelope's required fields {empty} were empty; emit must supply a non-empty value for each so the event is identifiable in the log",
+            detail={"fields": empty},
+        ),
+    )

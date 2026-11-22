@@ -1,81 +1,200 @@
-# honest-observe declared in .hd — event-sourced observability. emit reaches the world through the
-# module's own boundaries: a random source for the event id, the clock for its timestamp, and the
-# honest-persist log it reads for the next sequence and appends to. A connection to honest-persist
-# is carried in as a handle. Projections are pure folds; the rest builds events and metrics as pure
-# data. No capability is handed in as an object.
+# honest-observe declared in .hd -- the observability layer of the Honest Framework
+# (honest-observe-architecture.md section 1). It owns the event log: emit is the one write, a boundary
+# door that hands its input to the run_emit orchestrator, which pulls the fresh id, the timestamp and
+# the next per-aggregate sequence, builds one immutable envelope and appends it. Everything read back
+# out of the log -- projections, snapshots, the canonical request event, the OTel signal, the threshold
+# metrics, the hybrid-logical-clock and identity folds, the table schema -- is a pure function the world
+# reaches by import. The module owns the sides it actually touches: a random source and the clock on
+# their own readers, and the event-log database it is handed a connection to. No capability is handed in
+# as a runtime object (honest-design-architecture.md section 6: that object is gone, and a side is
+# declared where it is touched). Faults return as a bare union arm (value | Fault), recognized by
+# honest-type's is_fault off the reserved is_err tag -- never an ok/err envelope.
+# Architecture: ../../specs/02-code-quality/honest-observe-architecture.md
 
 module honest-observe
 
   layer tooling
+  note "the observability layer: an append-only event log written by one emit boundary and read back only through pure projections (section 1). Layer is tooling because honest-observe is instrumentation the framework and its operators consume -- the event log, the dev-time read tools, the OTel export -- not foundation substrate, not correctness machinery (checker, harness, declaration layer), not domain business logic; honest-alerts, a domain module, reads this log, so observe sits below it."
 
-  # The surface, closed: every side the boundaries here touch, and no other.
+  # The surface, closed: every side the boundaries here touch, and no other (section 3). random and
+  # clock are ambient OS kinds the readers pull. database:given is the event-log store: observe is handed
+  # the connection at run time, so the kind is database and the name is given -- the module cannot name
+  # the database at declaration, exactly as honest-persist declares database:given for the same table
+  # (honest-design-architecture.md section 6). It is read (for the next sequence) and written (the
+  # append), so it is a reads_writes side and sits in both lists.
   inputs  = { "random" : "the fresh event id",
               "clock" : "the event timestamp",
-              "honest-persist" : "the event log, read for the next sequence number" }
-  outputs = { "honest-persist" : "the appended event" }
+              "database:given" : "the event log, read for the next per-aggregate sequence number" }
+  outputs = { "database:given" : "the event log, the appended immutable event" }
+
+  # ------------------------------------------------------------------------------------------------
+  # The data dictionary. honest-observe owns the event envelope, the projection and metric handles it
+  # moves between its pure functions, and the Fault record every function that can fail returns.
+  # ------------------------------------------------------------------------------------------------
 
   type Event = {
-    event_type: str
-    aggregate_id: str
-    payload: dict<str, any>
-    sequence: int
-  }
+    event_id:       str
+    event_type:     str
+    event_version:  str
+    timestamp:      str
+    sequence:       int
+    aggregate_type: str
+    aggregate_id:   str
+    payload:        dict<str, any>
+    auth:           dict<str, any>
+    meta:           dict<str, any>
+  } note "one event-log envelope, the single shape every event takes whether the framework emits it automatically or application code emits it explicitly (section 2.1). event_id is the UUID v7, time-ordered and never reused; event_type is the dot-namespaced identifier (hf.chain.completed, order.placed); event_version is the schema version of that type as a string ('1.0', section 2.4). timestamp is ISO-8601 microsecond UTC; sequence is per-aggregate and always increasing, which fixes order within an aggregate without a global lock (section 3.2). aggregate_type and aggregate_id say what thing the event is about and which one. payload is the event-type-specific open map (section 4). auth is the auth partition, carried verbatim and never read by the framework for anything but attaching it (section 2.2); meta is the optional application metadata (section 2.3). It is a flat typed record so a divergent, source-branched event shape cannot be expressed."
 
   type Projection = {
-    id: str
-    event_types: list<str>
-  }
+    projection_id: str
+    event_types:   list<str>
+  } note "a declared named projection: the id it is registered under and the event types it folds over (section 6). A projection is the only way application code reads the log -- a pure fold (state, event) -> state over a filtered event slice -- so this record names the filter and the handle, and declare_projection returns it; apply_projection and resume_from_snapshot read its event_types to filter. It carries no fold or initial_state field: those are callables the pure folds take as arguments, kept out of the stored handle so the handle stays flat and serializable. A threshold projection is a different, richer shape, ThresholdProjection, not this one."
 
   type Metric = {
-    name: str
-    value: any
-  }
+    name:        str
+    event_types: list<str>
+  } note "a built-in or custom metric handle: its name and the event types it is computed from (section 8b.3, 8b.5). compute_metric folds the named events into the metric's value; a grouped metric (link.fault_rate, grouped by link) yields one value per group rather than one aggregate (section 8b.5). It names no fold, value or group function for the same reason Projection does not: those are callables passed to compute_metric, not stored in the flat handle."
 
-  # The world calls emit; emit hands its input to run_emit, which pulls the id, the time and the next
-  # sequence, builds the event, and appends it. The event version is supplied by the caller, not read
-  # from an injected object.
-  boundary_in fn emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, event_version: int, conn: any) -> Event awaited invokes run_emit
+  type ThresholdProjection = {
+    projection_id: str
+    metric:        str
+    condition:     any
+    window:        str
+    cooldown:      str
+    alert:         any
+    enabled:       bool
+  } note "a threshold projection: a projection that watches a metric and fires an alert when a declared condition is crossed (section 8b.1, 8b.2). It is a richer shape than Projection, which is why threshold_projection returns this and not that: projection_id is its unique id; metric is the NAME of the metric it watches, a str, the built-in or custom metric name (section 8b.2, 8b.3) -- the live Metric handle is passed to evaluate_threshold separately, so the threshold stores only the name it references; condition is the comparison that fires it ({operator: bound}, e.g. {gt: 0.1}); window is the time window the metric is computed over ('5m'); cooldown is the minimum time between firings ('15m'); alert is the message, recipient and surface to send on a firing; enabled lets an operator toggle it without redeployment (section 8b.2, 8b.4). condition and alert are any because their inner shape is open at this unit; the rest are the fixed scalar terms a firing decision reads. It is stored as a honest-persist record, so it is flat and serializable."
 
-  orchestrator fn run_emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, event_version: int, conn: any) -> Event awaited invokes new_event_id, event_timestamp, next_sequence, build_event, append_event
+  type Fault = {
+    is_err:  bool
+    code:    str
+    message: str
+    detail:  dict<str, any>
+  } note "the failure an observe function returns as a bare union arm (value | Fault), recognized by honest-type's is_fault and never raised and never wrapped in an ok/err envelope (honest-errors-architecture.md section 2, 3). is_err is the reserved boolean tag, always true, the mark is_fault reads to tell the fault arm from the value arm; it is reserved framework-wide, so no non-fault observe value -- an Event, a Projection, a Metric, a NOTHING a lookup yields -- carries a field of that name. code is the specific reason: emit_failed when the log append fails (section 3), empty_required_field when build_event is handed an empty required envelope field (section 3). message is the human sentence naming what went wrong and what to do instead. detail is the structured context -- the append error, the name of the empty field. Two fields minimum, the code to branch on and the message to read, with is_err the arm tag. The bare union makes the undifferentiated ok/err envelope -- two shapes a reader must unwrap before it can branch -- impossible to express."
+
+  type WriteOutcome = {
+    ok:     bool
+    detail: str
+  } note "the raw outcome append_event reports for one log write (section 3). It is not a Fault and not the ok/err envelope: it is a boundary's plain report of what the database did, so the terminus boundary can stay a thin write and leave fault construction to the orchestrator. ok is true on a clean write and false on a failed one; detail is empty on success and carries the write error on failure, which run_emit passes into the emit_failed Fault it builds via observe_fault. honest-persist's own write boundaries report an untyped result; observe models this one minimally because run_emit must read two things from it -- whether the write succeeded and, if not, the error to put in the fault."
+
+  # ------------------------------------------------------------------------------------------------
+  # Column 1 -- readers: the module reaches out and pulls. Each names exactly the side it touches.
+  # ------------------------------------------------------------------------------------------------
 
   reader fn new_event_id : () -> str side_effect reads "random"
+    note "pulls one fresh event id from the random source -- a UUID v7, time-ordered so the log sorts by creation without a separate column (section 2.1, 3). It reads random and nothing else; run_emit invokes it and applies its answer, so the id enters the envelope at one place. A reader, not a pure fn, because a fresh id is a read of the world: made pure it would be a hidden non-deterministic call, the leak the reader role exists to surface."
 
   reader fn event_timestamp : () -> str side_effect reads "clock"
+    note "pulls the current wall-clock time as an ISO-8601 microsecond UTC string, the event's timestamp (section 2.1, 3). It reads the clock and nothing else; run_emit invokes it and applies its answer. A reader for the same reason new_event_id is: a clock read inside a pure function is the hidden-clock leak the role declaration makes visible."
 
-  reader fn next_sequence : (aggregate_id: str, conn: any) -> int awaited side_effect reads "honest-persist"
+  reader fn next_sequence : (aggregate_id: str, conn: any) -> int awaited side_effect reads "database:given"
+    note "reads the event log for the next per-aggregate sequence number, a counter unique and increasing within one aggregate_id (section 3.2). conn is the injected database connection, held and passed to the boundary, never read by any pure function. awaited because the read is I/O. run_emit invokes it and applies its answer into the envelope under construction, so the sequence is assigned in one place; emit never owns the counter, it only asks for the next value. It reads database:given -- the event-log store whose name observe learns from conn at run time."
 
-  boundary_out fn append_event : (event: Event, conn: any) -> Event awaited side_effect writes "honest-persist"
+  # ------------------------------------------------------------------------------------------------
+  # Column 4 -- output boundary: the module reaches out and pushes. The one write to the log.
+  # ------------------------------------------------------------------------------------------------
 
-  fn build_event : (event_type: str, event_version: int, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, event_id: str, timestamp: str, sequence: int) -> Event
+  boundary_out fn append_event : (event: Event, conn: any) -> WriteOutcome awaited side_effect writes "database:given"
+    note "appends one built envelope to the event log and reports the raw write outcome (section 3). conn is the injected connection; the log is append-only, so this issues no update or delete (section 10). awaited because the append is I/O. It is the single write boundary of the module: every event, framework or application, leaves through here, which is what lets the append-only guarantee be stated in one place. It does ONLY the write: it returns a WriteOutcome (ok true on a clean write, ok false with the error detail on a failed one) and does not construct a Fault. Building the emit_failed Fault is the orchestrator's job, because a boundary is a terminus and may not call the pure fault constructor without a backward arrow; run_emit reads this outcome and builds the Fault via observe_fault. The boundary does not raise."
 
-  entry "call:emit" -> emit
+  # ------------------------------------------------------------------------------------------------
+  # Column 2 -- the orchestrator: the single mutator of the event under construction. The pure
+  # functions and readers return their parts; run_emit applies each into the one envelope, then appends.
+  # ------------------------------------------------------------------------------------------------
 
-  fn apply_projection : (events: list<Event>, fold: Callable, initial_state: any) -> any
+  orchestrator fn run_emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, event_version: str, conn: any) -> Event | Fault awaited invokes new_event_id, event_timestamp, next_sequence, extract_auth, extract_meta, build_event, append_event, observe_fault
+    note "runs the emit path and is the single mutator of the event value (section 3; the single-mutator law, honest-state-architecture.md section 1.2). It pulls the three impure parts -- new_event_id, event_timestamp, next_sequence -- extracts the auth and meta partitions from context, and hands them all to build_event, which assembles and validates one immutable envelope; no pure function mutates, run_emit applies each return into the one value. On a build_event Fault (an empty required field) it returns the Fault without writing; otherwise it appends through append_event, reads the WriteOutcome, and returns the event on a clean write or builds the emit_failed Fault via observe_fault on a failed one. It owns the fault construction because append_event is a boundary terminus that may not call the pure constructor; a forward orchestrator -> pure call is legal. awaited because next_sequence and append_event are I/O. It returns Event | Fault so the fault bubbles to the door by return, never a swallowed log line."
+
+  # ------------------------------------------------------------------------------------------------
+  # Column 1 -- the door: the world calls emit, and nothing inside the module calls it. It hands its
+  # input to the one orchestrator.
+  # ------------------------------------------------------------------------------------------------
+
+  boundary_in fn emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, event_version: str, conn: any) -> Event | Fault awaited invokes run_emit
+    note "the one door that writes an event to the log, called from inside an application chain link declared at the boundary (section 3, 3.1). The world calls in here and nothing inside the module calls it; it hands its input to run_emit and returns what run_emit returns -- the appended Event or a Fault. event_type, aggregate_type, aggregate_id and payload are the event; context is the current manifest, from which the auth and meta partitions are extracted; event_version is the schema version the caller states; conn is the injected log connection. awaited because run_emit is. It returns Event | Fault rather than raising, because the calling link decides whether a failed emit stops its chain (section 3)."
+
+  # ------------------------------------------------------------------------------------------------
+  # Column 3 -- pure functions. Data in, data out, no side of the world. A failure comes back as a
+  # Fault arm, never a raise. The read-back surface (projections, snapshots, canonical, OTel, metrics,
+  # HLC, identity, schema) is all here, reached by import through the entries at the foot of the file.
+  # ------------------------------------------------------------------------------------------------
+
+  fn observe_fault : (code: str, message: str, detail: dict<str, any>) -> Fault
+    note "builds one observe Fault record from its parts, the single place honest-observe assembles a fault (honest-errors-architecture.md section 2, 3). code is the specific reason -- empty_required_field when a required envelope field is empty (build_event), emit_failed when the log append fails (append_event); message is the human sentence naming what went wrong and what to do instead; detail is the structured context. It sets the reserved is_err tag true and returns the Fault, carried by the return as a bare union arm and recognized by is_fault, never raised and never wrapped in an ok/err envelope. Pure: it reads no world. build_event and append_event invoke it; it is the honest-observe twin of honest-auth's auth_fault."
+
+  fn extract_auth : (context: dict<str, any>) -> dict<str, any>
+    note "pulls the auth partition out of the current manifest for attachment to the envelope (section 2.2). The partition boundary is the context's auth key; everything inside it is carried verbatim and the framework reads none of it for any purpose but attaching it, so this copies the block and never inspects a field. Pure: a map read, no world, no fault. Run_emit invokes it and passes the result to build_event."
+
+  fn extract_meta : (context: dict<str, any>) -> dict<str, any>
+    note "pulls the optional application-metadata partition out of the current manifest (section 2.3). meta is an open map -- environment, release, correlation_id, feature flags, anything the application attaches that is not the event's business meaning -- carried verbatim and never read by the framework. Pure: a map read, no world, no fault. Run_emit invokes it and passes the result to build_event."
+
+  fn build_event : (event_type: str, event_version: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, auth: dict<str, any>, meta: dict<str, any>, event_id: str, timestamp: str, sequence: int) -> Event | Fault invokes observe_fault
+    note "assembles one immutable event envelope from its already-computed parts and validates it, returning the Event or a Fault with code empty_required_field when a required field is empty (section 2, 3). The impure parts -- event_id, timestamp, sequence -- and the extracted auth and meta are passed in, so this stays a pure constructor run_emit can test without a clock, a random source or a database. Validation is a fault as data, not an exception: an empty required field returns the Fault arm, never raises. It is the one place the envelope is built, so the event shape is stated once."
+
+  fn request_canonical : (request_id: str, http_method: str, http_path: str, http_status: int, caller_id: str, session_id: str, chain_name: str, link_count: int, link_sequence: list<any>, token_count: int, rejection_count: int, query_count: int, query_duration_ns: int, result: str, fault_code: str, fault_category: str, duration_ns: int) -> Event
+    note "assembles the one dense canonical request event emitted last for every request, colocating all request telemetry in a single record so an operational question needs no join (section 4.6). It carries the HTTP method, path and status; the caller and session from the auth partition; the primary chain, its link count and the ordered link_sequence of per-link summaries; the intake token and rejection counts; the database query count and total duration; the outcome result with its fault code and category; and the total duration, all keyed by request_id, the join key with the browser events (section 8.5). Pure: it folds facts already gathered for the request into one Event, reads no world and returns no fault -- the boundary that calls it has the facts in hand."
 
   fn matches : (event: Event, event_types: list<str>) -> bool
+    note "the projection filter predicate: true when the event's type is one of the requested types (section 6.1). It is the one place the event-type filter is decided, so apply_projection and resume_from_snapshot fold over exactly the events a projection asked for and no others. Pure: a membership test, no world, no fault."
+
+  fn apply_projection : (projection: Projection, events: list<Event>, fold: Callable, initial_state: any) -> any invokes matches
+    note "runs a projection: folds the filtered event slice into a derived read model with the caller's pure accumulator (section 6.1). projection is the declared handle; apply_projection reads its event_types and invokes matches to keep only the events the projection filters to, so the filter lives in the one Projection handle and is not copied into a loose argument beside it (no-duplicate-truth). fold is the pure (state, event) -> state function, initial_state its seed; it folds the kept events in order. No I/O and no mutation: the fold returns new state each step, so a projection is a pure function of the log and cannot drift from it. This is the only read path over the raw log; application code reaches it by import."
 
   fn declare_projection : (projection_id: str, event_types: list<str>, fold: Callable, initial_state: any) -> Projection
+    note "declares a named projection, returning the flat Projection handle registered under projection_id over the given event types (section 6). fold and initial_state are the pure accumulator and its seed, named here and passed to apply_projection at run time, so they are not stored in the serializable handle. Pure: it builds a record, reads no world and returns no fault. Reached by import."
 
   fn build_snapshot : (projection_id: str, snapshot_at: str, state: any) -> any
+    note "builds a projection snapshot: the folded state of a projection at a log position, so a projection over millions of events need not replay from the beginning every time (section 6.3). projection_id names the projection, snapshot_at is the log position the snapshot covers, state is the folded state at that position. Pure: it packages the three into a snapshot record, reads no world and returns no fault. Reached by import."
 
-  fn resume_from_snapshot : (snapshot: any, events: list<Event>, fold: Callable) -> any
-
-  fn request_canonical : (request_id: str, http_method: str, http_path: str, http_status: int, link_count: int, result: str, duration_ns: int) -> Event
+  fn resume_from_snapshot : (projection: Projection, snapshot: any, events: list<Event>, fold: Callable) -> any invokes matches
+    note "resumes a projection from a snapshot: folds only the events after the snapshot position into the snapshot's state, rather than the whole log (section 6.3). projection is the declared handle; resume_from_snapshot reads its event_types and invokes matches to keep only the filtered events in the log tail, the same filter apply_projection uses, read from the one handle rather than copied beside it (no-duplicate-truth). snapshot carries the prior folded state, events are the log tail, fold is the same pure accumulator; it folds the kept events onto the snapshot state. Pure: no I/O, no mutation -- the resumed state equals a full replay, so a snapshot is an optimization that cannot change the answer. Reached by import."
 
   fn otel_signal : (event: Event) -> any
-
-  fn threshold_projection : (projection_id: str, metric: Metric, condition: any, window: any, cooldown: any, alert: any) -> Projection
-
-  fn evaluate_threshold : (threshold: Projection, metric: Metric, events: list<Event>) -> any
+    note "projects one event to its OpenTelemetry signal -- a trace span, a child span, a span event, or a metric -- as pure data carrying the standard and the hf.* semantic-convention attributes (section 7.1, 7.3). The signal kind follows the event type (chain.started to span start, link.executed to child span, persist.query to a db span, classify.completed to a metric counter), a mapping read from the event, not a branch ladder. It emits no signal itself: installing an SDK exporter and shipping signals is boundary I/O reached through an injected exporter at the application boundary, so observe never imports the OTel SDK (section 7.4). Pure: an Event in, a signal value out, no world, no fault. Reached by import."
 
   fn compute_metric : (metric: Metric, events: list<Event>) -> any
+    note "computes a metric's value by folding its source events (section 8b.3, 8b.5). For a plain metric it returns one number -- an error rate, a p99 duration, a count. For a grouped metric (link.fault_rate, grouped by link) it folds each group's events separately and returns a mapping of group key to value, so a per-link threshold can test each link. The fold, value and group functions are the metric's own, passed in with it, so adding a metric is data, not a new branch. Pure: events in, value out, no world, no fault. Reached by import, and invoked by evaluate_threshold."
+
+  fn threshold_projection : (projection_id: str, metric: str, condition: any, window: str, cooldown: str, alert: any, enabled: bool) -> ThresholdProjection
+    note "declares a threshold projection: a projection that watches a metric and fires an alert when a declared condition is crossed (section 8b.1, 8b.2). projection_id names it; metric is the NAME of the watched metric, a str, the live Metric handle being passed to evaluate_threshold separately; condition is the comparison that fires it; window is the time window the metric is computed over; cooldown is the minimum time between firings; alert is the message, recipient and surface to send; enabled lets an operator toggle it without redeployment. It returns the ThresholdProjection record, not a Projection -- the Projection's two fields cannot carry a firing decision's terms, which is why a threshold needs its own richer type (section 8b.2). The stored declaration is a honest-persist record. Pure: it builds a record, reads no world and returns no fault. Reached by import."
+
+  fn evaluate_threshold : (threshold: ThresholdProjection, metric: Metric, events: list<Event>) -> any invokes compute_metric
+    note "evaluates a threshold projection against the events in its window and returns the firing decision (section 8b.2, 8b.5). threshold is the ThresholdProjection carrying the condition; metric is the live Metric handle it watches. It invokes compute_metric to get the metric's value, then tests threshold's condition. For a plain metric the decision is whether the one value crossed; for a grouped metric it tests each group and returns { fired, firings }, where fired is true when any group crossed and firings carries one { group, fired, value } record per group, so the per-group firing is declared, not hardcoded. Pure: events in, decision out, no world, no fault -- the send to honest-alerts is a separate boundary the caller runs. Reached by import."
 
   fn hlc_send : (local: dict<str, int>, physical_now: int) -> dict<str, int>
+    note "advances a hybrid logical clock for a send, giving a total order across sources that respects causality without a synchronized wall clock (section 8c.2). local is the last HLC seen -- physical milliseconds, a logical counter, a source tiebreaker; physical_now is the local best-guess physical time. It sets physical to the max of physical_now and local's physical, and increments the logical counter when physical did not advance, so same-millisecond events still order. Pure: two values in, the new HLC out, no world (physical_now is passed, not read) and no fault. Reached by import."
 
   fn hlc_receive : (local: dict<str, int>, incoming: dict<str, int>, physical_now: int) -> dict<str, int>
+    note "advances a hybrid logical clock on receiving an event from another source, so events from one source keep their order and events across sources interleave by physical time (section 8c.2). local is the receiver's last HLC, incoming the sender's HLC on the event, physical_now the local physical time. It advances physical to the max of the three physicals and sets the logical counter so causality is preserved, breaking ties by source id. Pure: three values in, the new HLC out, no world and no fault. Reached by import."
 
   fn fold_identity_claims : (events: list<Event>) -> dict<str, any>
+    note "folds the identity.claimed events into the identity binding table, a projection mapping (external_system, external_id) to a canonical id (section 8c.3). Each claim is an append-only event asserting a mapping with its evidence; the fold reduces them into a lookup. A conflict -- two claims mapping one external id to different canonical ids -- is surfaced in the result for human adjudication, not silently resolved. Pure: events in, bindings out, no world and no fault -- it reads the log slice it is handed. Reached by import."
 
-  fn resolve_identity : (external_id: str, source: str, bindings: dict<str, any>) -> str
+  fn resolve_identity : (external_id: str, source: str, bindings: dict<str, any>) -> str | NOTHING
+    note "resolves one external id in a source to its canonical id by looking it up in the bindings table (section 8c.3). bindings is the table fold_identity_claims produced. An unresolvable id is a bounded absence, not a failure: it returns NOTHING, which carries no is_err tag and is never recognized by is_fault, keeping it disjoint from a Fault -- a translator that meets NOTHING emits identity.unknown and returns its own rejection (section 8c.3). Pure: a table lookup, no world. Reached by import."
 
   fn event_log_schema : () -> any
+    note "returns the honest_event_log table manifest: the append-only event-log schema honest-persist enforces, with update and delete rejected against the table (section 10). It names the columns of the envelope (section 2.1) and the indexes the common projection filters need -- by event type, by aggregate, by timestamp, by aggregate-and-sequence. Pure: it returns the manifest as data, reads no world and takes no argument, because the schema is fixed. Reached by import, so honest-persist's migration can create the table from one declared shape."
+
+  # ------------------------------------------------------------------------------------------------
+  # Who calls in. The one door is called from an application chain link (call:emit). Every pure
+  # read-back function the world uses is reached by importing honest_observe. A function reached only
+  # by another function inside the module -- run_emit, the three readers, extract_auth, extract_meta,
+  # build_event, append_event, matches -- needs no entry; the call that reaches it is its arrival.
+  # ------------------------------------------------------------------------------------------------
+
+  entry "call:emit" -> emit
+  entry "import honest_observe" -> request_canonical
+  entry "import honest_observe" -> apply_projection
+  entry "import honest_observe" -> declare_projection
+  entry "import honest_observe" -> build_snapshot
+  entry "import honest_observe" -> resume_from_snapshot
+  entry "import honest_observe" -> otel_signal
+  entry "import honest_observe" -> compute_metric
+  entry "import honest_observe" -> threshold_projection
+  entry "import honest_observe" -> evaluate_threshold
+  entry "import honest_observe" -> hlc_send
+  entry "import honest_observe" -> hlc_receive
+  entry "import honest_observe" -> fold_identity_claims
+  entry "import honest_observe" -> resolve_identity
+  entry "import honest_observe" -> event_log_schema
