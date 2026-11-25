@@ -61,27 +61,37 @@ status=$(( $? || missing_hd ))
 # it was invoked is not a gate.
 echo ""
 uv run --package honest-check python - <<'PY'
-import glob, os, sys
+import glob, os, re, sys, tomllib
+from pathlib import Path
 from honest_design import read_hd
-from honest_check.integration_rules import check_seams
+from honest_check import check_seams
 
 targets = set(os.environ.get("HD_TARGETS", "").split())
 declarations = {}
 paths = {}
+manifest_deps = {}
 for path in sorted(glob.glob("honest-*/honest-*.hd")):
-    document = read_hd(open(path).read())
+    document = read_hd(Path(path).read_text(encoding="utf-8"))
     if "ok" not in document:
         continue
+    manifest = Path(path).with_name("pyproject.toml")
+    dependencies = []
+    if manifest.is_file():
+        project = tomllib.loads(manifest.read_text(encoding="utf-8")).get("project", {})
+        dependencies = [
+            re.sub(r"[-_.]+", "-", match[0]).lower()
+            for requirement in project.get("dependencies", [])
+            if (match := re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", requirement.lstrip()))
+        ]
     for module in document["ok"]["modules"]:
-        declarations[module["name"]] = module
-        paths[module["name"]] = path
+        name = module["name"]
+        declarations[name] = module
+        paths[name] = path
+        manifest_deps[name] = dependencies
 
-# The gate is the outside world, so it enters honest-check's cross-module checks through the one
-# door, check_seams, and never calls the pure rule functions directly (ruling 2026-11-01). In-scope
-# is this commit's affected modules, or every loaded declaration when none were named; a module out
-# of scope is still loaded above, so a caller's seam into it resolves.
-in_scope = sorted(n for n in declarations if not targets or paths[n].split("/")[0] in targets)
-findings = check_seams(declarations, paths, in_scope)
+# Resolve against the whole workspace and report findings for affected modules.
+in_scope = sorted(name for name in declarations if not targets or paths[name].split("/")[0] in targets)
+findings = check_seams(declarations, paths, manifest_deps, in_scope)
 for d in findings:
     print(f"  {d['rule_id']} {d['source_location']}: {d['message']}")
 print(f"honest-pre-commit: cross-module seams checked across {len(declarations)} declaration(s), "
