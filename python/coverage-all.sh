@@ -58,8 +58,21 @@ $COV run --append --branch --source="$SRC" -m honest_check.cli --declaration "$t
 printf 'Feature: f\n\n  Scenario: s\n    Given a step\n' > "$tmp/f.feature"
 $COV run --append --branch --source="$SRC" -m honest_gherkin.cli run "$tmp/f.feature" >/dev/null 2>&1 || true
 mkdir -p "$tmp/tsrc"
-$COV run --append --branch --source="$SRC" -m honest_test.cli "$tmp/tsrc" >/dev/null 2>&1 || true
-rm -f coverage.json   # the runner CLI writes coverage.json to the cwd; this empty run only exercises the __main__ shim
+# honest_test writes its report in its current directory. Keep it in the fixture directory
+# and append coverage to the same data file used by the other conformance runs.
+coverage_file=${COVERAGE_FILE:-.coverage}
+case "$coverage_file" in /*) ;; *) coverage_file="$PWD/$coverage_file";; esac
+workspace=$PWD
+printf 'import honest_test.__main__\nimport honest_test.pytest_plugin\n' > "$tmp/import_test_entries.py"
+if ! (
+    cd "$tmp" || exit 1
+    export COVERAGE_FILE="$coverage_file"
+    uv run --project "$workspace" --all-packages --with coverage coverage run --append --branch --source="$SRC" -m honest_test "$tmp/tsrc" &&
+    uv run --project "$workspace" --all-packages --with coverage coverage run --append --branch --source="$SRC" "$tmp/import_test_entries.py"
+) >/dev/null 2>&1; then
+    echo "coverage-all: Honest Test CLI or plugin entry failed." >&2
+    status=1
+fi
 rm -rf "$tmp"
 
 if [ "$status" -ne 0 ]; then
