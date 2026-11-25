@@ -84,6 +84,12 @@ Feature: honest-design — reading, checking, drawing and tracing .hd itself
     When _read_flow reads it
     Then it returns a Flow carrying the name, the group, and the steps in order
 
+  # hd: python/honest-design/honest-design.hd::_read_version
+  Scenario: _read_version preserves the architect's free-text version
+    Given node: Node for a version clause and source: bytes for its declaration
+    When _read_version is called
+    Then it returns the declared version text without the enclosing quotes
+
   Scenario: _read_layer reads a module's layer name
     Given a layer node and the source
     When _read_layer reads it
@@ -119,10 +125,11 @@ Feature: honest-design — reading, checking, drawing and tracing .hd itself
     When _read_type_decl reads a record, an alias, or a foreign type
     Then it returns a TypeDecl carrying the fields, the aliased type, or the foreign source, and any note
 
-  Scenario: _read_field folds one record field into a Field
-    Given a field node and the source
-    When _read_field reads the name and type
-    Then it returns a Field carrying the name and its type expression
+  # hd: python/honest-design/honest-design.hd::_read_name_and_type
+  Scenario: _read_name_and_type folds a record field into a Field
+    Given node: Node for one record field and source: bytes for its declaration
+    When _read_name_and_type is called
+    Then it returns the declared field name and the complete type union with nested generic arguments
 
   Scenario: _read_type reads a type expression into a list of atoms
     Given a type node and the source
@@ -169,10 +176,11 @@ Feature: honest-design — reading, checking, drawing and tracing .hd itself
     When _read_function reads the role, parameters, return, side effects, invokes, raises and awaited word
     Then it returns a Function carrying all of them and the column its role derives
 
-  Scenario: _read_param folds one parameter into a Param
-    Given a parameter node and the source
-    When _read_param reads the name and type
-    Then it returns a Param carrying the name and its type expression
+  # hd: python/honest-design/honest-design.hd::_read_name_and_type
+  Scenario: _read_name_and_type folds a function parameter into a Param
+    Given node: Node for one parameter and source: bytes for its declaration
+    When _read_name_and_type is called
+    Then it returns the declared parameter name and the complete type union in the supplied order
 
   Scenario: _read_side_effect folds one side effect, splitting a dotted target
     Given a side effect node and the source
@@ -230,6 +238,13 @@ Feature: honest-design — reading, checking, drawing and tracing .hd itself
     Given a module's functions and env declarations
     When _unknown_envs checks each environment read
     Then it faults a read that names no declared env
+
+  # hd: python/honest-design/honest-design.hd::_unknown_side_kind
+  Scenario: _unknown_side_kind reports unknown world-side kinds
+    Given module: Module containing known world sides, a cross-module seam, a store target and an unknown world-side kind
+    When _unknown_side_kind is called
+    Then it returns an unknown_side_kind fault for the unknown kind naming its function, target and kind
+    And it returns an empty list when the module contains only the known kinds, seams and stores
 
   Scenario: _unknown_layer faults a layer that is not one of the known set
     Given a module's layer

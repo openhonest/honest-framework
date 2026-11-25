@@ -288,7 +288,7 @@ module honest-design
 
   orchestrator fn read_declaration : (source: str) -> Document | Fault invokes parse, _read_module, _read_rule, _read_actor, _read_flow, _document, ok, err, fault note "refuses a non-text source, asks honest-parse for the tree, and folds its top level into a Document; a malformed source comes back as a located fault"
 
-  orchestrator fn check_module : (module: Module) -> list<Fault> invokes _bad_surfaces, _missing_note, _unknown_links, _unknown_targets, _unknown_envs, _unknown_layer, _duplicate_names, _impure_pure_functions, _edge_role_withdrawn, _held_not_read, _fault_swallowed, _fault_shape, _reserved_field, _unawaited_caller, _door_called, _door_orchestrator, _reader_calls, _store_of_impure, _unknown_stores, _store_not_orchestrator, _surface_undeclared, _surface_unknown, _surface_unused, _boundary_without_surface, _door_takes_readable, _bad_projections, fault note "runs every check over one module and gathers the faults; refuses a document handed where a single module belongs"
+  orchestrator fn check_module : (module: Module) -> list<Fault> invokes _bad_surfaces, _missing_note, _unknown_links, _unknown_targets, _unknown_envs, _unknown_layer, _unknown_side_kind, _duplicate_names, _impure_pure_functions, _edge_role_withdrawn, _held_not_read, _fault_swallowed, _fault_shape, _reserved_field, _unawaited_caller, _door_called, _door_orchestrator, _reader_calls, _store_of_impure, _unknown_stores, _store_not_orchestrator, _surface_undeclared, _surface_unknown, _surface_unused, _boundary_without_surface, _door_takes_readable, _bad_projections, fault note "runs every check over one module and gathers the faults; refuses a document handed where a single module belongs"
 
   orchestrator fn draw_module : (module: Module) -> Diagram invokes _column, _edges note "builds the four columns and the chain edges"
 
@@ -298,12 +298,13 @@ module honest-design
 
   fn _document : (groups: dict<str, any>) -> Document note "assembles the four top-level lists into a Document"
 
-  fn _read_module : (node: Node, source: bytes) -> Module invokes _read_layer, _read_env, _read_store, _read_surface, _read_type_decl, _read_set, _read_vocab, _read_dispatch, _read_surfaces, _read_example, _read_function, _read_chain, _read_expose, _read_route, _read_entry, _read_html_attr, _note note "folds one module node, each body declaration through its own reader"
+  fn _read_module : (node: Node, source: bytes) -> Module invokes _read_layer, _read_version, _read_env, _read_store, _read_surface, _read_type_decl, _read_set, _read_vocab, _read_dispatch, _read_surfaces, _read_example, _read_function, _read_chain, _read_expose, _read_route, _read_entry, _read_html_attr, _note note "folds one module node, each body declaration through its own reader"
 
   fn _read_rule : (node: Node, source: bytes) -> Rule note "reads a workspace rule: its id, the module it binds when it names one, and the statement it makes"
   fn _read_actor : (node: Node, source: bytes) -> Actor note "reads an actor, a person or system the workspace names by name alone"
   fn _read_flow : (node: Node, source: bytes) -> Flow note "reads a flow: its name, the group it belongs to, and its steps in order"
   fn _read_layer : (node: Node, source: bytes) -> str note "reads the layer a module says it sits in"
+  fn _read_version : (node: Node, source: bytes) -> str note "reads a version declaration node against the exact source bytes that produced it. Returns the architect's free-text version without the enclosing declaration quotes. The format assigns no ordering or version semantics. A module that omits the optional version does not have a version node to pass to this reader."
 
   fn _read_env : (node: Node, source: bytes) -> Env invokes _read_type, _note note "reads an environment variable the deployment must supply, with its type and note"
   fn _read_store : (node: Node, source: bytes) -> Store note "reads a store: the state held between calls, the pure function whose answers it keeps, and why"
@@ -311,8 +312,8 @@ module honest-design
   fn _read_surfaces : (node: Node, source: bytes) -> Surfaces invokes _read_surface_member note "reads a surfaces block, keeping its members in the order written, because that order is the contract a page renders in"
   fn _read_surface_member : (node: Node, source: bytes) -> SurfaceMember note "reads one surface: the id a rendered element must carry and the element it lives in"
 
-  fn _read_type_decl : (node: Node, source: bytes) -> TypeDecl invokes _read_field, _read_type, _note note "reads a type declaration as a record of fields, an alias of another type, or a foreign type named by its source"
-  fn _read_field : (node: Node, source: bytes) -> Field invokes _read_type note "reads one field of a record: its name and its type"
+  fn _read_type_decl : (node: Node, source: bytes) -> TypeDecl invokes _read_name_and_type, _read_type, _note note "reads a type declaration as a record of fields, an alias of another type, or a foreign type named by its source"
+  fn _read_name_and_type : (node: Node, source: bytes) -> Field | Param invokes _read_type note "reads a record field node or a function parameter node against the exact source bytes that produced it. Both return a record carrying the declared name and the complete type union. The type preserves atom order and nested generic arguments."
   fn _read_type : (node: Node, source: bytes) -> Type invokes _read_atom note "reads a type as the union of the atoms it joins"
   fn _read_atom : (node: Node, source: bytes) -> Atom invokes _read_type note "reads one atom of a type: a name and the generic arguments it carries, each a type in its own right"
 
@@ -323,8 +324,7 @@ module honest-design
   fn _read_dispatch_entry : (node: Node, source: bytes) -> DispatchEntry note "reads one dispatch entry: the key, the handler it runs, and the field of the input the handler is fed, empty when none is declared"
   fn _read_example : (node: Node, source: bytes) -> Example note "reads an example: its name, the chain it runs, and its text"
 
-  fn _read_function : (node: Node, source: bytes) -> Function invokes _read_param, _read_side_effect, _read_type, _note note "reads a function in full: its role and the column that role sets, its signature, the sides of the world it touches, what it invokes and raises, whether it is awaited, and its note"
-  fn _read_param : (node: Node, source: bytes) -> Param invokes _read_type note "reads one parameter: its name and its type"
+  fn _read_function : (node: Node, source: bytes) -> Function invokes _read_name_and_type, _read_side_effect, _read_type, _note note "reads a function in full: its role and the column that role sets, its signature, the sides of the world it touches, what it invokes and raises, whether it is awaited, and its note"
   fn _read_side_effect : (node: Node, source: bytes) -> SideEffect note "splits a dotted target into the module and the door it enters; a colon names a kind, a dot names a path"
   fn _read_chain : (node: Node, source: bytes) -> Chain invokes _note note "reads a chain as its links in the order they run"
   fn _read_expose : (node: Node, source: bytes) -> Exposed invokes _note note "reads an exposed value: its kind and the name the module presents it under for the honest-test runner"
@@ -342,6 +342,7 @@ module honest-design
   fn _unknown_targets : (module: Module) -> list<Fault> invokes _declared_functions, fault note "every route and entry targets a function the module declares"
   fn _unknown_envs : (module: Module) -> list<Fault> invokes _env_reads, fault note "every environment read names a declared env, so the deployment knows what it must supply"
   fn _unknown_layer : (module: Module) -> list<Fault> invokes fault note "a module's layer is one of the fixed set, never a word someone coined; a module with no layer is not this fault"
+  fn _unknown_side_kind : (module: Module) -> list<Fault> invokes fault note "checks every declared side effect in the parsed module. The world-side kind is the target before its first colon, or the entire bare target. A kind outside the declared world-side set returns an unknown_side_kind fault whose detail names the function, its target, and the kind. A cross-module seam and a store target are governed by their own rules and do not produce this fault. Returns an empty list when every world-side kind is known."
   fn _duplicate_names : (module: Module) -> list<Fault> invokes fault note "names are unique within each kind of declaration"
   fn _impure_pure_functions : (module: Module) -> list<Fault> invokes fault note "a pure function touches no side of the world; only a boundary may"
   fn _held_not_read : (module: Module) -> list<Fault> invokes _handles, _type_names, fault note "a pure function never names a handle in its own signature, since a handle is held and passed to a boundary, never read"
