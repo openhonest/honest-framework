@@ -86,7 +86,7 @@ fi
 # The feature gate fires on staged Python (a new/removed function changes the function set) OR a
 # staged feature file (the scenario set changed). Affected modules only — it tests what changed.
 if [ -n "$py" ] || [ -n "$feat" ]; then
-    echo "feature gate (one gherkin per function)…"
+    echo "feature gate (one or more Gherkin scenarios per function)…"
     "$root/python/feature-gate.sh" || exit 1
 fi
 

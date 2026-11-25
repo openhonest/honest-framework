@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# feature-gate.sh — the function-point invariant: every function carries exactly one gherkin
-# scenario (honest-gherkin §9). The scenario count is the directly-counted FP measure, so a
-# function written in src/ with no scenario, or a scenario that names no function anywhere, is a
-# real defect, gated like dishonest code.
+# feature-gate.sh — each written function carries one or more Gherkin scenarios.
+# Count unique full scenario markers and check their function subjects separately.
 #
 # The build order is .hd -> features -> tests -> code. A later stage may lag the earlier ones but
 # must never run ahead of them, so the gate is one-directional. The allowed scenario set is the
@@ -60,7 +58,8 @@ PYTHON
 
   feat=("$root/specs/features/honest-$m.feature")
   [ -f "$root/python/honest-$m/features/honest-$m.feature" ] && feat+=("$root/python/honest-$m/features/honest-$m.feature")
-  scen=$(grep -hE '^  Scenario:' "${feat[@]}" 2>/dev/null | sed -E 's/^  Scenario: ([A-Za-z_][A-Za-z0-9_]*).*/\1/' | sort -u)
+  markers=$(grep -hE '^  Scenario:' "${feat[@]}" 2>/dev/null | sed -E 's/^  Scenario:[[:blank:]]+//; s/[[:space:]]+$//' | sort -u)
+  scen=$(printf '%s\n' "$markers" | sed -E 's/^([A-Za-z_][A-Za-z0-9_]*).*/\1/' | sort -u)
 
   # The allowed scenario set is the union of the declared and the written functions.
   allowed=$(printf '%s\n%s\n' "$srcfuncs" "$hdfuncs" | grep -v '^$' | sort -u)
@@ -73,7 +72,7 @@ PYTHON
 
   nsrc=$(printf '%s\n' "$srcfuncs" | grep -c .)
   nhd=$(printf '%s\n' "$hdfuncs" | grep -c .)
-  nscen=$(printf '%s\n' "$scen" | grep -c .)
+  nscen=$(printf '%s\n' "$markers" | grep -c .)
 
   if [ -n "$missing" ] || [ -n "$extra" ]; then
     fail=1
@@ -81,7 +80,7 @@ PYTHON
     supp="python/honest-$m/features/honest-$m.feature"
     echo ""
     echo "feature-gate: honest-$m — the gherkin features do not match the code ($nscen scenarios; $nsrc written, $nhd declared)."
-    echo "  The rule: every function written in src/ has exactly one scenario named after it, as"
+    echo "  The rule: every function written in src/ has one or more scenarios named after it, as"
     echo "    Scenario: <function_name> <plain description>"
     echo "  in $nfeat (or, for host-specific behaviour, the supplement $supp). A function the .hd"
     echo "  declares but src/ has not written yet needs no scenario — the code stage may lag."
