@@ -75,6 +75,7 @@ for path in sorted(glob.glob("honest-*/honest-*.hd")):
     if "ok" not in document:
         continue
     manifest = Path(path).with_name("pyproject.toml")
+    project = {}
     dependencies = []
     if manifest.is_file():
         project = tomllib.loads(manifest.read_text(encoding="utf-8")).get("project", {})
@@ -87,7 +88,9 @@ for path in sorted(glob.glob("honest-*/honest-*.hd")):
         name = module["name"]
         declarations[name] = module
         paths[name] = path
-        manifest_deps[name] = dependencies
+        # Dependencies belong to the distribution declared by the manifest.
+        # A separately declared module inside that distribution does not inherit them.
+        manifest_deps[name] = dependencies if name == project.get("name") else []
 
 # Resolve against the whole workspace and report findings for affected modules.
 in_scope = sorted(name for name in declarations if not targets or paths[name].split("/")[0] in targets)
@@ -132,21 +135,53 @@ done
 # spec, declaration, failing test, code. Removing an entry is how a package becomes gated; adding one
 # is not a repair.
 NOT_CROSSED="honest-observe honest-persist honest-alerts honest-auth honest-errors honest-gherkin honest-rca honest-type honest-page honest-test"
-for hd in honest-*/honest-*.hd; do
-    pkg=${hd%%/*}
-    [ -d "$pkg/src" ] || continue
-    in_scope "$pkg" || continue
-    case " $NOT_CROSSED " in *" $pkg "*) continue;; esac
-    exports="$pkg/src/${pkg//-/_}/__init__.py"
-    [ -f "$exports" ] || { echo "  honest-pre-commit: $pkg is gated for HC-REF005 and has no $exports"; status=1; continue; }
-    out=$(uv run --package honest-check python -m honest_check.cli --declaration "$hd" --exports "$exports" --rule HC-REF005 "$pkg/src" 2>&1) || { status=1; printf '%s\n' "$out"; }
-done
-crossed=0
-for hd in honest-*/honest-*.hd; do
-    pkg=${hd%%/*}
-    case " $NOT_CROSSED " in *" $pkg "*) ;; *) crossed=$((crossed + 1));; esac
-done
-echo "honest-pre-commit: HC-REF005 gates $crossed package(s); $(printf '%s\n' $NOT_CROSSED | wc -l | tr -d ' ') still to cross."
+uv run --package honest-check python - "$NOT_CROSSED" <<'PY'
+import os
+from pathlib import Path
+import sys
+
+from honest_check import cross_declaration, pair_source, read_source
+from honest_design import read_hd
+
+exempt = set(sys.argv[1].split())
+targets = set(os.environ["HD_TARGETS"].split())
+failed = False
+checked = 0
+for package in sorted(Path.cwd().glob("honest-*")):
+    name = package.name
+    source_dir = package / "src"
+    if name in exempt or (targets and name not in targets) or not source_dir.is_dir():
+        continue
+    paths = sorted(package.glob("honest-*.hd"))
+    if not paths:
+        continue
+    exports = source_dir / name.replace("-", "_") / "__init__.py"
+    if not exports.is_file():
+        print(f"  honest-pre-commit: {name} is gated for HC-REF005 and has no {exports}")
+        failed = True
+        continue
+    functions = []
+    for path in paths:
+        document = read_hd(path.read_text(encoding="utf-8"))
+        if "err" in document:
+            print(f"  honest-pre-commit: cannot read {path}: {document['err']['message']}")
+            failed = True
+            continue
+        for module in document["ok"]["modules"]:
+            functions.extend(module["functions"])
+    files = sorted(source_dir.rglob("*.py"))
+    sources = [pair_source(str(path), read_source(str(path))) for path in files]
+    diagnostics = cross_declaration(
+        sources, {"functions": functions}, read_source(str(exports)), ["HC-REF005"]
+    )
+    for finding in diagnostics:
+        print(f"{finding['source_location']}: {finding['rule_id']} {finding['message']}")
+    failed |= bool(diagnostics)
+    checked += 1
+print(f"honest-pre-commit: HC-REF005 checked {checked} package(s); {len(exempt)} still to cross.")
+sys.exit(int(failed))
+PY
+status=$(( status || $? ))
 
 # Every exported function must be reachable by the world, through the declaration alone: it is the
 # target of an entry or a route, or something reachable from one calls it. A function the world

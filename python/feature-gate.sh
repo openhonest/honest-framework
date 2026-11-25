@@ -22,33 +22,39 @@ staged=$(git diff --cached --name-only --diff-filter=ACM)
 mods=$(printf '%s\n' "$staged" | sed -nE \
   -e 's#^python/honest-([a-z_]+)/src/.*#\1#p' \
   -e 's#^python/honest-([a-z_]+)/features/.*#\1#p' \
-  -e 's#^python/honest-([a-z_]+)/honest-[a-z_]+\.hd#\1#p' \
+  -e 's#^python/honest-([a-z_]+)/honest-[a-z_-]+\.hd#\1#p' \
   -e 's#^specs/features/honest-([a-z_]+)\.feature#\1#p' | sort -u)
 [ -z "$mods" ] && exit 0
 
 fail=0
 for m in $mods; do
   src="$root/python/honest-$m/src/honest_$m"
-  hd="$root/python/honest-$m/honest-$m.hd"
 
   # The functions written in src/ (empty while the code stage still lags).
   srcfuncs=""
   [ -d "$src" ] && srcfuncs=$(grep -rhoE --include='*.py' '^(async )?def [a-z_][a-z0-9_]*' "$src" | sed -E 's/^(async )?def //' | sort -u)
 
-  # The functions the .hd declares (empty if the module carries no declaration yet). The build
-  # order writes the .hd first, so these may name functions the code has not written yet.
+  # Read every declaration in the package, including boundaryless submodules.
   hdfuncs=""
-  [ -f "$hd" ] && hdfuncs=$(uv run --project "$root/python" --package honest-design python - "$hd" <<'PY'
+  shopt -s nullglob
+  hd_files=("$root/python/honest-$m/"*.hd)
+  shopt -u nullglob
+  if [ "${#hd_files[@]}" -gt 0 ]; then
+    hdfuncs=$(uv run --project "$root/python" --package honest-design python - "${hd_files[@]}" <<'PYTHON'
 import sys
+from pathlib import Path
 from honest_design import read_hd
-doc = read_hd(open(sys.argv[1]).read())
-names = []
-if "ok" in doc:
-    for module in doc["ok"]["modules"]:
-        names += [f["name"] for f in module["functions"]]
-print("\n".join(sorted(set(names))))
-PY
-)
+names = set()
+for file in sys.argv[1:]:
+    source = Path(file)
+    doc = read_hd(source.read_text(encoding="utf-8"))
+    if "ok" not in doc:
+        sys.exit(f"feature-gate: could not parse {source}: {doc.get('err')}")
+    names.update(fn["name"] for module in doc["ok"]["modules"] for fn in module["functions"])
+print("\n".join(sorted(names)))
+PYTHON
+    ) || { fail=1; continue; }
+  fi
 
   [ -z "$srcfuncs" ] && [ -z "$hdfuncs" ] && continue   # nothing to bind scenarios to
 
