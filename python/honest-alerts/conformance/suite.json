@@ -193,228 +193,416 @@
     },
     {
       "id": "terminated-ttl-live",
+      "description": "A TTL message is live before its expiry. # inherits: hd=python/honest-alerts/honest-alerts-pure.hd::is_terminated -> feature=specs/features/honest-alerts.feature::is_terminated",
       "value_case": {
         "function": "is_terminated",
         "args": [
           {
-            "event_type": "alert.sent",
-            "timestamp": 1000,
-            "payload": {
-              "message_id": "m1",
-              "recipient": {
-                "type": "user",
-                "id": "u1"
-              },
-              "sent_at": 1000,
-              "ack_scope": "actor",
-              "termination": {
-                "condition": "ttl",
-                "ttl_seconds": 10
-              }
-            }
+            "message_id": "019634a0-0000-7000-8000-000000000001",
+            "message_type": "sys.notice",
+            "sender": {
+              "type": "framework",
+              "id": "alerts",
+              "tenant_id": null
+            },
+            "recipient": {
+              "type": "user",
+              "id": "u1",
+              "tenant_id": null
+            },
+            "payload": {},
+            "reply_required": false,
+            "resume_token": null,
+            "sent_at": 1000,
+            "message_version": "1",
+            "subject_label_id": "sys.notice",
+            "body_label_id": null,
+            "channel": null,
+            "dom_surface": null,
+            "dom_target": null,
+            "reply_options": null,
+            "termination": {
+              "condition": "ttl",
+              "ttl_seconds": 10,
+              "event_type": null,
+              "event_filter": null
+            },
+            "ack_scope": "actor"
           },
           {
             "type": "user",
-            "id": "u1"
+            "id": "u1",
+            "tenant_id": null
           },
+          1005,
           [
             {
               "event_type": "alert.sent",
               "timestamp": 1000,
               "payload": {
-                "message_id": "m1",
+                "message_id": "019634a0-0000-7000-8000-000000000001",
+                "message_type": "sys.notice",
+                "sender": {
+                  "type": "framework",
+                  "id": "alerts",
+                  "tenant_id": null
+                },
                 "recipient": {
                   "type": "user",
-                  "id": "u1"
+                  "id": "u1",
+                  "tenant_id": null
                 },
+                "payload": {},
+                "reply_required": false,
+                "resume_token": null,
                 "sent_at": 1000,
-                "ack_scope": "actor",
+                "message_version": "1",
+                "subject_label_id": "sys.notice",
+                "body_label_id": null,
+                "channel": null,
+                "dom_surface": null,
+                "dom_target": null,
+                "reply_options": null,
                 "termination": {
                   "condition": "ttl",
-                  "ttl_seconds": 10
-                }
+                  "ttl_seconds": 10,
+                  "event_type": null,
+                  "event_filter": null
+                },
+                "ack_scope": "actor"
               }
             }
           ],
-          1005
+          null
         ],
         "expected": false
       }
     },
     {
       "id": "terminated-ttl-expired",
+      "description": "A TTL message terminates after its expiry. # inherits: hd=python/honest-alerts/honest-alerts-pure.hd::is_terminated -> feature=specs/features/honest-alerts.feature::is_terminated",
       "value_case": {
         "function": "is_terminated",
         "args": [
           {
-            "event_type": "alert.sent",
-            "timestamp": 1000,
-            "payload": {
-              "message_id": "m1",
-              "recipient": {
-                "type": "user",
-                "id": "u1"
-              },
-              "sent_at": 1000,
-              "ack_scope": "actor",
-              "termination": {
-                "condition": "ttl",
-                "ttl_seconds": 10
-              }
-            }
+            "message_id": "019634a0-0000-7000-8000-000000000001",
+            "message_type": "sys.notice",
+            "sender": {
+              "type": "framework",
+              "id": "alerts",
+              "tenant_id": null
+            },
+            "recipient": {
+              "type": "user",
+              "id": "u1",
+              "tenant_id": null
+            },
+            "payload": {},
+            "reply_required": false,
+            "resume_token": null,
+            "sent_at": 1000,
+            "message_version": "1",
+            "subject_label_id": "sys.notice",
+            "body_label_id": null,
+            "channel": null,
+            "dom_surface": null,
+            "dom_target": null,
+            "reply_options": null,
+            "termination": {
+              "condition": "ttl",
+              "ttl_seconds": 10,
+              "event_type": null,
+              "event_filter": null
+            },
+            "ack_scope": "actor"
           },
           {
             "type": "user",
-            "id": "u1"
+            "id": "u1",
+            "tenant_id": null
           },
+          1011,
           [
             {
               "event_type": "alert.sent",
               "timestamp": 1000,
               "payload": {
-                "message_id": "m1",
+                "message_id": "019634a0-0000-7000-8000-000000000001",
+                "message_type": "sys.notice",
+                "sender": {
+                  "type": "framework",
+                  "id": "alerts",
+                  "tenant_id": null
+                },
                 "recipient": {
                   "type": "user",
-                  "id": "u1"
+                  "id": "u1",
+                  "tenant_id": null
                 },
+                "payload": {},
+                "reply_required": false,
+                "resume_token": null,
                 "sent_at": 1000,
-                "ack_scope": "actor",
+                "message_version": "1",
+                "subject_label_id": "sys.notice",
+                "body_label_id": null,
+                "channel": null,
+                "dom_surface": null,
+                "dom_target": null,
+                "reply_options": null,
                 "termination": {
                   "condition": "ttl",
-                  "ttl_seconds": 10
-                }
+                  "ttl_seconds": 10,
+                  "event_type": null,
+                  "event_filter": null
+                },
+                "ack_scope": "actor"
               }
             }
           ],
-          1011
+          null
         ],
         "expected": true
       }
     },
     {
       "id": "terminated-never",
+      "description": "A never-terminated message remains live. # inherits: hd=python/honest-alerts/honest-alerts-pure.hd::is_terminated -> feature=specs/features/honest-alerts.feature::is_terminated",
       "value_case": {
         "function": "is_terminated",
         "args": [
           {
-            "event_type": "alert.sent",
-            "timestamp": 1000,
-            "payload": {
-              "message_id": "m1",
-              "recipient": {
-                "type": "user",
-                "id": "u1"
-              },
-              "sent_at": 1000,
-              "ack_scope": "actor",
-              "termination": {
-                "condition": "never"
-              }
-            }
+            "message_id": "019634a0-0000-7000-8000-000000000001",
+            "message_type": "sys.notice",
+            "sender": {
+              "type": "framework",
+              "id": "alerts",
+              "tenant_id": null
+            },
+            "recipient": {
+              "type": "user",
+              "id": "u1",
+              "tenant_id": null
+            },
+            "payload": {},
+            "reply_required": false,
+            "resume_token": null,
+            "sent_at": 1000,
+            "message_version": "1",
+            "subject_label_id": "sys.notice",
+            "body_label_id": null,
+            "channel": null,
+            "dom_surface": null,
+            "dom_target": null,
+            "reply_options": null,
+            "termination": {
+              "condition": "never",
+              "ttl_seconds": null,
+              "event_type": null,
+              "event_filter": null
+            },
+            "ack_scope": "actor"
           },
           {
             "type": "user",
-            "id": "u1"
+            "id": "u1",
+            "tenant_id": null
           },
+          9999999,
           [],
-          9999999
+          null
         ],
         "expected": false
       }
     },
     {
       "id": "mailbox-orders-and-filters",
+      "description": "Mailbox filters recipients and orders pending Messages by sent_at. # inherits: hd=python/honest-alerts/honest-alerts-pure.hd::mailbox -> feature=specs/features/honest-alerts.feature::mailbox",
       "value_case": {
         "function": "mailbox",
         "args": [
           {
             "type": "user",
-            "id": "u1"
+            "id": "u1",
+            "tenant_id": null
           },
+          3000,
           [
             {
               "event_type": "alert.sent",
               "timestamp": 2000,
               "payload": {
-                "message_id": "m2",
+                "message_id": "019634a0-0000-7000-8000-000000000002",
+                "message_type": "sys.notice",
+                "sender": {
+                  "type": "framework",
+                  "id": "alerts",
+                  "tenant_id": null
+                },
                 "recipient": {
                   "type": "user",
-                  "id": "u1"
+                  "id": "u1",
+                  "tenant_id": null
                 },
+                "payload": {},
+                "reply_required": false,
+                "resume_token": null,
                 "sent_at": 2000,
-                "ack_scope": "actor",
+                "message_version": "1",
+                "subject_label_id": "sys.notice",
+                "body_label_id": null,
+                "channel": null,
+                "dom_surface": null,
+                "dom_target": null,
+                "reply_options": null,
                 "termination": {
-                  "condition": "never"
-                }
+                  "condition": "never",
+                  "ttl_seconds": null,
+                  "event_type": null,
+                  "event_filter": null
+                },
+                "ack_scope": "actor"
               }
             },
             {
               "event_type": "alert.sent",
               "timestamp": 1000,
               "payload": {
-                "message_id": "m1",
+                "message_id": "019634a0-0000-7000-8000-000000000001",
+                "message_type": "sys.notice",
+                "sender": {
+                  "type": "framework",
+                  "id": "alerts",
+                  "tenant_id": null
+                },
                 "recipient": {
                   "type": "user",
-                  "id": "u1"
+                  "id": "u1",
+                  "tenant_id": null
                 },
+                "payload": {},
+                "reply_required": false,
+                "resume_token": null,
                 "sent_at": 1000,
-                "ack_scope": "actor",
+                "message_version": "1",
+                "subject_label_id": "sys.notice",
+                "body_label_id": null,
+                "channel": null,
+                "dom_surface": null,
+                "dom_target": null,
+                "reply_options": null,
                 "termination": {
-                  "condition": "never"
-                }
+                  "condition": "never",
+                  "ttl_seconds": null,
+                  "event_type": null,
+                  "event_filter": null
+                },
+                "ack_scope": "actor"
               }
             },
             {
               "event_type": "alert.sent",
               "timestamp": 1000,
               "payload": {
-                "message_id": "m3",
+                "message_id": "019634a0-0000-7000-8000-000000000003",
+                "message_type": "sys.notice",
+                "sender": {
+                  "type": "framework",
+                  "id": "alerts",
+                  "tenant_id": null
+                },
                 "recipient": {
                   "type": "user",
-                  "id": "u2"
+                  "id": "u2",
+                  "tenant_id": null
                 },
+                "payload": {},
+                "reply_required": false,
+                "resume_token": null,
                 "sent_at": 1000,
-                "ack_scope": "actor",
+                "message_version": "1",
+                "subject_label_id": "sys.notice",
+                "body_label_id": null,
+                "channel": null,
+                "dom_surface": null,
+                "dom_target": null,
+                "reply_options": null,
                 "termination": {
-                  "condition": "never"
-                }
+                  "condition": "never",
+                  "ttl_seconds": null,
+                  "event_type": null,
+                  "event_filter": null
+                },
+                "ack_scope": "actor"
               }
             }
           ],
-          3000
+          null
         ],
         "expected": [
           {
-            "event_type": "alert.sent",
-            "timestamp": 1000,
-            "payload": {
-              "message_id": "m1",
-              "recipient": {
-                "type": "user",
-                "id": "u1"
-              },
-              "sent_at": 1000,
-              "ack_scope": "actor",
-              "termination": {
-                "condition": "never"
-              }
-            }
+            "message_id": "019634a0-0000-7000-8000-000000000001",
+            "message_type": "sys.notice",
+            "sender": {
+              "type": "framework",
+              "id": "alerts",
+              "tenant_id": null
+            },
+            "recipient": {
+              "type": "user",
+              "id": "u1",
+              "tenant_id": null
+            },
+            "payload": {},
+            "reply_required": false,
+            "resume_token": null,
+            "sent_at": 1000,
+            "message_version": "1",
+            "subject_label_id": "sys.notice",
+            "body_label_id": null,
+            "channel": null,
+            "dom_surface": null,
+            "dom_target": null,
+            "reply_options": null,
+            "termination": {
+              "condition": "never",
+              "ttl_seconds": null,
+              "event_type": null,
+              "event_filter": null
+            },
+            "ack_scope": "actor"
           },
           {
-            "event_type": "alert.sent",
-            "timestamp": 2000,
-            "payload": {
-              "message_id": "m2",
-              "recipient": {
-                "type": "user",
-                "id": "u1"
-              },
-              "sent_at": 2000,
-              "ack_scope": "actor",
-              "termination": {
-                "condition": "never"
-              }
-            }
+            "message_id": "019634a0-0000-7000-8000-000000000002",
+            "message_type": "sys.notice",
+            "sender": {
+              "type": "framework",
+              "id": "alerts",
+              "tenant_id": null
+            },
+            "recipient": {
+              "type": "user",
+              "id": "u1",
+              "tenant_id": null
+            },
+            "payload": {},
+            "reply_required": false,
+            "resume_token": null,
+            "sent_at": 2000,
+            "message_version": "1",
+            "subject_label_id": "sys.notice",
+            "body_label_id": null,
+            "channel": null,
+            "dom_surface": null,
+            "dom_target": null,
+            "reply_options": null,
+            "termination": {
+              "condition": "never",
+              "ttl_seconds": null,
+              "event_type": null,
+              "event_filter": null
+            },
+            "ack_scope": "actor"
           }
         ]
       }
@@ -1009,182 +1197,271 @@
     },
     {
       "id": "advance-created-deliver",
+      "description": "A declared lifecycle transition returns the next state directly. # inherits: hd=python/honest-alerts/honest-alerts-pure.hd::advance -> feature=specs/features/honest-alerts.feature::advance",
       "value_case": {
         "function": "advance",
         "args": [
           "created",
           "deliver"
         ],
-        "expected": {
-          "ok": {
-            "state": "delivered",
-            "event": "alert.delivered"
-          }
-        }
+        "expected": "delivered"
       }
     },
     {
       "id": "advance-delivered-acknowledge",
+      "description": "A declared lifecycle transition returns the next state directly. # inherits: hd=python/honest-alerts/honest-alerts-pure.hd::advance -> feature=specs/features/honest-alerts.feature::advance",
       "value_case": {
         "function": "advance",
         "args": [
           "delivered",
           "acknowledge"
         ],
-        "expected": {
-          "ok": {
-            "state": "acknowledged",
-            "event": "alert.acknowledged"
-          }
-        }
+        "expected": "acknowledged"
       }
     },
     {
       "id": "advance-escalated-expire",
+      "description": "A declared lifecycle transition returns the next state directly. # inherits: hd=python/honest-alerts/honest-alerts-pure.hd::advance -> feature=specs/features/honest-alerts.feature::advance",
       "value_case": {
         "function": "advance",
         "args": [
           "escalated",
           "expire"
         ],
-        "expected": {
-          "ok": {
-            "state": "expired",
-            "event": "alert.expired"
-          }
-        }
+        "expected": "expired"
       }
     },
     {
-      "id": "build-message-defaults",
+      "id": "build-message-explicit-options",
+      "description": "Build a message with a registered version and explicit caller options. # inherits: hd=python/honest-alerts/honest-alerts.hd::build_message -> feature=specs/features/honest-alerts.feature::build_message",
       "value_case": {
         "function": "build_message",
         "args": [
           "sys.notice",
           {
             "type": "dom",
-            "id": null
+            "id": null,
+            "tenant_id": null
           },
           {},
           {
+            "message_version": "1",
+            "subject_label_id": "sys.notice",
+            "body_label_id": null,
+            "channel": null,
+            "dom_surface": null,
+            "dom_target": null,
+            "reply_options": null,
             "termination": {
-              "condition": "never"
-            }
+              "condition": "never",
+              "ttl_seconds": null,
+              "event_type": null,
+              "event_filter": null
+            },
+            "ack_scope": "actor"
           },
           {
-            "actor": {
-              "type": "role",
-              "id": "mgr"
-            }
+            "type": "role",
+            "id": "mgr",
+            "tenant_id": null
           },
-          "m2",
-          2000
+          "019634a0-0000-7000-8000-000000000002",
+          2000,
+          false,
+          {
+            "message_type": "sys.notice",
+            "message_versions": [
+              "1"
+            ]
+          }
         ],
         "expected": {
-          "message_id": "m2",
+          "message_id": "019634a0-0000-7000-8000-000000000002",
           "message_type": "sys.notice",
-          "message_version": "1",
           "sender": {
             "type": "role",
-            "id": "mgr"
+            "id": "mgr",
+            "tenant_id": null
           },
           "recipient": {
             "type": "dom",
-            "id": null
+            "id": null,
+            "tenant_id": null
           },
-          "subject_label_id": "sys.notice",
           "payload": {},
           "reply_required": false,
+          "resume_token": null,
+          "sent_at": 2000,
+          "message_version": "1",
+          "subject_label_id": "sys.notice",
+          "body_label_id": null,
+          "channel": null,
+          "dom_surface": null,
+          "dom_target": null,
+          "reply_options": null,
           "termination": {
-            "condition": "never"
+            "condition": "never",
+            "ttl_seconds": null,
+            "event_type": null,
+            "event_filter": null
           },
-          "ack_scope": "actor",
-          "sent_at": 2000
+          "ack_scope": "actor"
         }
       }
     },
     {
       "id": "build-message-framework-sender",
+      "description": "Preserve the explicitly supplied framework sender and session scope. # inherits: hd=python/honest-alerts/honest-alerts.hd::build_message -> feature=specs/features/honest-alerts.feature::build_message",
       "value_case": {
         "function": "build_message",
         "args": [
-          "x",
+          "sys.notice",
           {
             "type": "user",
-            "id": "u1"
+            "id": "u1",
+            "tenant_id": null
           },
           {},
           {
+            "message_version": "1",
+            "subject_label_id": "sys.notice",
+            "body_label_id": null,
+            "channel": null,
+            "dom_surface": null,
+            "dom_target": null,
+            "reply_options": null,
             "termination": {
-              "condition": "never"
+              "condition": "never",
+              "ttl_seconds": null,
+              "event_type": null,
+              "event_filter": null
             },
             "ack_scope": "session"
           },
-          {},
-          "m3",
-          3000
+          {
+            "type": "framework",
+            "id": "alerts",
+            "tenant_id": null
+          },
+          "019634a0-0000-7000-8000-000000000003",
+          3000,
+          false,
+          {
+            "message_type": "sys.notice",
+            "message_versions": [
+              "1"
+            ]
+          }
         ],
         "expected": {
-          "message_id": "m3",
-          "message_type": "x",
-          "message_version": "1",
+          "message_id": "019634a0-0000-7000-8000-000000000003",
+          "message_type": "sys.notice",
           "sender": {
-            "type": "framework"
+            "type": "framework",
+            "id": "alerts",
+            "tenant_id": null
           },
           "recipient": {
             "type": "user",
-            "id": "u1"
+            "id": "u1",
+            "tenant_id": null
           },
-          "subject_label_id": "x",
           "payload": {},
           "reply_required": false,
+          "resume_token": null,
+          "sent_at": 3000,
+          "message_version": "1",
+          "subject_label_id": "sys.notice",
+          "body_label_id": null,
+          "channel": null,
+          "dom_surface": null,
+          "dom_target": null,
+          "reply_options": null,
           "termination": {
-            "condition": "never"
+            "condition": "never",
+            "ttl_seconds": null,
+            "event_type": null,
+            "event_filter": null
           },
-          "ack_scope": "session",
-          "sent_at": 3000
+          "ack_scope": "session"
         }
       }
     },
     {
-      "id": "build-message-surface-default-termination",
+      "id": "build-message-toast-explicit-termination",
+      "description": "Preserve the explicitly supplied toast surface and TTL. # inherits: hd=python/honest-alerts/honest-alerts.hd::build_message -> feature=specs/features/honest-alerts.feature::build_message",
       "value_case": {
         "function": "build_message",
         "args": [
-          "x",
+          "sys.notice",
           {
             "type": "user",
-            "id": "u1"
+            "id": "u1",
+            "tenant_id": null
           },
           {},
           {
-            "dom_surface": "toast"
+            "message_version": "1",
+            "subject_label_id": "sys.notice",
+            "body_label_id": null,
+            "channel": "dom",
+            "dom_surface": "toast",
+            "dom_target": null,
+            "reply_options": null,
+            "termination": {
+              "condition": "ttl",
+              "ttl_seconds": 5,
+              "event_type": null,
+              "event_filter": null
+            },
+            "ack_scope": "actor"
           },
-          {},
-          "m4",
-          4000
+          {
+            "type": "framework",
+            "id": "alerts",
+            "tenant_id": null
+          },
+          "019634a0-0000-7000-8000-000000000004",
+          4000,
+          false,
+          {
+            "message_type": "sys.notice",
+            "message_versions": [
+              "1"
+            ]
+          }
         ],
         "expected": {
-          "message_id": "m4",
-          "message_type": "x",
-          "message_version": "1",
+          "message_id": "019634a0-0000-7000-8000-000000000004",
+          "message_type": "sys.notice",
           "sender": {
-            "type": "framework"
+            "type": "framework",
+            "id": "alerts",
+            "tenant_id": null
           },
           "recipient": {
             "type": "user",
-            "id": "u1"
+            "id": "u1",
+            "tenant_id": null
           },
-          "subject_label_id": "x",
           "payload": {},
           "reply_required": false,
+          "resume_token": null,
+          "sent_at": 4000,
+          "message_version": "1",
+          "subject_label_id": "sys.notice",
+          "body_label_id": null,
+          "channel": "dom",
+          "dom_surface": "toast",
+          "dom_target": null,
+          "reply_options": null,
           "termination": {
             "condition": "ttl",
-            "ttl_seconds": 5
+            "ttl_seconds": 5,
+            "event_type": null,
+            "event_filter": null
           },
-          "ack_scope": "actor",
-          "sent_at": 4000,
-          "dom_surface": "toast"
+          "ack_scope": "actor"
         }
       }
     },

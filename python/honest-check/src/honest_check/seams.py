@@ -3,6 +3,9 @@ loads every module's parsed declaration and reaches one door, check_seams, which
 runs the three cross-module rules over the in-scope modules. The rules are pure: a
 declaration arrives already parsed, so nothing here opens a file."""
 
+import re
+from pathlib import Path
+
 from ._util import choose, pick, read_or
 
 
@@ -16,22 +19,28 @@ _WORLD_TOKENS = {
 }
 
 
+# inherits: hd=python/honest-check/honest-check.hd::_is_world -> feature=specs/features/honest-check.feature::_is_world identifies recognized world and resource targets -> test=python/honest-check/conformance/probe_parsed_seams_is_world.py::probe_parsed_seams_is_world
+# hd: _is_world
 def _is_world(target):
     return bool(target in _WORLD_TOKENS or ":" in target or target.isupper())
 
 
+# inherits: hd=python/honest-check/honest-check.hd::_bare_seam -> feature=specs/features/honest-check.feature::_bare_seam keeps only a standalone bare module target -> test=python/honest-check/conformance/probe_parsed_seams_bare_seam.py::probe_parsed_seams_bare_seam
+# hd: _bare_seam
 def _bare_seam(caller, effect):
     target = effect["target"]
     return pick(
-        _is_world(target),
+        _is_world(target) or re.fullmatch(_HD_IDENTIFIER, target) is None,
         lambda: [],
         lambda: [{"caller": caller, "module": target, "door": "", "direction": effect["direction"]}],
     )
 
 
+# inherits: hd=python/honest-check/honest-check.hd::_seam_of -> feature=specs/features/honest-check.feature::_seam_of preserves a qualified seam and skips an empty target -> test=python/honest-check/conformance/probe_parsed_seams_seam_of.py::probe_parsed_seams_seam_of
+# hd: _seam_of
 def _seam_of(caller, effect):
     return pick(
-        effect["module"] != "",
+        effect["target"] != "" and effect["module"] != "",
         lambda: [
             {"caller": caller, "module": effect["module"], "door": effect["door"], "direction": effect["direction"]}
         ],
@@ -39,11 +48,13 @@ def _seam_of(caller, effect):
     )
 
 
+# inherits: hd=python/honest-check/honest-check.hd::declared_seams -> feature=specs/features/honest-check.feature::declared_seams -> test=python/honest-check/conformance/probe_parsed_seams_declared_seams.py::probe_parsed_seams_declared_seams
+# hd: declared_seams
 def declared_seams(module):
     """Every cross-module seam one module declares — one per side effect whose target
     names another module; a world-named side effect is skipped (§8). A bare module
-    target (whose declaration-parsed `module` field is empty) is kept when it is not
-    a world token."""
+    target (whose declaration-parsed `module` field is empty) is kept when it names
+    a module and is not a world token."""
     out = []
     for function in module["functions"]:
         caller = function["name"]
@@ -149,19 +160,101 @@ def check_ref012(module, manifest_deps, workspace_module_names, path):
     return out
 
 
+_HD_IDENTIFIER = r"[a-zA-Z_][a-zA-Z0-9_]*(?:-[a-zA-Z0-9_]+)*"
+_PURE_CALL_TARGET = re.compile(rf"{_HD_IDENTIFIER}\.{_HD_IDENTIFIER}")
+
+
+# inherits: hd=python/honest-check/honest-check.hd::resolve_pure_calls -> feature=specs/features/honest-check.feature::resolve_pure_calls returns invalid_role for impure targets -> test=python/honest-check/conformance/probe_resolve_pure_calls_impure.py::probe_resolve_pure_calls_impure
+# inherits: hd=python/honest-check/honest-check.hd::resolve_pure_calls -> feature=specs/features/honest-check.feature::resolve_pure_calls returns unresolved for malformed targets -> test=python/honest-check/conformance/probe_resolve_pure_calls_malformed.py::probe_resolve_pure_calls_malformed
+# inherits: hd=python/honest-check/honest-check.hd::resolve_pure_calls -> feature=specs/features/honest-check.feature::resolve_pure_calls returns unresolved for missing targets -> test=python/honest-check/conformance/probe_resolve_pure_calls_missing.py::probe_resolve_pure_calls_missing
+# inherits: hd=python/honest-check/honest-check.hd::resolve_pure_calls -> feature=specs/features/honest-check.feature::resolve_pure_calls preserves resolved occurrences in declaration order -> test=python/honest-check/conformance/probe_resolve_pure_calls_ordered.py::probe_resolve_pure_calls_ordered
+# hd: resolve_pure_calls
+def resolve_pure_calls(module, declarations):
+    """Resolve each authored pure call without introducing an I/O seam."""
+    resolutions = []
+    for caller in module["functions"]:
+        for target in read_or(caller, "pure_calls", []):
+            target_module, _, target_name = target.partition(".")
+            qualified = _PURE_CALL_TARGET.fullmatch(target) is not None
+            target_module = choose(qualified, target_module, "")
+            declaration = read_or(declarations, target_module, None)
+            functions = pick(
+                qualified and target_module != module["name"] and declaration is not None,
+                lambda: declaration["functions"],
+                lambda: [],
+            )
+            callee = next(filter(lambda function: function["name"] == target_name, functions), None)
+            pure = (
+                callee is not None
+                and not read_or(callee, "side_effects", [])
+                and all(function["role"] == "fn" for function in functions)
+            )
+            status = choose(callee is None, "unresolved", choose(pure, "resolved", "invalid_role"))
+            resolutions.append({
+                "caller": caller["name"],
+                "target": target,
+                "module": target_module,
+                "status": status,
+            })
+    return resolutions
+
+
+# inherits: hd=python/honest-check/honest-check.hd::pure_call_findings -> feature=specs/features/honest-check.feature::pure_call_findings reports ordered errors at the caller declaration path -> test=python/honest-check/conformance/probe_pure_call_findings_ordered.py::probe_pure_call_findings_ordered
+# hd: pure_call_findings
+def pure_call_findings(calls, path):
+    """Report every failed pure call in annotation order at its declaration."""
+    findings = []
+    for call in filter(lambda call: call["status"] != "resolved", calls):
+        rule, problem = choose(
+            call["status"] == "unresolved",
+            ("HC-REF006", "does not resolve to a declared function in another module"),
+            ("HC-REF007", "must target a plain function without side effects in a boundaryless module"),
+        )
+        findings.append(_seam_diagnostic(rule, path, f"{call['caller']}: pure_call {call['target']!r} {problem}"))
+    return findings
+
+
+# inherits: hd=python/honest-check/honest-check.hd::distribution_pure_dependencies -> feature=specs/features/honest-check.feature::distribution_pure_dependencies includes only resolved calls from the caller distribution -> test=python/honest-check/conformance/probe_distribution_pure_dependencies_resolved.py::probe_distribution_pure_dependencies_resolved
+# hd: distribution_pure_dependencies
+def distribution_pure_dependencies(module_name, paths, calls_by_module):
+    """Collect resolved target modules from declarations in the owner's manifest directory."""
+    owner_path = read_or(paths, module_name, "")
+    directory = Path(owner_path).parent
+    members = filter(
+        lambda member: owner_path and member[1] and Path(member[1]).parent == directory,
+        paths.items(),
+    )
+    return {
+        call["module"]
+        for name, _ in members
+        for call in filter(
+            lambda call: call["status"] == "resolved", read_or(calls_by_module, name, [])
+        )
+    }
+
+
+# inherits: hd=python/honest-check/honest-check.hd::run_seam_rules -> feature=specs/features/honest-check.feature::run_seam_rules checks scoped pure calls alongside I/O seams -> test=python/honest-check/conformance/probe_run_seam_rules_scoped_pure_calls.py::probe_run_seam_rules_scoped_pure_calls
+# hd: run_seam_rules
 def run_seam_rules(declarations, paths, manifest_deps, in_scope):
-    """The seam orchestrator (§8): run HC-REF006, HC-REF007 and HC-REF012 over each
-    in-scope module, resolving seams against the complete declarations map."""
+    """Resolve against the full workspace and report findings for the selected modules."""
     scope = choose(len(in_scope) == 0, list(declarations.keys()), in_scope)
     workspace = list(declarations.keys())
+    calls_by_module = {
+        name: resolve_pure_calls(module, declarations) for name, module in declarations.items()
+    }
     out = []
     for name in scope:
         module = declarations[name]
         path = read_or(paths, name, "")
         dependencies = read_or(manifest_deps, name, [])
+        pure_dependencies = distribution_pure_dependencies(name, paths, calls_by_module)
+        dependencies_without_pure_evidence = list(
+            filter(lambda dependency: dependency not in pure_dependencies, dependencies)
+        )
         out.extend(check_hc_ref006(module, declarations, path))
         out.extend(check_hc_ref007(module, declarations, path))
-        out.extend(check_ref012(module, dependencies, workspace, path))
+        out.extend(pure_call_findings(calls_by_module[name], path))
+        out.extend(check_ref012(module, dependencies_without_pure_evidence, workspace, path))
     return out
 
 

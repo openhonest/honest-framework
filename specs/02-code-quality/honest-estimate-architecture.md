@@ -20,7 +20,7 @@ The estimator reads the declaration (the `.hd`), not the code, for everything it
 - **Bits of specified case-distinction.** The depth reading. Defined in §6.1.
 - **Cost.** Dollars: compute + human oversight + tooling. The business axis, and the clean dollar bridge to Jones. §6.2.
 - **Duration.** Wall-clock calendar time. The time-to-market axis. §6.3.
-- **Code-honesty census.** The existing per-`def` count that `feature-gate.sh` enforces (one gherkin scenario per function, privates included). It is NOT a size number. See §4.
+- **Code-honesty census.** The existing per-`def` count that `feature-gate.sh` enforces (one or more Gherkin scenarios per function, privates included). It is NOT a size number. See §4.
 
 ## 3. Scope and non-goals
 

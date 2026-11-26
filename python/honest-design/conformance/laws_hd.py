@@ -12,6 +12,27 @@ failures; run() aggregates.
 from pathlib import Path
 
 from honest_design import err, fault, ok, read_hd, reach, render, validate
+from probe_couples_on import probe_couples_on
+from probe_read_field_shape import probe_read_field_shape
+from probe_read_function_legacy_edge import probe_read_function_legacy_edge
+from probe_read_pure_call_target import probe_read_pure_call_target
+from probe_read_function_repeated_pure_calls import probe_read_function_repeated_pure_calls
+from probe_read_function_absent_pure_calls import probe_read_function_absent_pure_calls
+from probe_read_module_authored_version import probe_read_module_authored_version
+from probe_read_module_omitted_version import probe_read_module_omitted_version
+from probe_read_parameter_shape import probe_read_parameter_shape
+from probe_read_version import probe_read_version
+from probe_reserved_field_foreign_record import probe_reserved_field_foreign_record
+from probe_reserved_field_no_discriminant import probe_reserved_field_no_discriminant
+from probe_reserved_field_fault_record import probe_reserved_field_fault_record
+from probe_reserved_field_vocabulary import probe_reserved_field_vocabulary
+from probe_edge_role_withdrawn_legacy import probe_edge_role_withdrawn_legacy
+from probe_edge_role_withdrawn_column_one import probe_edge_role_withdrawn_column_one
+from probe_edge_role_withdrawn_other_roles import probe_edge_role_withdrawn_other_roles
+from probe_impure_pure_functions_legacy_edge import probe_impure_pure_functions_legacy_edge
+from probe_held_not_read_legacy_edge_direct import probe_held_not_read_legacy_edge_direct
+from probe_held_not_read_legacy_edge_alias import probe_held_not_read_legacy_edge_alias
+from probe_unknown_side_kind import probe_unknown_side_kind
 from honest_design import __all__ as PUBLIC
 
 
@@ -702,6 +723,8 @@ def _probe_public_surface():
     return []
 
 
+# scenario: _bad_projections faults a dispatch projection that names no real field
+# inherits: hd=python/honest-design/honest-design.hd::_bad_projections -> feature=python/honest-design/features/honest-design.feature::_bad_projections faults a dispatch projection that names no real field
 def _probe_projection():
     """`from` reads back, stays optional, and is checked rather than decorative."""
     bad = []
@@ -722,6 +745,9 @@ def _probe_projection():
     mismatch = validate(_module(src.replace("fn g : (b: int)", "fn g : (b: str)")))
     if [f["code"] for f in mismatch] != ["projection_mismatch"]:
         bad.append(f"a handler that does not take the projected field must fault: {mismatch}")
+    extra_parameter = validate(_module(src.replace("fn g : (b: int)", "fn g : (b: int, extra: str)")))
+    if [f["code"] for f in extra_parameter] != ["projection_mismatch"]:
+        bad.append(f"a projection must satisfy the handler's entire input: {extra_parameter}")
     return bad
 
 
@@ -1100,9 +1126,30 @@ def _probe_reserved_field():
 
 def run():
     probes = {
+        "read_field_shape": probe_read_field_shape(),
+        "read_function_legacy_edge": probe_read_function_legacy_edge(),
+        "read_pure_call_target": probe_read_pure_call_target(),
+        "read_function_repeated_pure_calls": probe_read_function_repeated_pure_calls(),
+        "read_function_absent_pure_calls": probe_read_function_absent_pure_calls(),
+        "read_module_authored_version": probe_read_module_authored_version(),
+        "read_module_omitted_version": probe_read_module_omitted_version(),
+        "read_parameter_shape": probe_read_parameter_shape(),
+        "read_version": probe_read_version(),
+        "reserved_field_foreign_record": probe_reserved_field_foreign_record(),
+        "reserved_field_no_discriminant": probe_reserved_field_no_discriminant(),
+        "reserved_field_fault_record": probe_reserved_field_fault_record(),
+        "reserved_field_vocabulary": probe_reserved_field_vocabulary(),
+        "edge_role_withdrawn_legacy": probe_edge_role_withdrawn_legacy(),
+        "edge_role_withdrawn_column_one": probe_edge_role_withdrawn_column_one(),
+        "edge_role_withdrawn_other_roles": probe_edge_role_withdrawn_other_roles(),
+        "impure_pure_functions_legacy_edge": probe_impure_pure_functions_legacy_edge(),
+        "held_not_read_legacy_edge_direct": probe_held_not_read_legacy_edge_direct(),
+        "held_not_read_legacy_edge_alias": probe_held_not_read_legacy_edge_alias(),
+        "unknown_side_kind": probe_unknown_side_kind(),
         "reserved_field": _probe_reserved_field(),
         "edge": _probe_edge(),
         "couples_on": _probe_couples_on(),
+        "side_policy": probe_couples_on(),
         "side_kinds": _probe_side_kinds(),
         "door_orchestrator": _probe_door_orchestrator(),
         "module": _probe_module(),

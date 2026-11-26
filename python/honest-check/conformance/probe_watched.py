@@ -1,3 +1,5 @@
+# scenario: watched
+# inherits: hd=python/honest-check/honest-check.hd::watched -> feature=specs/features/honest-check.feature::watched
 """Honest probe for honest-check's watched (Scenario: watched).
 
 watched returns true when a call's dotted target is on the watch list: an exact
@@ -12,8 +14,10 @@ the scenario names.
 from honest_parse import parse, walk
 
 
-def _call_target(source):
+def _call_target(source, read_reference):
     root = parse(source.encode("utf-8"), "python").root_node
+    if read_reference:
+        return root.named_children[0].named_children[0]
     for node in walk(root):
         if node.type == "call":
             return node.child_by_field_name("function")
@@ -23,13 +27,21 @@ def _call_target(source):
 # Each case: a call source (its dotted target is what watched reads), the watch
 # set, and whether that target is watched.
 _CASES = [
+    {"src": "os.environ", "watch": {"os.environ"}, "expect": True, "read_reference": True},
+    {"src": "__file__", "watch": {"__file__"}, "expect": True, "read_reference": True},
+    {"src": "environ", "watch": {"os.environ"}, "expect": False, "read_reference": True},
     {"src": "os.system(a)", "watch": {"os.system"}, "expect": True},                # exact match
     {"src": "os.system(a)", "watch": {"os.remove"}, "expect": False},               # exact miss
     {"src": "os.system(a)", "watch": {"os.*"}, "expect": True},                      # trailing .* : any attr of module os
     {"src": "os.system(a)", "watch": {"shutil.*"}, "expect": False},                # .* on a different module misses
     {"src": "requests.get(u)", "watch": {"requests*"}, "expect": True},             # trailing * : prefix
+    {"src": "request.get(u)", "watch": {"requests*"}, "expect": False},
     {"src": "flask.get(u)", "watch": {"requests*"}, "expect": False},               # prefix miss
     {"src": "urllib.request.urlopen(u)", "watch": {"urllib.*.urlopen"}, "expect": True},  # * between dots : one segment
+    {"src": "os.system.path(a)", "watch": {"os.*"}, "expect": False},
+    {"src": "urllib.request.extra.urlopen(u)", "watch": {"urllib.*.urlopen"}, "expect": False},
+    {"src": "urllib.request.retrieve(u)", "watch": {"urllib.*.urlopen"}, "expect": False},
+    {"src": "requests.get(u)", "watch": {"requests."}, "expect": False},
     {"src": "open(f)", "watch": {"os.system"}, "expect": False},                    # unrelated target, not watched
 ]
 
@@ -43,7 +55,7 @@ def probe_watched():
 
     bad = []
     for case in _CASES:
-        target = _call_target(case["src"])
+        target = _call_target(case["src"], case.get("read_reference", False))
         if target is None:
             bad.append(f"test setup: no call target in {case['src']!r}")
             continue

@@ -2,10 +2,12 @@
 reads structure off a node and answers data; the node kind keys a closed handler
 table and every other decision is boolean algebra."""
 
-from honest_parse import walk
+import re
+
+from honest_parse import language_of, walk
 
 from ._util import choose, pick, read_or
-from .nodes import _field, bare_or_final_name, literal_string, param_names
+from .nodes import _field, _text, bare_or_final_name, literal_string, param_names
 
 _IMMUTABLE_TYPES = {"integer", "float", "string", "true", "false", "none", "tuple"}
 
@@ -121,14 +123,51 @@ def _segment_match(entry, text):
     )
 
 
+# inherits: hd=python/honest-check/honest-check.hd::watched -> feature=specs/features/honest-check.feature::watched -> test=python/honest-check/conformance/probe_watched.py::probe_watched
+# inherits: hd=python/honest-check/honest-check.hd::watched -> feature=specs/features/honest-check.feature::watched resolves static JavaScript member names independent of spacing -> test=python/honest-check/conformance/probe_watched_javascript_members.py::probe_watched_javascript_members
+# inherits: hd=python/honest-check/honest-check.hd::watched -> feature=specs/features/honest-check.feature::watched matches static Ruby methods and Go selectors -> test=python/honest-check/conformance/probe_p004_watched_ruby_go.py::probe_p004_watched_ruby_go
+# hd: watched
 def watched(target, watch):
-    """True when a call's dotted target matches a watch entry — exact, a trailing
-    `*` prefix, or a `*` segment glob (§5.4)."""
-    text = target.text.decode("utf-8")
+    """Match the spelling of a call target or supplied read reference (§5.4)."""
+    member = target.type == "member_expression"
+    match target.type:
+        case "subscript_expression":
+            return False
+    parts = []
+    node = target
+    static = True
+    method = _field(target, "method")
+    match target.type, method is not None:
+        case "call", True:
+            receiver = _field(target, "receiver")
+            static = receiver is None or receiver.type in {"identifier", "constant"} or (
+                receiver.type == "scope_resolution"
+                and all(not piece.is_named or piece.type in {"scope_resolution", "constant"} for piece in walk(receiver))
+            )
+            prefix = "".join((_text(receiver) or "").split())
+            parts = list(filter(bool, (_text(method), prefix)))
+            node = None
+        case "selector_expression", _:
+            operand = _field(target, "operand")
+            field = _field(target, "field")
+            static = operand is not None and operand.type == "identifier" and field is not None
+            parts = [_text(field), _text(operand)]
+            node = None
+    while node is not None and node.type == "member_expression":
+        property_node = _field(node, "property")
+        static = static and property_node is not None and property_node.type == "property_identifier"
+        parts.append(_text(property_node))
+        node = _field(node, "object")
+    match not static or (member and (node is None or node.type != "identifier")):
+        case True:
+            return False
+    text = ".".join(reversed(list(filter(bool, [*parts, _text(node)]))))
     return any(_entry_matches(entry, text) for entry in watch)
 
 
 _CALL_TYPES = {"call", "call_expression"}
+_PYTHON_WATCHED_READS = {"os.environ", "sys.argv", "sys.version", "sys.path", "__file__", "__name__"}
+_JAVASCRIPT_WATCHED_READS = {"process.env", "process.argv", "process.pid", "process.platform", "process.version", "document.cookie"}
 
 
 def _own_body_nodes(fdef):
@@ -137,13 +176,58 @@ def _own_body_nodes(fdef):
     return own_body(fdef)
 
 
+# inherits: hd=python/honest-check/honest-check.hd::link_is_impure -> feature=specs/features/honest-check.feature::link_is_impure -> test=python/honest-check/conformance/probe_link_is_impure.py::probe_link_is_impure
+# inherits: hd=python/honest-check/honest-check.hd::link_is_impure -> feature=specs/features/honest-check.feature::link_is_impure detects watched JavaScript calls and value reads -> test=python/honest-check/conformance/probe_link_is_impure_javascript.py::probe_link_is_impure_javascript
+# hd: link_is_impure
 def link_is_impure(ctx, fdef, watch, mutable_globals):
-    """True when a link's own body calls a watched function or reads a module-level
-    mutable global, nested scopes not descended into (§HC008)."""
+    """Find watched calls and reads or mutable global reads in the link's own body."""
+    from .nodes import is_attribute_suffix, is_keyword_name
+
     body = _own_body_nodes(fdef)
     calls = filter(lambda n: n.type in _CALL_TYPES, body)
     hits_watch = any(_calls_watched(ctx, c, watch) for c in calls)
     reads_global = any(_reads_global(ctx, n, mutable_globals) for n in body)
+    language = read_or(language_of(ctx["path"]), "ok", "python")
+    read_entries = {"python": _PYTHON_WATCHED_READS, "javascript": _JAVASCRIPT_WATCHED_READS}
+    read_nodes = {"python": {"attribute", "identifier"}, "javascript": {"member_expression"}}
+    watched_reads = watch & read_or(read_entries, language, set())
+    reference_types = read_or(read_nodes, language, set())
+    references = filter(
+        lambda node: watched_reads and node.type in reference_types
+        and not is_attribute_suffix(node) and not is_keyword_name(node)
+        and watched(node, watched_reads),
+        body,
+    )
+    target_fields = {
+        "assignment": "left",
+        "for_statement": "left",
+        "for_in_clause": "left",
+        "named_expression": "name",
+        "as_pattern": "alias",
+        "aliased_import": "alias",
+        "assignment_expression": "left",
+        "for_in_statement": "left",
+        "variable_declarator": "name",
+    }
+    wrappers = {
+        "pattern_list", "tuple_pattern", "list_pattern", "list_splat_pattern", "as_pattern_target",
+        "array_pattern", "object_pattern", "pair_pattern", "rest_pattern",
+    }
+    for reference in references:
+        target = reference
+        parent = target.parent
+        while parent.type in wrappers:
+            target = parent
+            parent = target.parent
+        field = read_or(target_fields, parent.type, "")
+        write_only = (
+            parent.type in {"delete_statement", "global_statement", "nonlocal_statement"}
+            or target == _field(parent, field)
+            or (parent.type == "unary_expression" and _text(_field(parent, "operator")) == "delete")
+        )
+        match write_only:
+            case False:
+                return True
     return bool(hits_watch or reads_global)
 
 
@@ -161,12 +245,6 @@ def _reads_global(ctx, node, mutable_globals):
         and not is_attribute_suffix(node)
         and not is_keyword_name(node)
     )
-
-
-def has_decorator(ctx, fdef, name):
-    from .decorators import has_decorator as _has
-
-    return _has(ctx, fdef, name)
 
 
 def local_function_links(ctx):
@@ -240,10 +318,36 @@ def longest_shared_run(ctx, calls_a, calls_b):
 
 
 _EMPTY_CONSTRUCTORS = {"list", "dict", "set", "tuple", "frozenset"}
+_PREFIXED_ZERO = re.compile(rb"0[xXoObB]_?0(?:_?0)*")
+_DECIMAL_DIGITS = rb"[0-9](?:_?[0-9])*"
+_DECIMAL_NUMBER = re.compile(
+    rb"((?:" + _DECIMAL_DIGITS + rb"(?:\.(?:" + _DECIMAL_DIGITS + rb")?)?|\." + _DECIMAL_DIGITS
+    + rb")(?:[eE][+-]?" + _DECIMAL_DIGITS + rb")?)[jJ]?"
+)
 
 
+# inherits: hd=python/honest-check/honest-check.hd::_number_is_zero -> feature=specs/features/honest-check.feature::_number_is_zero recognizes zero by literal value and syntax -> test=python/honest-check/conformance/probe_number_is_zero_numeric_zero.py::probe_number_is_zero_numeric_zero
+# hd: _number_is_zero
 def _number_is_zero(value):
-    return float(value.text.decode("utf-8")) == 0.0
+    """Recognize Python zero-valued numeric literals under grouping and signs."""
+    node = value
+    while node is not None:
+        match node.type:
+            case "integer" | "float":
+                raw = node.text
+                decimal = _DECIMAL_NUMBER.fullmatch(raw)
+                return _PREFIXED_ZERO.fullmatch(raw) is not None or (
+                    decimal is not None and float(decimal[1]) == 0.0
+                )
+            case "parenthesized_expression":
+                expressions = list(filter(lambda child: child.type != "comment", node.named_children))
+                node = choose(len(expressions) == 1, next(iter(expressions), None), None)
+            case "unary_operator":
+                sign = _text(_field(node, "operator"))
+                node = choose(sign in {"+", "-"}, _field(node, "argument"), None)
+            case _:
+                break
+    return False
 
 
 def _empty_container(value):
@@ -267,7 +371,8 @@ _EMPTY_DEFAULT_HANDLERS = {
     "dictionary": _empty_container,
     "set": _empty_container,
     "tuple": _empty_container,
-    "parenthesized_expression": _empty_container,
+    "parenthesized_expression": _number_is_zero,
+    "unary_operator": _number_is_zero,
     "call": _is_empty_constructor,
 }
 
@@ -276,6 +381,8 @@ def _default_false(value):
     return False
 
 
+# inherits: hd=python/honest-check/honest-check.hd::is_empty_default -> feature=specs/features/honest-check.feature::is_empty_default accepts zero spellings and rejects nonzero defaults -> test=python/honest-check/conformance/probe_is_empty_default_numeric_zero.py::probe_is_empty_default_numeric_zero
+# hd: is_empty_default
 def is_empty_default(ctx, value):
     """True when a parameter default stands for absence — None, False, a zero
     number, an empty string, an empty container literal or an empty-constructor call

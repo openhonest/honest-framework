@@ -1,3 +1,5 @@
+# scenario: link_is_impure
+# inherits: hd=python/honest-check/honest-check.hd::link_is_impure -> feature=specs/features/honest-check.feature::link_is_impure
 """Honest probe for honest-check's link_is_impure (Scenario: link_is_impure).
 
 link_is_impure is true when a link's own body calls a watched function or reads a
@@ -36,6 +38,18 @@ _CASES = [
         "mutable_globals": {"CACHE"},
         "expect": False,
     },
+    {
+        "source": "def f(config):\n    return config.cache\n",
+        "watch": set(),
+        "mutable_globals": {"cache"},
+        "expect": False,
+    },
+    {
+        "source": "def f():\n    return run(cache=1)\n",
+        "watch": set(),
+        "mutable_globals": {"cache"},
+        "expect": False,
+    },
     # Not descended: the watched call lives in nested def g, not f's own body.
     {
         "source": "def f():\n    def g():\n        open('x')\n    return 1\n",
@@ -54,9 +68,66 @@ def probe_link_is_impure():
     except ImportError as exc:
         return [f"cannot import link_is_impure: {exc}"]
 
+    expected_reads = [
+        ("import os\ndef f():\n    return os.environ\n", "os.environ"),
+        ("import sys\ndef f():\n    return sys.argv\n", "sys.argv"),
+        ("import sys\ndef f():\n    return sys.argv[0]\n", "sys.argv"),
+        ("import sys\ndef f():\n    return sys.version\n", "sys.version"),
+        ("import sys\ndef f():\n    return sys.path\n", "sys.path"),
+        ("def f():\n    return __file__\n", "__file__"),
+        ("def f():\n    return __name__\n", "__name__"),
+    ]
+    excluded_reads = [
+        ("def f():\n    return 'sys.argv'\n", "sys.argv"),
+        ("def f(other):\n    return other.argv\n", "argv"),
+        ("import sys\ndef f(argv):\n    sys.argv = argv\n", "sys.argv"),
+        ("def f():\n    __file__ = 'path'\n", "__file__"),
+        ("def f():\n    (__file__, label) = ('path', 'name')\n", "__file__"),
+        ("def f():\n    __file__, label = ('path', 'name')\n", "__file__"),
+        ("def f():\n    [__file__, label] = ['path', 'name']\n", "__file__"),
+        ("def f():\n    label, *__file__ = ['path', 'name']\n", "__file__"),
+        ("def f(paths):\n    for __file__ in paths:\n        pass\n", "__file__"),
+        ("def f(paths):\n    return [0 for __file__ in paths]\n", "__file__"),
+        ("def f():\n    return (__file__ := 'path')\n", "__file__"),
+        ("def f(resource):\n    with resource as __file__:\n        pass\n", "__file__"),
+        ("def f():\n    import pathlib as __file__\n", "__file__"),
+        ("def f():\n    del __file__\n", "__file__"),
+        ("def f():\n    global __file__\n", "__file__"),
+        ("def outer():\n    __file__ = 'path'\n    def f():\n        nonlocal __file__\n", "__file__"),
+        ("import sys\ndef f():\n    def inner():\n        return sys.argv\n    return inner\n", "sys.argv"),
+        ("def f():\n    return lambda: __name__\n", "__name__"),
+    ]
+    read_cases = [
+        {"source": source, "watch": {reference}, "mutable_globals": set(), "expect": True}
+        for source, reference in expected_reads
+    ]
+    negative_cases = [
+        {"source": source, "watch": {reference}, "mutable_globals": set(), "expect": False}
+        for source, reference in excluded_reads
+    ]
+
+    other_language_cases = [
+        {
+            "source": "def f\n  puts('path')\nend\n",
+            "watch": {"open"},
+            "mutable_globals": set(),
+            "expect": False,
+            "language": "ruby",
+            "path": "case.rb",
+        },
+        {
+            "source": "function f() { return __file__; }",
+            "watch": {"__file__"},
+            "mutable_globals": set(),
+            "expect": False,
+            "language": "javascript",
+            "path": "case.js",
+        },
+    ]
+
     bad = []
-    for case in _CASES:
-        tree = parse(case["source"].encode("utf-8"), "python")
+    for case in _CASES + read_cases + negative_cases + other_language_cases:
+        tree = parse(case["source"].encode("utf-8"), case.get("language", "python"))
         root = tree.root_node
         nodes = walk(root)
         ctx = {
@@ -65,14 +136,14 @@ def probe_link_is_impure():
             "aliases": {},
             "roles": {},
             "source": root.text,
-            "path": "case.py",
+            "path": case.get("path", "case.py"),
             "rule_config": {},
         }
         fdef = next(
             (
                 n
                 for n in nodes
-                if n.type == "function_definition"
+                if n.type in {"function_definition", "function_declaration", "method"}
                 and n.named_children
                 and n.named_children[0].text.decode("utf-8") == "f"
             ),

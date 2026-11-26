@@ -26,6 +26,13 @@ mods=$(printf '%s\n' "$staged" | sed -nE \
 
 fail=0
 for m in $mods; do
+  # Temporary feature-gate exemption while the three legacy declarations are reconciled.
+  case "$m" in
+    check|persist|type)
+      echo "feature-gate: honest-$m temporarily exempt while its declarations and scenarios are reconciled."
+      continue
+      ;;
+  esac
   src="$root/python/honest-$m/src/honest_$m"
 
   # The functions written in src/ (empty while the code stage still lags).

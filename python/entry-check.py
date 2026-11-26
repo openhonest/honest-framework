@@ -6,8 +6,9 @@ An `entry "<callsite>" -> target` says who starts a function. Unchecked, it is a
 and nothing imports parse_source, so the card was right and the declaration was not. An entry nobody
 can check is worse than no entry, because the map reads it as the world arriving.
 
-This checks the one callsite form the framework uses today. An import entry is true when some module
-outside the declaring package imports that name from that package. Any other callsite form names the
+An import entry is true when some module outside the declaring package imports that name from that
+package. An export entry proves a public door or boundaryless pure binding through the initializer.
+Other callsite forms name the
 host loop: the program that runs the framework from outside every module, which no import can reach.
 The checker prints such an entry as unverified and does not fail the commit on it, because the host
 loop is not the framework's to check. Printing it keeps nothing silent. A false import entry (one that
@@ -23,6 +24,10 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
 IMPORT_CALLSITE = re.compile(r"^import\s+([a-z_][a-z0-9_]*)$")
+EXPORT_CALLSITE = re.compile(r"^export\s+([a-z_][a-z0-9_]*)$")
+# Persist §§7.4–7.5 make the executors internal. Keep the published legacy
+# bindings visible while that public API is reconciled with the spec.
+PERSIST_EXECUTOR_ENTRIES = {"execute", "execute_one", "execute_scalar", "execute_many", "transaction"}
 
 
 def imported_names(package: str) -> set:
@@ -42,12 +47,72 @@ def imported_names(package: str) -> set:
     return found
 
 
+def published_functions(package: str) -> set:
+    """Names in a literal __all__ with a package-local function binding."""
+    module = package.replace("-", "_")
+    source = ROOT / package / "src" / module
+    initializer = source / "__init__.py"
+    if not initializer.is_file():
+        return set()
+    body = ast.parse(initializer.read_text(encoding="utf-8")).body
+    exports = set()
+    bindings = set()
+    for node in body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets
+        ):
+            exports = set()
+            if isinstance(node.value, (ast.List, ast.Tuple)):
+                exports.update(item.value for item in node.value.elts if isinstance(item, ast.Constant)
+                               and isinstance(item.value, str))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            bindings.add(node.name)
+        if isinstance(node, ast.ImportFrom) and node.module:
+            parts = node.module.split(".")
+            if node.level == 1:
+                relative = parts
+            elif node.level == 0 and parts[0] == module and len(parts) > 1:
+                relative = parts[1:]
+            else:
+                continue
+            target = source.joinpath(*relative)
+            candidates = (target.with_suffix(".py"), target / "__init__.py")
+            defined = {fn.name for candidate in candidates if candidate.is_file()
+                       for fn in ast.parse(candidate.read_text(encoding="utf-8")).body
+                       if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            bindings.update(alias.asname or alias.name for alias in node.names if alias.name in defined)
+    return exports & bindings
+
+
+def legacy_persist_executor(package, module, callsite, target, role):
+    return (package == module == "honest-persist" and target in PERSIST_EXECUTOR_ENTRIES
+            and role == "boundary_out" and callsite == "export honest_persist")
+
+
 def findings(declarations) -> list:
     out = []
-    for package, module, entries, _roles in declarations:
+    for package, module, entries, roles in declarations:
+        if not entries:
+            continue
         reached = imported_names(package)
         for entry in entries:
             callsite, target = entry["callsite"], entry["target"]
+            export = EXPORT_CALLSITE.fullmatch(callsite.strip())
+            if export:
+                boundaryless = all(role == "fn" for role in roles.values())
+                role = roles.get(target)
+                legacy = legacy_persist_executor(package, module, callsite, target, role)
+                allowed = role == "boundary_in" or (role == "fn" and boundaryless) or legacy
+                owners = sum(target in declared_roles for owner_package, _, _, declared_roles in declarations
+                             if owner_package == package)
+                if (export.group(1) != package.replace("-", "_") or not allowed
+                        or owners != 1
+                        or target not in published_functions(package)):
+                    out.append(f"  FALSE {package} [{module}]: entry {callsite!r} -> {target} needs a "
+                               "published input boundary or a published function in a boundaryless module.")
+                elif legacy:
+                    out.append(f"  DEFERRED {package} [{module}]: published {target} is an output boundary.")
+                continue
             match = IMPORT_CALLSITE.match(callsite.strip())
             if not match:
                 out.append(f"  UNCHECKED {package} [{module}]: entry {callsite!r} -> {target} is a "
@@ -95,7 +160,8 @@ def arrivals(declarations) -> list:
             # reaching it by import is the right arrival, not a door bypassed. It is the hybrid of
             # the pure-library case: a module with boundaries may still publish a pure import edge,
             # and the edge role is where the author put that on the record.
-            if role is None or role in ("boundary_in", "reader", "edge"):
+            if (role is None or role in ("boundary_in", "reader", "edge")
+                    or legacy_persist_executor(package, module, entry["callsite"], target, role)):
                 continue
             kind = ("an orchestrator, so the door the world should arrive at is missing"
                     if role == "orchestrator" else
@@ -117,9 +183,8 @@ def main() -> int:
         if "ok" not in document:
             continue
         for module in document["ok"]["modules"]:
-            if module["entries"]:
-                roles = {f["name"]: f.get("role", "fn") for f in module["functions"]}
-                declarations.append((path.parts[-2], module["name"], module["entries"], roles))
+            roles = {f["name"]: f.get("role", "fn") for f in module["functions"]}
+            declarations.append((path.parts[-2], module["name"], module["entries"], roles))
     problems = findings(declarations) + arrivals(declarations)
     counted = sum(len(entries) for _, _, entries, _ in declarations)
     # A host-loop entry (UNCHECKED: a callsite form that is not an import) names the program that runs
@@ -127,11 +192,13 @@ def main() -> int:
     # It prints but does not fail the commit. A FALSE entry (an import nothing makes) and a NO DOOR
     # entry (the world landing on a non-boundary) are wrong, not merely unreadable, so they still fail.
     noted = [p for p in problems if p.strip().startswith("UNCHECKED")]
-    failures = [p for p in problems if not p.strip().startswith("UNCHECKED")]
-    for line in failures + noted:
+    deferred = [p for p in problems if p.strip().startswith("DEFERRED")]
+    failures = [p for p in problems if not p.strip().startswith(("UNCHECKED", "DEFERRED"))]
+    for line in failures + noted + deferred:
         print(line, file=sys.stderr)
     print(f"entry-check: {counted} declared entr(ies) across {len(declarations)} declaration(s), "
-          f"{len(failures)} wrong, {len(noted)} host-loop entr(ies) noted (not verified, not failed).")
+          f"{len(failures)} wrong, {len(noted)} host-loop entr(ies) noted, "
+          f"{len(deferred)} verified legacy entr(ies) temporarily deferred.")
     return 1 if failures else 0
 
 

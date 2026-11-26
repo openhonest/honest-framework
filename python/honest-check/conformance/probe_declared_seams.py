@@ -1,3 +1,5 @@
+# scenario: declared_seams
+# inherits: hd=python/honest-check/honest-check.hd::declared_seams -> feature=specs/features/honest-check.feature::declared_seams
 """Honest probe for honest-check's declared_seams (feature Scenario: declared_seams).
 
 declared_seams reads one parsed .hd module and collects its cross-module seams.
@@ -30,7 +32,18 @@ _SRC_WORLD_ONLY = (
     "module demo\n\n"
     '  fn caller : (x: str) -> str'
     ' side_effect writes "DOM"'
-    ' side_effect reads "env:POOL_SIZE"\n'
+    ' side_effect reads "env:POOL_SIZE"'
+    ' side_effect reads "clock"'
+    ' side_effect reads "random"'
+    ' side_effect reads "stdin"'
+    ' side_effect writes "stdout"'
+    ' side_effect writes "stderr"'
+    ' side_effect reads "network"'
+    ' side_effect reads "time"'
+    ' side_effect reads "file"'
+    ' side_effect reads "env"'
+    ' side_effect reads "argv"'
+    ' side_effect reads "process"\n'
 )
 
 # Each case: the .hd text to parse into a Declaration, and the exact seam list

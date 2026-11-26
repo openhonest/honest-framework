@@ -1,3 +1,5 @@
+# scenario: check_references
+# inherits: hd=python/honest-check/honest-check.hd::check_references -> feature=specs/features/honest-check.feature::check_references
 """Honest probe for honest-check's check_references (feature Scenario: check_references).
 
 check_references resolves cross-file references over the whole discovered set and
@@ -24,7 +26,9 @@ pins each of the four with a literal dead reference and gives the matching clean
   enumerates against that attribute's allowed set (§HC-REF004). With
   format_vocabulary {"hf-format": ["currency", "percent"]}, a template emitting
   `hf-format="bogus"` names no member -> one HC-REF004 error. The clean template
-  emits `hf-format="currency"`, a member -> no diagnostic.
+  emits `hf-format="currency"`, a member -> no diagnostic. Both templates use
+  a class declared in a stylesheet supplied alongside them, so their CSS reference
+  also resolves.
 - The plain clean case is a template with no include, no class, no hx-* action
   and no hf-* value, with format_vocabulary standing HC-REF004 down -> no
   diagnostics.
@@ -52,15 +56,20 @@ _SRC_LIVE_ACTION = {
     "path": "action.html",
     "text": b'<div hx-get="/home">x</div>\n',
 }
+# The stylesheet defines the class used by the format examples in another source.
+_SRC_FORMAT_CSS = {
+    "path": "format.css",
+    "text": b".formatted-amount { color: black; }\n",
+}
 # A template whose hf-format value names no member of the enumerated vocabulary: a dead reference.
 _SRC_DEAD_HF = {
     "path": "format.html",
-    "text": b'<span hf-format="bogus">x</span>\n',
+    "text": b'<span class="formatted-amount" hf-format="bogus">x</span>\n',
 }
 # A template whose hf-format value is a declared member: resolves.
 _SRC_LIVE_HF = {
     "path": "format.html",
-    "text": b'<span hf-format="currency">x</span>\n',
+    "text": b'<span class="formatted-amount" hf-format="currency">x</span>\n',
 }
 # The format vocabulary HC-REF004 resolves hf-* values against.
 _FMT = {"hf-format": ["currency", "percent"]}
@@ -84,19 +93,84 @@ _SRC_CLEAN = {
 # Each case: the SourceFile list, the format_vocabulary (None = NOTHING, standing
 # HC-REF004 down), and the (rule_id, severity) pairs check_references must return.
 _CASES = [
-    {"sources": [_SRC_ROUTES, _SRC_DEAD_ACTION], "fmt": None, "expect": [("HC-REF001", "error")]},
+    {"sources": [_SRC_ROUTES, _SRC_DEAD_ACTION], "fmt": None, "expect": [("HC-REF001", "error")], "action": ("GET", "/ghost")},
     {"sources": [_SRC_ROUTES, _SRC_LIVE_ACTION], "fmt": None, "expect": []},
+    {
+        "sources": [
+            {"path": "service.py", "text": b"def home():\n    return 'home'\n"},
+            _SRC_DEAD_ACTION,
+        ],
+        "fmt": None,
+        "expect": [],
+    },
+    {
+        "sources": [
+            {"path": "routes.py", "text": b'def route_table():\n    return [{"method": "POST", "path": "/items/{id}"}]\n'},
+            {"path": "action.htm", "text": b'<button hx-post="/items/{{item.id}}">Save</button>\n'},
+        ],
+        "fmt": None,
+        "expect": [],
+    },
+    {
+        "sources": [
+            {"path": "routes.py", "text": b'def route_table():\n    return [{"method": "POST", "path": "/items/{id}"}]\n'},
+            {"path": "action.htm", "text": b'<button hx-get="/items/{{item.id}}">Save</button>\n'},
+        ],
+        "fmt": None,
+        "expect": [("HC-REF001", "error")],
+        "action": ("GET", "/items/{{item.id}}"),
+    },
+    {
+        "sources": [
+            {"path": "routes.py", "text": b'def route_table():\n    return [{"method": "GET", "path": "/items/"}]\n'},
+            {"path": "action.htm", "text": b'<button hx-get="/items/{{item.id}}">View</button>\n'},
+        ],
+        "fmt": None,
+        "expect": [("HC-REF001", "error")],
+        "action": ("GET", "/items/{{item.id}}"),
+    },
+    {
+        "sources": [
+            {"path": "pages/view.htm", "text": b'{% include "parts/base.html" %}<div class="card">x</div>\n'},
+            {"path": "molecules/parts/base.html", "text": b'<span>base</span>\n'},
+            {"path": "components/base.css", "text": b'.card { color: black; }\n'},
+        ],
+        "fmt": None,
+        "expect": [],
+    },
+    {
+        "sources": [
+            {"path": "pages/view.htm", "text": b'{% include "parts/base.html" %}<div class="card">x</div>\n'},
+            {"path": "molecules/parts/base.html", "text": b'<span>base</span>\n'},
+        ],
+        "fmt": None,
+        "expect": [("HC-REF003", "error")],
+    },
+    {
+        "sources": [
+            {"path": "widget.html", "text": b'<p class="ghostclass">The text .ghostclass is not a rule</p>\n'},
+        ],
+        "fmt": None,
+        "expect": [("HC-REF003", "error")],
+    },
+    {
+        "sources": [
+            {"path": "notes.css", "text": b'.help::before { content: \'<span class="not-in-html">\'; }\n'},
+        ],
+        "fmt": None,
+        "expect": [],
+    },
     {"sources": [_SRC_DEAD_EXTENDS], "fmt": None, "expect": [("HC-REF002", "error")]},
     {"sources": [_SRC_DEAD_CLASS], "fmt": None, "expect": [("HC-REF003", "error")]},
-    {"sources": [_SRC_DEAD_HF], "fmt": _FMT, "expect": [("HC-REF004", "error")]},
-    {"sources": [_SRC_LIVE_HF], "fmt": _FMT, "expect": []},
+    {"sources": [_SRC_FORMAT_CSS, _SRC_DEAD_HF], "fmt": _FMT, "expect": [("HC-REF004", "error")]},
+    {"sources": [_SRC_FORMAT_CSS, _SRC_LIVE_HF], "fmt": _FMT, "expect": []},
     # Absence: every reference in the set resolves (and there are none to resolve).
     {"sources": [_SRC_CLEAN], "fmt": None, "expect": []},
 ]
 
 
 def probe_check_references():
-    """check_references flags dead include/extends and class references across files."""
+    """Resolve actions, templates, CSS classes, and formatting values across files."""
     try:
         from honest_check import check_references
     except ImportError as exc:
@@ -105,6 +179,20 @@ def probe_check_references():
     bad = []
     for case in _CASES:
         got = check_references(sources=case["sources"], format_vocabulary=case["fmt"])
+        for finding in got:
+            if not finding["message"].strip():
+                bad.append(f"reference finding has no explanation: {finding!r}")
+            if finding["source_location"] not in {source["path"] for source in case["sources"]}:
+                bad.append(f"reference finding has no source-file location: {finding!r}")
+            if finding["context"] != "" or finding["fixable"] is not False:
+                bad.append(f"unexpected context or automatic fix on reference finding: {finding!r}")
+        if "action" in case:
+            method, path = case["action"]
+            for finding in got:
+                if finding["rule_id"] == "HC-REF001" and (
+                    method not in finding["message"] or path not in finding["message"]
+                ):
+                    bad.append(f"Expected the action method {method} and path {path!r}, got {finding!r}")
         pairs = [(d["rule_id"], d["severity"]) for d in got]
         if pairs != case["expect"]:
             bad.append(

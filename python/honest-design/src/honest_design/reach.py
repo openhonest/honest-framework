@@ -28,12 +28,16 @@ def _world(function, modules) -> set:
     module's name: counting it as one answered that nothing was unfollowed for a seam nothing
     followed, which is the false comfort the unfollowed count exists to prevent.
     """
-    return {
-        side["target"]
-        for side in function["side_effects"]
-        if not side["module"] and not side["target"].startswith(_OWN)
-        and side["target"] not in _DIRECTION and side["target"] not in modules
-    }
+    world_sides = filter(
+        lambda side: (
+            not side["module"]
+            and not side["target"].startswith(_OWN)
+            and side["target"] not in _DIRECTION
+            and side["target"] not in modules
+        ),
+        function["side_effects"],
+    )
+    return {side["target"] for side in world_sides}
 
 
 def _seams(function, modules) -> list:
@@ -43,11 +47,11 @@ def _seams(function, modules) -> list:
     what it must, and the surface has listed modules since before the dot existed, so every seam
     declared before then is this shape.
     """
-    return [
-        (side["module"] or side["target"], side["door"])
-        for side in function["side_effects"]
-        if side["module"] or side["target"] in modules
-    ]
+    seams = filter(
+        lambda side: side["module"] or side["target"] in modules,
+        function["side_effects"],
+    )
+    return [(side["module"] or side["target"], side["door"]) for side in seams]
 
 
 def _onward(module) -> dict:
@@ -77,22 +81,29 @@ def _walk(module, start, declarations, seen):
     while frontier:
         name = frontier.pop()
         key = (module["name"], name)
-        if key in seen or name not in functions:
-            continue
+        match key in seen or name not in functions:
+            case True:
+                continue
         seen.add(key)
         function = functions[name]
         direct |= _world(function, declarations)
-        frontier.extend(onward.get(name, []))
+        frontier.extend(onward[name])
         for other, door in _seams(function, declarations):
-            if other not in declarations:
-                unfollowed += 1
-                continue
+            match other in declarations:
+                case False:
+                    unfollowed += 1
+                    continue
             far = declarations[other]
             # A seam naming no door is followed into every door of that module, because the
             # declaration did not say which one. The answer is wider than the code and the count
             # beside it says so.
-            doors = [door] if door else [f["name"] for f in far["functions"] if f["role"] == "boundary_in"]
-            coarse += 0 if door else 1
+            match door:
+                case "":
+                    boundaries = filter(lambda fn: fn["role"] == "boundary_in", far["functions"])
+                    doors = [fn["name"] for fn in boundaries]
+                    coarse += 1
+                case _:
+                    doors = [door]
             for entrance in doors:
                 far_direct, far_through, far_unfollowed, far_coarse = _walk(far, entrance, declarations, seen)
                 through |= far_direct | far_through
@@ -111,9 +122,8 @@ def reach(module, declarations) -> dict:
     seam nobody could follow is not a seam that touches nothing.
     """
     answer = {}
-    for function in module["functions"]:
-        if function["role"] != "boundary_in":
-            continue
+    doors = filter(lambda function: function["role"] == "boundary_in", module["functions"])
+    for function in doors:
         direct, through, unfollowed, coarse = _walk(module, function["name"], declarations, set())
         answer[function["name"]] = {
             "direct": sorted(direct),

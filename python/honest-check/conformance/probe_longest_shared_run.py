@@ -1,3 +1,5 @@
+# scenario: longest_shared_run
+# inherits: hd=python/honest-check/honest-check.hd::longest_shared_run -> feature=specs/features/honest-check.feature::longest_shared_run
 """Honest probe for honest-check's longest_shared_run (Scenario: longest_shared_run).
 
 longest_shared_run returns the length of the longest run of consecutive equivalent
@@ -9,6 +11,10 @@ explicit 0 case for sequences that share no adjacent run.
 
 # Each case: two call-name sequences, and the length of their longest shared run.
 _CASES = [
+    {"a": ["only"], "b": ["only"], "expect": 1},
+    {"a": ["only"], "b": [], "expect": 0},
+    {"a": [], "b": ["only"], "expect": 0},
+    {"a": ["before", "x"], "b": ["after", "x"], "expect": 1},
     {"a": ["a", "b", "c", "d"], "b": ["x", "b", "c", "y"], "expect": 2},   # shared run b,c
     {"a": ["a", "b", "c", "d"], "b": ["z", "a", "b", "c", "d"], "expect": 4},  # whole a,b,c,d
     {"a": ["a", "b"], "b": ["b", "a"], "expect": 1},                       # common elements, not adjacent -> run 1

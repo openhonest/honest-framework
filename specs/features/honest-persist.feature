@@ -1,4 +1,4 @@
-Feature: honest-persist — one scenario per function (103), plus one per orchestrator decision path (10 more, 113 total)
+Feature: honest-persist — Persistence contracts
 
   Scenario: session_open opens a database for a caller and raises if it will not open
     Given target: str and shutdown: Shutdown and primary: str | NOTHING and token: str | NOTHING
@@ -179,6 +179,20 @@ Feature: honest-persist — one scenario per function (103), plus one per orches
     Then it opens one drainer's connection, held for its life, answering Connection | Fault, awaited, reading and writing database
     And a turso writer has MVCC turned on here, once, before it is handed back, running PRAGMA journal_mode = 'mvcc' and reading the cursor, so its BEGIN CONCURRENT is real; without it turso refuses BEGIN CONCURRENT outright; this is the write mode only, separate from master-to-slave replication; sqlite and postgresql are handed back as opened
 
+  # hd: python/honest-persist/honest-persist.hd::session_open_writer
+  # spec: Honest Persist §7.7
+  Scenario: session_open_writer opens a SQLite writer with no driver busy wait
+    Given target is a writable SQLite database path and engine is sqlite
+    When session_open_writer is awaited and PRAGMA busy_timeout is read on the returned SQLite connection
+    Then the pragma reports 0 milliseconds
+
+  # hd: python/honest-persist/honest-persist.hd::session_open_writer
+  Scenario: session_open_writer reports the SQLite driver reason for a missing parent directory
+    Given target: str names a database file inside a parent directory that does not exist and engine: Engine is sqlite
+    When session_open_writer is called and awaited against the real SQLite driver
+    Then it returns a writer_would_not_open Fault
+    And its message identifies SQLite and the requested target and conveys the driver's actionable reason for refusing to open the file
+
   Scenario: session_open_channel opens the one line to the primary
     Given target: str and primary: str and token: str
     When session_open_channel is called
@@ -254,6 +268,20 @@ Feature: honest-persist — one scenario per function (103), plus one per orches
     Given event: dict<str, Value>
     When log_write is called
     Then it writes a line an operator reads afterwards, answering NOTHING, writing stderr, and a failure never travels here
+
+  # hd: python/honest-persist/honest-persist.hd::log_write
+  Scenario: log_write sends a warning event at warning severity
+    Given an operator observes output from the host logger and, in separate cases, event has level "debug", "info", "warning", "error", or "critical" and fact db "example"
+    When log_write is called
+    Then each event produces one line at its corresponding host logger severity, carrying the event's level and db facts
+    And log_write returns NOTHING
+
+  # hd: python/honest-persist/honest-persist.hd::log_write
+  Scenario: log_write emits an event with an unrecognized scalar level
+    Given an operator observes output from the host logger at any severity and event has the unrecognized numeric level 17 and fact db "example"
+    When log_write is called
+    Then the operator receives one line carrying the event's level and db facts
+    And log_write returns NOTHING without raising
 
   Scenario: engine_of reads a target and names one of three engines
     Given target: str
@@ -366,12 +394,26 @@ Feature: honest-persist — one scenario per function (103), plus one per orches
     When next_in_order is called
     Then it answers whose write is next, in arrival order, returning Ticket | NOTHING, and taking it out is the boundary's work
 
+  # hd: python/honest-persist/honest-persist-pure.hd::is_fault
+  Scenario: is_fault recognizes only records with the fault discriminator
+    Given value: any is a fault record, an ordinary record, a row list, a count, a boolean, or NOTHING
+    When is_fault is called
+    Then it returns true for the fault record and false for the ordinary record, row list, count, boolean and NOTHING
+
+  # hd: python/honest-persist/honest-persist-pure.hd::refused
+  Scenario: refused builds a tagged fault with the supplied facts
+    Given code: str is "unknown_table", message: str is "No such table", and detail: dict<str, any> identifies the requested table
+    When refused is called
+    Then it returns a Fault with the supplied code, message and detail, a refused category, the reserved fault tag and empty results
+
+  # hd: python/honest-persist/honest-persist-pure.hd::worth_retrying
   Scenario: worth_retrying answers whether a failure is worth another attempt
     Given fault: Fault
     When worth_retrying is called
     Then it answers whether a failure is worth another attempt, asked of its category, returning a bool
     And only a conflict is worth another attempt, because two writers wrote one row; a refused request, a spent budget and a killed process never improve on a retry
 
+  # hd: python/honest-persist/honest-persist-pure.hd::budget_spent
   Scenario: budget_spent answers whether the retry budget is gone
     Given attempts: int and budget: int
     When budget_spent is called
@@ -408,6 +450,7 @@ Feature: honest-persist — one scenario per function (103), plus one per orches
     When receipt_for is called
     Then it builds the receipt a caller reads for its write, carrying how many rows it touched and how many attempts it took, returning a Receipt
 
+  # hd: python/honest-persist/honest-persist-pure.hd::field
   Scenario: field says about one column what its annotation cannot
     Given renamed_from: str | NOTHING and references: Reference | NOTHING
     When field is called
@@ -526,6 +569,7 @@ Feature: honest-persist — one scenario per function (103), plus one per orches
     And it refuses one that asks to be refreshed and names no cadence or no allowance, because a requirement with no period is a schedule nobody can run and a number invented here would be this package deciding how stale the host's data may be quietly
     And it answers views rather than schedule declarations, because a ScheduleSpec carries work that writes to a database and a pure function cannot hold an open connection; schema_say_refreshes turns each view into a schedule declaration
 
+  # hd: python/honest-persist/honest-persist-pure.hd::what_to_do_after_a_refresh
   Scenario: what_to_do_after_a_refresh reads one refresh's outcome and says whether to run again or stop
     Given written: int | Fault and attempt: Attempt and attempts_allowed: int
     When what_to_do_after_a_refresh is called
@@ -534,6 +578,133 @@ Feature: honest-persist — one scenario per function (103), plus one per orches
     And attempt is handed in rather than counted here, which keeps it pure, and attempts_allowed is the host's number read off the view it declared
     And it never answers retry_after, because a refresh already has its cadence as the spacing, so a conflict worth another go is answered continue and tried again on the next tick, and attempt.overran changes nothing it answers
 
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_select
+  Scenario: checked_select builds the raw query for declared names
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people", columns: list<str> | NOTHING is ["email"], where: dict<str, Value> | NOTHING is {"id": 7}, order_by: list<str> | NOTHING is ["email"], limit: int | NOTHING is NOTHING, offset: int | NOTHING is NOTHING, and joins: list<QueryJoin> | NOTHING is NOTHING
+    When checked_select is called
+    Then it returns the same Query as select with those query arguments, without I/O
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_select
+  Scenario: checked_select allows the wildcard and a descending declared column
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people", columns: list<str> | NOTHING is ["*"], where: dict<str, Value> | NOTHING is NOTHING, order_by: list<str> | NOTHING is ["-email"], limit: int | NOTHING is NOTHING, offset: int | NOTHING is NOTHING, and joins: list<QueryJoin> | NOTHING is NOTHING
+    When checked_select is called
+    Then it returns the same Query as select with those query arguments, without I/O
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_select
+  Scenario: checked_select keeps the on expression of a join to a declared table
+    Given schema: Schema declares table "people" with columns "id" and "email" and table "teams"
+    And table: str is "people", columns: list<str> | NOTHING is ["email"], where: dict<str, Value> | NOTHING is {"id": 7}, order_by: list<str> | NOTHING is ["email"], limit: int | NOTHING is NOTHING, offset: int | NOTHING is NOTHING, and joins: list<QueryJoin> | NOTHING contains a join to "teams" whose raw on expression is "people.team_id = teams.id"
+    When checked_select is called
+    Then it returns the same Query as select with those query arguments, without I/O
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_select
+  Scenario: checked_select rejects an undeclared table
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "missing", columns: list<str> | NOTHING is ["email"], where: dict<str, Value> | NOTHING is {"id": 7}, order_by: list<str> | NOTHING is ["email"], limit: int | NOTHING is NOTHING, offset: int | NOTHING is NOTHING, and joins: list<QueryJoin> | NOTHING is NOTHING
+    When checked_select is called
+    Then it returns a bare unknown_table Fault whose detail names "missing"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_select
+  Scenario: checked_select rejects an undeclared selected column
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people", columns: list<str> | NOTHING is ["emial"], where: dict<str, Value> | NOTHING is {"id": 7}, order_by: list<str> | NOTHING is ["email"], limit: int | NOTHING is NOTHING, offset: int | NOTHING is NOTHING, and joins: list<QueryJoin> | NOTHING is NOTHING
+    When checked_select is called
+    Then it returns a bare unknown_column Fault whose detail identifies table "people", missing column "emial", and declared columns "id" and "email"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_select
+  Scenario: checked_select rejects an undeclared where key
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people", columns: list<str> | NOTHING is ["email"], where: dict<str, Value> | NOTHING is {"missing_id": 7}, order_by: list<str> | NOTHING is ["email"], limit: int | NOTHING is NOTHING, offset: int | NOTHING is NOTHING, and joins: list<QueryJoin> | NOTHING is NOTHING
+    When checked_select is called
+    Then it returns a bare unknown_column Fault whose detail identifies table "people", missing column "missing_id", and declared columns "id" and "email"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_select
+  Scenario: checked_select rejects an undeclared descending order key
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people", columns: list<str> | NOTHING is ["email"], where: dict<str, Value> | NOTHING is {"id": 7}, order_by: list<str> | NOTHING is ["-emial"], limit: int | NOTHING is NOTHING, offset: int | NOTHING is NOTHING, and joins: list<QueryJoin> | NOTHING is NOTHING
+    When checked_select is called
+    Then it returns a bare unknown_column Fault whose detail identifies table "people", missing column "emial", and declared columns "id" and "email"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_select
+  Scenario: checked_select rejects a join to an undeclared table
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people", columns: list<str> | NOTHING is ["email"], where: dict<str, Value> | NOTHING is {"id": 7}, order_by: list<str> | NOTHING is ["email"], limit: int | NOTHING is NOTHING, offset: int | NOTHING is NOTHING, and joins: list<QueryJoin> | NOTHING contains a join to "missing" whose raw on expression is "people.team_id = missing.id"
+    When checked_select is called
+    Then it returns a bare unknown_table Fault whose detail names "missing"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_insert
+  Scenario: checked_insert builds the raw query for declared value keys
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people" and values: dict<str, Value> is {"email": "new@example.org"}
+    When checked_insert is called
+    Then it returns the same Query as insert with those query arguments, without I/O
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_insert
+  Scenario: checked_insert rejects an undeclared table
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "missing" and values: dict<str, Value> is {"email": "new@example.org"}
+    When checked_insert is called
+    Then it returns a bare unknown_table Fault whose detail names "missing"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_insert
+  Scenario: checked_insert rejects an undeclared value key
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people" and values: dict<str, Value> is {"emial": "new@example.org"}
+    When checked_insert is called
+    Then it returns a bare unknown_column Fault whose detail identifies table "people", missing column "emial", and declared columns "id" and "email"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_update
+  Scenario: checked_update builds the raw query for declared value and where keys
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people" and values: dict<str, Value> is {"email": "new@example.org"} and where: dict<str, Value> is {"id": 7}
+    When checked_update is called
+    Then it returns the same Query as update with those query arguments, without I/O
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_update
+  Scenario: checked_update rejects an undeclared table
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "missing" and values: dict<str, Value> is {"email": "new@example.org"} and where: dict<str, Value> is {"id": 7}
+    When checked_update is called
+    Then it returns a bare unknown_table Fault whose detail names "missing"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_update
+  Scenario: checked_update rejects an undeclared value key
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people" and values: dict<str, Value> is {"emial": "new@example.org"} and where: dict<str, Value> is {"id": 7}
+    When checked_update is called
+    Then it returns a bare unknown_column Fault whose detail identifies table "people", missing column "emial", and declared columns "id" and "email"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_update
+  Scenario: checked_update rejects an undeclared where key
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people" and values: dict<str, Value> is {"email": "new@example.org"} and where: dict<str, Value> is {"missing_id": 7}
+    When checked_update is called
+    Then it returns a bare unknown_column Fault whose detail identifies table "people", missing column "missing_id", and declared columns "id" and "email"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_delete
+  Scenario: checked_delete builds the raw query for declared where keys
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people" and where: dict<str, Value> is {"id": 7}
+    When checked_delete is called
+    Then it returns the same Query as delete with those query arguments, without I/O
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_delete
+  Scenario: checked_delete rejects an undeclared table
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "missing" and where: dict<str, Value> is {"id": 7}
+    When checked_delete is called
+    Then it returns a bare unknown_table Fault whose detail names "missing"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::checked_delete
+  Scenario: checked_delete rejects an undeclared where key
+    Given schema: Schema declares table "people" with columns "id" and "email"
+    And table: str is "people" and where: dict<str, Value> is {"missing_id": 7}
+    When checked_delete is called
+    Then it returns a bare unknown_column Fault whose detail identifies table "people", missing column "missing_id", and declared columns "id" and "email"
+
+  # hd: python/honest-persist/honest-persist-pure.hd::select
   Scenario: select builds a SELECT Query from names
     Given table: str and columns: list<str> | NOTHING and where: dict<str, Value> | NOTHING and order_by: list<str> | NOTHING and limit: int | NOTHING and offset: int | NOTHING and joins: list<QueryJoin> | NOTHING
     When select is called
@@ -542,24 +713,28 @@ Feature: honest-persist — one scenario per function (103), plus one per orches
     And order_by is the column names to sort by, each optionally prefixed - for descending, or NOTHING; limit and offset are the row cap and the start offset, or NOTHING for neither; joins is the tables joined in, each a QueryJoin of a table name and a raw ON expression, or NOTHING
     And every optional part is an explicit NOTHING when absent, never a language default, so a caller that named nothing and a caller that chose nothing read the same
 
+  # hd: python/honest-persist/honest-persist-pure.hd::insert
   Scenario: insert builds an INSERT Query
     Given table: str and values: dict<str, Value>
     When insert is called
     Then it builds an INSERT Query and does no I/O, returning a Query of parameterized SQL with every value carried in the Query's named params
     And table is the table written and values is the map of column name to the Value to write into it
 
+  # hd: python/honest-persist/honest-persist-pure.hd::update
   Scenario: update builds an UPDATE Query
     Given table: str and values: dict<str, Value> and where: dict<str, Value>
     When update is called
     Then it builds an UPDATE Query and does no I/O, returning a Query of parameterized SQL with every value carried in the Query's named params
     And table is the table written, values is the map of column name to the Value to set, and where is the map of column name to the Value a row must equal to be updated; an empty where map updates every row
 
+  # hd: python/honest-persist/honest-persist-pure.hd::delete
   Scenario: delete builds a DELETE Query
     Given table: str and where: dict<str, Value>
     When delete is called
     Then it builds a DELETE Query and does no I/O, returning a Query of parameterized SQL with every value carried in the Query's named params
     And table is the table written and where is the map of column name to the Value a row must equal to be deleted; an empty where map deletes every row
 
+  # hd: python/honest-persist/honest-persist-pure.hd::raw
   Scenario: raw builds a Query from SQL the caller wrote
     Given sql: str and params: dict<str, Value> | NOTHING
     When raw is called

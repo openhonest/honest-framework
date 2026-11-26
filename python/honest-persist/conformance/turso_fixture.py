@@ -80,9 +80,65 @@ def turso_connection():
 # --- the real cloud primary, for the replication round trip (section 5.5, declaration channel_push) ---
 import os  # noqa: E402
 import shutil  # noqa: E402
+import socket  # noqa: E402
 import subprocess  # noqa: E402
+import tempfile  # noqa: E402
+import time  # noqa: E402
+from contextlib import contextmanager  # noqa: E402
+from functools import cache  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 _TEST_DATABASE = "honest-persist-test"
+
+
+@cache
+def _turso_sync_binary():
+    installed = Path.home() / ".turso" / "tursodb"
+    binary = shutil.which("tursodb") or (str(installed) if installed.is_file() else None)
+    if binary is None:
+        return None
+    help_text = subprocess.run([binary, "--help"], capture_output=True, timeout=3, check=True)
+    return binary if b"--sync-server" in help_text.stdout else None
+
+
+@contextmanager
+def turso_local_primary():
+    """Yield a private native sync primary when its server binary is available."""
+    binary = _turso_sync_binary()
+    if binary is None:
+        yield None
+        return
+    with tempfile.TemporaryDirectory() as folder:
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+        address = f"127.0.0.1:{port}"
+        database = str(Path(folder) / "primary.db")
+        server = subprocess.Popen(
+            [binary, "--sync-server", address, database],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                        break
+                except OSError:
+                    if server.poll() is not None:
+                        raise RuntimeError(f"the local Turso sync server exited with {server.returncode}")
+                    time.sleep(0.025)
+            else:
+                raise TimeoutError("the local Turso sync server did not become ready")
+            yield {"url": f"http://{address}", "token": ""}
+        finally:
+            server.terminate()
+            try:
+                server.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=2)
 
 
 class TursoKeyMissing(Exception):
@@ -110,8 +166,8 @@ def _turso_platform_key():
 
 def _turso_binary():
     """The turso CLI path, from PATH or the default install location, or None when it is not installed."""
-    return shutil.which("turso") or (
-        "/Users/adam/.turso/turso" if os.path.isfile("/Users/adam/.turso/turso") else None)
+    installed = os.path.expanduser("~/.turso/turso")
+    return shutil.which("turso") or (installed if os.path.isfile(installed) else None)
 
 
 def _run_turso(binary, key, args):

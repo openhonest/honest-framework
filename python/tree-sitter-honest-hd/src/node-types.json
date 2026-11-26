@@ -411,6 +411,10 @@
           "named": true
         },
         {
+          "type": "pure_call",
+          "named": true
+        },
+        {
           "type": "raises",
           "named": true
         },
@@ -680,6 +684,22 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "pure_call",
+    "named": true,
+    "fields": {
+      "target": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -1327,6 +1347,10 @@
   },
   {
     "type": "provider",
+    "named": false
+  },
+  {
+    "type": "pure_call",
     "named": false
   },
   {

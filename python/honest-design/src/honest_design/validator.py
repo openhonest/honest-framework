@@ -20,6 +20,7 @@ module does not carry, or because the corpus shows the rule as stated does not h
 """
 
 from honest_design.result import fault
+from honest_design.side_policy import couples_on as couples_on
 
 
 def _declared_functions(module):
@@ -32,8 +33,7 @@ def _unknown_links(module):
     return [
         fault("unknown_link", f"Chain '{c['name']}' references undeclared function '{link}'", "client", {"chain": c["name"], "link": link})
         for c in module["chains"]
-        for link in c["links"]
-        if link not in declared
+        for link in filter(lambda name: name not in declared, c["links"])
     ]
 
 
@@ -43,8 +43,7 @@ def _missing_note(module):
     it is at authoring time, while the author still has the context; it is not recoverable later."""
     return [
         fault("missing_note", f"Function '{f['name']}' has no note; every function needs one", "client", {"function": f["name"]})
-        for f in module["functions"]
-        if not f["note"].strip()
+        for f in filter(lambda function: not function["note"].strip(), module["functions"])
     ]
 
 
@@ -53,13 +52,11 @@ def _unknown_targets(module):
     declared = _declared_functions(module)
     routes = [
         fault("unknown_target", f"Route '{r['method']} {r['path']}' targets undeclared function '{r['target']}'", "client", {"target": r["target"]})
-        for r in module["routes"]
-        if r["target"] not in declared
+        for r in filter(lambda route: route["target"] not in declared, module["routes"])
     ]
     entries = [
         fault("unknown_target", f"Entry '{e['callsite']}' targets undeclared function '{e['target']}'", "client", {"target": e["target"]})
-        for e in module["entries"]
-        if e["target"] not in declared
+        for e in filter(lambda entry: entry["target"] not in declared, module["entries"])
     ]
     return routes + entries
 
@@ -73,7 +70,9 @@ def _duplicate_names(module):
     for kind in _UNIQUE_KINDS:
         seen = set()
         for name in [d["name"] for d in module[kind]]:
-            faults += [fault("duplicate_name", f"Duplicate {kind[:-1]} name '{name}'", "client", {"kind": kind, "name": name})] if name in seen else []
+            match name in seen:
+                case True:
+                    faults.append(fault("duplicate_name", f"Duplicate {kind[:-1]} name '{name}'", "client", {"kind": kind, "name": name}))
             seen.add(name)
     return faults
 
@@ -85,8 +84,10 @@ ENV_TARGET = "env:"
 def _env_reads(module):
     """Every (function, variable name) pair where a side effect reads the environment by name."""
     return [(f, se["target"][len(ENV_TARGET):])
-            for f in module["functions"] for se in f["side_effects"]
-            if se["target"].startswith(ENV_TARGET)]
+            for f in module["functions"] for se in filter(
+                   lambda se: se["target"].startswith(ENV_TARGET),
+                   f["side_effects"],
+               )]
 
 
 # The layers a module may declare, in the order a layered system's seams run: a module calls
@@ -150,33 +151,17 @@ KIND_FAMILIES = {
 SIDE_KINDS = tuple(KIND_FAMILIES)
 
 
-def couples_on(target):
-    """Whether a world side can couple two modules through a shared resource (HC-REF009).
-
-    A bare kind is ambient and couples nobody, so a target with no colon returns False. A kind
-    that carries a name couples, because two modules naming the same one meet there. The reserved
-    name "given" is the exception: a run-time name never matches another, so it returns False.
-    The caller passes a world-side target; a seam is not one and is filtered before this.
-
-    One home for two rules: honest-check's HC-REF009 and the system map both call this, so neither
-    keeps its own copy of "a bare kind is ambient" or "given never matches given".
-    """
-    _kind, colon, name = target.partition(":")
-    if not colon:
-        return False
-    return name != "given"
-
-
 def _unknown_layer(module):
     """A module's layer is one of the declared set, or it is a word somebody coined.
 
     A module declaring no layer at all is a different fact and not this fault: the corpus has
     modules without one, and silence is not a coined word.
     """
-    layer = module["layer"]
-    if not layer or layer in LAYERS:
-        return []
-    return [fault("unknown_layer", f"Layer '{layer}' is not one of {', '.join(LAYERS)}", "client", {"layer": layer})]
+    unknown_layers = filter(lambda layer: bool(layer) and layer not in LAYERS, (module["layer"],))
+    return [
+        fault("unknown_layer", f"Layer '{layer}' is not one of {', '.join(LAYERS)}", "client", {"layer": layer})
+        for layer in unknown_layers
+    ]
 
 
 def _unknown_side_kind(module):
@@ -188,18 +173,21 @@ def _unknown_side_kind(module):
     `store:` target). Closing the set the way LAYERS is closed means a resource named one way, so
     two modules naming it meet on one side rather than on two spellings the gate cannot join."""
     faults = []
-    for f in module["functions"]:
-        for se in f["side_effects"]:
-            if se["module"] or se["target"].startswith(STORE_TARGET):
-                continue
-            kind = se["target"].partition(":")[0]
-            if kind not in SIDE_KINDS:
-                faults.append(fault(
-                    "unknown_side_kind",
-                    f"Function '{f['name']}' names side '{se['target']}', whose kind '{kind}' is not one of the declared world sides",
-                    "client",
-                    {"function": f["name"], "target": se["target"], "kind": kind},
-                ))
+    for function in module["functions"]:
+        world_sides = filter(
+            lambda side: not side["module"] and not side["target"].startswith(STORE_TARGET),
+            function["side_effects"],
+        )
+        targets_and_kinds = (
+            (side["target"], side["target"].partition(":")[0]) for side in world_sides
+        )
+        for target, kind in filter(lambda pair: pair[1] not in SIDE_KINDS, targets_and_kinds):
+            faults.append(fault(
+                "unknown_side_kind",
+                f"Function '{function['name']}' names side '{target}', whose kind '{kind}' is not one of the declared world sides",
+                "client",
+                {"function": function["name"], "target": target, "kind": kind},
+            ))
     return faults
 
 
@@ -212,8 +200,7 @@ def _unknown_envs(module):
     declared = {e["name"] for e in module["envs"]}
     return [
         fault("unknown_env", f"Function '{f['name']}' reads environment variable '{name}', which no env declares", "client", {"function": f["name"], "env": name})
-        for f, name in _env_reads(module)
-        if name not in declared
+        for f, name in filter(lambda pair: pair[1] not in declared, _env_reads(module))
     ]
 
 
@@ -237,17 +224,19 @@ def _reaches_handle(name, aliases, budget):
 
     The budget is the number of aliases in the module, so a chain can be as long as the module
     allows and a cycle of aliases, which leads nowhere, ends when the budget does."""
-    if name == HANDLE:
-        return True
-    if budget == 0 or name not in aliases:
-        return False
+    match name == HANDLE:
+        case True:
+            return True
+    match bool(budget == 0 or name not in aliases):
+        case True:
+            return False
     return any(_reaches_handle(a["name"], aliases, budget - 1) for a in aliases[name])
 
 
 def _handles(module):
     """The names that mean a handle: the scalar, and every alias that resolves to it."""
-    aliases = {t["name"]: t["alias"] for t in module["types"] if t["alias"]}
-    return {HANDLE} | {name for name in aliases if _reaches_handle(name, aliases, len(aliases))}
+    aliases = {t["name"]: t["alias"] for t in filter(lambda t: t["alias"], module["types"])}
+    return {HANDLE} | {name for name in filter(lambda name: _reaches_handle(name, aliases, len(aliases)), aliases)}
 
 
 def _held_not_read(module):
@@ -259,9 +248,8 @@ def _held_not_read(module):
     """
     handles = _handles(module)
     faults = []
-    for f in module["functions"]:
-        if f["role"] not in PURE_ROLES:
-            continue
+    pure_functions = filter(lambda fn: fn["role"] in PURE_ROLES, module["functions"])
+    for f in pure_functions:
         named = _type_names(f["ret"])
         for p in f["params"]:
             named |= _type_names(p["type"])
@@ -276,7 +264,8 @@ FAULT = "Fault"
 
 def _can_fault(module):
     """The functions whose return type says they can fail."""
-    return {f["name"] for f in module["functions"] if FAULT in _type_names(f["ret"])}
+    fallible = filter(lambda fn: FAULT in _type_names(fn["ret"]), module["functions"])
+    return {fn["name"] for fn in fallible}
 
 
 def _callees(module):
@@ -287,7 +276,11 @@ def _callees(module):
     pairs = []
     for f in module["functions"]:
         for target in f["invokes"]:
-            pairs += [(f["name"], callee) for callee in tables.get(target, [target])]
+            match target in tables:
+                case True:
+                    pairs.extend((f["name"], callee) for callee in tables[target])
+                case _:
+                    pairs.append((f["name"], target))
     for c in module["chains"]:
         pairs += list(zip(c["links"], c["links"][1:]))
     return list(dict.fromkeys(pairs))
@@ -319,13 +312,11 @@ def _fault_swallowed(module):
     fails = _can_fault(module)
     discharged = {
         f["name"]
-        for f in module["functions"]
-        if f.get("role") in BOUNDARY_ROLES and f.get("raises")
+        for f in filter(lambda f: f.get("role") in BOUNDARY_ROLES and f.get("raises"), module["functions"])
     }
     return [
         fault("fault_swallowed", f"Function '{caller}' calls '{callee}', which can fault, and cannot return one", "server", {"function": caller, "callee": callee})
-        for caller, callee in _callees(module)
-        if callee in fails and caller not in fails and caller not in discharged
+        for caller, callee in filter(lambda pair: pair[1] in fails and pair[0] not in fails and pair[0] not in discharged, _callees(module))
     ]
 
 
@@ -336,7 +327,11 @@ def _fault_shape(module):
     declared = {t["name"]: t for t in module["types"]}
     # A Fault declared elsewhere has its shape checked there.
     thin = bool(_can_fault(module)) and FAULT in declared and len(declared[FAULT]["record"]) < 2
-    return [fault("fault_shape", "Fault is declared without the fields to say what went wrong and what to do instead", "server", {"type": FAULT})] if thin else []
+    match bool(thin):
+        case True:
+            return [fault("fault_shape", "Fault is declared without the fields to say what went wrong and what to do instead", "server", {"type": FAULT})]
+        case _:
+            return []
 
 
 # The field that marks a record as the fault arm of a bare union. Only a Fault may carry it.
@@ -363,9 +358,11 @@ def _reserved_field(module):
             "client",
             {"type": declared["name"], "field": field["name"]})
         for declared in module["types"]
-        for field in declared["record"]
-        for owner in [RESERVED_FIELDS.get(field["name"], "")]
-        if owner and declared["name"] != owner
+        for field in filter(
+            lambda field: field["name"] in RESERVED_FIELDS and declared["name"] != RESERVED_FIELDS[field["name"]],
+            declared["record"],
+        )
+        for owner in (RESERVED_FIELDS[field["name"]],)
     ]
 
 
@@ -374,11 +371,11 @@ def _door_called(module):
     names it, and it is never a chain link after the first. A read the program initiates, a clock,
     a file it chose to open, is a reader, and declaring it a door tells the truth about the column
     and a lie about the arrows."""
-    doors = {f["name"] for f in module["functions"] if f["role"] == "boundary_in"}
+    boundaries = filter(lambda fn: fn["role"] == "boundary_in", module["functions"])
+    doors = {fn["name"] for fn in boundaries}
     return [
         fault("door_called", f"Function '{caller}' calls '{callee}', a door; the world calls a door, nothing inside does. A read the program asks for is a reader", "server", {"function": caller, "callee": callee})
-        for caller, callee in _callees(module)
-        if callee in doors
+        for caller, callee in filter(lambda pair: pair[1] in doors, _callees(module))
     ]
 
 
@@ -386,27 +383,37 @@ def _door_orchestrator(module):
     """Every door hands its input to exactly one orchestrator, which runs the core. A door reaching
     no orchestrator has put logic in the wall or wired itself straight to a pure function; a door
     reaching two has split the single path the world takes in. One door, one orchestrator."""
-    role = {f["name"]: f["role"] for f in module["functions"]}
-    doors = [f["name"] for f in module["functions"] if f["role"] == "boundary_in"]
-    handoffs: dict = {}
-    for caller, callee in _callees(module):
-        if caller in doors:
-            handoffs.setdefault(caller, []).append(callee)
-    out = []
-    for door in doors:
-        orchestrators = [c for c in handoffs.get(door, []) if role.get(c) == "orchestrator"]
-        if len(orchestrators) != 1:
-            out.append(fault("door_orchestrator", f"Door '{door}' hands to {len(orchestrators)} orchestrator(s); every door hands its input to exactly one, which runs the core", "server", {"function": door, "orchestrators": orchestrators}))
-    return out
+    roles = {function["name"]: function["role"] for function in module["functions"]}
+    doors = [
+        function["name"]
+        for function in filter(lambda fn: fn["role"] == "boundary_in", module["functions"])
+    ]
+    handoffs = {door: [] for door in doors}
+    orchestrators = {name for name in filter(lambda name: roles[name] == "orchestrator", roles)}
+    caller_pairs = filter(
+        lambda pair: pair[0] in handoffs and pair[1] in orchestrators,
+        _callees(module),
+    )
+    for caller, callee in caller_pairs:
+        handoffs[caller].append(callee)
+    return [
+        fault(
+            "door_orchestrator",
+            f"Door '{door}' hands to {len(assigned)} orchestrator(s); every door hands its input to exactly one, which runs the core",
+            "server",
+            {"function": door, "orchestrators": assigned},
+        )
+        for door in filter(lambda name: len(handoffs[name]) != 1, doors)
+        for assigned in (handoffs[door],)
+    ]
 
 
 def _reader_calls(module):
     """A reader answers the program and asks nothing of it: it invokes nothing and heads no chain."""
-    readers = {f["name"] for f in module["functions"] if f["role"] == "reader"}
+    readers = {fn["name"] for fn in filter(lambda fn: fn["role"] == "reader", module["functions"])}
     return [
         fault("reader_calls", f"Reader '{caller}' calls '{callee}'; a reader answers the program and asks nothing of it", "server", {"function": caller, "callee": callee})
-        for caller, callee in _callees(module)
-        if caller in readers
+        for caller, callee in filter(lambda pair: pair[0] in readers, _callees(module))
     ]
 
 
@@ -417,8 +424,10 @@ STORE_TARGET = "store:"
 def _store_reads(module):
     """Every (function, store name) pair where a side effect names a store."""
     return [(f, se["target"][len(STORE_TARGET):])
-            for f in module["functions"] for se in f["side_effects"]
-            if se["target"].startswith(STORE_TARGET)]
+            for f in module["functions"] for se in filter(
+                   lambda se: se["target"].startswith(STORE_TARGET),
+                   f["side_effects"],
+               )]
 
 
 def _store_of_impure(module):
@@ -427,8 +436,7 @@ def _store_of_impure(module):
     roles = {f["name"]: f["role"] for f in module["functions"]}
     return [
         fault("store_of_impure", f"Store '{st['name']}' holds the answers of '{st['fn']}', which is not a pure fn; only a pure function's answer can be held without going stale", "server", {"store": st["name"], "fn": st["fn"]})
-        for st in module["stores"]
-        if roles.get(st["fn"]) != "fn"
+        for st in filter(lambda st: roles.get(st["fn"]) != "fn", module["stores"])
     ]
 
 
@@ -437,8 +445,7 @@ def _unknown_stores(module):
     declared = {st["name"] for st in module["stores"]}
     return [
         fault("unknown_store", f"Function '{f['name']}' reaches store '{name}', which no store declares", "client", {"function": f["name"], "store": name})
-        for f, name in _store_reads(module)
-        if name not in declared
+        for f, name in filter(lambda pair: pair[1] not in declared, _store_reads(module))
     ]
 
 
@@ -448,8 +455,7 @@ def _store_not_orchestrator(module):
     with the process's own memory."""
     return [
         fault("store_not_orchestrator", f"Function '{f['name']}' reaches store '{name}', and it is a {f['role']}; only an orchestrator keeps what a step returned", "server", {"function": f["name"], "store": name})
-        for f, name in _store_reads(module)
-        if f["role"] not in ("orchestrator", "fn")
+        for f, name in filter(lambda pair: pair[0]["role"] not in ("orchestrator", "fn"), _store_reads(module))
     ]
 
 
@@ -471,52 +477,61 @@ def _world_targets(f, directions):
     `reads "honest-parse.parse_source"` is listed in the surface as `honest-parse`, and matching
     the whole string would make the surface hold the door as well, which is one fact in two places.
     """
-    return [se["module"] or se["target"] for se in f["side_effects"]
-            if se["direction"] in directions and not se["target"].startswith(_OWN)]
+    return [se["module"] or se["target"] for se in filter(
+                   lambda se: se["direction"] in directions and not se["target"].startswith(_OWN),
+                   f["side_effects"],
+               )]
 
 
 def _boundaries(module):
-    return [f for f in module["functions"] if f["role"] in _INPUT_ROLES + ("boundary_out",)]
+    roles = _INPUT_ROLES + ("boundary_out",)
+    return list(filter(lambda fn: fn["role"] in roles, module["functions"]))
 
 
 def _surface_undeclared(module):
     """A module with boundaries and no inputs or outputs list has an open surface: one fault for
     the module, not one per boundary, because the fix is one declaration."""
-    if _boundaries(module) and not module["surface_declared"]:
-        n = len(_boundaries(module))
-        return [fault("surface_undeclared", f"Module '{module['name']}' has {n} boundar{'y' if n == 1 else 'ies'} and declares no inputs or outputs, so its surface is open", "client", {"module": module["name"]})]
+    match bool(_boundaries(module) and not module["surface_declared"]):
+        case True:
+            n = len(_boundaries(module))
+            word = ("boundaries", "boundary")[n == 1]
+            return [fault("surface_undeclared", f"Module '{module['name']}' has {n} {word} and declares no inputs or outputs, so its surface is open", "client", {"module": module["name"]})]
     return []
 
 
 def _surface_unknown(module):
     """Every side a boundary reads is in inputs and every side it writes is in outputs; a
     reads_writes side is in both. Only checked once the module declares a surface at all."""
-    if not module["surface_declared"]:
-        return []
+    match not module["surface_declared"]:
+        case True:
+            return []
     ins = {m["value"] for m in module["inputs"]}
     outs = {m["value"] for m in module["outputs"]}
     faults = []
     for f in _boundaries(module):
         for t in _world_targets(f, _READS):
-            if t not in ins:
-                faults.append(fault("surface_unknown", f"Function '{f['name']}' reads '{t}', which inputs does not list", "client", {"function": f["name"], "target": t, "side": "inputs"}))
+            match t not in ins:
+                case True:
+                    faults.append(fault("surface_unknown", f"Function '{f['name']}' reads '{t}', which inputs does not list", "client", {"function": f["name"], "target": t, "side": "inputs"}))
         for t in _world_targets(f, _WRITES):
-            if t not in outs:
-                faults.append(fault("surface_unknown", f"Function '{f['name']}' writes '{t}', which outputs does not list", "client", {"function": f["name"], "target": t, "side": "outputs"}))
+            match t not in outs:
+                case True:
+                    faults.append(fault("surface_unknown", f"Function '{f['name']}' writes '{t}', which outputs does not list", "client", {"function": f["name"], "target": t, "side": "outputs"}))
     return faults
 
 
 def _surface_unused(module):
     """A listed side no boundary touches is a stale declaration. Only once the module has a
     boundary, so a skeleton written surface-first is not a fault while its boundaries arrive."""
-    if not _boundaries(module):
-        return []
+    match not _boundaries(module):
+        case True:
+            return []
     read = {t for f in _boundaries(module) for t in _world_targets(f, _READS)}
     written = {t for f in _boundaries(module) for t in _world_targets(f, _WRITES)}
     faults = [fault("surface_unused", f"inputs lists '{m['value']}', which no boundary reads", "client", {"side": "inputs", "target": m["value"]})
-              for m in module["inputs"] if m["value"] not in read]
+              for m in filter(lambda m: m["value"] not in read, module["inputs"])]
     faults += [fault("surface_unused", f"outputs lists '{m['value']}', which no boundary writes", "client", {"side": "outputs", "target": m["value"]})
-               for m in module["outputs"] if m["value"] not in written]
+               for m in filter(lambda m: m["value"] not in written, module["outputs"])]
     return faults
 
 
@@ -531,13 +546,16 @@ def _boundary_without_surface(module):
     called = {e["target"] for e in module["entries"]} | {r["target"] for r in module["routes"]}
     faults = []
     for f in _boundaries(module):
-        reads = [se for se in f["side_effects"] if se["direction"] in _READS and not se["target"].startswith(STORE_TARGET)]
-        if f["role"] == "reader" and not reads:
-            faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a reader that reads nothing; a boundary touches a side of the world", "server", {"function": f["name"]}))
-        if f["role"] == "boundary_in" and not reads and f["name"] not in called:
-            faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a boundary_in that reads no side and no entry or route names it; a door reads a side or is called by a named host", "server", {"function": f["name"]}))
-        if f["role"] == "boundary_out" and not _world_targets(f, _WRITES):
-            faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a boundary_out that writes nothing; a boundary that only reads is a reader", "server", {"function": f["name"]}))
+        reads = [se for se in filter(lambda se: se["direction"] in _READS and not se["target"].startswith(STORE_TARGET), f["side_effects"])]
+        match bool(f["role"] == "reader" and not reads):
+            case True:
+                faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a reader that reads nothing; a boundary touches a side of the world", "server", {"function": f["name"]}))
+        match bool(f["role"] == "boundary_in" and not reads and f["name"] not in called):
+            case True:
+                faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a boundary_in that reads no side and no entry or route names it; a door reads a side or is called by a named host", "server", {"function": f["name"]}))
+        match bool(f["role"] == "boundary_out" and not _world_targets(f, _WRITES)):
+            case True:
+                faults.append(fault("boundary_without_surface", f"Function '{f['name']}' is a boundary_out that writes nothing; a boundary that only reads is a reader", "server", {"function": f["name"]}))
     return faults
 
 
@@ -545,11 +563,11 @@ def _door_takes_readable(module):
     """A door does not take what the module can read for itself: a parameter whose declared type
     a reader in the module returns lets a caller hand the module a second truth."""
     declared = {t["name"] for t in module["types"]} | {v["name"] for v in module["vocabularies"]}
-    readable = {a["name"] for f in module["functions"] if f["role"] == "reader" for a in f["ret"]} & declared
+    readable = {a["name"] for f in filter(lambda f: f["role"] == "reader", module["functions"]) for a in f["ret"]} & declared
     return [
         fault("door_takes_readable", f"Door '{f['name']}' takes a {a['name']}, which a reader in this module returns; the module can read it for itself", "server", {"function": f["name"], "type": a["name"]})
-        for f in module["functions"] if f["role"] == "boundary_in"
-        for p in f["params"] for a in p["type"] if a["name"] in readable
+        for f in filter(lambda f: f["role"] == "boundary_in", module["functions"])
+        for p in f["params"] for a in filter(lambda a: a["name"] in readable, p["type"])
     ]
 
 
@@ -564,11 +582,10 @@ def _unawaited_caller(module):
     execute_chain_async awaits the links it is given. Nothing about waiting touches the world,
     so the word says nothing about purity, and whether the code is in fact async is
     honest-check HC-R003's question, not this one's."""
-    awaited = {f["name"] for f in module["functions"] if f["awaited"]}
+    awaited = {fn["name"] for fn in filter(lambda fn: fn["awaited"], module["functions"])}
     return [
         fault("unawaited_caller", f"Function '{caller}' calls '{callee}', which must be awaited, and is not itself awaited", "server", {"function": caller, "callee": callee})
-        for caller, callee in _callees(module)
-        if callee in awaited and caller not in awaited
+        for caller, callee in filter(lambda pair: pair[1] in awaited and pair[0] not in awaited, _callees(module))
     ]
 
 
@@ -576,8 +593,7 @@ def _impure_pure_functions(module):
     """A pure `fn` or `edge` declares no side effect — only a boundary may."""
     return [
         fault("impure_pure_function", f"Pure function '{f['name']}' declares a side effect", "server", {"function": f["name"]})
-        for f in module["functions"]
-        if f["role"] in PURE_ROLES and f["side_effects"]
+        for f in filter(lambda fn: fn["role"] in PURE_ROLES and fn["side_effects"], module["functions"])
     ]
 
 
@@ -591,6 +607,10 @@ PRIMITIVES = frozenset({
 })
 
 
+# inherits: hd=python/honest-design/honest-design.hd::_edge_role_withdrawn -> feature=python/honest-design/features/honest-design.feature::_edge_role_withdrawn faults a function declared an edge -> test=python/honest-design/conformance/probe_edge_role_withdrawn_legacy.py::probe_edge_role_withdrawn_legacy
+# inherits: hd=python/honest-design/honest-design.hd::_edge_role_withdrawn -> feature=python/honest-design/features/honest-design.feature::_edge_role_withdrawn accepts reader and boundary_in in column 1 -> test=python/honest-design/conformance/probe_edge_role_withdrawn_column_one.py::probe_edge_role_withdrawn_column_one
+# inherits: hd=python/honest-design/honest-design.hd::_edge_role_withdrawn -> feature=python/honest-design/features/honest-design.feature::_edge_role_withdrawn accepts the other supported roles -> test=python/honest-design/conformance/probe_edge_role_withdrawn_other_roles.py::probe_edge_role_withdrawn_other_roles
+# hd: _edge_role_withdrawn
 def _edge_role_withdrawn(module):
     """The `edge` role is withdrawn. A pure function the world reaches with nothing inside the
     module calling it does not belong to this module, and no role should have let it sit here.
@@ -628,22 +648,24 @@ def _edge_role_withdrawn(module):
             "the world reaches that nothing in this module calls belongs to whoever calls it: to "
             "a utility module of its own when many modules import it, so its purpose is plain "
             "rather than hidden inside a module that merely hosts it; to the importing module as "
-            "a plain fn when one module imports it; and nowhere at all when nothing reaches it, "
+            "a plain fn when one module imports it. Remove the function when nothing reaches it, "
             "because a function no path arrives at cannot be tested and answers to nobody",
             "server", {"function": f["name"]})
-        for f in module["functions"]
-        if f["role"] == "edge"
+        for f in filter(
+               lambda f: f["role"] == "edge",
+               module["functions"],
+           )
     ]
 
 
 def _callers_of(module, dispatch_name):
     """The functions that invoke a dispatch table. Their input is what the table projects from."""
-    return [f for f in module["functions"] if dispatch_name in f["invokes"]]
+    return list(filter(lambda f: dispatch_name in f["invokes"], module["functions"]))
 
 
 def _record_fields(module):
     """Every declared record's fields, keyed by type name."""
-    return {t["name"]: {fl["name"]: fl["type"] for fl in t["record"]} for t in module["types"] if t["record"]}
+    return {t["name"]: {fl["name"]: fl["type"] for fl in t["record"]} for t in filter(lambda t: t["record"], module["types"])}
 
 
 def _bad_surfaces(module):
@@ -657,12 +679,14 @@ def _bad_surfaces(module):
     faults = []
     for block in module["surfaces"]:
         here = {"surfaces": block["name"]}
-        if not block["members"]:
-            faults.append(fault("empty_surfaces", f"Surfaces block '{block['name']}' declares no surface. A page that renders none has no contract to state.", "client", here))
+        match not block["members"]:
+            case True:
+                faults.append(fault("empty_surfaces", f"Surfaces block '{block['name']}' declares no surface. A page that renders none has no contract to state.", "client", here))
         seen = set()
         for member in block["members"]:
-            if member["id"] in seen:
-                faults.append(fault("duplicate_surface", f"Surfaces block '{block['name']}' declares '{member['id']}' more than once. An id names one element, so the order is ambiguous.", "client", {**here, "id": member["id"]}))
+            match member["id"] in seen:
+                case True:
+                    faults.append(fault("duplicate_surface", f"Surfaces block '{block['name']}' declares '{member['id']}' more than once. An id names one element, so the order is ambiguous.", "client", {**here, "id": member["id"]}))
             seen.add(member["id"])
     return faults
 
@@ -675,22 +699,26 @@ def _bad_projections(module):
     parameter is a different type from the field it is fed, is the defect the notation was added
     to catch.
     """
-    records, by_name = _record_fields(module), {f["name"]: f for f in module["functions"]}
+    records = _record_fields(module)
+    params_by_handler = {fn["name"]: fn["params"] for fn in module["functions"]}
     faults = []
     for table in module["dispatches"]:
         inputs = [a["name"] for c in _callers_of(module, table["name"]) for p in c["params"] for a in p["type"]]
-        fields = {n: t for i in inputs if i in records for n, t in records[i].items()}
+        fields = {n: t for i in filter(lambda i: i in records, inputs) for n, t in records[i].items()}
         for entry in table["entries"]:
             here = {"dispatch": table["name"], "key": entry["key"], "projection": entry["projection"]}
-            if not entry["projection"]:
-                continue
-            if entry["projection"] not in fields:
-                faults.append(fault("unknown_projection", f"Dispatch '{table['name']}' entry '{entry['key']}' projects '{entry['projection']}', which is not a field of its caller's input", "client", here))
-                continue
-            handler = by_name.get(entry["handler"])
-            params = handler["params"] if handler else []
-            if len(params) != 1 or params[0]["type"] != fields[entry["projection"]]:
-                faults.append(fault("projection_mismatch", f"Dispatch '{table['name']}' entry '{entry['key']}' feeds '{entry['projection']}' to '{entry['handler']}', which does not take exactly that", "client", here))
+            match not entry["projection"]:
+                case True:
+                    continue
+            match entry["projection"] not in fields:
+                case True:
+                    faults.append(fault("unknown_projection", f"Dispatch '{table['name']}' entry '{entry['key']}' projects '{entry['projection']}', which is not a field of its caller's input", "client", here))
+                    continue
+            params = params_by_handler.get(entry["handler"])
+            mismatch = params is None or len(params) != 1 or params[0]["type"] != fields[entry["projection"]]
+            match mismatch:
+                case True:
+                    faults.append(fault("projection_mismatch", f"Dispatch '{table['name']}' entry '{entry['key']}' feeds '{entry['projection']}' to '{entry['handler']}', which does not take exactly that", "client", here))
     return faults
 
 
@@ -732,6 +760,7 @@ def validate(module):
     document (what `read_hd` returns) holds modules rather than being one, and handing one over
     is the obvious first mistake: it is named here rather than surfacing as a KeyError from
     whichever check reads a field first."""
-    if "modules" in module:
-        return [fault("not_a_module", "validate takes one module's IR; this is a document. Pass each of its 'modules' in turn.", "client", {})]
+    match "modules" in module:
+        case True:
+            return [fault("not_a_module", "validate takes one module's IR; this is a document. Pass each of its 'modules' in turn.", "client", {})]
     return [f for check in _CHECKS for f in check(module)]

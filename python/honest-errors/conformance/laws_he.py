@@ -27,6 +27,7 @@ A fault arm is a dict carrying a `code`; a success arm is the value itself. No o
 import copy
 
 import honest_errors
+from probe_add_display import probe_add_display
 from honest_errors import (
     NOTHING,
     PRESET_NAMES,
@@ -241,6 +242,7 @@ _LAWS = [
     law_missing_key_is_malformed,
     law_advance_steps_do_not_mutate,
     law_once_display_not_added_twice,
+    probe_add_display,
 ]
 
 

@@ -1,3 +1,5 @@
+# scenario: check_construction
+# inherits: hd=python/honest-check/honest-check.hd::check_construction -> feature=specs/features/honest-check.feature::check_construction
 """Honest probe for honest-check's check_construction (feature Scenario: check_construction).
 
 check_construction is the construction-time rule sub-core: it runs HC001, HC003, HC006,
@@ -53,4 +55,18 @@ def probe_check_construction():
                 f"check_construction({case['desc']}) -> {ids}, "
                 f"expected a {case['must_contain']} finding"
             )
+    for reference in ("os.environ", "sys.argv", "sys.version", "sys.path", "__file__", "__name__"):
+        for decorator, expected in (("@link()", [("warning", "probe.py", "4")]), ("@link(boundary=True)", [])):
+            source = f"from honest_type import link\nimport os, sys\n{decorator}\ndef observe():\n    return {reference}\n"
+            context = build_context(source=source.encode(), path="probe.py", rule_config={})
+            findings = check_construction(ctx=context)
+            warnings = [
+                (finding["severity"], *finding["source_location"].rsplit(":", 2)[:2])
+                for finding in findings if finding["rule_id"] == "HC008"
+            ]
+            if warnings != expected:
+                bad.append(
+                    f"check_construction({decorator} reads {reference}) gave HC008 {warnings!r}, "
+                    f"expected {expected!r}"
+                )
     return bad

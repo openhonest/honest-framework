@@ -1,3 +1,5 @@
+# scenario: parse_args
+# inherits: hd=python/honest-check/honest-check.hd::parse_args -> feature=specs/features/honest-check.feature::parse_args
 """Honest probe for honest-check's parse_args (feature Scenario: parse_args).
 
 parse_args turns the raw argv vector into the resolved CliArgs record, resolving
@@ -6,7 +8,7 @@ absence at the boundary to explicit bounded values: an omitted --format becomes
 --exports become the empty string, --config the empty string, --report false, and
 --rule/--no-rule collect into include_rules/exclude_rules. Each case feeds a real
 argv list and demands the exact CliArgs back. The defaults case pins every absence
-value; the populated case pins the flags being read. A stub that returned a fixed
+value. The populated cases pin the flags being read. A stub that returned a fixed
 record, or echoed no defaults, fails at least one case.
 """
 
@@ -45,6 +47,21 @@ _CASES = [
             "config_path": "",
             "report_mode": False,
             "declaration": "mod.hd",
+            "exports": "",
+        },
+    },
+    # Report mode changes only the report_mode field when the other flags are absent.
+    {
+        "argv": ["src/", "--report"],
+        "expect": {
+            "paths": ["src/"],
+            "format": "human",
+            "severity": "warning",
+            "include_rules": [],
+            "exclude_rules": [],
+            "config_path": "",
+            "report_mode": True,
+            "declaration": "",
             "exports": "",
         },
     },

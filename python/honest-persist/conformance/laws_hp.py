@@ -33,6 +33,24 @@ import sqlite3
 import tempfile
 
 import honest_persist as hp
+from fragments.probe_channel_push_bootstraps_schema import probe_channel_push_bootstraps_schema
+from fragments.probe_query_run_statement_zero_rows import probe_query_run_statement_zero_rows
+from fragments.probe_query_run_together_zero_rows import probe_query_run_together_zero_rows
+from fragments.probe_crew_run_write_zero_rows import probe_crew_run_write_zero_rows
+from fragments.probe_is_fault import probe_is_fault
+from fragments.probe_log_write_unknown_level import probe_log_write_unknown_level
+from fragments.probe_log_write_warning_severity import probe_log_write_warning_severity
+from fragments.probe_sqlite_writer_busy_timeout import probe_sqlite_writer_busy_timeout
+from fragments.probe_refused import probe_refused
+from fragments.probe_crew_run_write_turso_conflict import probe_crew_run_write_turso_conflict
+from fragments.probe_session_open_channel_local_refusal import probe_session_open_channel_local_refusal
+from fragments.probe_query_run_together_embedded_refusal import probe_query_run_together_embedded_refusal
+from fragments.probe_crew_run_write_driver_refusal import probe_crew_run_write_driver_refusal
+from fragments.probe_session_close_connection_driver_refusal import probe_session_close_connection_driver_refusal
+from fragments.probe_query_run_statement_driver_refusal import probe_query_run_statement_driver_refusal
+from fragments.probe_query_run_together_postgres_refusal import probe_query_run_together_postgres_refusal
+from fragments.probe_session_open_connection_postgres_refusal import probe_session_open_connection_postgres_refusal
+from fragments.probe_session_open_writer_sqlite_reason import probe_session_open_writer_sqlite_reason
 
 # The real engines the parametrized laws run against. sqlite is always here; postgresql and turso come
 # from the conformance fixtures, which provision a real server or open a real embedded database. The
@@ -1456,6 +1474,8 @@ def _probe_crew_run_write():
     return asyncio.run(_run())
 
 
+# inherits: hd=python/honest-persist/honest-persist.hd::session_open_connection -> feature=specs/features/honest-persist.feature::session_open_connection asks the driver for a connection
+# inherits: hd=python/honest-persist/honest-persist.hd::query_run_statement -> feature=specs/features/honest-persist.feature::query_run_statement runs one statement on the connection it is handed and emits an event
 def _probe_boundary_faults():
     """The output boundaries turn a bad argument or an unreachable driver into a Fault value, never a
     raise: an open the driver cannot reach, a bound of zero connections, a writer that will not open, and
@@ -1483,9 +1503,16 @@ def _probe_boundary_faults():
             if not (hp.is_fault(unreachable) and unreachable.get("code") == "could_not_reach"):
                 bad.append(f"an unreachable open should be a could_not_reach Fault: {unreachable}")
             # A bound of zero connections leaves none to read on.
-            none_left = await session_open_connection(os.path.join(d, "z.db"), "sqlite", 0)
+            zero_target = os.path.join(d, "z.db")
+            none_left = await session_open_connection(zero_target, "sqlite", 0)
             if not (hp.is_fault(none_left) and none_left.get("code") == "no_connection_permitted"):
                 bad.append(f"a zero-connection bound should be a no_connection_permitted Fault: {none_left}")
+            else:
+                message = none_left.get("message", "")
+                if not all(fragment in message for fragment in ("0 connections", zero_target, "at least one")):
+                    bad.append(f"zero-connection Fault should name its bound, target and remedy: {none_left!r}")
+                if none_left.get("detail", {}).get("connections") != 0:
+                    bad.append(f"zero-connection Fault should expose 0 as its connection bound: {none_left!r}")
             # A writer that cannot open.
             no_writer = await session_open_writer(os.path.join(d, "missing", "w.db"), "sqlite")
             if not (hp.is_fault(no_writer) and no_writer.get("code") == "writer_would_not_open"):
@@ -1496,6 +1523,8 @@ def _probe_boundary_faults():
             miss_stmt = await query_run_statement(conn, "mysql", stmt)
             if not (hp.is_fault(miss_stmt) and miss_stmt.get("code") == "no_such_engine"):
                 bad.append(f"a statement on an unknown engine should be a no_such_engine Fault: {miss_stmt}")
+            elif "mysql" not in miss_stmt.get("message", ""):
+                bad.append(f"unknown statement engine Fault should name mysql: {miss_stmt!r}")
             miss_group = await query_run_together(conn, "mysql", [stmt], how_to_write("sqlite"))
             if not (hp.is_fault(miss_group) and miss_group.get("code") == "no_such_engine"):
                 bad.append(f"a group on an unknown engine should be a no_such_engine Fault: {miss_group}")
@@ -1707,6 +1736,9 @@ def _probe_replication():
     return asyncio.run(_run())
 
 
+# inherits: hd=python/honest-persist/honest-persist.hd::session_open_channel -> feature=specs/features/honest-persist.feature::session_open_channel opens the one line to the primary
+# inherits: hd=python/honest-persist/honest-persist.hd::channel_push -> feature=specs/features/honest-persist.feature::channel_push sends local commits to the primary
+# inherits: hd=python/honest-persist/honest-persist.hd::channel_pull -> feature=specs/features/honest-persist.feature::channel_pull brings down what the primary has and this copy does not
 async def _channel_fault_cases():
     """The channel boundaries turn a bad local path and an unreachable primary into Fault values, never a
     raise: session_open_channel on a path it cannot make, and channel_push / channel_pull on a channel
@@ -1731,9 +1763,13 @@ async def _channel_fault_cases():
             pushed = await channel_push(channel)
             if not (hp.is_fault(pushed) and pushed.get("code") == "push_refused"):
                 bad.append(f"a push to an unreachable primary should be a push_refused Fault: {pushed}")
+            elif not pushed.get("message", "").strip():
+                bad.append(f"a refused push should explain the replication failure: {pushed!r}")
             pulled = await channel_pull(channel)
             if not (hp.is_fault(pulled) and pulled.get("code") == "pull_refused"):
                 bad.append(f"a pull from an unreachable primary should be a pull_refused Fault: {pulled}")
+            elif not pulled.get("message", "").strip():
+                bad.append(f"a refused pull should explain the replication failure: {pulled!r}")
     return bad
 
 
@@ -3715,7 +3751,25 @@ def _probe_spelling_refused_on_open():
         gc.collect()
 
 
+def _probe_channel_push_bootstrap():
+    return probe_channel_push_bootstraps_schema(_note_skip)
+
+
+def _probe_postgres_open_refusal():
+    return probe_session_open_connection_postgres_refusal(_note_skip)
+
+
+def _probe_postgres_group_refusal():
+    return probe_query_run_together_postgres_refusal(_note_skip)
+
+
+def _probe_crew_driver_refusal():
+    return probe_crew_run_write_driver_refusal(_note_skip)
+
+
 _PROBES = [
+    probe_is_fault,
+    probe_refused,
     _probe_surface,
     _probe_engine_of,
     _probe_deciders,
@@ -3732,11 +3786,27 @@ _PROBES = [
     _probe_crew_pure,
     _probe_schema_declarations,
     _probe_refresh,
+    probe_query_run_statement_zero_rows,
+    probe_query_run_together_zero_rows,
+    probe_crew_run_write_zero_rows,
+    _probe_channel_push_bootstrap,
     _probe_real_query,
     _probe_real_readonly_fault,
     _probe_crew_run_write,
+    _probe_postgres_open_refusal,
+    probe_session_open_writer_sqlite_reason,
+    probe_session_close_connection_driver_refusal,
+    probe_query_run_statement_driver_refusal,
+    _probe_postgres_group_refusal,
+    probe_query_run_together_embedded_refusal,
+    _probe_crew_driver_refusal,
+    probe_crew_run_write_turso_conflict,
+    probe_session_open_channel_local_refusal,
     _probe_boundary_faults,
     _probe_readers_and_log,
+    probe_sqlite_writer_busy_timeout,
+    probe_log_write_warning_severity,
+    probe_log_write_unknown_level,
     _probe_crew_lifecycle,
     _probe_channel,
     _probe_replication,
@@ -3783,23 +3853,25 @@ _PROBES = [
 ]
 
 
-def run():
-    """Run every probe, never letting one missing function abort the rest, and aggregate the failures.
-    Returns 0 when every law holds, 1 otherwise. Today the code port has not run, so this is RED by
-    construction: the surface sweep names the unbuilt functions and the behavioural laws fail on them."""
+def run(stop_on_failure):
+    """Run the behavioral laws. Mutation mode returns the first observed failure."""
     all_bad = []
+    ran = 0
     for probe in _PROBES:
+        ran += 1
         try:
             all_bad.extend(probe())
         except Exception as e:
             all_bad.append(f"{probe.__name__} raised {type(e).__name__}: {e}")
+        if stop_on_failure and all_bad:
+            break
     for failure in all_bad:
         print(f"LAW FAIL: {failure}")
     for skip in _SKIPS:
         print(f"LAW SKIP: {skip}")
-    print(f"laws: {len(all_bad)} failures across {len(_PROBES)} probes; {len(_SKIPS)} engine/fixture skips recorded")
+    print(f"laws: {len(all_bad)} failures across {ran} probes; {len(_SKIPS)} engine/fixture skips recorded")
     return 0 if not all_bad else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    raise SystemExit(run(False))

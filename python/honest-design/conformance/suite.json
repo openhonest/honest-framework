@@ -42,6 +42,7 @@
               {
                 "name": "x",
                 "layer": "foundation",
+                "version": "",
                 "note": "",
                 "envs": [],
                 "stores": [],

@@ -1,0 +1,21 @@
+[project]
+name = "honest-render"
+version = "0.1.0"
+description = "The public static renderer of one .hd declaration: read the file, get honest-design's Module and Diagram, build a ViewModel, render Markdown, write it out. Read-only, deterministic; never parses .hd and never recomputes layout."
+requires-python = ">=3.11"
+dependencies = ["honest-design", "honest-type"]
+
+[tool.uv.sources]
+honest-design = { workspace = true }
+honest-type = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honest_render"]
+
+[tool.honest-check]
+conformance = "python"
+conformance-suite-version = "0"

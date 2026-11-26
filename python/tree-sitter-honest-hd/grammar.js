@@ -192,7 +192,7 @@ module.exports = grammar({
     // A function the caller must await: it hands back a promise of the answer, and a call site
     // written without the word holds a coroutine that is truthy, is not a Fault, and is not the
     // answer. The word states the caller's obligation; how the host waits is the host's business.
-    _annotation: $ => choice($.invokes, $.raises, $.side_effect, $.note, $.awaited),
+    _annotation: $ => choice($.invokes, $.raises, $.side_effect, $.pure_call, $.note, $.awaited),
     awaited: $ => 'awaited',
 
     invokes: $ => seq('invokes', commaSep1($.identifier)),
@@ -201,6 +201,8 @@ module.exports = grammar({
     raises: $ => seq('raises', commaSep1(choice($.identifier, $.string))),
 
     side_effect: $ => seq('side_effect', field('direction', choice('reads', 'writes', 'reads_writes')), field('target', $.string)),
+
+    pure_call: $ => seq('pure_call', field('target', $.string)),
 
     // --- Chains --------------------------------------------------------------
 

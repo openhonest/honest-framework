@@ -1,4 +1,6 @@
-"""RED probe for honest-test.check_test_body — the pytest collection hook (.hd, section 4.8).
+# scenario: check_test_body refuses a test body that rebinds a call target
+# inherits: hd=python/honest-test/honest-test.hd::check_test_body -> feature=specs/features/honest-test.feature::check_test_body refuses a test body that rebinds a call target
+"""Probe for honest-test.check_test_body — the pytest collection hook (.hd, section 4.8).
 
 check_test_body reads the collected test module's source through the injected
 collector, hands it to run_body_check for the pure verdict, and returns the list of
@@ -6,8 +8,7 @@ rejections. It returns the empty list when the body is honest and raises
 collection_failure when the list is non-empty, so a test body that rebinds a call
 target at runtime does not run. The collector is a real stand-in: an object carrying
 a `path` whose read_text returns the source, pointed at a real temporary file (spec
-section 4.8). honest-test has no code yet, so importing honest_test fails — the
-correct red state.
+section 4.8).
 """
 
 import os
@@ -15,7 +16,7 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from honest_test import check_test_body
+from honest_test import check_test_body, test_body_violations
 
 
 def _collector_over(source):
@@ -59,8 +60,9 @@ def probe_check_test_body():
     try:
         got = check_test_body(collector)
         bad.append(f"check_test_body returned {got!r} for a monkeypatch body, expected it to raise collection_failure")
-    except Exception:
-        pass  # raising on a dishonest body is the contract
+    except Exception as error:
+        if "collection_failure" not in str(error):
+            bad.append(f"expected the declared collection_failure, got {error!r}")
     finally:
         os.unlink(path)
 
@@ -75,8 +77,31 @@ def probe_check_test_body():
     try:
         got = check_test_body(collector)
         bad.append(f"check_test_body returned {got!r} for a mock.patch body, expected it to raise collection_failure")
-    except Exception:
-        pass
+    except Exception as error:
+        if "collection_failure" not in str(error):
+            bad.append(f"expected the declared collection_failure, got {error!r}")
+    finally:
+        os.unlink(path)
+
+    two_sites = (
+        "def test_rebound_twice(monkeypatch):\n"
+        '    monkeypatch.setattr(service, "fetch", lambda: 1)\n'
+        "\n"
+        '    monkeypatch.setattr(service, "fetch", lambda: 1)\n'
+    )
+    verdict = test_body_violations(two_sites)
+    locations = {finding["location"] for finding in verdict}
+    if len(verdict) != 2 or len(locations) != 2 or "" in locations:
+        bad.append(f"expected two distinct rebinding sites from the source verdict, got {verdict!r}")
+    collector, path = _collector_over(two_sites)
+    try:
+        got = check_test_body(collector)
+        bad.append(f"check_test_body returned {got!r} for two rebindings, expected collection_failure")
+    except Exception as error:
+        reported = str(error)
+        missing = sorted(site for site in locations if site not in reported)
+        if "collection_failure" not in reported or missing:
+            bad.append(f"expected collection_failure identifying both rebinding sites, missing {missing!r}: {reported!r}")
     finally:
         os.unlink(path)
 

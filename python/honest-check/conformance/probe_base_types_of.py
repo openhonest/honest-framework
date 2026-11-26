@@ -1,3 +1,5 @@
+# scenario: base_types_of
+# inherits: hd=python/honest-check/honest-check.hd::base_types_of -> feature=specs/features/honest-check.feature::base_types_of
 """Honest probe for honest-check's base_types_of (Scenario: base_types_of).
 
 base_types_of returns dict<str, BaseType> (the .hd types): each name mapped to a
@@ -50,6 +52,12 @@ def probe_base_types_of():
 
     if not isinstance(got, dict):
         return [f"base_types_of(...) -> {got!r}, expected a dict of name -> BaseType record"]
+
+    if set(got) != {"color", "check"}:
+        bad.append(f"base_types_of keys -> {set(got)!r}, expected color and check")
+    for name, record in got.items():
+        if not isinstance(record, dict) or set(record) != {"kind", "members", "recognizer"}:
+            bad.append(f"base_types_of[{name!r}] -> {record!r}, expected all BaseType fields")
 
     # The 'set' entry: a BaseType record {kind 'set', members the string set, recognizer NOTHING}.
     color = got.get("color")

@@ -1,3 +1,5 @@
+# scenario: check_source
+# inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source
 """honest-check conformance runner (section 9.2).
 
 The test-of-record for honest-check is data, not hand-coded tests. Two parts run
@@ -9,9 +11,8 @@ here:
     (rule_id, severity, line) it got against the triples the case expects. The
     comparison is exact: a case that expects one diagnostic fails if the checker
     also produces a second, so a false positive is caught as loudly as a missed
-    finding. The per-rule behaviour the rule engine folds over the graph is
-    pinned here, not by a function scenario (the engine is data inside
-    check_source).
+    finding. Each finding must include a human-readable explanation. This data
+    suite pins the per-rule behaviour that check_source folds over the graph.
 
   - probe_*.py: the honest tests derived one-per-function from the feature
     scenarios. Each is a function returning a list of failure strings, empty
@@ -89,9 +90,12 @@ def _check_case(case):
     got = check_source(context, None)
     got_triples = _triples_got(got)
     want_triples = _triples_expected(case)
-    if got_triples == want_triples:
-        return True, ""
-    return False, f"got {got_triples}, expected {want_triples}"
+    if got_triples != want_triples:
+        return False, f"got {got_triples}, expected {want_triples}"
+    empty_messages = [d["rule_id"] for d in got if not d["message"].strip()]
+    if empty_messages:
+        return False, f"findings with no explanation: {empty_messages}"
+    return True, ""
 
 
 def run_suite(suite_path):

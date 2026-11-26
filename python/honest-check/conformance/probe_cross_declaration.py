@@ -1,3 +1,5 @@
+# scenario: cross_declaration
+# inherits: hd=python/honest-check/honest-check.hd::cross_declaration -> feature=specs/features/honest-check.feature::cross_declaration
 """Honest probe for honest-check's cross_declaration (feature Scenario: cross_declaration).
 
 cross_declaration crosses one module's .hd against the whole package of source files and runs
@@ -41,6 +43,11 @@ _HD_R002 = (
     '  boundary_out fn emit : (x: int) -> int note "an output boundary, a terminus"\n'
     '  orchestrator fn run : (x: int) -> int invokes emit note "an orchestrator"\n'
 )
+_HD_R002_INPUT = (
+    "module demo\n\n  layer correctness\n\n"
+    '  boundary_out fn emit : (x: int) -> int note "an output boundary"\n'
+    '  boundary_in fn enter : (x: int) -> int note "an input boundary"\n'
+)
 _HD_R004 = (
     "module demo\n\n  layer correctness\n\n"
     '  fn find : (x: int) -> int note "its card promises an int, no absence arm"\n'
@@ -78,6 +85,66 @@ _HD_REF005_LAG = (
     '  fn gamma : (x: int) -> int note "declared ahead of the code, not yet written"\n'
 )
 
+_HD_ALL = (
+    "module demo\n\n  layer correctness\n\n"
+    '  boundary_out fn emit : () -> int note "an output boundary"\n'
+    '  orchestrator fn drive : () -> int note "an orchestrator"\n'
+    '  fn async_mismatch : () -> int note "synchronous"\n'
+    '  fn bare : () -> int note "promises a value"\n'
+    '  fn generator : () -> int note "promises one value"\n'
+)
+_EXPECTED_ALL = ["HC-R002", "HC-R003", "HC-R004", "HC-R005", "HC-REF005"]
+_SOURCE_ALL = b"""def emit():
+    return drive()
+
+def drive():
+    return 1
+
+async def async_mismatch():
+    return 1
+
+def bare():
+    return
+
+def generator():
+    yield 1
+    return 1
+
+def undocumented():
+    return 1
+"""
+
+_HD_ARITY = (
+    "module demo\n\n  layer correctness\n\n"
+    '  fn configure : (left: int, right: int) -> int note "takes two parameters"\n'
+)
+_SOURCE_ARITY = b"""def configure(
+    left, /,  # left is positional-only
+    *,
+    right,
+):
+    return left + right
+"""
+_HD_LITERAL = (
+    "module demo\n\n  layer correctness\n\n"
+    '  fn check : () -> any | NOTHING note "names an absence arm"\n'
+)
+_LITERAL_EXPRESSIONS = [
+    "1.5",
+    "'value'",
+    "'first' 'second'",
+    "True",
+    "False",
+    "[]",
+    "{}",
+    "{1}",
+    "()",
+    "[x for x in ()]",
+    "{x: x for x in ()}",
+    "{x for x in ()}",
+    "lambda: 1",
+]
+
 # Each case: the module's .hd text, its code (bytes), the export module's bytes (the literal
 # __all__ HC-REF005 reads), the crossing rule to run, and the verdict crossing it must produce.
 _CASES = [
@@ -106,6 +173,14 @@ _CASES = [
         "must_be_empty": False,
     },
     {
+        "desc": "HC-R002: boundary_out emit calls boundary_in enter",
+        "hd": _HD_R002_INPUT,
+        "source": b"def emit(x):\n    return enter(x)\ndef enter(x):\n    return x\n",
+        "export": b"",
+        "rule": "HC-R002",
+        "must_be_empty": False,
+    },
+    {
         "desc": "HC-R002 clean: emit is a terminus and run calls emit",
         "hd": _HD_R002,
         "source": b"def emit(x):\n    return x\ndef run(x):\n    return emit(x)\n",
@@ -120,6 +195,14 @@ _CASES = [
         "export": b"",
         "rule": "HC-R004",
         "must_be_empty": False,
+    },
+    {
+        "desc": "HC-R004 clean: Absent explicitly permits a host None return",
+        "hd": _HD_R004.replace("-> int note", "-> int | Absent note"),
+        "source": b"def find(x):\n    return None\n",
+        "export": b"",
+        "rule": "HC-R004",
+        "must_be_empty": True,
     },
     {
         "desc": "HC-R004 clean: find always returns a value",
@@ -194,6 +277,15 @@ _CASES = [
         "must_be_empty": False,
     },
     {
+        "desc": "HC-REF005: the literal export ghost has neither a declaration nor a body",
+        "hd": _HD_REF005,
+        "source": b"def alpha(x):\n    return x\n",
+        "export": b'__all__ = ["alpha", "ghost"]\n',
+        "rule": "HC-REF005",
+        "must_be_empty": False,
+        "undeclared_export": "ghost",
+    },
+    {
         "desc": "HC-REF005 clean: the package exports exactly the declared alpha",
         "hd": _HD_REF005,
         "source": b"def alpha(x):\n    return x\n",
@@ -235,6 +327,15 @@ def probe_cross_declaration():
             export_source=case["export"],
             rule_ids=[case["rule"]],
         )
+        for finding in got:
+            if finding["severity"] != "error" or finding["rule_id"] != case["rule"]:
+                bad.append(f"unexpected crossing finding: {finding!r}")
+            if not finding["message"].strip():
+                bad.append(f"crossing finding has no explanation: {finding!r}")
+            if not finding["source_location"].split(":")[0]:
+                bad.append(f"crossing finding has no source-file location: {finding!r}")
+            if finding["fixable"] is not False:
+                bad.append(f"unexpected automatic fix on crossing finding: {finding!r}")
         ids = [d["rule_id"] for d in got]
         if case["must_be_empty"]:
             if got != []:
@@ -246,4 +347,40 @@ def probe_cross_declaration():
                 f"cross_declaration({case['desc']}) -> {ids}, "
                 f"expected a {case['rule']} finding"
             )
+        elif "undeclared_export" in case:
+            name = case["undeclared_export"]
+            if not any(d["rule_id"] == case["rule"] and d["severity"] == "error"
+                       and name in d["message"] and d.get("context") == "" for d in got):
+                bad.append(f"Expected an HC-REF005 error identifying {name!r}, received {got!r}")
+    all_rules = cross_declaration(
+        sources=[pair_source("demo.py", _SOURCE_ALL)],
+        declaration=read_hd(_HD_ALL)["ok"]["modules"][0],
+        export_source=b'__all__ = ["undocumented"]\n',
+        rule_ids=[],
+    )
+    actual_all = sorted(diag["rule_id"] for diag in all_rules if diag["severity"] == "error")
+    if actual_all != _EXPECTED_ALL or len(all_rules) != len(_EXPECTED_ALL):
+        bad.append(f"empty rule_ids returned {all_rules!r}, expected one error from each crossing rule")
+
+    # The two Python separators and the inline comment do not name parameters.
+    arity = cross_declaration(
+        sources=[pair_source("demo.py", _SOURCE_ARITY)],
+        declaration=read_hd(_HD_ARITY)["ok"]["modules"][0],
+        export_source=b'__all__ = ["configure"]\n',
+        rule_ids=["HC-REF005"],
+    )
+    if arity:
+        bad.append(f"two named parameters separated by / and * returned {arity!r}, expected []")
+
+    literal_declaration = read_hd(_HD_LITERAL)["ok"]["modules"][0]
+    for expression in _LITERAL_EXPRESSIONS:
+        literal = cross_declaration(
+            sources=[pair_source("demo.py", f"def check():\n    return {expression}\n".encode())],
+            declaration=literal_declaration,
+            export_source=b"",
+            rule_ids=["HC-R004"],
+        )
+        verdict = [(diag["rule_id"], diag["severity"]) for diag in literal]
+        if verdict != [("HC-R004", "error")]:
+            bad.append(f"return {expression} provably returns a value, got {literal!r}")
     return bad

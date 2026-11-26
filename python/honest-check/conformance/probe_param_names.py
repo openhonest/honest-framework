@@ -1,3 +1,5 @@
+# scenario: param_names
+# inherits: hd=python/honest-check/honest-check.hd::param_names -> feature=specs/features/honest-check.feature::param_names
 """Honest probe for honest-check's param_names (feature Scenario: param_names).
 
 param_names reads the names a single parameter node binds: a bare identifier
@@ -27,6 +29,7 @@ _CASES = [
     {"param": "x", "expect": ["x"]},        # bare identifier
     {"param": "x: int", "expect": ["x"]},   # typed parameter binds its name
     {"param": "x=5", "expect": ["x"]},      # defaulted parameter binds its name
+    {"param": "value: int = 5", "expect": ["value"]},
     {"param": "*args", "expect": []},       # splat binds nothing here
 ]
 

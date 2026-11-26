@@ -292,7 +292,7 @@ def _emit_query(connection, engine, statement, rows_or_count, nanoseconds):
         emit("hf.persist.query", {"engine": engine, "sql_hash": hash(statement["text"]),
                                   "duration_ns": nanoseconds})
     except Exception:  # noqa: BLE001
-        return NOTHING
+        pass
     return NOTHING
 
 

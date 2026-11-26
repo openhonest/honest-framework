@@ -33,7 +33,8 @@ def git(*args: str) -> str:
 
 def committed_declarations() -> dict:
     """Every tracked .hd path, mapped to its text as committed at HEAD."""
-    return {path: git("show", f"HEAD:{path}") for path in git("ls-files", "*.hd").split()}
+    paths = git("ls-tree", "-r", "--name-only", "-z", "HEAD").split("\0")
+    return {path: git("show", f"HEAD:{path}") for path in paths if path.endswith(".hd")}
 
 
 def rejected(declarations: dict) -> list:

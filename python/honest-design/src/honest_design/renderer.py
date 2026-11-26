@@ -10,7 +10,7 @@ layout); serializing it to SVG for display is a thin, separate presentation step
 
 from honest_design import ir
 
-_COLUMN_TITLES = {1: "Input boundary", 2: "Orchestrators", 3: "Pure functions", 4: "Output boundary"}
+_COLUMN_TITLES = ("Input boundary", "Orchestrators", "Pure functions", "Output boundary")
 
 
 def _node(fn) -> ir.Node:
@@ -18,10 +18,11 @@ def _node(fn) -> ir.Node:
 
 
 def _column(module, index) -> ir.Column:
+    functions = filter(lambda function: function["column"] == index, module["functions"])
     return {
         "index": index,
-        "title": _COLUMN_TITLES[index],
-        "nodes": [_node(f) for f in module["functions"] if f["column"] == index],
+        "title": _COLUMN_TITLES[index - 1],
+        "nodes": [_node(function) for function in functions],
     }
 
 

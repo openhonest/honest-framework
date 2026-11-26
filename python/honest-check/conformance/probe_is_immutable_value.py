@@ -1,3 +1,5 @@
+# scenario: is_immutable_value
+# inherits: hd=python/honest-check/honest-check.hd::is_immutable_value -> feature=specs/features/honest-check.feature::is_immutable_value
 """Honest probe for honest-check's is_immutable_value (feature Scenario: is_immutable_value).
 
 Scenario: is_immutable_value returns true when a module-level binding's right
@@ -17,11 +19,15 @@ from honest_parse import parse, walk
 # Each case: an assignment whose right side is the value under test, and whether
 # that value is provably immutable per the scenario's enumeration.
 _CASES = [
+    {"src": "_ = 3.5", "expect": True},
+    {"src": "_ = False", "expect": True},
+    {"src": "_ = list()", "expect": False},
     {"src": "_ = 42", "expect": True},                 # a number
     {"src": '_ = "s"', "expect": True},                # a string
     {"src": "_ = True", "expect": True},               # a bool
     {"src": "_ = None", "expect": True},               # None
     {"src": "_ = (1, 2)", "expect": True},             # a tuple literal
+    {"src": '_ = - \\\n    1\n', "expect": True},
     {"src": "_ = -1", "expect": True},                 # a negated immutable
     {"src": "_ = frozenset([1, 2])", "expect": True},  # a frozenset(...) call
     {"src": "_ = [1, 2]", "expect": False},            # a list literal

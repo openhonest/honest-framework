@@ -1,0 +1,193 @@
+# honest-render declared in its own .hd -- the public, free static renderer that makes one .hd
+# architecture declaration human-readable (honest-render-architecture.md section 1). It reads one
+# .hd file, asks honest-design to read it into a Module and to draw it into a Diagram, builds a
+# rendering-shaped ViewModel from those two values, renders that ViewModel to a Markdown document,
+# and writes the document out. It never parses .hd and never recomputes column placement or edges:
+# the grammar and the read path belong to honest-design, and column placement and edges come from
+# honest-design's Diagram, consumed as data (sections 1.1, 1.2, 5).
+#
+# Written in the method's order: the world first (one file read, one document written,
+# and the honest-design import seam), then the path the door takes, then the types the path carries,
+# then the pulls the orchestrator makes, then the two pure steps.
+
+module honest-render
+
+  layer tooling
+
+  note "the public static renderer of one .hd declaration: read the file, get honest-design's Module and Diagram, build a ViewModel, render Markdown, write it out; read-only, deterministic, never parses .hd and never recomputes layout render_file is the sole entry in the literal Python honest_render.__all__. Other existing bindings remain available by explicit named import (spec 3.1)."
+
+  # --- Step 1. The world ------------------------------------------------------
+  # honest-render's world is small. It reads one .hd file whose path it is handed at run time, and
+  # it writes one rendered document to a destination it is handed at run time: a file, or standard
+  # output (section 2). Both file sides are named `given` because the path and the destination are
+  # learned at run time, from the command line or the caller, not fixed at declaration (section 2,
+  # honest-design section 6 side-kind rules). honest-render's one framework dependency is
+  # honest-design, reached through `import honest_design`: it pulls the Module from read_hd and the
+  # Diagram from render, both honest-design functions, exactly as honest-design itself reaches
+  # honest-parse through a reader whose side names the other module's function (section 1.3, 6).
+  # honest-render reaches honest-parse only transitively through honest-design and never directly.
+  inputs  = { "file:given" : "the one .hd source file whose path honest-render is handed at run time, read as text at the reader", "honest-design" : "the honest-design module honest-render imports: it pulls the Module from honest-design's read_hd (honest-design section 4) and the Diagram from honest-design's render (honest-design section 7), the one framework dependency, the seam each pull reader names by its door (honest-design.read_hd, honest-design.render); the surface lists the module, because what is outside honest-render is the module and which door each pull enters is that pull's business" }
+  outputs = { "file:given" : "the rendered document written to a destination file path honest-render is handed at run time", "stdout" : "the rendered document written to standard output when no destination file is chosen, the console stdout side" }
+
+  # --- the failure a caller reads --------------------------------------------
+  # honest-render adds no diagnostics of its own (section 1.2). The only failure it surfaces is the
+  # fault honest-design's read_hd returns when the .hd is malformed or is not a valid declaration;
+  # honest-render reports that fault faithfully as data and renders nothing (sections 3.3, 9). It is
+  # declared as honest-render's own Fault record so the module can carry the fault outward by return
+  # from the reader that pulled it, up the orchestrator, to the door, as a bare union arm.
+
+  set fault_categories = {
+    "client" : "the caller is at fault: the request named something honest-render could not use, as a .hd path that could not be read (file_unreadable) or, passed through from honest-design, a malformed or invalid .hd (honest-type section 13.2)",
+    "server" : "honest-render or the environment it was given is at fault: the destination honest-render was handed could not be written (write_failed) (honest-type section 13.2)"
+  } note "the closed set of honest-render Fault categories, the two values honest-type defines in its Fault schema (honest-type section 13.2). Every honest-render Fault carries exactly one of these words in its category field, so a caller can sort a fault into caller-side (client) or module/environment-side (server) without parsing the code. It is a closed set because honest-type fixes the two values; honest-render coins no third."
+
+  vocabulary FaultCategory = { fault_categories } note "the category of one honest-render Fault, drawn from the fault_categories set: the fixed vocabulary a Fault's category field is one of (honest-type section 13.2). It bounds the category field to client or server, so a fault is never tagged with a word outside honest-type's two values. file_unreadable is client; write_failed is server; a passed-through honest-design read_hd fault carries its own category."
+
+  type Fault = {
+    is_err: bool
+    code: str
+    category: FaultCategory
+    message: str
+    detail: dict<str, str>
+  } note "the failure honest-render returns as a bare union arm (value | Fault), never raised and never wrapped in an ok/err envelope (honest-errors convention, honest-observe's Fault). is_err is the reserved boolean tag, always true, the mark honest-type's is_fault reads to tell the fault arm from the value arm; it is reserved framework-wide, so no non-fault honest-render value carries a field of that name. honest-render builds three kinds of fault: file_unreadable when read_source's read outcome is not ok (the .hd path could not be read), category client; write_failed when write_document's write outcome is not ok (the destination could not be written), category server; and the fault honest-design's read_hd gives it when the .hd is malformed or is not a valid declaration (sections 3.3, 9), passed through faithfully with its own code, message and category. code is the specific reason: file_unreadable, write_failed, or the code honest-design reported. category is the FaultCategory, client or server, the two values honest-type defines (honest-type section 13.2); file_unreadable is client, write_failed is server, and a passed-through read_hd fault keeps its own category. message is the human sentence naming what went wrong and what to do about it. detail is the structured context, for example the read error, the write error, or the location of a syntax error honest-design supplied. On any of these faults honest-render renders no document (section 9). The content fields, code to branch on, category to sort by and message to read, with is_err the arm tag, are the minimum."
+
+  # --- the plain outcomes the two boundaries report, not faults ----------------
+  # The reader and the output boundary stay thin and build no Fault (sections 3.2, 3.4). Each returns
+  # a plain outcome record -- the boundary's report of what the filesystem did -- and the orchestrator
+  # reads it and builds the Fault. This follows honest-observe's append_event/run_emit WriteOutcome
+  # pattern (honest-observe section 3): the boundary reports a plain outcome, the orchestrator builds
+  # the fault via a pure fault constructor.
+
+  type ReadOutcome = {
+    ok: bool
+    text: str
+    detail: str
+  } note "the raw outcome read_source reports for one .hd file read (section 3.2). It is not a Fault and not the ok/err envelope: it is the reader's plain report of what the filesystem did, so the boundary stays a thin read and leaves fault construction to the orchestrator. ok is true on a clean read and false on a failed one. text carries the complete .hd file text on a clean read and is empty on a failure. detail is empty on success and carries the read error on a failure, which render_declaration passes into the file_unreadable Fault it builds via render_fault. The orchestrator reads ok to decide whether to continue or to build the fault; this mirrors honest-observe's WriteOutcome (honest-observe section 3)."
+
+  type WriteOutcome = {
+    ok: bool
+    detail: str
+  } note "the raw outcome write_document reports for one document write (section 3.4). It is not a Fault and not the ok/err envelope: it is the output boundary's plain report of what the filesystem or stdout did, so the boundary stays a thin write and leaves fault construction to the orchestrator. ok is true on a clean write and false on a failed one. detail is empty on success and carries the write error on a failure, which render_declaration passes into the write_failed Fault it builds via render_fault. The orchestrator reads ok to decide whether the render succeeded or to build the fault; this mirrors honest-observe's WriteOutcome (honest-observe section 3)."
+
+  # --- the values honest-render receives from honest-design, never constructs --
+  # Module and Diagram are honest-design's published types (honest-design sections 4 and 7).
+  # honest-render consumes them and never builds them, so each is declared foreign to honest-design,
+  # the shape's owner, exactly as honest-check declares honest-design's parsed Declaration foreign
+  # (section 1.1, 6). The honest-design fault honest-render surfaces travels in honest-render's own
+  # Fault above, so DesignFault below names only that honest-design produces a failure value
+  # honest-render copies; honest-render never reads honest-design's fault fields directly.
+
+  type Module = foreign "honest-design" note "one parsed .hd module, honest-design's Module intermediate representation (honest-design section 4): the module's name, layer, note, envs, stores, inputs, outputs, surface_declared flag, types, sets, vocabularies, dispatches, surfaces, examples, functions, chains, exposes, routes, entries and html_attrs. honest-render receives it from honest-design's read_hd and reads it to build the per-declaration detail of the ViewModel -- notes, signatures, invokes, the type/set/vocabulary/dispatch tables, the chains, routes and entries (sections 3.3, 4). It is foreign because honest-design, not honest-render, owns the shape: honest-render reads it and never constructs it, and it names no fields here to avoid a copy that drifts from honest-design's own declaration (section 1.1, 1.4)."
+
+  type Diagram = foreign "honest-design" note "honest-design's four-column Diagram, the result of honest-design's render over a Module (honest-design section 7): the module name, the four columns of placed DiagramNodes (input boundary, orchestrators, pure functions, output boundary), and the chain edges between adjacent links. honest-render receives it from honest-design's render and takes all column placement and all edges from it, never recomputing a column rule or an edge (sections 1.1, 1.2, 5). It is foreign because honest-design, not honest-render, owns the shape and the layout rules that produced it: honest-render reads the result as data and never redraws it, and it names no fields here to avoid duplicating honest-design's declaration (section 1.1, 1.4)."
+
+  # --- the rendering-shaped projection honest-render owns ---------------------
+  # The ViewModel is honest-render's own type: the declaration reorganized into the sections and
+  # tables a reader reads, carrying only what the renderer needs (section 4). It holds the facts in
+  # rendering order and names no colors, no widths and no output syntax -- it is structure, and the
+  # renderer of each output format turns it into text (sections 4, 8). Column placement and edges in
+  # it come from the Diagram; everything else comes from the Module.
+
+  type OutputTarget = {
+    path: str | NOTHING
+  } note "where the rendered document goes, learned at run time (section 2, 3.4). path is the single field that is the whole destination choice: a destination file path writes the rendered document to that file (the file:given side), and NOTHING writes it to standard output (the stdout side). There is no boolean flag; the field's presence or absence is the whole choice. When path is a path string the document goes to the file at that path; when path is NOTHING the document goes to stdout. The door is handed this alongside the .hd path; the output boundary reads it to choose between the file:given side and the stdout side (section 3.4). It names a destination only; it carries no output syntax and no format choice."
+
+  type RenderRequest = {
+    hd_path: str
+    output: OutputTarget
+  } note "the request to render one .hd file, the value the door accepts and hands to the orchestrator (section 3.1). hd_path is the filesystem path of the one .hd file to render, the path the reader is handed to read the file text (section 2, 3.2); it is a path string, not the file's contents. output is the OutputTarget the rendered document is written to, a destination file or standard output (section 2, 3.4). The door checks this request because a boundary cannot assume the caller's types (section 3.1), then hands it to exactly one orchestrator."
+
+  type ViewSection = {
+    heading: str
+    kind: SectionKind
+    lines: list<str>
+    rows: list<list<str>>
+  } note "one rendered-document section in rendering order (section 4), the rendering-shaped projection of one grouping of the declaration. heading is the section's title as a reader reads it, for example the module name for the heading section or 'Types' for the types table section. kind names what the section presents, one of the words in the section_kinds set: which of the declaration's groupings this section carries (heading, world, functions, types, sets, vocabularies, dispatches, chains, routes, entries, exposes, surfaces, examples), so the renderer of each output format selects prose, table or ordered list without re-deriving the grouping. lines holds ordered prose paragraphs or, for chains, one logical item per declared chain. rows holds ordered cell tuples. In types, sets, vocabularies and dispatches it includes the table header row followed by data rows. In routes and entries it holds data rows only, respectively method/path/target and callsite/target, with no header row. The unused field is an empty list. A section carries lines or rows as its kind dictates, never inventing a fact the declaration does not state (section 5, 'Nothing invented'). Column placement and edges a section reflects come from the Diagram; every other fact comes from the Module (sections 4, 5)."
+
+  type ViewModel = {
+    module_name: str
+    sections: list<ViewSection>
+  } note "the whole rendering-shaped projection of one declaration, plain data derived purely from honest-design's Module and Diagram (section 4). It is the one place honest-render's document-view rules (section 5) are applied, and the shared input to every output format, so Markdown and the later HTML render the same structure and cannot drift (sections 3.3, 8). module_name is the name of the module being rendered, taken from the Module. sections is the ordered list of ViewSections in rendering order (section 4): the module heading and note, the world (declared inputs and outputs and the sides the boundaries touch, each with the family path honest-design assigns its kind), the functions grouped and placed by the Diagram's columns, the types/sets/vocabularies/dispatches as tables, the chains/routes/entries as ordered lists, and the exposes/surfaces/examples where the declaration carries them. It names no colors, no widths and no output syntax: it is the structure, and the renderer of each output format turns it into text (sections 4, 8)."
+
+  set section_kinds = {
+    "heading" : "the module heading section: name, layer, version, and the module note as opening prose",
+    "world" : "the world section: the declared inputs and outputs and the sides the boundaries touch, each shown with the family path honest-design assigns its kind",
+    "functions" : "the functions section: each function grouped and placed by the Diagram's columns, shown whole with role, signature, invokes, the sides it touches, awaited, and its note as prose",
+    "types" : "the types table: each type with its fields and their types",
+    "sets" : "the sets table: each set with its members",
+    "vocabularies" : "the vocabularies table: each vocabulary with the sets it draws on",
+    "dispatches" : "the dispatches table: each dispatch with each key and the function it selects",
+    "chains" : "the chains list: each chain with its links in declared order",
+    "routes" : "the routes list: each route with its method, path, and target",
+    "entries" : "the entries list: each entry with its external callsite string and the function it names",
+    "exposes" : "the exposes list, where the declaration carries them",
+    "surfaces" : "the surfaces list, where the declaration carries them",
+    "examples" : "the examples list, where the declaration carries them"
+  } note "the closed set of rendered-document section kinds in rendering order (section 4). Each ViewSection carries exactly one of these words in its kind field, so the renderer of each output format knows what a section presents -- prose or a table, and which grouping of the declaration -- without re-deriving it. It names what honest-render renders: the per-declaration groupings the Module carries plus the world and the column-placed functions the Diagram places. It is a closed set because the sections of the readable document are fixed by section 4, not open-ended."
+
+  vocabulary SectionKind = { section_kinds } note "the kind of one rendered-document section, drawn from the section_kinds set: the fixed vocabulary a ViewSection's kind field is one of (section 4). It bounds the kind field to the closed set of sections section 4 lists, so a section is never tagged with a word outside that set."
+
+  # --- Step 1, the cards: the one door, the file reader, the output boundary ---
+  # The door is the one entry the command line or a caller reaches; honest-render lists it on an
+  # entry so the world has a named way in (section 3.1). The reader reads the .hd file text at the
+  # boundary, honest-render's only input side effect (section 3.2). The output boundary writes the
+  # rendered document to its destination, honest-render's only output side effect (section 3.4).
+
+  boundary_in fn render_file : (request: RenderRequest) -> str | Fault invokes render_declaration note "the single input boundary, the one door honest-render presents (section 3.1). It accepts the request to render: a RenderRequest carrying the .hd path and the chosen OutputTarget. It checks its own input, because a boundary cannot assume the caller's types (section 3.1), then hands the request to exactly one orchestrator, render_declaration, and adds nothing of its own. request is the RenderRequest: hd_path names the one .hd file to render and output names where the rendered document goes (a file or standard output). It returns the rendered document as a string on success -- the same bytes the output boundary wrote, answered to the caller -- or honest-render's Fault when honest-design's read_hd reported the .hd is malformed or is not a valid declaration, in which case no document is rendered (sections 3.3, 9). The fault travels back here by return from the orchestrator; the door is the boundary where the world sees it. It is the one function the command line or a host caller reaches, named on the import entry below so the world has a named way in (section 3.1)."
+
+  reader fn read_source : (hd_path: str) -> ReadOutcome side_effect reads "file:given" note "the reader on the filesystem side, honest-render's only input side effect (section 3.2). It reads the .hd file's text from the filesystem and reports a plain ReadOutcome, so the orchestrator can pass the text to honest-design's read_hd on a clean read or build the file_unreadable Fault on a failed one. It stays thin and builds no Fault: it returns a ReadOutcome with ok true and the file text in text on a clean read, or ok false with the read error in detail on a failure (section 3.2). It does not parse the text and it does not interpret it. hd_path is the filesystem path of the one .hd file to read, handed to it by the orchestrator from the RenderRequest; the path is learned at run time, which is why the file side is named given (section 2). The side it reads is file:given, the OS/persistence file family at a path known only at run time (honest-design section 6). It reads and does nothing else: it does not parse, render, write, or construct a Fault -- fault construction is the orchestrator's, following honest-observe's append_event pattern (honest-observe section 3). It is a pull the orchestrator makes; it answers the program and asks nothing of it."
+
+  boundary_out fn write_document : (document: str, output: OutputTarget) -> WriteOutcome side_effect writes "file:given" side_effect writes "stdout" note "the output boundary, honest-render's only output side effect (section 3.4). The pure core produced the bytes; this boundary only puts them where they go and reports a plain WriteOutcome. document is the rendered document the pure core produced, the Markdown text to write. output is the OutputTarget: when output.path is a path string the document is written to the file at that path (the file:given side, a destination path known only at run time), and when output.path is NOTHING the document is written to standard output (the stdout side, the console stdout family). It writes to exactly one of the two sides per call, chosen by whether output.path is present or NOTHING, never both. It stays thin and builds no Fault: it returns a WriteOutcome with ok true on a clean write, or ok false with the write error in detail on a failure, so the orchestrator can build the write_failed Fault (section 3.4). It writes and does nothing else: it does not parse, build, render, or construct a Fault -- fault construction is the orchestrator's, following honest-observe's append_event pattern (honest-observe section 3). It is a terminus; it calls nothing."
+
+  # --- Step 2, the path: one orchestrator, reached by the one door -------------
+  # The door hands its request to exactly one orchestrator. The orchestrator pulls the file text,
+  # pulls the Module from honest-design's read_hd and the Diagram from honest-design's render, then
+  # drives the two pure steps and the output boundary (section 3.3). honest-render has one chain,
+  # the pipeline the door starts.
+
+  orchestrator fn render_declaration : (request: RenderRequest) -> str | Fault invokes read_source, read_ir, draw_diagram, build_view, render_markdown, write_document, render_fault pure_call "honest-type.is_fault" note "the one orchestrator, composing the work above the pure core and owning all fault construction (sections 3.3, 3.2, 3.4, 3b). It takes the RenderRequest the door handed it and pulls the .hd file text with read_source, which returns a ReadOutcome. It reads that outcome: when the read outcome is not ok it builds a file_unreadable Fault via render_fault, with detail.read_error set to the reader outcome's detail and category client, and returns it, rendering nothing; the caller named a path that could not be read (file_unreadable, client, section 3b; sections 3.2, 3.3). On a clean read it passes the outcome's text to honest-design through import honest_design: the Module from read_ir (honest-design's read_hd) and the Diagram from draw_diagram (honest-design's render). honest-render performs no parse and no column computation; it pulls the producer of each value and consumes the result (sections 1.1, 3.3). If read_ir returns the client not_single_module Fault -- honest-design's read_hd returned a Document carrying zero modules or more than one, so there is not exactly one module to render -- the orchestrator returns that fault and renders nothing, its detail stating the module count found and its category client (not_single_module, client, section 3b; sections 3.3, 9). If read_ir returns the passed-through honest-design read_hd fault -- read_hd reported the .hd is malformed or is not a valid declaration -- the orchestrator passes that fault through unchanged and renders nothing, returning it to the door with its own code, message and category, never re-coded (sections 3.3, 3b, 9). On a valid declaration it drives the two pure steps in order -- build_view turns the Module and Diagram into a ViewModel, then render_markdown turns the ViewModel into the Markdown document string -- and hands the document and the request's OutputTarget to write_document, which writes it to the file or to standard output and returns a WriteOutcome. It reads that outcome: when the write outcome is not ok it builds a write_failed Fault via render_fault, with detail.write_error set to the writer outcome's detail and category server, and returns it; the destination it was given could not be written (write_failed, server, section 3b; sections 3.4, 3.3). On a clean write it returns the rendered document string. request is the RenderRequest: hd_path to read and render, output to write to. Every fault case comes back as the Fault value, never as a raise, because honest-render reports faults faithfully as data and adds no diagnostics of its own (sections 3.3, 9); the orchestrator raises nothing. It owns fault construction because the boundaries stay thin (sections 3.2, 3.4), mirroring honest-observe's run_emit reading append_event's WriteOutcome and building the fault via observe_fault (honest-observe section 3); a forward orchestrator -> pure call to render_fault is legal. It is the single mutator: the two pure steps and the three boundaries it drives own no sequencing of their own."
+
+  # --- Step 4, the pulls: the honest-design import seam ------------------------
+  # The orchestrator needs two values no door hands it: the Module honest-design reads from the file
+  # text, and the Diagram honest-design draws from the Module. Each is a pull across the module
+  # boundary into honest-design, declared the way honest-design pulls honest-parse: a reader whose
+  # side names the other module's function (honest-design's parse reads "honest-parse.parse_source").
+  # These two readers are honest-render's side of `import honest_design`; the import entries below
+  # name them as the seam the import reaches (sections 1.3, 6). read_ir carries the Fault outward
+  # because read_hd can report a malformed .hd (sections 3.3, 9); render is total, so draw_diagram
+  # does not.
+
+  reader fn read_ir : (source: str) -> Module | Fault side_effect reads "honest-design.read_hd" note "the import seam to honest-design's read path, honest-render's side of import honest_design for the Module (sections 1.1, 1.3, 3.3). It hands the .hd source text to honest-design's read_hd, which returns a Document, and resolves that Document to exactly one Module (section 3b). honest-render renders exactly one module per .hd: when read_hd returns a Document carrying exactly one module, read_ir returns that one Module intermediate representation honest-design read (honest-design section 4). When read_hd returns a Document carrying zero modules or more than one, read_ir returns the client not_single_module Fault, never a Module -- detail.module_count is the decimal string for the module count found, and its category is client, because there is not exactly one module to render (section 3b). When read_hd itself reported the .hd is malformed or is not a valid declaration, read_ir passes that honest-design fault through unchanged, with its own code, message and category, never re-coded (section 3b; sections 3.3, 9). honest-render never parses .hd itself; this pull is the only way it obtains a Module, and the grammar and the read path stay honest-design's (sections 1.1, 1.2). source is the complete .hd file text the reader read from disk, handed to it by the orchestrator. It returns the one Module on a single-module Document, the client not_single_module Fault on a zero- or multi-module Document. The zero-module message explains the absence and asks the caller to supply one module. The multi-module message explains the excess and directs the caller to render the modules individually. For a malformed or invalid declaration, it returns the original honest-design fault. Each Fault travels by return to the orchestrator, which renders nothing (sections 3.3, 9). The side it reads is honest-design.read_hd, the imported honest-design function it pulls, the same seam idiom honest-design uses to reach honest-parse.parse_source (honest-design section 6). It is a pull the orchestrator makes; it reads honest-design and asks nothing of the program."
+
+  reader fn draw_diagram : (module: Module) -> Diagram side_effect reads "honest-design.render" note "the import seam to honest-design's static renderer, honest-render's side of import honest_design for the Diagram (sections 1.1, 1.3, 5). It hands the Module to honest-design's render and returns the four-column Diagram honest-design drew -- the column-placed nodes and the chain edges (honest-design section 7). honest-render never recomputes column placement or edges; this pull is the only way it obtains the layout, and the column rules stay honest-design's (sections 1.1, 1.2, 5). module is the Module honest-design's read_hd produced, handed to it by the orchestrator. It returns the Diagram; honest-design's render is total and reports no fault, so this pull carries none. The side it reads is honest-design.render, the imported honest-design function it pulls, the same seam idiom honest-design uses to reach honest-parse.parse_source (honest-design section 6). It is a pull the orchestrator makes; it reads honest-design and asks nothing of the program."
+
+  # --- Step 5, the pure core: the two steps -----------------------------------
+  # Structure, then text (section 3.3). build_view decides structure from the Module and the Diagram;
+  # render_markdown decides text from the ViewModel. Splitting the two is deliberate: the ViewModel
+  # is the one place the document-view rules are applied and the shared input to every output format,
+  # so Markdown and the later HTML cannot drift (sections 3.3, 8).
+
+  fn _dispatches_section : (module: Module, diagram: Diagram) -> ViewSection note "builds the Dispatches table from the Honest Design Module IR (Render spec 4 and 5). Each Dispatch has name, entries and note. Each DispatchEntry has key, handler and projection. Start rows with the existing Dispatch, Key, Target header, then add one row with dispatch.name, entry.key and entry.handler for every entry, preserving both dispatch order and entry order. The table projects the handler as its target; projection is separate IR metadata. No entries leaves a header-only table. kind is dispatches and lines is empty. Diagram is accepted for the shared section-builder signature and is unused here."
+
+  fn _chains_section : (module: Module, diagram: Diagram) -> ViewSection note "builds the chains section, with one item in lines per declared chain and empty rows (spec 4 and 5). Module supplies chain names and their declaration order. For each name, keep every matching Diagram edge in its supplied order and preserve its source-to-destination direction. Only these pairs express adjacency. If a chain has no Diagram edges and exactly one declared link, show that standalone link. With no edges and zero or multiple declared links, show the chain name without inventing adjacency. Do not join disjoint edge pairs into an inferred path."
+
+  fn _routes_section : (module: Module, diagram: Diagram) -> ViewSection note "builds the routes section from Module in declaration order. Each route contributes one headerless row with method, path and target in that order. lines is empty. The shared section builder takes Diagram but routes use no layout data (spec 4 and 5)."
+
+  fn _entries_section : (module: Module, diagram: Diagram) -> ViewSection note "builds the entries section from Module in declaration order. Each entry contributes one headerless row with external callsite and target in that order. lines is empty. The shared section builder takes Diagram but entries use no layout data (spec 4 and 5)."
+
+  fn _render_ordered_list : (section: ViewSection) -> str note "renders the section heading and one numbered Markdown list item per logical item, in the supplied order. For chains the items are lines. For routes and entries each row contributes one item showing all its fields in their given order. An empty item collection produces only the section heading. No table header or divider is inserted (spec 5 and 8)."
+
+  fn build_view : (module: Module, diagram: Diagram) -> ViewModel invokes _dispatches_section, _chains_section, _routes_section, _entries_section note "the first pure step, build the document view (section 3.3, step 1). It takes honest-design's Module and Diagram and produces a ViewModel: the declaration reorganized into the order and groupings a reader wants (section 4). It decides structure, not text (section 3.3). module is the parsed .hd module honest-design read; diagram is the four-column layout honest-design drew. Column placement and edges come from the diagram -- each function is grouped and placed in the column the diagram gives and the chain edges are the edges the diagram gives (section 5) -- and the per-declaration detail (notes, signatures, invokes, the type/set/vocabulary/dispatch tables, the chains, routes, entries, exposes, surfaces, examples) comes from the module (sections 4, 5). It builds the ViewSections in rendering order (section 4), tagging each with its SectionKind from the closed section_kinds set, carrying prose and chain items in lines, and table or list cells in rows, and invents nothing the declaration does not state (section 5, 'Nothing invented'): a missing note is marked omitted, never guessed. It is pure: it reads no world and produces the ViewModel from its two inputs alone, which is why the rendering is a pure function of the declaration (section 7). It returns the ViewModel."
+
+  fn render_markdown : (view: ViewModel) -> str invokes _render_ordered_list note "the second pure step, render the document view (section 3.3, step 2). It takes the ViewModel and produces the output document as a string: Markdown, the first and normative output format (sections 3.3, 8). It decides text, not structure (section 3.3): the structure was fixed in the ViewModel, and this step only turns each ViewSection into Markdown -- the module heading and note as prose, a function shown whole as prose with its signature, the types/sets/vocabularies/dispatches as Markdown tables, the chains/routes/entries as Markdown lists (sections 5, 8). view is the ViewModel build_view produced, the shared structure every output format renders. It returns the rendered Markdown document as a string. It is deterministic: the same ViewModel renders to byte-identical Markdown every time, with no clock and no external state, so the whole rendering is a pure function of the declaration (section 7). Output syntax lives only here and in the later HTML renderer; a new output format reads the same ViewModel and does not re-derive the structure (section 8). It is pure: it reads no world."
+
+  fn render_fault : (code: str, category: FaultCategory, message: str, detail: dict<str, str>) -> Fault note "builds one honest-render Fault record from its parts, the single place honest-render assembles a fault it originates (sections 3.2, 3.3, 3.4, 3b; the honest-render twin of honest-observe's observe_fault). honest-render originates exactly the three codes the section 3b fault-code table names, and render_fault builds all three. code is the specific reason -- file_unreadable when read_source's ReadOutcome is not ok (the .hd path could not be read, section 3b), write_failed when write_document's WriteOutcome is not ok (the destination could not be written, section 3b), not_single_module when read_ir's Document carried zero modules or more than one (there is not exactly one module to render, section 3b). category is the FaultCategory the section 3b table assigns each code: client for file_unreadable (the caller named a path that could not be read), server for write_failed (the destination honest-render was given could not be written), and client for not_single_module (the caller named a .hd whose Document did not carry exactly one module), the two bounded values honest-type defines (honest-type section 13.2). message is the human sentence naming what went wrong and what to do instead. detail is the structured context -- the originating path supplies read_error from ReadOutcome.detail for file_unreadable, write_error from WriteOutcome.detail for write_failed, or module_count as a decimal string for not_single_module. render_fault preserves the supplied detail. It sets the reserved is_err tag true and returns the Fault, carried by the return as a bare union arm and recognized by is_fault, never raised and never wrapped in an ok/err envelope. render_declaration invokes it; a passed-through honest-design read_hd fault is not built here and is never re-coded, it keeps its own code, message and category (section 3b). Pure: it reads no world, a bounded assembly of a fault from its parts."
+
+  # --- the one pipeline the door starts ---------------------------------------
+  chain render_pipeline = render_file -> render_declaration note "the one pipeline honest-render runs (section 3): the door render_file hands the request to the orchestrator render_declaration, which pulls the file text and honest-design's Module and Diagram, drives the two pure steps, and writes the document out. The orchestrator fans out to its pulls, the two pure steps and the output boundary through its invokes; the chain names the door-to-orchestrator entry of the single path the world takes in."
+
+  # --- the way in -------------------------------------------------------------
+  # honest-render is a tool the command line and host callers reach by importing it, so the door
+  # carries an import entry, the way the framework names a module reached by import (section 3.1).
+
+  entry "export honest_render" -> render_file

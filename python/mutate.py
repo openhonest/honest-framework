@@ -10,9 +10,8 @@ Python subprocess per mutant; profiling showed 97% of every mutant's time was pr
 re-importing the whole package, while the conformance work itself took ~4ms. Here a meta-path finder
 overrides exactly one module's source with the mutant string — no file is written, so parallel workers
 cannot collide — and the module's conformance __main__ is exec'd in-process. A per-mutant alarm bounds
-non-terminating mutants (a removed loop increment): a timeout means the suite did not pass, so the mutant
-is caught. Early-exit falls out of run_conformance's __main__, which stops at the failing half (suite or
-laws) and raises SystemExit.
+a run that has yet to reach a verdict. A reported probe failure catches the mutant; an expired
+alarm or worker deadline without a reported failure leaves it undecided.
 """
 
 import importlib.abc
@@ -21,11 +20,13 @@ import io
 import json
 import multiprocessing as mp
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import honest_parse
@@ -121,11 +122,29 @@ def _alarm(_signum, _frame):
 
 
 def _purge():
-    """Drop the package and its conformance modules from sys.modules so the next mutant re-imports them
-    fresh (the mutated file via the finder, the rest from disk)."""
-    for name in list(sys.modules):
-        if name == f"honest_{_MODULE}" or name.startswith(f"honest_{_MODULE}.") or name.startswith("laws_"):
-            del sys.modules[name]
+    """Reload the target and its conformance code while retaining independent resources."""
+    package = f"honest_{_MODULE}"
+    conformance = os.path.abspath(_RUNNER_PATH.parent)
+    prefix = conformance + os.sep
+    resource_fixtures = {"postgres_fixture", "turso_fixture"}
+    discard = []
+    for name, module in list(sys.modules.items()):
+        if name == package or name.startswith(package + "."):
+            discard.append(name)
+            continue
+        metadata = getattr(module, "__dict__", {})
+        filename = metadata.get("__file__")
+        if _MODULE == "persist" and name in resource_fixtures and filename:
+            if os.path.abspath(filename) == os.path.join(conformance, name + ".py"):
+                continue
+        locations = (filename,) if filename else metadata.get("__path__", ())
+        absolute_locations = map(os.path.abspath, locations or ())
+        if any(location.startswith(prefix) or location == conformance for location in absolute_locations):
+            discard.append(name)
+
+    # Namespace paths can consult their parent in sys.modules while iterating.
+    for name in discard:
+        del sys.modules[name]
 
 
 # Stdlib modules a conformance harness patches at runtime (honest-test's non-determinism probe replaces
@@ -166,6 +185,12 @@ def _suite_verdict(fqmn, path, source):
     _FINDER.fqmn, _FINDER.path, _FINDER.source = fqmn, path, source
     _purge()
     snapshot = _snapshot_stdlib()
+    # CPython stores signal registrations outside the module dictionary. The
+    # suite may install a shutdown handler, so warm runs must restore the actual handlers.
+    handlers = {
+        number: signal.getsignal(number)
+        for number in (signal.SIGALRM, signal.SIGINT, signal.SIGTERM)
+    }
     signal.signal(signal.SIGALRM, _alarm)
     signal.alarm(_TIMEOUT_SECONDS)
     try:
@@ -183,12 +208,17 @@ def _suite_verdict(fqmn, path, source):
     finally:
         signal.alarm(0)
         _restore_stdlib(snapshot)
+        for number, handler in handlers.items():
+            if handler is not None:
+                signal.signal(number, handler)
         _FINDER.fqmn = None
 
 
-def _worker_main(module, task_conn, result_conn):
+def _worker_main(module, task_conn, result_conn, postgres_root):
     """A warm worker: import once, then loop — receive a mutant, send back whether it survived. Runs
     until it receives the stop sentinel (or the parent kills it for blowing the deadline)."""
+    if postgres_root is not None:
+        os.environ["HONEST_MUTATION_POSTGRES_ROOT"] = str(postgres_root)
     _init_worker(module)
     while True:
         mutant = task_conn.recv()
@@ -198,6 +228,14 @@ def _worker_main(module, task_conn, result_conn):
             verdict = _suite_verdict(mutant["fqmn"], mutant["path"], mutant["source"])
         except BaseException:
             verdict = ("caught", None)
+        if postgres_root is not None:
+            fixture = sys.modules.get("postgres_fixture")
+            cleanup = getattr(fixture, "_drop_targets", None)
+            if cleanup is not None:
+                try:
+                    cleanup()
+                except Exception as error:
+                    verdict = ("undecided", f"PostgreSQL fixture cleanup failed: {error}")
         result_conn.send(verdict)
 
 
@@ -212,8 +250,21 @@ class _Worker:
     def _spawn(self):
         self._task_recv, self._task_send = mp.Pipe(duplex=False)
         self._result_recv, self._result_send = mp.Pipe(duplex=False)
-        self.proc = mp.Process(target=_worker_main, args=(self._module, self._task_recv, self._result_send), daemon=True)
-        self.proc.start()
+        self._postgres_root = (
+            Path(tempfile.mkdtemp(prefix="hpg-mutation-", dir="/tmp"))
+            if self._module == "persist"
+            else None
+        )
+        self.proc = mp.Process(
+            target=_worker_main,
+            args=(self._module, self._task_recv, self._result_send, self._postgres_root),
+            daemon=True,
+        )
+        try:
+            self.proc.start()
+        except BaseException:
+            self._cleanup_postgres()
+            raise
         self.current = None
         self.since = None
 
@@ -240,6 +291,7 @@ class _Worker:
         mutant = self.current
         self.proc.kill()
         self.proc.join()
+        self._cleanup_postgres()
         self._spawn()
         return mutant
 
@@ -251,6 +303,24 @@ class _Worker:
         self.proc.join(timeout=2)
         if self.proc.is_alive():
             self.proc.kill()
+            self.proc.join()
+        self._cleanup_postgres()
+
+    def _cleanup_postgres(self):
+        workspace = self._postgres_root
+        if workspace is None:
+            return
+        datadir = workspace / "data"
+        if (datadir / "postmaster.pid").is_file():
+            pg_ctl = (workspace / "pg_ctl").read_text(encoding="utf-8")
+            stopped = subprocess.run(
+                [pg_ctl, "-D", str(datadir), "-m", "immediate", "-w", "-t", "5", "stop"],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            if stopped.returncode and (datadir / "postmaster.pid").is_file():
+                raise RuntimeError(f"Could not stop mutation PostgreSQL cluster {datadir}: {stopped.stderr}")
+        shutil.rmtree(workspace)
+        self._postgres_root = None
 
 
 def _rss_bytes(pids):
@@ -405,67 +475,66 @@ def _adequacy(mutants, survivors, undecided, declared):
 def _run_module(module, only=None):
     """Fan the mutants across killable warm workers. Each worker runs one mutant at a time; a mutant that
     runs past the deadline (one no in-worker signal could stop) has its worker SIGKILLed and replaced,
-    and is counted as caught. A surviving mutant is one whose worker reported the suite still passing.
+    and is reported as undecided. A surviving mutant is one whose worker reported the suite still passing.
     `only` (a filename substring) narrows mutation to one source file for fast iteration."""
     mutants, unspliced = _mutants(module, only)
     pending = list(reversed(mutants))  # pop() from the end
-    workers = [_Worker(module) for _ in range(min(_WORKERS, len(mutants) or 1))]
     survivors = []
     undecided = []
     done = 0
     last_memory_poll = 0.0
-    while done < len(mutants):
-        for worker in workers:
-            if worker.current is None and pending:
-                worker.dispatch(pending.pop())
-        progressed = False
-        for worker in workers:
-            if worker.ready():
-                mutant, (outcome, reason) = worker.take()
-                if outcome == "survived":
-                    survivors.append({"operator": mutant["operator"], "label": mutant["label"]})
-                elif outcome == "undecided":
-                    undecided.append({"operator": mutant["operator"], "label": mutant["label"], "reason": reason})
-                done += 1
-                progressed = True
-            elif worker.overdue():
-                stalled = worker.current
-                worker.kill_and_respawn()
-                undecided.append({"operator": stalled["operator"], "label": stalled["label"],
-                                  "reason": f"killed at the {_DEADLINE_SECONDS}s deadline"})
-                done += 1
-                progressed = True
-        # Cap resident memory: a mutant whose run grows past the per-worker cap has its worker SIGKILLed
-        # and replaced, and is counted as caught (a memory blowup is a detected behaviour change, like a
-        # hang). Polled, not per-iteration, so the `ps` cost is bounded.
-        now = time.monotonic()
-        if now - last_memory_poll >= _MEMORY_POLL_SECONDS:
-            last_memory_poll = now
-            busy = [worker for worker in workers if worker.current is not None]
-            rss = _rss_bytes([worker.proc.pid for worker in busy])
-            for worker in busy:
-                if rss.get(worker.proc.pid, 0) > _WORKER_RSS_CAP_BYTES:
+    with ExitStack() as cleanup:
+        workers = []
+        for _ in range(min(_WORKERS, len(mutants) or 1)):
+            worker = _Worker(module)
+            cleanup.callback(worker.stop)
+            workers.append(worker)
+        while done < len(mutants):
+            for worker in workers:
+                if worker.current is None and pending:
+                    worker.dispatch(pending.pop())
+            progressed = False
+            for worker in workers:
+                if worker.ready():
+                    mutant, (outcome, reason) = worker.take()
+                    if outcome == "survived":
+                        survivors.append({"operator": mutant["operator"], "label": mutant["label"]})
+                    elif outcome == "undecided":
+                        undecided.append({"operator": mutant["operator"], "label": mutant["label"], "reason": reason})
+                    done += 1
+                    progressed = True
+                elif worker.overdue():
                     stalled = worker.current
                     worker.kill_and_respawn()
                     undecided.append({"operator": stalled["operator"], "label": stalled["label"],
-                                      "reason": "killed at the worker memory ceiling"})
+                                      "reason": f"killed at the {_DEADLINE_SECONDS}s deadline"})
                     done += 1
                     progressed = True
-        if not progressed:
-            time.sleep(0.002)
-    for worker in workers:
-        worker.stop()
+            # Cap resident memory by replacing the worker and reporting an undecided verdict.
+            # Poll at intervals so the cost of ps stays bounded.
+            now = time.monotonic()
+            if now - last_memory_poll >= _MEMORY_POLL_SECONDS:
+                last_memory_poll = now
+                busy = [worker for worker in workers if worker.current is not None]
+                rss = _rss_bytes([worker.proc.pid for worker in busy])
+                for worker in busy:
+                    if rss.get(worker.proc.pid, 0) > _WORKER_RSS_CAP_BYTES:
+                        stalled = worker.current
+                        worker.kill_and_respawn()
+                        undecided.append({"operator": stalled["operator"], "label": stalled["label"],
+                                          "reason": "killed at the worker memory ceiling"})
+                        done += 1
+                        progressed = True
+            if not progressed:
+                time.sleep(0.002)
     report = _adequacy(mutants, survivors, undecided, _set_aside(module))
     report["unspliced"] = unspliced
     return report
 
 
 def main(modules):
-    # Signal the conformance suite that it is running under mutation, so probes that drive a heavy
-    # real external service (the PostgreSQL integration probe) skip themselves: mutation re-runs the
-    # whole suite once per mutant, and a real server in that loop is prohibitively slow. Those probes
-    # verify integration in a normal suite run; their pure logic is mutation-tested by pure probes.
-    # Workers inherit this env, as does the baseline subprocess.
+    # Baseline and mutant workers inherit the same mode. Participating suites report the
+    # first observed failure; a passing run still exercises every probe.
     os.environ["HONEST_MUTATION"] = "1"
     status = 0
     for module in modules:

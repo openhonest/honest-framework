@@ -35,6 +35,7 @@ from honest_type.recognizers import recognize
 from honest_type.reserved import _LAYER1, _LAYER2, _LAYER3_PYTHON, reservation_layer
 from honest_type.state_machine import state_machine, transition
 from honest_type.vocabulary import merge
+from probe_execute_chain_async_first_fault import probe_execute_chain_async_first_fault
 
 
 def _raiser(_token):
@@ -489,7 +490,8 @@ def run():
     ]
     directs = [("HT-4", "reservation_layer total", _reservation_layer_law()),
                ("HT-engine", "catch-all admits a discriminating predicate", _catch_all_admits_discriminating()),
-               ("HT-9.5", "non_string_token names the received type", _non_string_token_names_the_type())]
+               ("HT-9.5", "non_string_token names the received type", _non_string_token_names_the_type()),
+               ("HT-12.3/12.6", "execute_chain_async returns the first fault", probe_execute_chain_async_first_fault())]
 
     passed = sum(g["passed"] for g in groups) + sum(1 for _, _, messages in directs if not messages)
     violations = [v for g in groups for v in g["violations"]]

@@ -1,8 +1,4 @@
-"""The rule engine check_source folds over one declaration graph (§3.4, §4.1,
-§4.2). The two sub-cores — check_construction and check_per_file — hold their rules
-as data; check_source runs both, then apply_suppression resolves the inline
-directives. A violation is a Diagnostic, never an exception, and every branch here
-is a key into a table or boolean algebra, never an `if`."""
+"""Evaluate the construction and per-file rules, then apply suppression."""
 
 import itertools
 
@@ -55,6 +51,13 @@ from .nodes import (
     within_class_init,
 )
 
+from .io_rules import _IO_WATCH, _call_target_watched, _hc_p004
+
+from .suppression import (
+    _diag_line, _directive_record, _directives, _is_directive,
+    _matches, _resolve_one, _suppression_findings, apply_suppression,
+)
+
 _CALL_TYPES = {"call", "call_expression"}
 
 
@@ -94,27 +97,6 @@ def _hc003(ctx):
                 overlap,
                 lambda: [
                     diagnostic(ctx, "HC003", "error", "recognizer overlap: two Set recognizers share a value", vocab)
-                ],
-                lambda: [],
-            )
-        )
-    return out
-
-
-def _hc006(ctx):
-    out = []
-    for vocab in _calls_named(ctx, "vocabulary"):
-        surface = vocabulary_types(ctx, vocab)
-        base_names = surface["base_names"]
-        unknown = any(
-            len((c["requires_bases"] | c["captures_bases"]) - base_names) > 0
-            for c in surface["composed"]
-        )
-        out.extend(
-            pick(
-                unknown,
-                lambda: [
-                    diagnostic(ctx, "HC006", "error", "composed type references an unknown base type", vocab)
                 ],
                 lambda: [],
             )
@@ -282,20 +264,6 @@ def _hc004(ctx):
     return out
 
 
-def _hc005(ctx):
-    out = []
-    for vocabs, binding in vocabulary_binding_pairs(ctx):
-        known = set()
-        for vocab in vocabs:
-            known |= vocabulary_types(ctx, vocab)["base_names"]
-        stray = filter(lambda k: k not in known, binding_keys(ctx, binding))
-        out.extend(
-            diagnostic(ctx, "HC005", "warning", "binding references a type the vocabulary does not define", binding)
-            for _ in stray
-        )
-    return out
-
-
 def _hc_p013(ctx):
     out = []
     for vocabs, binding in vocabulary_binding_pairs(ctx):
@@ -353,7 +321,7 @@ _HC008_WATCH = {
         # Environment / process
         "os.environ", "os.getenv", "os.getlogin", "os.getpid", "os.getppid",
         "os.getcwd", "os.uname", "os.environ.get", "getpass.getpass", "getpass.getuser",
-        "platform.*", "sys.argv", "sys.version",
+        "platform.*", "sys.argv", "sys.version", "sys.path", "__file__", "__name__",
         # Thread / process state
         "threading.current_thread", "threading.get_ident", "threading.active_count",
         "multiprocessing.current_process", "multiprocessing.cpu_count",
@@ -380,7 +348,7 @@ _HC008_WATCH = {
         "Date.now", "performance.now",
         # Environment / process
         "process.env", "process.pid", "process.cwd", "process.argv",
-        "process.platform", "process.version",
+        "process.platform", "process.version", "document.cookie",
     },
 }
 
@@ -389,11 +357,53 @@ def _is_boundary_link(ctx, fdef):
     return any(is_boundary_decorator(ctx, d) for d in decorators_of(ctx, fdef))
 
 
+# inherits: hd=python/honest-check/honest-check.hd::_links -> feature=specs/features/honest-check.feature::_links selects direct top-level JavaScript link callbacks -> test=python/honest-check/conformance/probe_links_javascript_wrappers.py::probe_links_javascript_wrappers
+# hd: _links
 def _links(ctx):
-    return filter(
-        lambda f: has_decorator(ctx, f, "link") and not _is_boundary_link(ctx, f),
-        _top_level_functions(ctx),
-    )
+    """Select non-boundary Python links and direct JavaScript inline callbacks."""
+    match _language(ctx):
+        case "javascript":
+            declarations = filter(
+                lambda node: node.type == "lexical_declaration" and node.children[0].type == "const",
+                ctx["root"].named_children,
+            )
+            bindings = (binding for declaration in declarations for binding in declaration.named_children)
+            values = (_field(binding, "value") for binding in bindings)
+            calls = filter(lambda node: node is not None and node.type == "call_expression", values)
+            callbacks = []
+            for call in calls:
+                head = _field(call, "function")
+                arguments_node = _field(call, "arguments")
+                members = arguments_node and arguments_node.named_children or ()
+                arguments = list(filter(lambda node: node.type != "comment", members))
+                direct = head is not None and head.type == "identifier" and head.text == b"link" and not any(
+                    child.type == "optional_chain" for child in call.named_children
+                )
+                inline = (
+                    arguments_node is not None and arguments_node.type == "arguments"
+                    and len(arguments) == 2 and arguments[0].type == "object"
+                    and arguments[1].type in {"arrow_function", "function_expression"}
+                )
+                match direct and inline:
+                    case False:
+                        continue
+                keys = (
+                    _field(member, "key") or member
+                    for member in filter(lambda node: node.type != "comment", arguments[0].named_children)
+                )
+                readable = all(
+                    key.type in {"property_identifier", "shorthand_property_identifier", "number", "string"}
+                    and not any(child.type == "escape_sequence" for child in key.named_children)
+                    and key.text not in {b"boundary", b"'boundary'", b'"boundary"'}
+                    for key in keys
+                )
+                callbacks.extend(pick(readable, lambda: [arguments[1]], list))
+            return callbacks
+        case _:
+            return list(filter(
+                lambda f: has_decorator(ctx, f, "link") and not _is_boundary_link(ctx, f),
+                _top_level_functions(ctx),
+            ))
 
 
 def _hc008(ctx):
@@ -481,22 +491,39 @@ def _hc010(ctx):
     return out
 
 
+# inherits: hd=python/honest-check/honest-check.hd::check_construction -> feature=specs/features/honest-check.feature::check_construction leaves HC010 to the per-file rule group -> test=python/honest-check/conformance/probe_check_construction_hc010_per_file.py::probe_check_construction_hc010_per_file
+# inherits: hd=python/honest-check/honest-check.hd::check_construction -> feature=specs/features/honest-check.feature::check_construction leaves HC005 to the per-file rule group -> test=python/honest-check/conformance/probe_check_construction_hc005_per_file.py::probe_check_construction_hc005_per_file
+# inherits: hd=python/honest-check/honest-check.hd::check_construction -> feature=specs/features/honest-check.feature::check_construction -> test=python/honest-check/conformance/probe_check_construction.py::probe_check_construction
+# inherits: hd=python/honest-check/honest-check.hd::check_construction -> feature=specs/features/honest-check.feature::check_construction checks optional capture base names with HC006 -> test=python/honest-check/conformance/probe_check_construction_optional_capture.py::probe_check_construction_optional_capture
+# inherits: hd=python/honest-check/honest-check.hd::check_construction -> feature=specs/features/honest-check.feature::check_construction anchors JavaScript HC008 warnings to inline callbacks -> test=python/honest-check/conformance/probe_check_construction_javascript_hc008.py::probe_check_construction_javascript_hc008
+# inherits: hd=python/honest-check/honest-check.hd::check_construction -> feature=specs/features/honest-check.feature::check_construction warns for published JavaScript watch-list calls -> test=python/honest-check/conformance/probe_check_construction_javascript_watch_calls.py::probe_check_construction_javascript_watch_calls
+# hd: check_construction
 def check_construction(ctx):
     """The construction-time rule sub-core (§4.1): HC007, HC003, HC006, HC011, the
-    state-machine rules, the vocabulary/binding pairing rules HC004/HC005/HC-P013, and
-    the link rules HC008/HC010, dispatched by the framework constructor each call
+    state-machine rules, the vocabulary/binding pairing rules HC004/HC-P013, and
+    the link rule HC008, dispatched by the framework constructor each call
     resolves to."""
+    composed_findings = []
+    for vocab in _calls_named(ctx, "vocabulary"):
+        surface = vocabulary_types(ctx, vocab)
+        for composition in surface["composed"]:
+            name_node = composition["name_node"]
+            anchor = name_node or vocab
+            name = pick(name_node is None, lambda: "", lambda: f" {literal_string(name_node)!r}")
+            references = (("requires", composition["requires_bases"]), ("captures", composition["captures_bases"]))
+            for relation, base_names in references:
+                for base in sorted(base_names - surface["base_names"]):
+                    message = f"Composed type{name} {relation} unknown base type {base!r}"
+                    composed_findings.append(diagnostic(ctx, "HC006", "error", message, anchor))
     return (
         _hc007(ctx)
         + _hc003(ctx)
-        + _hc006(ctx)
+        + composed_findings
         + _hc011(ctx)
         + _hc_state_machines(ctx)
         + _hc004(ctx)
-        + _hc005(ctx)
         + _hc_p013(ctx)
         + _hc008(ctx)
-        + _hc010(ctx)
     )
 
 
@@ -524,7 +551,7 @@ def _hc_p002(ctx):
     ]
 
 
-_APPROVED_BASES = {"TypedDict", "Protocol", "ABC", "ABCMeta", "Exception", "NamedTuple", "Enum"}
+_APPROVED_BASES = {"TypedDict", "Protocol", "ABC", "Exception"}
 
 
 def _has_approved_base(cls):
@@ -537,39 +564,39 @@ def _has_approved_base(cls):
     return len(names & _APPROVED_BASES) > 0
 
 
+# inherits: hd=python/honest-check/honest-check.hd::_hc_p003 -> feature=specs/features/honest-check.feature::_hc_p003 reports implicit object inheritance when no actual Python base is declared -> test=python/honest-check/conformance/probe_p003_implicit_bases.py::probe_p003_implicit_bases
+# inherits: hd=python/honest-check/honest-check.hd::_hc_p003 -> feature=specs/features/honest-check.feature::_hc_p003 accepts the four approved direct Python bases -> test=python/honest-check/conformance/probe_p003_approved_bases.py::probe_p003_approved_bases
+# inherits: hd=python/honest-check/honest-check.hd::_hc_p003 -> feature=specs/features/honest-check.feature::_hc_p003 reports each disallowed direct Python base in source order -> test=python/honest-check/conformance/probe_p003_unauthorized_bases.py::probe_p003_unauthorized_bases
+# inherits: hd=python/honest-check/honest-check.hd::_hc_p003 -> feature=specs/features/honest-check.feature::_hc_p003 preserves class-level fallback for disputed and unresolved Python bases -> test=python/honest-check/conformance/probe_p003_disputed_base_fallback.py::probe_p003_disputed_base_fallback
+# hd: _hc_p003
 def _hc_p003(ctx):
-    classes = filter(lambda n: n.type == "class_definition", ctx["nodes"])
-    firing = filter(lambda c: not _has_approved_base(c), classes)
-    return [
-        diagnostic(ctx, "HC-P003", "error", "class declaration (inheritance or bare class)", c)
-        for c in firing
-    ]
-
-
-_IO_WATCH = {
-    "python": {"open", "input", "os.*", "socket.*", "requests.*", "urllib.*", "subprocess.*", "shutil.*"},
-    "javascript": {"fetch", "XMLHttpRequest", "localStorage.*", "sessionStorage.*"},
-    "ruby": {"File.*", "IO.*"},
-    "go": {"os.*", "ioutil.*"},
-}
-
-
-def _call_target_watched(ctx, call, watch):
-    func = _field(call, "function")
-    return pick(func is None, lambda: False, lambda: watched(func, watch))
-
-
-def _hc_p004(ctx):
-    watch = read_or(_IO_WATCH, _language(ctx), set())
-    calls = filter(lambda n: n.type in _CALL_TYPES, ctx["nodes"])
-    firing = filter(
-        lambda c: _call_target_watched(ctx, c, watch) and in_non_boundary_function(ctx, c),
-        calls,
-    )
-    return [
-        diagnostic(ctx, "HC-P004", "error", "I/O inside a non-boundary function", c)
-        for c in firing
-    ]
+    findings = []
+    classes = filter(lambda node: node.type == "class_definition", ctx["nodes"])
+    for cls in classes:
+        supers = cls.child_by_field_name("superclasses")
+        bases = pick(
+            supers is None,
+            list,
+            lambda: list(filter(
+                lambda base: base.type not in {"keyword_argument", "dictionary_splat", "comment"},
+                supers.named_children,
+            )),
+        )
+        match bool(bases):
+            case False:
+                findings.append(diagnostic(ctx, "HC-P003", "error", "implicit object inheritance: no declared base", cls))
+                continue
+        identifiers = filter(lambda base: base.type == "identifier", bases)
+        names = map(lambda base: base.text.decode("utf-8"), identifiers)
+        disallowed = list(filter(lambda name: name not in _APPROVED_BASES and name != "BaseException", names))
+        findings.extend(
+            diagnostic(ctx, "HC-P003", "error", f"unauthorized direct base {name!r}", cls)
+            for name in disallowed
+        )
+        match not disallowed and not _has_approved_base(cls):
+            case True:
+                findings.append(diagnostic(ctx, "HC-P003", "error", "class declaration (inheritance or bare class)", cls))
+    return findings
 
 
 _TYPE_CHECKS = {"isinstance", "type"}
@@ -622,15 +649,6 @@ _LIFECYCLE_HOOKS = {
     "useEffect", "useLayoutEffect", "ngOnInit", "ngOnDestroy", "connectedCallback",
     "disconnectedCallback",
 }
-
-
-def _hc_p011(ctx):
-    calls = filter(lambda n: n.type in _CALL_TYPES, ctx["nodes"])
-    firing = filter(lambda c: called_name(ctx, c) in _LIFECYCLE_HOOKS, calls)
-    return [
-        diagnostic(ctx, "HC-P011", "error", "framework lifecycle hook", c)
-        for c in firing
-    ]
 
 
 def _top_level_functions(ctx):
@@ -798,23 +816,6 @@ def _hc_p010(ctx):
     ]
 
 
-def _hc_hf001(ctx):
-    features = features_vocabulary(ctx)
-    calls = filter(lambda n: n.type in _CALL_TYPES, ctx["nodes"])
-    out = []
-    for call in calls:
-        flag = feature_state_flag(ctx, call)
-        fire = len(features) > 0 and flag is not None and flag not in features
-        out.extend(
-            pick(
-                fire,
-                lambda: [diagnostic(ctx, "HC-HF001", "error", "feature_state references a flag not declared in FEATURES", call)],
-                lambda: [],
-            )
-        )
-    return out
-
-
 def _hc_hf002(ctx):
     features = features_vocabulary(ctx)
     tables = module_dict_literals(ctx)
@@ -868,13 +869,63 @@ def _hc_p017(ctx):
     ]
 
 
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file reports an emitted type neither produced nor accepted without a companion declaration -> test=python/honest-check/conformance/probe_check_per_file_hc010_phantom.py::probe_check_per_file_hc010_phantom
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file allows an emitted type produced by a manifest assignment -> test=python/honest-check/conformance/probe_check_per_file_hc010_produced.py::probe_check_per_file_hc010_produced
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file allows an emitted type accepted by the link -> test=python/honest-check/conformance/probe_check_per_file_hc010_accepted.py::probe_check_per_file_hc010_accepted
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file does not warn on a link with no declared emitted types -> test=python/honest-check/conformance/probe_check_per_file_hc010_undeclared.py::probe_check_per_file_hc010_undeclared
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file skips automatic binding -> test=python/honest-check/conformance/probe_check_per_file_hc005_automatic.py::probe_check_per_file_hc005_automatic
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file allows an explicit binding for a declared base type -> test=python/honest-check/conformance/probe_check_per_file_hc005_base.py::probe_check_per_file_hc005_base
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file allows an explicit binding for a declared composed type -> test=python/honest-check/conformance/probe_check_per_file_hc005_composed.py::probe_check_per_file_hc005_composed
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file warns for an unknown explicit binding key -> test=python/honest-check/conformance/probe_check_per_file_hc005_unknown.py::probe_check_per_file_hc005_unknown
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file reports an unknown literal flag against an explicitly empty FEATURES vocabulary -> test=python/honest-check/conformance/probe_check_per_file_empty_features.py::probe_check_per_file_empty_features
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file skips local feature rules when FEATURES is absent or unreadable -> test=python/honest-check/conformance/probe_check_per_file_unreadable_features.py::probe_check_per_file_unreadable_features
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file reports qualified JavaScript lifecycle calls -> test=python/honest-check/conformance/probe_check_per_file_javascript_lifecycle.py::probe_check_per_file_javascript_lifecycle
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file reports only real-valued Python numeric defaults -> test=python/honest-check/conformance/probe_check_per_file_numeric_defaults.py::probe_check_per_file_numeric_defaults
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file reports a disallowed Python base alongside an approved base -> test=python/honest-check/conformance/probe_p003_through_check_per_file.py::probe_p003_through_check_per_file
+# inherits: hd=python/honest-check/honest-check.hd::check_per_file -> feature=specs/features/honest-check.feature::check_per_file reports HC-P004 for named JavaScript Ruby and Go functions -> test=python/honest-check/conformance/probe_p004_check_per_file_cross_language_p004.py::probe_p004_check_per_file_cross_language_p004
+# hd: check_per_file
 def check_per_file(ctx):
     """The static per-file rule sub-core (§4.2): the HC-P purity rules, the predicate
-    rule HC009, the non-serializable-return rule HC-P010, the undeclared-serializer rule
-    HC-P017 and the feature-flag rules HC-HF001/HC-HF002, folded over the declaration
+    rules HC005, HC009, and HC010, the non-serializable-return rule
+    HC-P010, the undeclared-serializer rule HC-P017 and the feature-flag rules
+    HC-HF001/HC-HF002, folded over the declaration
     graph."""
+    binding_findings = []
+    for vocabs, binding in vocabulary_binding_pairs(ctx):
+        known = set()
+        for vocab in vocabs:
+            surface = vocabulary_types(ctx, vocab)
+            known.update(surface["base_names"], surface["composed_type_names"])
+        binding_findings.extend(
+            diagnostic(ctx, "HC005", "warning", f"binding references undefined vocabulary type {key!r}", binding)
+            for key in sorted(binding_keys(ctx, binding) - known)
+        )
+    calls = list(filter(lambda node: node.type in _CALL_TYPES, ctx["nodes"]))
+    named_calls = ((call, called_name(ctx, call)) for call in calls)
+    lifecycle_findings = [
+        diagnostic(
+            ctx, "HC-P011", "error",
+            f"Lifecycle hook {name!r}. Use HTMX attributes or server-rendered HTML.",
+            call,
+        )
+        for call, name in filter(lambda entry: entry[1] in _LIFECYCLE_HOOKS, named_calls)
+    ]
+    tables = module_dict_literals(ctx)
+    feature_findings = []
+    for call in pick("FEATURES" in tables, lambda: calls, list):
+        flag = feature_state_flag(ctx, call)
+        fire = flag is not None and flag not in tables["FEATURES"]
+        feature_findings.extend(
+            pick(
+                fire,
+                lambda: [diagnostic(ctx, "HC-HF001", "error", f"feature_state references a flag not declared in FEATURES: {flag!r}", call)],
+                list,
+            )
+        )
     return (
-        _hc_p001(ctx)
+        binding_findings
+        + _hc010(ctx)
+        + _hc_p001(ctx)
         + _hc_p002(ctx)
         + _hc_p003(ctx)
         + _hc_p004(ctx)
@@ -882,7 +933,7 @@ def check_per_file(ctx):
         + _hc_p006(ctx)
         + _hc_p007(ctx)
         + _hc_p010(ctx)
-        + _hc_p011(ctx)
+        + lifecycle_findings
         + _hc_p014(ctx)
         + _hc_p015(ctx)
         + _hc_p016(ctx)
@@ -890,83 +941,9 @@ def check_per_file(ctx):
         + _hc_p019(ctx)
         + _hc_p020(ctx)
         + _hc009(ctx)
-        + _hc_hf001(ctx)
+        + feature_findings
         + _hc_hf002(ctx)
     )
-
-
-# ---- suppression (§7) -------------------------------------------------------
-
-
-def _is_directive(text):
-    return text.lstrip("#").strip().startswith("honest:")
-
-
-_REASONED_VERBS = {"ignore", "disable"}
-
-
-def _directive_record(comment):
-    text = comment.text.decode("utf-8")
-    body = text.lstrip("#").strip()[len("honest:"):].strip()
-    left = body.split(":", 1)[0]
-    tokens = left.split()
-    verb = pick(len(tokens) == 0, lambda: "", lambda: tokens[0])
-    return {
-        "line": comment.start_point[0] + 1,
-        "node": comment,
-        "verb": verb,
-        "rules": set(token.strip(",") for token in tokens[1:]),
-        "has_reason": ":" in body,
-    }
-
-
-def _directives(ctx):
-    comments = filter(lambda n: n.type == "comment", ctx["nodes"])
-    honest = filter(lambda c: _is_directive(c.text.decode("utf-8")), comments)
-    return [_directive_record(c) for c in honest]
-
-
-def _diag_line(diag):
-    parts = diag["source_location"].rsplit(":", 2)
-    return pick(
-        len(parts) == 3 and parts[1].isdigit(),
-        lambda: int(parts[1]),
-        lambda: None,
-    )
-
-
-def _matches(directive, diag):
-    return bool(_diag_line(diag) == directive["line"] and diag["rule_id"] in directive["rules"])
-
-
-def _resolve_one(diag, directives):
-    suppressed = any(_matches(d, diag) for d in directives)
-    return choose(suppressed, {**diag, "severity": "info"}, diag)
-
-
-def _suppression_findings(ctx, directives, raw_diagnostics):
-    out = []
-    for directive in directives:
-        matched = any(_matches(directive, diag) for diag in raw_diagnostics)
-        dead = directive["verb"] != "enable" and not matched
-        reasonless = directive["verb"] in _REASONED_VERBS and not directive["has_reason"]
-        out.extend(
-            pick(dead, lambda: [diagnostic(ctx, "HC-SUP001", "error", "suppression directive matched no diagnostic (dead directive)", directive["node"])], lambda: [])
-        )
-        out.extend(
-            pick(reasonless, lambda: [diagnostic(ctx, "HC-SUP002", "error", "suppression directive carries no reason", directive["node"])], lambda: [])
-        )
-    return out
-
-
-def apply_suppression(ctx, raw_diagnostics):
-    """The suppression pass (§7): an inline `# honest: ignore RULE: reason` directive
-    on a finding's line downgrades it to info rather than dropping it (never drops);
-    a directive that matched nothing is dead (HC-SUP001) and one carrying no reason is
-    reasonless (HC-SUP002), both reported and themselves unsuppressable."""
-    directives = _directives(ctx)
-    resolved = [_resolve_one(d, directives) for d in raw_diagnostics]
-    return resolved + _suppression_findings(ctx, directives, raw_diagnostics)
 
 
 # ---- the rule-running core (§3.4) -------------------------------------------

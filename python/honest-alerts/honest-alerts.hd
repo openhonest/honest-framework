@@ -1,170 +1,271 @@
-# honest-alerts declared in .hd — the actor-model message layer. The mailbox is a pure projection
-# over honest-observe's event log, and routing and planning are pure. The module owns the sides it
-# touches: the clock and a random source, the routing table and the delivery queue in honest-persist,
-# the alert events in honest-observe, and the delivery channels on the network. A connection is
-# carried in as a handle, the way honest-persist's own doors take one. Delivery picks a channel
-# through a dispatch table, never a branch. No capability is handed in as an object.
+# honest-alerts declared in .hd -- the message-passing layer of the Honest Framework
+# (honest-alerts-architecture.md section 1). It is an actor model over honest-state, honest-persist and
+# honest-observe: a message is sent once, lands in a recipient's mailbox, and persists there until a
+# declared termination condition is met. Unit 1 builds exactly three doors: send, which fires a message and
+# forgets; acknowledge, which records that a recipient acted on one; and register_message_type, which an
+# application calls to declare the closed set of message_version values a message_type supports (section 3b).
+# The send_and_wait door and its reply path are a later unit, not declared here (spec section 8.2).
+# Each door hands its input to one orchestrator. The supervisor is the pure core: it matches a message
+# against the routing table (pulled from honest-persist), builds one delivery record per channel, and hands
+# them back to the orchestrator to write. Every state change is an alert.* event, written to honest-observe
+# through the frozen emit seam. The mailbox in honest-alerts-pure is NOT a door and never queries the raw log: it is a pure
+# projection the caller reaches by import, folding over an events list the caller selected through an
+# honest-observe projection and passed in. Faults return as a bare union arm (value | Fault), recognized by
+# honest-type's is_err tag, never raised and never wrapped in an ok/err envelope (honest-errors section 2, 3).
+# Architecture: ../../specs/03-application-production/honest-alerts-architecture.md
 
 module honest-alerts
 
-  layer domain
-  note "the actor-model message layer: it routes a message to delivery channels, keeps each recipient's mailbox as a pure projection over the event log, and carries replies back."
+  layer application
+  note "the message-passing layer: an actor model where messages pass between actors and no actor shares state with another (section 1). A message is sent through the send door, lands in a mailbox, and persists until a declared termination condition is met. Unit 1 has exactly three doors: send and acknowledge, which write, and register_message_type, which an application calls to declare the closed set of message_version values a message_type supports (section 3b); the send_and_wait door and its reply path are a later unit, not declared here (section 8.2). There is no framework-level set of message versions: each application owns the versions for its own message types and registers them, and run_send validates a message's message_version against that registered set. Every mailbox read is a pure projection reached by import, never a door and never a raw-log query (section 4.1, honest-observe section 6). Layer is application because honest-alerts is a production feature application code calls -- the actor runtime, the delivery queue, the DOM surfaces -- built on top of the tooling layer (honest-observe's event log, honest-persist's tables) rather than being that substrate itself. Unit 1 Python wildcard publication includes these three doors and the four pure entries in honest-alerts-pure. The literal honest_alerts.__all__ has exactly those seven names in any order. Other existing bindings remain available by explicit named import (spec 1.3)."
 
-  # The surface, closed: every side the boundaries here touch, and no other. honest-persist and
-  # honest-observe are seams to those modules; clock, random and network are the OS and the network;
-  # file is the alert configuration.
-  inputs  = { "clock" : "the wall clock, for send and delivery times",
-              "random" : "fresh message ids and reply tokens",
-              "honest-persist" : "the routing table and the pending-delivery queue",
-              "honest-observe" : "the alert event log, read for the mailbox and to resume a waiting send",
-              "file" : "the alert configuration" }
-  outputs = { "honest-persist" : "the delivery queue",
-              "honest-observe" : "the alert.* events",
-              "network" : "the channel that carries a message to its recipient" }
+  # ------------------------------------------------------------------------------------------------
+  # The surface, closed: every side the boundaries here touch, and no other (section 1, 6).
+  # random and clock are ambient OS kinds the readers pull: random is the message id, clock is sent_at,
+  # deliver_at and acknowledged_at. database:given is honest-alerts' own honest-persist tables, read at
+  # declaration-time as given because conn, a standard DB-API connection (PEP 249), is handed in at run time,
+  # exactly as honest-observe and honest-persist declare database:given for the same reason (honest-design
+  # section 6); the alerts-owned tables and the event log are reached through the same conn, so run_send writes
+  # the delivery rows then appends alert.sent on that one conn and commits once, the rows and the append
+  # landing together or not at all: alert_routes is read
+  # for the delivery plan, the registered-types table is read for a message_type's registered version set and
+  # written on register_message_type, and alert_deliveries is written with one pending record per channel.
+  # honest-observe is the event log honest-alerts writes through the frozen emit seam: an alert.sent on a
+  # send, an alert.acknowledged on an acknowledge.
+  # ------------------------------------------------------------------------------------------------
 
-  type ActorRef = {
-    actor_type: str
-    actor_id: str
-  }
+  inputs  = { "random" : "the fresh message id, a UUID v7",
+              "clock" : "the wall clock, for sent_at, deliver_at and acknowledged_at",
+              "database:given" : "honest-alerts' honest-persist tables, read for the routing table (alert_routes) and for a message_type's registered version set (the registered-types table): conn is a standard DB-API connection (PEP 249) handed in at run time, and the alerts-owned tables and the event log are reached through the same conn, so run_send writes the delivery rows then appends alert.sent on that one conn and commits once, the rows and the append landing together or not at all" }
+  outputs = { "database:given" : "honest-alerts' honest-persist tables, written: one RegisteredType record on register_message_type, and one pending alert_deliveries record per channel in the delivery plan",
+              "honest-observe" : "the honest-observe event log, reached through the frozen honest-observe.emit seam: honest-alerts writes each alert.* event, a one-way coupling, alerts to observe" }
 
-  type Message = {
-    message_type: str
-    recipient: ActorRef
-    payload: dict<str, any>
-  }
+  # ------------------------------------------------------------------------------------------------
+  # The Fault, the message record, and every sub-schema honest-alerts owns and moves between its pure
+  # functions (sections 2, 3, 5). Every field that affects delivery, persistence or lifecycle is declared
+  # here, because nothing about message behavior is implicit (section 3).
+  # ------------------------------------------------------------------------------------------------
 
-  type Route = {
-    route_id: str
-    message_type: str
-    channels: list<any>
-    priority: int
-  }
+  # Fault in this module is the shared Fault record owned by honest-alerts-pure.
 
-  type Delivery = {
-    message_id: str
-    route_id: str
-    channel: str
-    recipient: ActorRef
-    deliver_at: int
-    status: str
-  }
+  # --- actor identity (section 2) ------------------------------------------
 
-  type Reply = {
-    option_id: str
-    actor_id: str
-    reply_payload: dict<str, any>
-  }
+  type SessionId = str note "an identifier for one DOM session (section 4.1). A DOM actor is one live browser session, one per browser tab (section 2.1), and a SessionId names exactly one such session. It is an opaque string the host assigns to a browser session: honest-alerts never parses it, it only compares one SessionId to another for equality when deciding whether a session-scoped acknowledgment terminates a message for a given viewer. It is not an ActorRef and not a field of one -- ActorRef is pure identity and carries no session (section 4.1) -- so the session travels as its own typed value: on the alert.acknowledged payload as the acking session, and into mailbox and is_terminated as the viewing_session the read is taken for. A viewer that is not a DOM session has no SessionId and is represented by NOTHING, never by a SessionId value."
 
-  # Delivery picks a channel handler by the delivery's channel, a dispatch table and not a branch.
-  dispatch deliver_by_channel = { "dom" -> deliver_dom, "email" -> deliver_posted, "sms" -> deliver_posted, "webhook" -> deliver_posted, "slack" -> deliver_posted, "teams" -> deliver_posted } note "run_deliveries dispatches each pending record on its channel; the five posted channels share deliver_posted, dom has its own handler"
+  set actor_types = { "user" : "a specific authenticated user by id", "role" : "anyone currently holding a named role", "tenant" : "all users in an organization", "admin" : "all users with administrative access", "anonymous" : "an unauthenticated visitor", "chain" : "a running chain instance by chain name and correlation id", "state_machine" : "a state machine instance by machine name and entity id", "job" : "a scheduled or triggered background job by job id", "projection" : "an honest-observe projection that crossed a declared threshold", "framework" : "honest-framework itself: startup, shutdown, health events", "auth" : "honest-auth: session expiry, security violation, login event", "webhook_inbound" : "an inbound webhook from an external system", "dom" : "a specific user's live browser session, one per browser tab", "email" : "an email address", "sms" : "a phone number", "webhook_outbound" : "an external HTTP endpoint", "slack" : "a Slack channel or DM", "teams" : "a Microsoft Teams channel or chat" } note "every kind of thing that can send or receive a message (section 2.1): human actors (user..anonymous), process actors (chain..projection), system actors (framework..webhook_inbound), interface actors (dom..teams). There is no actor registry; actors are named in routing table records. A new actor kind is one more line here"
+  vocabulary ActorType = { actor_types } note "which kind of actor this reference names"
 
-  # --- Pure core: data in, data out, no side of the world --------------------
+  type ActorRef = { type:      ActorType
+                    id:        str | NOTHING
+                    tenant_id: str | NOTHING } note "an actor's identity (section 2.2): who a message is from or to. type is the kind of actor, one of ActorType. id is the specific actor id, and NOTHING means all actors of this type (a broadcast): { type: dom, id: NOTHING } is every active DOM session. tenant_id scopes resolution to one organization, NOTHING when the reference is not tenant-scoped. It is a flat record so an actor is named by data, never by a live object or a registry handle."
 
-  fn build_message : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, message_id: str, sent_at: str) -> Message
+  # --- the message and its sub-schemas (section 3) -------------------------
 
-  fn validate_message : (message: Message) -> Result invokes validate_actor_ref, validate_termination, validate_reply_option
+  set channels = { "dom" : "render as a visual surface on the live page", "email" : "deliver to an email address", "sms" : "deliver to a phone number", "webhook" : "POST to an external HTTP endpoint", "slack" : "deliver to a Slack channel or DM", "teams" : "deliver to a Microsoft Teams channel or chat" } note "the delivery transports a message may be carried on (section 3.1); the message is independent of the channel. A channel of NOTHING on a message lets the supervisor choose from the routing table"
+  vocabulary Channel = { channels } note "which transport delivers this message"
 
-  fn validate_actor_ref : (ref: ActorRef) -> Result
+  set dom_surfaces = { "banner" : "a full-width persistent bar at the top of the page", "toast" : "a transient notification at the bottom right", "modal" : "a blocking overlay requiring a response", "badge" : "a numeric count on a nav element", "inline" : "rendered inside a specific dom_target element" } note "how a message is drawn when the channel is dom (section 9); each surface has its own default termination, banner acknowledged-or-event, toast ttl, modal and inline acknowledged, badge persists until dismissed"
+  vocabulary DomSurface = { dom_surfaces } note "which DOM surface this message renders as"
 
-  fn validate_termination : (spec: dict<str, any>) -> Result
+  set ack_scopes = { "session" : "acknowledged by this specific DOM session only; other sessions of the same user still see it", "actor" : "acknowledged by the recipient actor; all sessions of that actor stop seeing it", "broadcast" : "acknowledged by any one recipient; all recipients stop seeing it" } note "when an acknowledgment counts as done (section 3.4): an upgrade banner sent with ack_scope actor disappears for a user on all their devices once they dismiss it on any one. This is the only scope vocabulary in honest-alerts; the alert.acknowledged event carries no scope word of its own, so is_terminated dispatches the acknowledged-condition termination on this set"
+  vocabulary AckScope = { ack_scopes } note "the scope at which an acknowledgment terminates this message"
 
-  fn validate_reply_option : (option: dict<str, any>) -> Result
+  set termination_conditions = { "ttl" : "the message expires N seconds after sent_at", "acknowledged" : "the message expires when the ack_scope conditions are met", "event" : "the message expires when a specific event type is appended to honest-observe", "never" : "the message persists until explicitly deleted, admin use only" } note "the four ways a message ends (section 3.3); a message terminates when exactly one of these is met"
+  vocabulary TerminationCondition = { termination_conditions } note "which single termination condition governs this message"
 
-  fn validate_channel_config : (config: dict<str, any>) -> Result
+  type TerminationSpec = { condition:    TerminationCondition
+                           ttl_seconds:  int | NOTHING
+                           event_type:   str | NOTHING
+                           event_filter: dict<str, any> | NOTHING } note "how and when a message ends (section 3.3); exactly one condition is met. condition is which of the four governs it. ttl_seconds is set only when condition is ttl, the seconds after sent_at the message expires. event_type is set only when condition is event, the honest-observe event type whose appearance expires the message (e.g. system.maintenance_completed); event_filter is the optional payload conditions that terminating event must match, NOTHING when any such event terminates it. For acknowledged the ack_scope on the message determines when it is met, so no field is needed here; for never no field is needed. A field that does not apply to the chosen condition is NOTHING, never absent."
 
-  fn validate_escalation_rule : (rule: dict<str, any>) -> Result
+  set reply_styles = { "primary" : "the main affirmative action", "secondary" : "a lesser action", "danger" : "a destructive or rejecting action", "warning" : "an action that needs caution" } note "the visual emphasis of a reply option's button (section 3.2); style is optional, NOTHING when the surface uses its default"
+  vocabulary ReplyStyle = { reply_styles } note "the visual emphasis of this reply option"
 
-  fn validate_alert_route : (route: Route) -> Result invokes validate_channel_config, validate_escalation_rule
+  type ReplyOption = { option_id: str
+                       label_id:  str
+                       style:     ReplyStyle | NOTHING
+                       payload:   dict<str, any> | NOTHING } note "one response the recipient may choose on a message that expects a reply (section 3.2). option_id is the machine-readable identifier the reply event carries back: approve, reject, dismiss, snooze, or a custom id. label_id is the i18n label id for the button or action text. style is the button's visual emphasis, one of ReplyStyle, NOTHING for the surface default. payload is additional data attached to this option, NOTHING when the option carries none."
 
-  fn advance : (current_state: str, event: str) -> Result
+  type Message = { message_id:       str
+                   message_type:     str
+                   message_version:  str
+                   sender:           ActorRef
+                   recipient:        ActorRef
+                   channel:          Channel | NOTHING
+                   subject_label_id: str
+                   body_label_id:    str | NOTHING
+                   payload:          dict<str, any>
+                   dom_surface:      DomSurface | NOTHING
+                   dom_target:       str | NOTHING
+                   reply_required:   bool
+                   reply_options:    list<ReplyOption> | NOTHING
+                   resume_token:     str | NOTHING
+                   termination:      TerminationSpec
+                   ack_scope:        AckScope
+                   sent_at:          int } note "one immutable, typed message, the single shape every message takes and the record written to honest-observe's log as the alert.sent payload (section 3.1). Every field that affects delivery, persistence or lifecycle is declared, because nothing is implicit. message_id is a UUID v7, time-ordered, generated at send time. message_type is the dot-namespaced type (approval.requested, system.maintenance_notice). message_version is the schema version for that type, a plain str the caller passes that must be a member of the closed set the registering application declared for this message_type (section 3b); there is no framework-level version vocabulary, so the allowed values are per-application data in the registered-types store, not a declared type here. sender and recipient are the actor references; sender is taken from context, recipient is a door parameter. channel is the preferred transport or NOTHING to let the supervisor choose. subject_label_id and body_label_id are i18n label ids, body optional. payload is the message-type-specific data. dom_surface and dom_target apply when the channel includes dom, dom_target a CSS selector for inline. reply_required is true when the sender waits for a reply; the unit-1 send door always leaves it false. reply_options are the declared responses, NOTHING when none. resume_token is the chain resume token, set only when reply_required is true, so it is NOTHING on every unit-1 send. termination is how and when the message ends. ack_scope is the scope at which an acknowledgment terminates it. sent_at is epoch seconds UTC, generated at send time."
 
-  fn message_type_matches : (pattern: str, message_type: str) -> bool
+  type SendOpts = { message_version:  str
+                    subject_label_id: str
+                    body_label_id:    str | NOTHING
+                    channel:          Channel | NOTHING
+                    dom_surface:      DomSurface | NOTHING
+                    dom_target:       str | NOTHING
+                    reply_options:    list<ReplyOption> | NOTHING
+                    termination:      TerminationSpec
+                    ack_scope:        AckScope } note "the closed bag of Message fields the caller controls that the explicit send parameters do not already supply (section 8.1); it carries exactly these nine keys and no others. message_version is the schema version, a plain str the caller passes that must be a member of the closed set the registering application declared for this message_type (section 3b); there is no framework-level version vocabulary, honest-alerts never defaults it, and a missing or out-of-registered-set value is a client fault. subject_label_id is the i18n label id for the message subject, required. body_label_id is the i18n label id for the body, NOTHING when the message has no body. channel is the preferred transport, one of Channel, NOTHING to let the supervisor choose from the routing table. dom_surface is which DOM surface the message renders as, one of DomSurface, NOTHING when the channel is not dom. dom_target is the CSS selector for inline placement, NOTHING unless dom_surface is inline. reply_options is the list of declared ReplyOption responses, NOTHING when the message expects no reply. termination is the TerminationSpec naming the one condition that ends the message, required. ack_scope is the scope at which an acknowledgment terminates the message, one of AckScope, required. message_id, sender, sent_at, reply_required and resume_token are never keys here: id and sent_at are generated, sender is taken from context, and the door sets reply_required and resume_token. A field the spec marks nullable is NOTHING when it does not apply, never absent."
 
-  fn matching_routes : (routing_table: list<Route>, message: Message) -> list<Route> invokes message_type_matches
+  # --- message-type registration (section 3b) ------------------------------
 
-  fn delivery_plan : (message: Message, routes: list<Route>, now: int) -> list<Delivery>
+  type RegisteredType = { message_type:     str
+                          message_versions: list<str> } note "one registered-types record declaring the closed set of schema versions a message_type supports (section 3b.1). There is no framework-level set of message versions; each registering application owns the versions for the message types it defines and declares them to honest-alerts before sending any message of that type. message_type is the dot-namespaced type (approval.requested). message_versions is the non-empty closed set of str version values the application supports for that type; run_send reads this record for the message's message_type and a message_version outside this set, or a message_type with no record, is a client fault (section 3b.2). It is a flat honest-persist record in the module-owned registered-types table, written by register_message_type's write boundary and read by read_registered_type."
 
-  fn alert_event : (event_type: str, aggregate_id: str, payload: dict<str, any>) -> Result
+  set register_actions = { "write" : "a first registration of this message_type: the record must be written to the registered-types table", "noop" : "a re-registration whose arriving whole declaration is byte-identical to the stored one: nothing is written and the door still returns success" } note "what run_register_message_type must do with a validated registration (section 3b.3), the two non-fault outcomes of build_registered_type; the third outcome, a refused re-registration, is a Fault, not a member of this set"
+  vocabulary RegisterAction = { register_actions } note "whether a validated registration is a first write or a byte-identical no-op"
 
-  fn mailbox : (actor_ref: ActorRef, events: list<Event>, at_time: str) -> list<Message> invokes is_terminated, recipient_matches
+  type RegisterDecision = { action:          RegisterAction
+                            registered_type: RegisteredType } note "the non-fault result of build_registered_type (section 3b.3): what run_register_message_type should do with a validated registration and the record it concerns. action is write when the message_type was never registered (the record must be persisted) or noop when the arriving whole declaration is byte-identical to the stored one (nothing is written, success is still returned). registered_type is the RegisteredType the decision is about: on write it is the fresh record to persist; on noop it is the stored record, byte-identical to the arriving one, echoed back so the door returns RegisterResult without a second read. A refused re-registration (any difference from the stored declaration) is not a RegisterDecision at all; it is a client Fault build_registered_type returns on the other arm of its union."
 
-  fn is_terminated : (event: Event, actor_ref: ActorRef, events: list<Event>, at_time: str) -> bool
+  # --- the routing table (section 5) ---------------------------------------
 
-  fn recipient_matches : (recipient: ActorRef, actor_ref: ActorRef) -> bool
+  type ChannelConfig = { channel:        Channel
+                         recipient_spec: ActorRef | NOTHING
+                         template_id:    str | NOTHING
+                         delay_seconds:  int | NOTHING } note "how one route delivers on one channel (section 5.1). channel is the transport. recipient_spec overrides the message recipient for this channel (e.g. always email the admin), NOTHING to use the message's own recipient. template_id is the message template for this channel, NOTHING for the default. delay_seconds delivers after N seconds, 0 or NOTHING for immediate; the supervisor adds it to now() to compute deliver_at."
 
-  fn render_surface : (message: Message) -> str
+  type EscalationRule = { ttl_seconds:             int
+                          escalate_to:             ActorRef
+                          escalate_channel:        Channel | NOTHING
+                          escalation_message_type: str | NOTHING } note "what happens when a message is not acknowledged within a window (section 5.1). ttl_seconds is the window after which, with no ack, the route escalates. escalate_to is the actor the message is forwarded to on escalation. escalate_channel is the channel to use for the escalation, NOTHING to reuse the route's channels. escalation_message_type overrides the message type on escalation, NOTHING to keep the original. Escalation itself is a later-unit build target; this is its declared shape, carried on AlertRoute."
 
-  fn resolve_config : (raw: dict<str, any>) -> dict<str, any>
+  type AlertRoute = { route_id:     str
+                      message_type: str
+                      sender_type:  ActorType | NOTHING
+                      channels:     list<ChannelConfig>
+                      escalation:   EscalationRule | NOTHING
+                      priority:     int } note "one honest-persist record declaring how a message type is delivered (section 5.1); the routing table is a set of these and routing is entirely table-driven, with no listener registry. route_id is the unique identifier. message_type is which message type this route handles, supporting a trailing-wildcard match (system.*). sender_type optionally restricts the route to messages from one sender actor type, NOTHING to match any sender. channels is the ordered list of how to deliver, one ChannelConfig each. escalation is what to do if no ack arrives within its window, NOTHING for no escalation. priority is the delivery order, lower is higher priority; the supervisor sorts matching routes by it ascending."
 
-  # --- Readers: the module reaches out and pulls -----------------------------
+  # --- the delivery plan the supervisor produces (section 6) ---------------
+
+  set delivery_statuses = { "pending" : "the delivery record is written and queued, not yet attempted", "delivered" : "a channel delivered it successfully", "failed" : "channel delivery failed" } note "the state of one delivery queue record (section 6.1, 6.2); a record is written pending and the later delivery process moves it to delivered or failed. The delivery process is a later-unit build target; unit 1 writes the pending record only"
+  vocabulary DeliveryStatus = { delivery_statuses } note "the current state of this delivery record"
+
+  type Delivery = { message_id: str
+                    route_id:   str
+                    channel:    Channel
+                    recipient:  ActorRef
+                    deliver_at: int
+                    status:     DeliveryStatus } note "one record in the alert_deliveries queue, one per channel in the delivery plan (section 6.1). message_id is the message this delivery carries. route_id is the matched route. channel is the transport. recipient is the resolved recipient, the channel's recipient_spec if it has one else the message recipient. deliver_at is epoch seconds the delivery becomes due, now() plus the channel's delay_seconds. status is the queue state, written pending. The supervisor builds one of these per channel of each matching route and the orchestrator writes each one."
+
+  type DeliveryPlan = { deliveries: list<Delivery> } note "what the supervisor produces from a message and the routing table (section 6.1): the ordered list of pending Delivery records to write, one per channel of each matching route, sorted by route priority. It is pure data the supervisor returns; the orchestrator writes each delivery and then emits alert.sent. An empty routing-table match is a fault (alert.no_route), not an empty plan -- but alert.no_route is a later-unit concern and no_route is not raised in unit 1."
+
+  type SendResult = { delivered: int } note "what the send door returns on success (section 6.1): the count of delivery records written. The sender fires and forgets; this is the only acknowledgment the sender gets that the message was queued. send returns SendResult | Fault."
+
+  type RegisterResult = { message_type:     str
+                          message_versions: list<str> } note "what the register_message_type door returns on success (section 3b.1): the message_type that was registered and the closed set of versions now recorded for it, echoing back what was persisted so the caller can confirm the registration. register_message_type returns RegisterResult | Fault; an empty message_versions set or a malformed message_type is a client Fault."
+
+  type AckResult = { message_id:   str
+                     acknowledged: bool } note "what the acknowledge door returns on success: the message that was acknowledged and that the acknowledgment was recorded. acknowledge records that a recipient acted on a message by writing alert.acknowledged to honest-observe, which feeds the mailbox projection so the message terminates when its ack_scope is met. acknowledge returns AckResult | Fault."
+
+  type AckPayload = { message_id:       str
+                      actor:            ActorRef
+                      acknowledged_at:  int
+                      reply_payload:    dict<str, any>
+                      session:          SessionId | NOTHING } note "the payload of the alert.acknowledged event, assembled by build_ack_event and handed to emit (section 6.3, 9.1, 4.1, 10). message_id is the message that was acknowledged, carried so the mailbox projection matches acks to their message (is_terminated keeps acks where payload.message_id equals the message's id). actor is the acknowledging actor as an ActorRef, pure identity carrying the actor's id (and tenant_id); an actor-scoped ack matches on actor.id and a broadcast ack on any ack existing. acknowledged_at is the epoch-seconds UTC moment the acknowledgment was recorded, read at the boundary by the clock reader and passed in, never computed in the pure core (section 10). reply_payload is any data attached to the acknowledgment, for example the chosen reply option's payload (section 10). session is the acking session, the DOM session the acknowledgment came in under, a SessionId, carried as data so a session-scoped ack terminates the message when this acking session equals the viewing_session the mailbox read is taken for (section 4.1); NOTHING when the ack did not come in under a DOM session. The ack event carries NO scope word: there is no scope field on this payload, because the message's own ack_scope (on the Message, one of AckScope) is the only scope vocabulary and is_terminated dispatches on that, not on anything the ack carries (section 4.1). ActorRef carries no session, so the acking session travels here on the payload as a typed SessionId, not on the actor. It is a flat map, pure data run_acknowledge hands to emit as the alert.acknowledged payload."
+
+  # ------------------------------------------------------------------------------------------------
+  # Column 1 -- readers: honest-alerts reaches out and pulls. Each names exactly the side it touches.
+  # ------------------------------------------------------------------------------------------------
+
+  reader fn new_message_id : () -> str side_effect reads "random" side_effect reads "clock" pure_call "honest-alerts-pure.uuid7_from_parts"
+    note "pulls one fresh message id, a UUID v7 that is time-ordered so messages sort by creation (section 3.1). A UUID v7 is built from two reads of the world, so this reader touches two sides: it reads random for the id's random bits, and it reads the clock for the id's leading timestamp (the millisecond-resolution time field that makes a v7 time-ordered, RFC 9562). Both reads are what make a fresh v7 id a read of the world and not a pure value: the random bits make it unique and the clock read makes it sort by creation, so a v7 generated without reading the clock would not be time-ordered. It reads random and clock and nothing else; run_send invokes it and applies its answer into the message under construction, so the id is assigned in one place. A reader, not a pure fn, because a fresh id is a read of the world: made pure it would be a hidden non-deterministic call reaching both random and the clock, the leak the reader role exists to surface. The clock read here is the id's own timestamp and is distinct from the now reader, whose clock read supplies the message's sent_at and each delivery's deliver_at."
+    note "reads native clock milliseconds and two native entropy samples of two and eight bytes, interprets the bytes as unsigned big-endian integers, and hands all three inputs to uuid7_from_parts. Returns the helper string unchanged."
 
   reader fn now : () -> int side_effect reads "clock"
+    note "pulls the current wall-clock time as epoch seconds UTC (section 3.1, 6.1, 10). run_send invokes it once and applies its answer two ways: as the message's sent_at, and, added to each channel's delay_seconds, as each delivery's deliver_at. It is also the input-side clock reader the boundary uses to obtain acknowledged_at before calling the acknowledge door, so the acknowledgment time is read at the boundary and handed in as a parameter, never computed in the pure core (section 10). It reads the clock and nothing else. A reader for the same reason new_message_id is: a clock read inside a pure function is the hidden-clock leak the role declaration makes visible."
 
-  reader fn new_message_id : () -> str side_effect reads "random"
+  reader fn read_routes : (message_type: str, conn: any) -> list<AlertRoute> awaited side_effect reads "database:given" pure_call "honest-alerts-pure.alert_tables_schema"
+    note "reads the alert_routes routing table from honest-persist for the routes that could match a message type (section 5, 6.1). message_type is the message's dot-namespaced type; the read returns every AlertRoute whose message_type matches it or wildcard-matches it, which the pure supervisor then filters and sorts, so the match decision lives in the pure core, not the query. conn is a standard DB-API connection (PEP 249), the injected honest-persist connection, held and passed, never read by any pure function; the alerts-owned tables and the event log are reached through the same conn, and run_send writes the delivery rows then appends alert.sent on that one conn and commits once, so the rows and the append land together or not at all. awaited because the read is I/O. It reads database:given, honest-alerts' own tables whose connection it is handed at run time. It reads the alert_routes table name and columns from the alert_tables_schema manifest rather than hardcoding them (section 10b), so the routing-table read and the manifest cannot drift. run_send invokes it and passes the routes to supervise."
 
-  reader fn new_resume_token : () -> str side_effect reads "random"
+  reader fn read_registered_type : (message_type: str, conn: any) -> RegisteredType | NOTHING awaited side_effect reads "database:given" pure_call "honest-alerts-pure.alert_tables_schema"
+    note "reads the registered-types table from honest-persist for the RegisteredType record of one message_type (section 3b.2). message_type is the message's dot-namespaced type; the read returns that type's RegisteredType, carrying the closed set of versions the registering application declared, or NOTHING when the type was never registered. conn is a standard DB-API connection (PEP 249), the injected honest-persist connection, held and passed, never read by any pure function; the alerts-owned tables and the event log are reached through the same conn, and run_send writes the delivery rows then appends alert.sent on that one conn and commits once, so the rows and the append land together or not at all. awaited because the read is I/O. It reads database:given, honest-alerts' own registered-types table whose connection it is handed at run time. It reads the alert_registered_types table name and columns from the alert_tables_schema manifest rather than hardcoding them (section 10b), so the registry read and the manifest cannot drift. run_send invokes it and passes the record to build_message, which validates the message's message_version against it; a NOTHING answer (unregistered type) or a version outside the set is a client fault build_message returns. run_register_message_type also invokes it, to read the existing registration before deciding the re-registration rule (section 3b.3): there a NOTHING answer means the message_type was never registered and the registration is a first write, and a stored record is the declaration the arriving one is compared against byte for byte."
 
-  reader fn read_routes : (conn: any) -> list<Route> awaited side_effect reads "honest-persist"
+  # ------------------------------------------------------------------------------------------------
+  # Column 4 -- output boundaries: honest-alerts reaches out and pushes. The delivery-queue writes and
+  # the frozen emit seam into honest-observe.
+  # ------------------------------------------------------------------------------------------------
 
-  reader fn read_pending : (conn: any) -> list<Delivery> awaited side_effect reads "honest-persist"
+  type DeliveryWriteOk = { ok: bool } note "the delivery insertion success result. ok is true. The send transaction owns the commit."
 
-  reader fn read_events : (conn: any, actor_ref: ActorRef) -> list<Event> awaited side_effect reads "honest-observe"
+  boundary_out fn write_delivery : (delivery: Delivery, conn: any) -> DeliveryWriteOk awaited side_effect writes "database:given" pure_call "honest-alerts-pure.alert_tables_schema"
+    note "writes one pending delivery record into the alert_deliveries queue table through honest-persist (section 6.1). delivery is one Delivery the supervisor produced, status pending. conn is a standard DB-API connection (PEP 249), the injected honest-persist connection; the alerts-owned tables and the event log are reached through the same conn, and run_send writes the delivery rows then appends alert.sent on that one conn and commits once, so the rows and the append land together or not at all. awaited because the insert is I/O. It is a terminus: it does only the write and returns honest-persist's own insert outcome; it constructs no Fault and reads nothing. run_send invokes it once per delivery in the plan. It writes database:given, honest-alerts' own alert_deliveries table. It reads the alert_deliveries table name and columns from the alert_tables_schema manifest rather than hardcoding them (section 10b), so the delivery-queue write and the manifest cannot drift. On successful insertion the boundary returns ok true and leaves the commit to the send transaction."
 
-  reader fn await_reply : (conn: any, message_id: str, timeout_seconds: int) -> Reply | Absent awaited side_effect reads "honest-observe"
+  type RegisteredTypeWriteOk = { ok: bool } note "the existing success outcome of the registry write. ok is true."
+  type RegisteredTypeWriteRefused = { ok: bool reason: str } note "the driver refused the registry write. ok is false and reason is the reported driver reason."
 
-  reader fn read_raw_config : () -> dict<str, any> side_effect reads "file"
+  boundary_out fn write_registered_type : (registered_type: RegisteredType, conn: any) -> RegisteredTypeWriteOk | RegisteredTypeWriteRefused awaited side_effect writes "database:given" pure_call "honest-alerts-pure.alert_tables_schema"
+    note "writes the supplied RegisteredType once to the registered-types table, using table and column names from alert_tables_schema (spec 3b.1 and 10b). conn is the injected PEP 249 connection. On success it passes back the existing ok outcome. If the driver refuses the insert, including an integrity constraint refusal, this output boundary catches the driver refusal and returns its reason with ok false. No successful registration is reported and the refusal path does not commit or roll back the caller connection. It constructs no Alerts Fault. Exceptions outside the driver write-refusal contract propagate."
 
-  # --- Output boundaries: the module reaches out and pushes ------------------
+  boundary_out fn emit : (event_type: str, aggregate_type: str, aggregate_id: str, payload: dict<str, any>, context: dict<str, any>, event_version: str, conn: any) -> any awaited side_effect writes "honest-observe.emit"
+    note "the emit seam into honest-observe: honest-alerts calls honest-observe's frozen emit door to append one alert.* event to the event log (section 6.1, 10; honest-observe section 3). Its signature is honest-observe.emit's contract exactly as frozen on main -- (event_type, aggregate_type, aggregate_id, payload, context, event_version, conn) -> Event | Fault -- and honest-alerts builds to that contract without redefining or widening it; the return is honest-observe's own Event-or-Fault, carried out as any because honest-observe owns that type. event_type is the alert.* type (alert.sent on a send, alert.acknowledged on an acknowledge). aggregate_type is always alert and aggregate_id is the message_id, so every event about one message folds under one aggregate. payload is the Message on alert.sent and the acknowledgment facts on alert.acknowledged. context is the current manifest, from which honest-observe extracts the auth and meta partitions. event_version is the alert event schema version. conn is a standard DB-API connection (PEP 249), the injected honest-observe log connection; the alerts-owned tables and the event log are reached through the same conn, and run_send writes the delivery rows then appends alert.sent on that one conn and commits once, so the rows and the append land together or not at all. awaited because emit is I/O. It is a terminus that does only the append; run_send invokes it for alert.sent and run_acknowledge for alert.acknowledged. When the seam converts a raised append failure, its server emit_seam_failed Fault carries detail.aggregate_id and detail.event_type from the attempted append and detail.detail as the exception text. A returned Observe Fault passes through unchanged."
 
-  boundary_out fn write_delivery : (delivery: Delivery, conn: any) -> Result awaited side_effect writes "honest-persist"
+  # ------------------------------------------------------------------------------------------------
+  # Column 2 -- the orchestrators: the single mutators. Each pure function and reader returns its part;
+  # the orchestrator applies each into the one value it owns, writes the sinks, and returns by value.
+  # One orchestrator per door; no door feeds two, no orchestrator is reached by two doors.
+  # ------------------------------------------------------------------------------------------------
 
-  boundary_out fn mark_delivery : (delivery: Delivery, status: str, conn: any) -> Result awaited side_effect writes "honest-persist"
+  orchestrator fn run_register_message_type : (message_type: str, message_versions: list<str>, context: dict<str, any>, conn: any) -> RegisterResult | Fault awaited invokes read_registered_type, build_registered_type, write_registered_type pure_call "honest-alerts-pure.alerts_fault"
+    note "runs the message-type registration path and is the single mutator of the registered-types record (section 3b.1, 3b.3). message_type is the dot-namespaced type an application is declaring; message_versions is the non-empty closed set of str version values it supports for that type; context is the current manifest. It reads the existing registration for the message_type first, with read_registered_type, so the re-registration rule can be decided against what is already stored (section 3b.3). It then hands message_type, message_versions and that existing RegisteredType-or-NOTHING to build_registered_type, the pure validator that both validates the arriving parts and applies the re-registration rule. build_registered_type returns either a RegisterDecision or a Fault carried by value: a RegisterDecision with action write (the type was never registered) carrying the fresh record to persist; a RegisterDecision with action noop (the arriving whole declaration is byte-identical to the stored one) carrying the stored record so nothing is written and the door still returns success; or a refused client Fault when the arriving declaration differs from the stored one in any way (its detail names the existing declaration against the arriving one). An empty version set or a malformed message_type also comes back as a client Fault. On a Fault run_register_message_type returns it without writing. On a RegisterDecision with action noop it writes nothing and returns RegisterResult echoing the stored type and versions. On a RegisterDecision with action write it writes the decision's RegisteredType into the registered-types table through write_registered_type, and inspects the returned outcome. On success it returns RegisterResult echoing the type and versions now recorded. On refusal alerts_fault builds registration_write_failed with category server, detail.message_type set to the attempted type and detail.reason set to the writer reason. Its message explains the failed write and gives the caller an actionable next step (section 6b). A prior RegisterDecision Fault remains unchanged. The refused re-registration arriving from build_registered_type is returned unchanged, code refused_registration (category client, section 6b). No pure function mutates; run_register_message_type owns the one record. awaited because read_registered_type and write_registered_type are I/O. It returns RegisterResult | Fault so any failure bubbles to the door by return."
 
-  boundary_out fn emit_event : (event: Result, conn: any) -> Event awaited side_effect writes "honest-observe"
+  orchestrator fn run_send : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: SendOpts, context: dict<str, any>, conn: any) -> SendResult | Fault awaited invokes new_message_id, now, read_registered_type, read_routes, build_message, supervise, write_delivery, emit pure_call "honest-alerts-pure.alerts_fault"
+    note "runs the send path and is the single mutator of the message and the delivery records (section 6, 8.1; the single-mutator law). It pulls the fresh id (new_message_id) and the clock (now), reads the registered-types record for the message_type with read_registered_type, extracts the controlled fields from opts, and hands them with message_type, recipient, payload, the sender (taken from context) and that RegisteredType to build_message, which assembles and validates one immutable Message; a message_type that was never registered (read_registered_type answers NOTHING) comes back as a client Fault code unregistered_message_type, a message_version outside the registered closed set for its type as code message_version_not_registered, a message carrying no message_version as code missing_message_version, and a malformed termination as code invalid_termination (all client, section 6b); run_send returns any of them without writing (section 3b.2). It pulls the matching routes with read_routes and hands the message and routes to supervise, the pure core that returns a DeliveryPlan. It then writes each Delivery in the plan through write_delivery, and emits alert.sent through the emit seam with the Message as payload and the message_id as aggregate_id. It returns SendResult carrying the count written, or a Fault built via alerts_fault with code append_failed (category server, section 6b) when the alert.sent append to the event log fails. No pure function mutates: run_send applies each return into the one message and the one plan. awaited because read_registered_type, read_routes, write_delivery and emit are I/O. It returns SendResult | Fault so any failure bubbles to the door by return, never a swallowed send. One-transaction rule (section 6.1): the delivery rows and the alert.sent append commit together or roll back together on one conn, inside one transaction, because alert.sent is the read-path source of truth for the mailbox and must share the fate of the delivery rows; a rolled-back transaction is returned as a Fault code append_failed (category server, section 6b), with no delivery rows committed. Until honest-observe ships a transactional append that joins the caller's connection without committing on its own, run_send uses the declared fallback: it writes the delivery rows first, then appends alert.sent through the emit seam, and a failed append is returned as a surfaced Fault code append_failed (category server) -- rows first then append, never emit-first, and a failed append never swallowed. No observe transactional-append function is declared in this module; the emit seam stays as declared, built to honest-observe's frozen emit contract. The append_failed Fault detail.message_id is the generated message ID."
 
-  boundary_out fn deliver_dom : (delivery: Delivery, conn: any, transport: any) -> Result awaited side_effect writes "network"
+  orchestrator fn run_acknowledge : (message_id: str, actor_ref: ActorRef, reply_payload: dict<str, any>, session: SessionId | NOTHING, acknowledged_at: int, context: dict<str, any>, conn: any) -> AckResult | Fault awaited invokes build_ack_event, emit pure_call "honest-alerts-pure.alerts_fault"
+    note "runs the acknowledge path and is the single mutator of the acknowledgment event (section 9.1, 10). message_id names the message being acknowledged; actor_ref is the acknowledging actor, pure identity whose id the mailbox projection reads for an actor- or broadcast-scoped ack; reply_payload is any data attached to the acknowledgment; session is the acking session, the DOM session the acknowledgment came in under, a SessionId carried onto the event as data so a session-scoped ack terminates the message when this acking session equals the viewing_session a later mailbox read is taken for, NOTHING when the ack did not come in under a DOM session (section 4.1); acknowledged_at is the epoch-seconds UTC moment the acknowledgment was recorded, read at the boundary side by the clock reader and passed in, never computed in the pure core (section 10). It hands message_id, actor_ref, reply_payload, session and acknowledged_at to build_ack_event, the pure function that assembles the alert.acknowledged payload, then emits alert.acknowledged through the emit seam with the message_id as aggregate_id, so the event folds under the same aggregate as the alert.sent and feeds the mailbox projection that terminates the message. It returns AckResult on a clean emit, or a Fault built via alerts_fault with code ack_append_failed (category server, section 6b) when the alert.acknowledged append fails. awaited because emit is I/O. It returns AckResult | Fault so a failed acknowledge bubbles to the door by return. The ack_append_failed Fault detail.message_id is the supplied message ID and detail.observe is the code of the append Fault returned by emit."
 
-  boundary_out fn deliver_posted : (delivery: Delivery, conn: any, transport: any) -> Result awaited side_effect writes "network" note "every posted channel — email, sms, webhook, slack, teams — delivers the same way, through the injected transport, so one deliverer serves them all"
+  # ------------------------------------------------------------------------------------------------
+  # Column 1 -- the doors. Unit 1 has three: send, acknowledge and register_message_type. The
+  # send_and_wait door is a later unit, not declared here (section 8.2). The world calls a door;
+  # nothing inside the module calls one. Each hands its input to exactly one orchestrator and returns
+  # what it returns. There is no read_mailbox door: the mailbox is reached by import (see the entries at
+  # the foot of the file).
+  # ------------------------------------------------------------------------------------------------
 
-  # --- Orchestrators: one per path, flat, never calling another orchestrator -
+  boundary_in fn register_message_type : (message_type: str, message_versions: list<str>, context: dict<str, any>, conn: any) -> RegisterResult | Fault awaited invokes run_register_message_type
+    note "the message-type registration door: a registering application declares the closed set of message_version values a message_type supports before sending any message of that type (section 3b.1). There is no framework-level set of message versions; each application owns the versions for its own message types. The world calls in here and nothing inside the module calls it; it hands its input to run_register_message_type and returns what it returns. message_type is the dot-namespaced type (approval.requested). message_versions is the non-empty closed set of str version values the application supports for that type; an empty set or a malformed message_type is a client Fault. context is the current manifest. conn is a standard DB-API connection (PEP 249), the injected honest-persist connection for the registered-types table; the alerts-owned tables and the event log are reached through the same conn, and run_send writes the delivery rows then appends alert.sent on that one conn and commits once, so the rows and the append land together or not at all. awaited because run_register_message_type is. It returns RegisterResult echoing the type and the versions now recorded, or a Fault, never raising. It is one of the three unit-1 doors."
 
-  orchestrator fn run_send : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, conn: any) -> Result awaited invokes new_message_id, now, build_message, validate_message, read_routes, validate_alert_route, matching_routes, delivery_plan, write_delivery, alert_event, emit_event
+  boundary_in fn send : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: SendOpts, context: dict<str, any>, conn: any) -> SendResult | Fault awaited invokes run_send
+    note "the primary send door: fire and forget with respect to the sender (section 8.1). The world calls in here and nothing inside the module calls it; it hands its input to run_send and returns what run_send returns. message_type is the dot-namespaced message type. recipient is the actor the message is addressed to. payload is the message-type-specific data. opts is a closed bag of the Message fields the caller controls that the explicit parameters do not already supply, carrying only these keys and no others (section 8.1): message_version (a plain str the caller passes that must be a member of the closed set the registering application declared for this message_type via register_message_type; there is no framework-level version vocabulary, honest-alerts never defaults it, and a missing or out-of-registered-set value is a client fault, section 3b.2), subject_label_id, body_label_id, channel, dom_surface, dom_target, reply_options, termination, and ack_scope. message_id, sender, sent_at, reply_required and resume_token are never in opts: id and sent_at are generated, sender is taken from context, and send leaves reply_required false with no resume_token. context is the current manifest, carrying the sender's identity and the auth and meta partitions emit attaches. conn is a standard DB-API connection (PEP 249), the injected connection for honest-persist and honest-observe; the alerts-owned tables and the event log are reached through the same conn, and run_send writes the delivery rows then appends alert.sent on that one conn and commits once, so the rows and the append land together or not at all. awaited because run_send is. It returns SendResult (the count of deliveries queued) or a Fault, never raising, because the calling link decides whether a failed send stops its chain."
 
-  orchestrator fn run_send_and_wait : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, conn: any) -> Result awaited invokes new_message_id, new_resume_token, now, build_message, validate_message, read_routes, validate_alert_route, matching_routes, delivery_plan, write_delivery, alert_event, emit_event, await_reply
+  boundary_in fn acknowledge : (message_id: str, actor_ref: ActorRef, reply_payload: dict<str, any>, session: SessionId | NOTHING, acknowledged_at: int, context: dict<str, any>, conn: any) -> AckResult | Fault awaited invokes run_acknowledge
+    note "the acknowledge door: records that a recipient acted on a message so the message can terminate (section 9.1, 10). The world calls in here and nothing inside the module calls it; it hands its input to run_acknowledge and returns what it returns. message_id names the message being acknowledged. actor_ref is the acknowledging actor, pure identity (it carries no session); the mailbox projection reads its id for an actor- or broadcast-scoped ack. reply_payload is any data the recipient attached. session is the acking session the acknowledgment came in under, a SessionId taken as an explicit parameter (section 4.1) and carried onto the alert.acknowledged event as data so a session-scoped ack terminates the message when this acking session equals the viewing_session a later mailbox read is taken for, NOTHING when the ack did not come in under a DOM session. The ack event carries no scope word; the message's own ack_scope is the only scope vocabulary. acknowledged_at is the epoch-seconds UTC moment the acknowledgment was recorded, read at the boundary side by the clock reader and passed in, never computed in the pure core (section 10). context is the current manifest, carrying the auth and meta partitions emit attaches. conn is a standard DB-API connection (PEP 249), the injected honest-observe log connection; the alerts-owned tables and the event log are reached through the same conn, and run_send writes the delivery rows then appends alert.sent on that one conn and commits once, so the rows and the append land together or not at all. awaited because run_acknowledge is. It returns AckResult or a Fault, never raising, for the same reason send does. It is one of the three unit-1 doors; there is no read_mailbox door, because reading a mailbox is a pure projection reached by import, never a write and never a door (section 4.1)."
 
-  orchestrator fn run_deliveries : (conn: any, transport: any) -> Result awaited invokes read_pending, deliver_by_channel, mark_delivery, alert_event, emit_event
+  # ------------------------------------------------------------------------------------------------
+  # Column 3 -- pure functions. Data in, data out, no side of the world. A failure comes back as a Fault
+  # arm, never a raise. The supervisor and the message, registration and ack builders live here.
+  # The mailbox projection, lifecycle and shared fault constructor belong to honest-alerts-pure.
+  # ------------------------------------------------------------------------------------------------
 
-  orchestrator fn record_reply : (message_id: str, option_id: str, reply_payload: dict<str, any>, actor_id: str, conn: any) -> Result awaited invokes alert_event, emit_event
+  fn _is_dotted : (message_type: any) -> bool note "checks the arriving registration's proposed message-type value (spec 3b.1). True only for a string consisting of at least two nonempty components separated by literal dots. Empty strings, nonstrings, unqualified names, dot-only names, leading or trailing dots, and adjacent dots are false. It inspects component presence without changing spelling or imposing an extra character vocabulary."
 
-  orchestrator fn render_mailbox : (actor_ref: ActorRef, at_time: str, conn: any) -> str awaited invokes read_events, mailbox, render_surface
+  fn build_registered_type : (message_type: str, message_versions: list<str>, existing: RegisteredType | NOTHING) -> RegisterDecision | Fault invokes _is_dotted pure_call "honest-alerts-pure.alerts_fault"
+    note "assembles and validates one registration from its parts, applies the re-registration rule against what is already stored, and returns the decision or a Fault (section 3b.1, 3b.3). message_type is the type being registered, checked by _is_dotted for at least two nonempty dot-separated components; message_versions is the closed set of version values the application declared for it; existing is the RegisteredType run_register_message_type already read for this message_type via read_registered_type, or NOTHING when the type was never registered. Shape validation is a fault as data, not an exception: an empty message_versions set, or a malformed (non-dot-namespaced or empty) message_type, returns a Fault via alerts_fault with category client, before any re-registration comparison. On a valid shape it assembles the arriving RegisteredType (exactly the two fields) and then decides against existing (section 3b.3): when existing is NOTHING the type was never registered, so it returns a RegisterDecision with action write carrying the arriving record; when existing is a stored record and the arriving whole declaration -- the message_type and its message_versions set taken whole -- is byte-identical to it, re-registration changes nothing, so it returns a RegisterDecision with action noop carrying the stored record; when existing is a stored record and the arriving declaration differs from it in any way, it refuses, returning a client Fault via alerts_fault with code refused_registration (category client, section 6b) whose detail names the existing declaration against the arriving one (both message_type values and both message_versions sets) so the caller sees exactly what differs, and whose message says to change the arriving declaration to match the stored one or remove the existing registration first. The refusal is wrong in itself, never retryable: sending the same differing declaration again fails the same way. Pure: parts and the existing record in, a decision or a fault out, no world. run_register_message_type invokes it. An invalid_registration Fault carries the supplied values in detail.message_type and detail.message_versions. A refused_registration Fault carries the two complete records in detail.existing and detail.arriving."
 
-  orchestrator fn run_stream : (actor_ref: ActorRef, at_time: str, conn: any) -> any awaited invokes read_events, mailbox, render_surface
+  fn build_message : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: SendOpts, sender: ActorRef, message_id: str, sent_at: int, reply_required: bool, registered: RegisteredType | NOTHING) -> Message | Fault pure_call "honest-alerts-pure.alerts_fault"
+    note "assembles one immutable Message from its already-computed parts and validates it, returning the Message or a Fault (section 3.1, 8.1, 3b.2). The impure parts -- message_id (from new_message_id), sent_at (from now) -- the sender (from context) and reply_required (false for the unit-1 send door) are passed in, so this stays a pure constructor run_send can test without a clock, a random source or a database. registered is the RegisteredType run_send read for this message_type (via read_registered_type), or NOTHING when the type was never registered. It reads the controlled fields out of opts (message_version, subject_label_id, body_label_id, channel, dom_surface, dom_target, reply_options, termination, ack_scope) and places each into the Message. Validation is a fault as data, not an exception, and each failure returns the exact code from the section 6b table via alerts_fault: a registered of NOTHING (the message_type was never registered) returns code unregistered_message_type (category client); a message_version that is carried but is not a member of registered.message_versions returns code message_version_not_registered (category client); a message carrying no message_version at all returns code missing_message_version (category client); and a termination whose fields do not match its declared condition returns code invalid_termination (category client). The message identifies the mismatch and tells the caller how to correct it (spec 3.3 and 6b). For ttl, supply ttl_seconds and clear event fields that do not apply. For event, supply event_type, leave ttl_seconds as NOTHING, and optionally specify event_filter. For acknowledged or never, clear ttl_seconds, event_type and event_filter to NOTHING wherever supplied. A missing or unsupported condition calls for a supported TerminationSpec. It never raises and never substitutes a default message_version. There is no framework-level version set; the only authority for which versions exist is the registered record. It is the one place the Message shape is built, so the message schema is stated once. The unregistered_message_type Fault carries detail.message_type. Version Faults carry detail.message_type and detail.message_version, which is NOTHING when missing and the rejected version otherwise."
 
-  orchestrator fn load_config : () -> dict<str, any> invokes read_raw_config, resolve_config
+  fn supervise : (message: Message, routing_table: list<AlertRoute>) -> DeliveryPlan
+    note "the supervisor: the pure core that produces the delivery plan from a message and the routing table (section 6, 6.1). It is stateless with no memory between invocations. It keeps the routes whose message_type matches the message's type (including trailing-wildcard match) and whose sender_type is NOTHING or equals the message sender's type, and sorts the kept routes by priority ascending. For each route, for each ChannelConfig, it resolves the recipient (the config's recipient_spec if set, else the message recipient), computes deliver_at as the message sent_at plus the config's delay_seconds, and builds one pending Delivery; the Deliveries in route-and-channel order are the DeliveryPlan. In unit 1 supervise declares no Fault arm and returns a DeliveryPlan alone: the match is assumed non-empty, so there is nothing for it to fault on (section 6). The empty-match case is alert.no_route, a later-unit concern that adds a Fault arm; until then supervise's return type is DeliveryPlan alone. Pure: a message and a table in, a plan out, no world. run_send invokes it."
 
-  # --- Doors: the world calls in, each handing its input to one orchestrator -
+  fn build_ack_event : (message_id: str, actor_ref: ActorRef, reply_payload: dict<str, any>, session: SessionId | NOTHING, acknowledged_at: int) -> AckPayload
+    note "assembles the payload of the alert.acknowledged event from its parts (section 9.1, 10, 4.1). message_id is the message being acknowledged, carried so the mailbox projection can match acks to their message. actor_ref is the acknowledging actor, pure identity whose id goes into the payload for an actor- or broadcast-scoped ack. reply_payload is any data the recipient attached, carried onto the payload (section 10). session is the acking session, the DOM session the acknowledgment came in under, a SessionId, placed on the payload as data so a session-scoped ack terminates the message when this acking session equals the viewing_session a mailbox read is taken for, NOTHING when the ack did not come in under a DOM session; ActorRef carries no session, so the acking session travels on the payload as a typed SessionId, not the actor (section 4.1). acknowledged_at is the epoch-seconds UTC moment, read at the boundary and passed in so this pure function never calls now(). It places no scope word on the payload: the only scope vocabulary is the message's own ack_scope, and is_terminated dispatches on that, not on anything this payload carries. It returns the event payload as an AckPayload run_acknowledge hands to emit: the message_id, the acknowledging actor, acknowledged_at, reply_payload and the acking session. Pure: parts in, payload out, no world and no fault."
 
-  boundary_in fn send : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, conn: any) -> Result awaited invokes run_send
-
-  boundary_in fn send_and_wait : (message_type: str, recipient: ActorRef, payload: dict<str, any>, opts: dict<str, any>, context: dict<str, any>, conn: any) -> Result awaited invokes run_send_and_wait
-
-  boundary_in fn handle_reply : (message_id: str, option_id: str, reply_payload: dict<str, any>, actor_id: str, conn: any) -> Result awaited invokes record_reply
-
-  boundary_in fn serve_mailbox : (actor_ref: ActorRef, at_time: str, conn: any) -> str awaited invokes render_mailbox
-
-  boundary_in fn serve_stream : (actor_ref: ActorRef, at_time: str, conn: any) -> any awaited invokes run_stream note "the SSE endpoint the page surfaces connect to; it returns the live stream of rendered surfaces for the actor, pushed as alert events arrive"
-
-  boundary_in fn tick : (conn: any, transport: any) -> Result awaited invokes run_deliveries
-
-  boundary_in fn start : () -> dict<str, any> invokes load_config
-
-  # --- Who calls in ----------------------------------------------------------
+  # ------------------------------------------------------------------------------------------------
+  # Who calls in. The three unit-1 doors are called from an application chain link (call:send,
+  # call:acknowledge, call:register_message_type); the send_and_wait door is a later unit and has no entry
+  # here (section 8.2). Public pure exports are declared in honest-alerts-pure.
+  # ------------------------------------------------------------------------------------------------
 
   entry "call:send" -> send
-  entry "call:send_and_wait" -> send_and_wait
-  entry "runtime:worker" -> tick
-  entry "call:configure" -> start
-  entry "call:advance" -> advance
-  route "POST /api/alerts/{message_id}/reply" -> handle_reply
-  route "GET /api/alerts/mailbox" -> serve_mailbox
-  route "GET /api/alerts/stream" -> serve_stream
+  entry "call:acknowledge" -> acknowledge
+  entry "call:register_message_type" -> register_message_type

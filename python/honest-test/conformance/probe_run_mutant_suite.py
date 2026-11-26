@@ -1,3 +1,6 @@
+# scenario: run_mutant_suite runs one source through the conformance suite out of process
+# inherits: hd=python/honest-test/honest-test.hd::run_mutant_suite -> feature=specs/features/honest-test.feature::run_mutant_suite runs one source through the conformance suite out of process
+
 """honest-test conformance: run_mutant_suite, the memory-capped mutation harness.
 
 run_mutant_suite runs one source through the conformance suite out of process and
@@ -20,7 +23,7 @@ def probe_run_mutant_suite():
     its time and memory bound."""
     bad = []
 
-    observation = run_mutant_suite('GREETING = "hi"\n')
+    observation = run_mutant_suite('print("child standard output")\n')
 
     if not isinstance(observation, dict):
         bad.append(f"run_mutant_suite should return a MutantObservation dict, got {observation!r}")
@@ -30,6 +33,10 @@ def probe_run_mutant_suite():
         bad.append(f"MutantObservation is missing its output field: {observation}")
     elif not isinstance(observation["output"], str):
         bad.append(f"MutantObservation.output should be text, got {observation['output']!r}")
+
+    output = observation.get("output", "")
+    if isinstance(output, str) and "child standard output" not in output:
+        bad.append(f"the subprocess observation lost its output: {output!r}")
 
     if observation.get("completed") is not True:
         bad.append(f"a trivial source that terminates at once should finish inside the bound, completed True: {observation}")

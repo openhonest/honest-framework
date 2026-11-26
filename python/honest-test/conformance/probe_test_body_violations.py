@@ -1,3 +1,5 @@
+# scenario: test_body_violations returns one rejection per runtime rebinding
+# inherits: hd=python/honest-test/honest-test.hd::test_body_violations -> feature=specs/features/honest-test.feature::test_body_violations returns one rejection per runtime rebinding
 """honest-test conformance: test_body_violations, the test-body honesty verdict.
 
 test_body_violations reads a test module's source and returns one rejection

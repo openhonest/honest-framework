@@ -28,6 +28,7 @@ members = [
   "honest-parse",
   "honest-persist",
   "honest-rca",
+  "honest-render",
   "honest-state",
   "honest-test",
   "honest-type",

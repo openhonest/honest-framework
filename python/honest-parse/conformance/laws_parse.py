@@ -25,6 +25,24 @@ from honest_parse import (
     parse,
     walk,
 )
+from probe_parse_root_node_explicit_grammar import probe_parse_root_node_explicit_grammar
+from probe_parse_root_node_recovery import probe_parse_root_node_recovery
+from probe_parse_root_node_unknown_grammar import probe_parse_root_node_unknown_grammar
+from probe_read_root_node_recovery import probe_read_root_node_recovery
+from probe_read_root_node_unknown_grammar import probe_read_root_node_unknown_grammar
+from probe_root_node_or_fault_tree import probe_root_node_or_fault_tree
+from probe_root_node_or_fault_recovery import probe_root_node_or_fault_recovery
+from probe_root_node_or_fault_fault import probe_root_node_or_fault_fault
+from probe_read_by_language_recovered import probe_read_by_language_recovered
+from probe_read_by_language_unsupported import probe_read_by_language_unsupported
+from probe_grammar_for_known import probe_grammar_for_known
+from probe_grammar_for_missing import probe_grammar_for_missing
+from probe_read_tree_python import probe_read_tree_python
+from probe__pick_truthiness import probe__pick_truthiness
+from probe__unknown_grammar_sorted_names import probe__unknown_grammar_sorted_names
+from probe__checked_tree_clean import probe__checked_tree_clean
+from probe__checked_tree_broken import probe__checked_tree_broken
+from probe__syntax_error_first_recovery import probe__syntax_error_first_recovery
 
 _CORPUS = [
     "x = 1",
@@ -427,7 +445,7 @@ def _law_fault_details_and_surface():
 
     bad = []
 
-    expected_all = ["first_error_node", "language_of", "line_col", "parse", "parse_source", "place_source", "walk"]
+    expected_all = ["first_error_node", "language_of", "line_col", "parse", "parse_root_node", "parse_source", "place_source", "walk"]
     if honest_parse.__all__ != expected_all:
         bad.append(f"__all__ drifted from the declared surface: {honest_parse.__all__}")
 
@@ -475,6 +493,24 @@ def _law_fault_details_and_surface():
 
 
 _LAWS = {
+    "read_by_language_recovered": probe_read_by_language_recovered,
+    "read_by_language_unsupported": probe_read_by_language_unsupported,
+    "grammar_for_known": probe_grammar_for_known,
+    "grammar_for_missing": probe_grammar_for_missing,
+    "read_tree_python": probe_read_tree_python,
+    "_pick_truthiness": probe__pick_truthiness,
+    "_unknown_grammar_sorted_names": probe__unknown_grammar_sorted_names,
+    "_checked_tree_clean": probe__checked_tree_clean,
+    "_checked_tree_broken": probe__checked_tree_broken,
+    "_syntax_error_first_recovery": probe__syntax_error_first_recovery,
+    "parse_root_node_explicit_grammar": probe_parse_root_node_explicit_grammar,
+    "parse_root_node_recovery": probe_parse_root_node_recovery,
+    "parse_root_node_unknown_grammar": probe_parse_root_node_unknown_grammar,
+    "read_root_node_recovery": probe_read_root_node_recovery,
+    "read_root_node_unknown_grammar": probe_read_root_node_unknown_grammar,
+    "root_node_or_fault_tree": probe_root_node_or_fault_tree,
+    "root_node_or_fault_recovery": probe_root_node_or_fault_recovery,
+    "root_node_or_fault_fault": probe_root_node_or_fault_fault,
     "node_bytes_match_source": _law_node_bytes_match_source,
     "fault_details_and_surface": _law_fault_details_and_surface,
     "walk_complete_ordered": _law_walk_complete_and_ordered,

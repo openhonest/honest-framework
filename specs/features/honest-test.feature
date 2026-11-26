@@ -27,6 +27,25 @@ Feature: honest-test — generated, one scenario per function (61 total)
     Then it imports each module under test and returns a LiveModules record carrying the live vocabularies, bindings, links, link declarations, chains, state machines, schemas, components, providers and gates for the orchestrator to thread into the checks that must call real functions
     And loading runs each module's own top-level code, so it is a boundary: its side effects are reading the filesystem, reading the import system of the running process, and the honest-type seam (link_meta, is_link, vocabulary) that tells a link from an ordinary function and reads its declared vocabulary and binding
 
+  # hd: python/honest-test/honest-test.hd::load_under_test
+  # spec: Honest Test §11 (as cited by the declaration)
+  Scenario: load_under_test reloads identical stems from the selected source directory
+    Given src_dir: str is first one source directory and then a different one, each containing a module of the same stem with a distinct live declaration and a sibling that eagerly imports it
+    And the original search-path object and unrelated cached module are observable before each load
+    When load_under_test is called for each directory
+    Then each LiveModules record contains the live declaration from its selected directory rather than that of the other directory
+    And each eager sibling import sees the very same live module instance selected for that invocation
+    And the original sys.path object and contents and the unrelated module binding are restored after each load
+
+  # hd: python/honest-test/honest-test.hd::load_under_test
+  # spec: Honest Test §11 (as cited by the declaration)
+  Scenario: load_under_test restores process import state after a failed import
+    Given src_dir: str contains a selected module whose top-level code throws during import
+    And the process already holds a module binding of the same stem from another directory, an unrelated cached module, and its original sys.path object and contents
+    When load_under_test is called and the selected import fails
+    Then the original binding for the same stem and the unrelated module binding retain their original identities
+    And the original sys.path object and contents are restored
+
   Scenario: read_config reads honest-test.toml and decodes it to a plain table
     Given path: str
     When read_config is called
@@ -68,6 +87,37 @@ Feature: honest-test — generated, one scenario per function (61 total)
     Then it takes the one test module's source text the collection door read, runs test_body_violations over it, and returns the rejections for the door to act on, empty when the test body is honest
     And it holds the collection path's single decision — run the verdict over the source — and nothing else: it reads no world, keeps no state, and composes no other orchestrator
 
+  # hd: python/honest-test/honest-test.hd::run_body_check
+  Scenario: run_body_check reports runtime rebinding in supplied source
+    Given source: str is a complete Python test module containing one runtime rebinding of an imported call target
+    When run_body_check is called
+    Then it returns the rejection for that statement with the rebinding location and the injection correction
+
+  # hd: python/honest-test/honest-test.hd::parse_source
+  Scenario: parse_source returns a recovered Python root for malformed source
+    Given source: str is a malformed Python module with parser recovery descendants
+    When parse_source is called
+    Then it returns its recovered Python root with the recovery descendants available to the caller
+
+  # hd: python/honest-test/honest-test.hd::parse_source
+  Scenario: parse_source returns a Python root for UTF-8 source
+    Given source: str is a syntactically valid Python module containing a non-ASCII literal
+    When parse_source is called
+    Then it returns the Python root for the UTF-8 encoding of the complete source
+
+  # hd: python/honest-test/honest-test.hd::body_findings
+  Scenario: body_findings reports one rejection per runtime rebinding
+    Given root: Node is the recovered Python root for a test module containing runtime rebinding statements and unrelated statements
+    When body_findings is called
+    Then it returns one Finding for each runtime rebinding statement, carrying its location and the correction to pass the dependency as a parameter or inject a boundary plug
+
+  # hd: python/honest-test/honest-test.hd::body_findings
+  Scenario: body_findings returns empty for an honest test body
+    Given root: Node is the Python root for a test module without runtime rebinding
+    When body_findings is called
+    Then it returns an empty list
+
+  # hd: python/honest-test/honest-test.hd::test_body_violations
   Scenario: test_body_violations returns one rejection per runtime rebinding
     Given source: str
     When test_body_violations is called
@@ -113,11 +163,39 @@ Feature: honest-test — generated, one scenario per function (61 total)
     Then it walks a parsed source tree and returns one node per recognizer predicate found, each the body honest-test analyzes; an empty list means the file declares no predicates
     And it reads no world and returns pure data
 
+  # hd: python/honest-test/honest-test.hd::extract_predicates
+  # spec: Honest Test §2 (as cited by the declaration)
+  Scenario: extract_predicates selects recognizers from a mixed source file
+    Given tree: Node is the parsed root of a source file containing plain function plain, a function named step marked as a link, and functions first and second marked as recognizers
+    When extract_predicates is called
+    Then it returns exactly the two recognizer predicate nodes that belong to first and second
+
   Scenario: classify_predicate sorts one predicate into its generation class
     Given predicate_node: Node
     When classify_predicate is called
     Then it reads the node for the markers that decide the class and returns exactly one PredicateClass: numeric for int()/float()/a numeric comparison, length_bounded for a len(s) comparison, character_class for s.isdigit()/s.isalpha()/s.isupper(), external_lookup for a call to a function not in the codebase, composite for a call to a codebase-defined function (recursing into the callee at any depth), and catch_all for a predicate accepting nearly all inputs
     And it reads no world and returns pure data
+
+  # hd: python/honest-test/honest-test-pure.hd::classify_predicate
+  # spec: Honest Test §2 (as cited by the declaration)
+  Scenario: classify_predicate selects generation classes for declared syntax markers
+    Given predicate_node: Node is the parsed body of each of these predicates
+      | expression                         | class           |
+      | int(s)                             | numeric         |
+      | float(s)                           | numeric         |
+      | s > 1                              | numeric         |
+      | s > 1.5                            | numeric         |
+      | 1e3 < s                            | numeric         |
+      | len(s) < 5                         | length_bounded  |
+      | len(s) < 1.5                       | length_bounded  |
+      | s.isdigit()                        | character_class |
+      | s.isalpha()                        | character_class |
+      | s.isupper()                        | character_class |
+      | external_lookup_api(s)             | external_lookup |
+      | external_lookup_api(s) > threshold | external_lookup |
+    And external_lookup_api is not defined in the codebase and threshold has no declared numeric value
+    When classify_predicate is called
+    Then it returns the given class for each predicate
 
   Scenario: enumerate_lengths generates the strings for a length-bounded predicate
     Given predicate_node: Node
@@ -125,6 +203,29 @@ Feature: honest-test — generated, one scenario per function (61 total)
     Then it reads the minimum and maximum length from the comparison operators (distinguishing == from <= from <) and returns a LengthCases: one valid string at every length in the range, and the invalid boundary lengths just outside — one over the maximum always, one under the minimum when the minimum exceeds one
     And a pure lower bound with no maximum is unbounded above and falls to supplied values rather than generating here
     And it reads no world and returns pure data
+
+  # hd: python/honest-test/honest-test-pure.hd::enumerate_lengths
+  # spec: Honest Test §3.4 (as cited by the declaration)
+  Scenario: enumerate_lengths returns valid lengths and adjacent rejection boundaries
+    Given predicate_node: Node is the parsed body for each length comparison
+      | expression      | valid lengths | invalid lengths |
+      | len(s) == 5     | 5             | 4, 6            |
+      | len(s) <= 8     | 1 through 8   | 9               |
+      | len(s) < 8      | 1 through 7   | 8               |
+      | 3 <= len(s) <= 8 | 3 through 8   | 2, 9            |
+      | 2 <= len(s) <= 3 | 2 through 3   | 1, 4            |
+      | 3 < len(s) < 8   | 4 through 7   | 3, 8            |
+      | len(s) == 37    | 37            | 36, 38          |
+    When enumerate_lengths is called
+    Then it returns a LengthCases record whose valid and invalid lists contain one string at each of their respective specified lengths
+    And a string longer than the alphabet is generated by repeating it
+
+  # hd: python/honest-test/honest-test-pure.hd::enumerate_lengths
+  # spec: Honest Test §§3.4 and 3.6 (as cited by the declaration)
+  Scenario: enumerate_lengths generates no local cases for an unbounded upper range
+    Given predicate_node: Node is the parsed body for "len(s) >= 3" or "len(s) > 3", with no maximum
+    When enumerate_lengths is called
+    Then it returns a LengthCases record with both lists empty so the supplied-values route can provide cases
 
   Scenario: fibonacci_sequence generates the numeric probe values
     Given limit: int and negative: bool
@@ -146,6 +247,199 @@ Feature: honest-test — generated, one scenario per function (61 total)
     And a Maybe slot adds its absent arm, so a Maybe Set of 4 members yields 5; a predicate recognizer contributes no slot and a vocabulary of only predicate recognizers enumerates to one empty manifest
     And it reads no world and returns pure data
 
+  # hd: python/honest-test/honest-test.hd::invoke_probe
+  Scenario: invoke_probe returns the callback answer unchanged
+    Given function: Callable records its received object and returns a known object, and argument: any is an object kept by the caller
+    When invoke_probe is called
+    Then the callback receives the identical argument once and the returned object is the identical callback answer
+
+  # hd: python/honest-test/honest-test.hd::invoke_probe
+  Scenario: invoke_probe leaves an awaitable answer untouched
+    Given function: Callable returns an awaitable and argument: any is its input
+    When invoke_probe is called
+    Then it returns the identical awaitable without awaiting it
+
+  # hd: python/honest-test/honest-test.hd::invoke_probe
+  Scenario: invoke_probe propagates a callback exception
+    Given function: Callable raises an exception for argument: any
+    When invoke_probe is called
+    Then that exception propagates
+
+  # hd: python/honest-test/honest-test.hd::purity_findings
+  Scenario: purity_findings reports different answers
+    Given first: any is 1 and second: any is 2
+    When purity_findings is called
+    Then it returns one failure with code non_deterministic
+
+  # hd: python/honest-test/honest-test.hd::purity_findings
+  Scenario: purity_findings returns no finding for equal answers
+    Given first: any is 1 and second: any is 1
+    When purity_findings is called
+    Then it returns an empty list
+
+  # hd: python/honest-test/honest-test.hd::mutation_findings
+  Scenario: mutation_findings reports a changed manifest
+    Given before: Manifest contains count 1 and after: Manifest contains count 2
+    When mutation_findings is called
+    Then it returns one failure with code manifest_mutated containing the before and after representations
+
+  # hd: python/honest-test/honest-test.hd::mutation_findings
+  Scenario: mutation_findings returns no finding for equal manifests
+    Given before: Manifest and after: Manifest both contain count 1
+    When mutation_findings is called
+    Then it returns an empty list
+
+  # hd: python/honest-test/honest-test.hd::idempotency_findings
+  Scenario: idempotency_findings reports different answers
+    Given first: any is 1 and second: any is 2
+    When idempotency_findings is called
+    Then it returns one failure with code not_idempotent
+
+  # hd: python/honest-test/honest-test.hd::idempotency_findings
+  Scenario: idempotency_findings returns no finding for equal answers
+    Given first: any is 1 and second: any is 1
+    When idempotency_findings is called
+    Then it returns an empty list
+
+  # hd: python/honest-test/honest-test.hd::run_purity_check
+  Scenario: run_purity_check uses a fresh copy for each call
+    Given link: Callable records its input and mutates a nested value before returning it, and test_manifest: Manifest has that nested value
+    When run_purity_check is called
+    Then it calls the same link twice in order with independently copied input from the original manifest and leaves the original unchanged
+
+  # hd: python/honest-test/honest-test.hd::run_mutation_check
+  Scenario: run_mutation_check passes the original and detects its change
+    Given link: Callable changes a nested value in its argument and test_manifest: Manifest contains that value
+    When run_mutation_check is called
+    Then it calls the link once with the original object and returns a manifest_mutated failure comparing the changed original with the saved deep copy
+
+  # hd: python/honest-test/honest-test.hd::run_idempotency_check
+  Scenario: run_idempotency_check uses a fresh deep copy for each call
+    Given chain: Callable records its input and mutates a nested value before returning it, and test_manifest: Manifest has that nested value
+    When run_idempotency_check is called
+    Then it calls the chain twice in order with fresh, independent deep copies of the original manifest and compares the two answers
+
+  # hd: python/honest-test/honest-test.hd::read_monitored_link
+  Scenario: read_monitored_link passes the supplied link and manifest unchanged
+    Given monitor: Callable records its inputs and returns a watched-call record, link: Callable is the link to monitor, and test_manifest: Manifest is the original object
+    When read_monitored_link is called
+    Then it calls the monitor once with the identical link and manifest and returns its watched-call record
+
+  # hd: python/honest-test/honest-test.hd::read_monitored_link
+  Scenario: read_monitored_link propagates monitor exceptions
+    Given monitor: Callable raises an exception for the supplied link: Callable and test_manifest: Manifest
+    When read_monitored_link is called
+    Then the exception propagates
+
+  # hd: python/honest-test/honest-test.hd::monitor_findings
+  Scenario: monitor_findings reports watched calls from a non-boundary link
+    Given link: Callable has non-boundary link metadata, record: list<str> contains a watched call, and kind: str is either nondeterminism, io or unrecognized
+    When monitor_findings is called
+    Then it returns a warning carrying the recorded calls, with code nondeterminism_detected for nondeterminism or io_detected for the other two kinds
+
+  # hd: python/honest-test/honest-test.hd::monitor_findings
+  Scenario: monitor_findings allows boundary links and empty records
+    Given link: Callable is marked as a boundary or record: list<str> is empty, and kind: str selects a check
+    When monitor_findings is called
+    Then it returns an empty list
+
+  # hd: python/honest-test/honest-test.hd::run_monitor_check
+  Scenario: run_monitor_check judges the original manifest monitor record
+    Given link: Callable has non-boundary metadata, test_manifest: Manifest is the original object, monitor: Callable records a watched call, and kind: str is unrecognized
+    When run_monitor_check is called
+    Then it asks the monitor once to observe the link with the original manifest and returns its io_detected warning
+
+  # hd: python/honest-test/honest-test.hd::server_rejection
+  Scenario: server_rejection recognizes only server-category faults
+    Given answer: any is a downstream answer
+    When server_rejection is called
+    Then it returns true for a server-category fault and false for a non-server fault or a successful value
+
+  # hd: python/honest-test/honest-test.hd::chain_contract_findings
+  Scenario: chain_contract_findings reports a failed join only for server rejection
+    Given rejected: bool records whether the downstream answer was a server rejection
+    When chain_contract_findings is called
+    Then it returns a single chain_contract failure for true and an empty list for false
+
+  # hd: python/honest-test/honest-test.hd::run_chain_contract_check
+  Scenario: run_chain_contract_check skips upstream faults and reports downstream server rejection
+    Given links: list<Callable> contains adjacent links, vocab: Vocabulary and binding: Binding produce case manifests, and across the cases the upstream returns either a fault or a value passed to a downstream link that can return a server fault, another fault, or a successful value
+    When run_chain_contract_check is called
+    Then it skips the downstream call on upstream faults and returns a chain_contract failure only for a downstream server fault
+
+  # hd: python/honest-test/honest-test.hd::auth_probe_mode
+  Scenario: auth_probe_mode selects the mode for each token class
+    Given token_class: TokenClass is one of valid, malformed, revoked, expired, missing or forged
+    When auth_probe_mode is called
+    Then it returns valid for valid, malformed for malformed, and faulting for revoked, expired, missing and forged
+
+  # hd: python/honest-test/honest-test.hd::auth_probe_findings
+  Scenario: auth_probe_findings accepts sound observations for each mode
+    Given token_class: TokenClass and mode: str identify a probe, accepted: bool and resolved: any record its outcomes, and fault_mapping: dict<str, int> and expected: int describe the expected outcome
+    When auth_probe_findings is called
+    Then it returns no findings when a malformed token is rejected, a valid token is accepted and resolves ok, or an accepted faulting token resolves to a fault whose category maps to the expected status
+
+  # hd: python/honest-test/honest-test.hd::auth_probe_findings
+  Scenario: auth_probe_findings reports observations that violate the mode contract
+    Given token_class: TokenClass and mode: str identify a probe, accepted: bool and resolved: any record an observation that violates that mode, and fault_mapping: dict<str, int> and expected: int describe the expected outcome
+    When auth_probe_findings is called
+    Then it returns the auth_honesty failure for that class
+
+  # hd: python/honest-test/honest-test.hd::run_auth_honesty_check
+  Scenario: run_auth_honesty_check probes token classes in order and resolves only eligible tokens
+    Given provider: AuthProvider supplies token generation, recognition, resolution, and expected statuses
+    When run_auth_honesty_check is called
+    Then it probes valid, malformed, revoked, expired, missing, and forged in that order, generates and recognizes each token once, and resolves only accepted non-malformed tokens
+
+  # hd: python/honest-test/honest-test.hd::run_auth_honesty_check
+  Scenario: run_auth_honesty_check propagates unexpected callback errors
+    Given provider: AuthProvider supplies a callback that raises an unexpected error during a probe
+    When run_auth_honesty_check is called
+    Then the unexpected error propagates
+
+  # hd: python/honest-test/honest-test.hd::read_schema_probe
+  Scenario: read_schema_probe returns real probe outcomes in contract order
+    Given table_name: str names the declared table, table: any describes it, and connect: Callable opens a fresh injected real database where setup succeeds
+    When read_schema_probe is called
+    Then it returns attempted outcomes in round-trip, undeclared-column, first non-primary required field when present, and empty-set order
+
+  # hd: python/honest-test/honest-test.hd::read_schema_probe
+  Scenario: read_schema_probe propagates fixture setup failures
+    Given table_name: str names the declared table, table: any describes it, and connect: Callable is the real database seam but connection or table creation fails
+    When read_schema_probe is called
+    Then the fixture setup failure propagates
+
+  # hd: python/honest-test/honest-test.hd::run_persist_schema_check
+  Scenario: run_persist_schema_check collects ordered findings from fresh databases
+    Given schema: Schema declares tables in a given order, and connect: Callable opens a fresh real database for each table
+    When run_persist_schema_check is called
+    Then it probes the tables in declaration order and translates each table’s observed probe outcomes into findings in probe order
+
+  # hd: python/honest-test/honest-test.hd::read_component_startup
+  Scenario: read_component_startup records whether the loader returned
+    Given load_component: Callable receives the supplied component: Component and either returns or raises an Exception
+    When read_component_startup is called
+    Then it calls the loader once with the exact component and returns its name with whether it returned
+
+  # hd: python/honest-test/honest-test.hd::read_component_startup
+  Scenario: read_component_startup propagates a non-Exception BaseException
+    Given load_component: Callable raises a BaseException outside Exception for the supplied component: Component
+    When read_component_startup is called
+    Then the BaseException propagates
+
+  # hd: python/honest-test/honest-test.hd::startup_cascade_findings
+  Scenario: startup_cascade_findings reports forward failures that passed in reverse
+    Given names: list<str> contains the components in original order, reverse: dict<str, bool> records reverse load outcomes, and forward: list<ComponentStartup> records named forward load outcomes
+    When startup_cascade_findings is called
+    Then it returns one failure for every component that loaded in reverse and failed in forward order, identifying the first earlier forward failure as the trigger when present
+
+  # hd: python/honest-test/honest-test.hd::run_startup_isolation_check
+  Scenario: run_startup_isolation_check loads components in reverse then forward order
+    Given components: list<Component> gives an original order, and load_component: Callable observes each attempt and may fail
+    When run_startup_isolation_check is called
+    Then it loads each component once in reverse input order and then once in input order and judges the difference in original component order
+
+  # hd: python/honest-test/honest-test.hd::verify_purity
   Scenario: verify_purity runs a link twice and flags a different result
     Given link: Callable and test_manifest: Manifest
     When verify_purity is called
@@ -153,12 +447,14 @@ Feature: honest-test — generated, one scenario per function (61 total)
     And a link declared a boundary is exempt and is not handed here
     And it performs no I/O of its own; any effect belongs to the injected link
 
+  # hd: python/honest-test/honest-test.hd::detect_mutation
   Scenario: detect_mutation flags a link that modified its input manifest
     Given link: Callable and test_manifest: Manifest
     When detect_mutation is called
     Then it deep-copies the manifest, runs the link, and returns a manifest_mutated failure carrying the diff when the manifest after the run differs from the copy, because a pure function must not modify its input; the empty list when the input was untouched
     And it performs no I/O of its own
 
+  # hd: python/honest-test/honest-test.hd::test_idempotency
   Scenario: test_idempotency flags a chain that is not idempotent
     Given chain: Callable and test_manifest: Manifest
     When test_idempotency is called
@@ -166,6 +462,7 @@ Feature: honest-test — generated, one scenario per function (61 total)
     And a chain containing a boundary link is exempt and is not handed here
     And it performs no I/O of its own
 
+  # hd: python/honest-test/honest-test.hd::verify_under_monitor
   Scenario: verify_under_monitor runs a link under the injected monitor
     Given link: Callable and test_manifest: Manifest and monitor: Callable and kind: str
     When verify_under_monitor is called
@@ -188,6 +485,7 @@ Feature: honest-test — generated, one scenario per function (61 total)
     And by patching the target symbols it catches non-determinism entering through an attribute chain or dynamic dispatch, the dynamic paths static HC008 misses; honest-test carries the trapped call-form subset itself rather than importing honest-check's NONDETERMINISTIC_WATCH_LIST, and its conformance verifies the subset against the published list so the two cannot drift
     And it raises nothing; its one side effect is reaching into the running process to patch, run and restore — a process-level effect of the same breadth as load_under_test and io_monitor, which is why it is a reader over the running process rather than a pure function
 
+  # hd: python/honest-test/honest-test.hd::test_chain_contracts
   Scenario: test_chain_contracts checks each adjacent link join
     Given links: list<Callable> and vocab: Vocabulary and binding: Binding
     When test_chain_contracts is called
@@ -202,6 +500,7 @@ Feature: honest-test — generated, one scenario per function (61 total)
     And the same Maybe and predicate rules enumerate_sets follows hold here
     And it reads no world and returns pure data
 
+  # hd: python/honest-test/honest-test.hd::test_auth_honesty
   Scenario: test_auth_honesty probes a provider with each token class
     Given provider: AuthProvider
     When test_auth_honesty is called
@@ -279,12 +578,80 @@ Feature: honest-test — generated, one scenario per function (61 total)
     Then it returns value with a UTF-16 byte-order-mark prefix, an overlong UTF-8 encoding of its ASCII, a double percent-encoding, a mixed UTF-8 and latin-1 encoding, and whitespace-normalization attacks that replace a space with a non-breaking space or a line separator, targeting recognizers that accept after normalization rather than rejecting malformed input
     And it reads no world and returns pure data
 
+  # hd: python/honest-test/honest-test.hd::schema_probe_findings
+  # spec: Honest Test §6.1 (as cited by the declaration)
+  Scenario: schema_probe_findings interprets round_trip_equal
+    Given table: str is the declared table "widgets" and outcome: SchemaProbeOutcome is round_trip_equal
+    When schema_probe_findings is called
+    Then it returns an empty list
+
+  # hd: python/honest-test/honest-test.hd::schema_probe_findings
+  # spec: Honest Test §6.1 (as cited by the declaration)
+  Scenario: schema_probe_findings interprets round_trip_mismatch
+    Given table: str is the declared table "widgets" and outcome: SchemaProbeOutcome is round_trip_mismatch
+    When schema_probe_findings is called
+    Then it returns one Finding with kind "failure", code "round_trip_mismatch" and an empty location
+    And the message identifies "widgets" and the broken round-trip contract
+
+  # hd: python/honest-test/honest-test.hd::schema_probe_findings
+  # spec: Honest Test §6.1 (as cited by the declaration)
+  Scenario: schema_probe_findings interprets undeclared_column_rejected
+    Given table: str is the declared table "widgets" and outcome: SchemaProbeOutcome is undeclared_column_rejected
+    When schema_probe_findings is called
+    Then it returns an empty list
+
+  # hd: python/honest-test/honest-test.hd::schema_probe_findings
+  # spec: Honest Test §6.1 (as cited by the declaration)
+  Scenario: schema_probe_findings interprets undeclared_column_accepted
+    Given table: str is the declared table "widgets" and outcome: SchemaProbeOutcome is undeclared_column_accepted
+    When schema_probe_findings is called
+    Then it returns one Finding with kind "failure", code "undeclared_column_accepted" and an empty location
+    And the message identifies "widgets" and the broken undeclared-column rejection contract
+
+  # hd: python/honest-test/honest-test.hd::schema_probe_findings
+  # spec: Honest Test §6.1 (as cited by the declaration)
+  Scenario: schema_probe_findings interprets missing_required_field_rejected
+    Given table: str is the declared table "widgets" and outcome: SchemaProbeOutcome is missing_required_field_rejected
+    When schema_probe_findings is called
+    Then it returns an empty list
+
+  # hd: python/honest-test/honest-test.hd::schema_probe_findings
+  # spec: Honest Test §6.1 (as cited by the declaration)
+  Scenario: schema_probe_findings interprets missing_required_field_accepted
+    Given table: str is the declared table "widgets" and outcome: SchemaProbeOutcome is missing_required_field_accepted
+    When schema_probe_findings is called
+    Then it returns one Finding with kind "failure", code "missing_required_field_accepted" and an empty location
+    And the message identifies "widgets" and the broken required-field rejection contract
+
+  # hd: python/honest-test/honest-test.hd::schema_probe_findings
+  # spec: Honest Test §6.1 (as cited by the declaration)
+  Scenario: schema_probe_findings interprets empty_rows
+    Given table: str is the declared table "widgets" and outcome: SchemaProbeOutcome is empty_rows
+    When schema_probe_findings is called
+    Then it returns an empty list
+
+  # hd: python/honest-test/honest-test.hd::schema_probe_findings
+  # spec: Honest Test §6.1 (as cited by the declaration)
+  Scenario: schema_probe_findings interprets empty_set_faulted
+    Given table: str is the declared table "widgets" and outcome: SchemaProbeOutcome is empty_set_faulted
+    When schema_probe_findings is called
+    Then it returns one Finding with kind "failure", code "empty_set_faulted" and an empty location
+    And the message identifies "widgets" and the broken empty-set contract
+
+  # hd: python/honest-test/honest-test.hd::test_persist_schema_contract
   Scenario: test_persist_schema_contract checks a schema against a real in-memory database
     Given schema: Schema and connect: Callable
     When test_persist_schema_contract is called
     Then for every table it checks four contracts against a real in-memory database (never a mock) and returns a failure for each that breaks: round_trip_mismatch when a row read back does not equal the row written, undeclared_column_accepted when a query builder referencing an undeclared column is not rejected at build time, missing_required_field_accepted when an insert omitting a non-nullable column is not rejected, and empty_set_faulted when a select matching no rows returns a fault instead of ok of an empty list
     And connect is honest-persist's one I/O seam injected, returning a fresh ephemeral in-memory database recreated per table; the only side effect is through that injected real driver
     And it returns one failure per broken contract per table, empty when every table's contract holds
+
+  # hd: python/honest-test/honest-test.hd::test_persist_schema_contract
+  # spec: Honest Test §6.1 (as cited by the declaration)
+  Scenario: test_persist_schema_contract reports a valid empty-set read fault
+    Given schema: Schema and connect: Callable for a real in-memory database where setup succeeds and the driver faults on a valid select for a key absent from the declared table
+    When test_persist_schema_contract is called
+    Then it returns an empty_set_faulted finding of kind failure for that table
 
   Scenario: enumerate_check_constraints enumerates the CHECK-constraint contract cases
     Given schema: Schema
@@ -304,6 +671,7 @@ Feature: honest-test — generated, one scenario per function (61 total)
     Then it accumulates every component's route paths and returns a route_collision failure naming both components when a path is defined twice; one failure per collided path, empty when every route path is unique
     And it reads no world and returns pure data
 
+  # hd: python/honest-test/honest-test.hd::test_startup_isolation
   Scenario: test_startup_isolation checks that components are independently loadable
     Given components: list<Component> and load_component: Callable
     When test_startup_isolation is called
@@ -342,6 +710,112 @@ Feature: honest-test — generated, one scenario per function (61 total)
     Then it returns the report text — the chains, links and vocabularies found, the permutations run and failures, the adversarial inputs rejected, the honesty and chain-contract results, the state-machine tallies, and the totals — laid out as section 11 shows
     And run_suite hands the string to print_report; it reads no world and returns pure data, the write being print_report's
 
+  # hd: python/honest-test/honest-test.hd::run_source_mutation
+  Scenario: run_source_mutation returns mutants for parseable source
+    Given source: str is a parseable Python module containing a site for a declared mechanical change
+    When run_source_mutation is called
+    Then it returns the source mutants with spans and original and replacement text, without executing them
+
+  # hd: python/honest-test/honest-test.hd::run_source_mutation
+  Scenario: run_source_mutation returns a fault for malformed source
+    Given source: str is a malformed Python module
+    When run_source_mutation is called
+    Then it returns the Fault from source_mutants
+
+  # hd: python/honest-test/honest-test.hd::_number_mutants
+  # spec: Honest Test §9.6 (as cited by the declaration)
+  Scenario: _number_mutants shifts hexadecimal octal and binary tokens
+    Given root: Node contains integer tokens "0x0FFF", "0O_17" and "0B_11" in that order
+    When _number_mutants is called
+    Then it returns three number_shift mutants in source order with replacement text "4096", "16" and "4", respectively
+    And each mutant retains the original token text and span
+
+  # hd: python/honest-test/honest-test.hd::_number_mutants
+  # spec: Honest Test §9.6 (as cited by the declaration)
+  Scenario: _number_mutants keeps decimal token spans separate from unary signs
+    Given root: Node contains the decimal token "000" followed by the unary expression "-1_000"
+    When _number_mutants is called
+    Then it returns number_shift mutants for "000" and "1_000" with replacement text "1" and "1001", respectively
+    And the span for "1_000" excludes the unary sign
+
+  # hd: python/honest-test/honest-test.hd::_number_mutants
+  # spec: Honest Test §9.6 (as cited by the declaration)
+  Scenario: _number_mutants skips imaginary tokens and preserves integer order
+    Given root: Node contains numeric tokens "7", "2j", "3J" and "9" in that order
+    When _number_mutants is called
+    Then it returns only the number_shift mutants for "7" and "9", in that order, with replacement text "8" and "10"
+
+  # hd: python/honest-test/honest-test.hd::source_mutants
+  Scenario: source_mutants enumerates the declared mechanical changes
+    Given root: Node is the parsed root of a module containing sites for the declared change kinds
+    When source_mutants is called
+    Then it returns one Mutant per applicable change site and change, carrying the node span, original text and replacement text, without running the mutants
+
+  # hd: python/honest-test/honest-test.hd::_boolean_mutants
+  # spec: Honest Test §9.6 (as cited by the declaration)
+  Scenario: _boolean_mutants flips only operator tokens in source order
+    Given root: Node parses the source line "result: bool = (a and b) or c # and in a comment"
+    When _boolean_mutants is called
+    Then it returns two condition_flip records in source order
+    And the first spans only "and" at zero-based bytes 18 through 20 and replaces it with "or"
+    And the second spans only "or" at zero-based bytes 25 through 26 and replaces it with "and"
+    And applying either record leaves the operands, grouping, annotation, whitespace and comment outside that span unchanged
+
+  # hd: python/honest-test/honest-test.hd::_boolean_mutants
+  # spec: Honest Test §9.6 (as cited by the declaration)
+  Scenario: _boolean_mutants returns no flips for operator words in strings and comments
+    Given root: Node parses one assignment of the string literal "and or" with a comment containing the words and and or, and no actual Boolean operator tokens
+    When _boolean_mutants is called
+    Then it returns an empty list
+
+  # hd: python/honest-test/honest-test.hd::_membership_mutants
+  # spec: Honest Test §9.6 (as cited by the declaration)
+  Scenario: _membership_mutants flips each chained membership token independently
+    Given root: Node parses the source line "a in b not in c in d"
+    When _membership_mutants is called
+    Then it returns three membership_change records in source order with zero-based byte spans [2, 4), [7, 13), and [16, 18)
+    And their original texts are "in", "not in", and "in" with replacements "not in", "in", and "not in", respectively
+    And applying one record leaves both other operators and all operands unchanged
+
+  # hd: python/honest-test/honest-test.hd::_membership_mutants
+  # spec: Honest Test §9.6 (as cited by the declaration)
+  Scenario: _membership_mutants preserves the raw span of a spaced not in token
+    Given root: Node parses the source line "a not  in b" with two spaces between not and in
+    When _membership_mutants is called
+    Then it returns one membership_change record with byte span [2, 9), original text "not  in", and replacement "in"
+    And applying it yields "a in b"
+
+  # hd: python/honest-test/honest-test.hd::_membership_mutants
+  # spec: Honest Test §9.6 (as cited by the declaration)
+  Scenario: _membership_mutants ignores iterator syntax strings and comments
+    Given root: Node parses the comprehension [a for a in b], a for-loop over b, the string literal "a in b not in c", and a comment containing in and not in, with no membership comparison
+    When _membership_mutants is called
+    Then it returns an empty list
+
+  # hd: python/honest-test/honest-test.hd::source_mutants
+  # spec: Honest Test §9.6 (as cited by the declaration)
+  Scenario: source_mutants emits separate condition and membership changes in traversal order
+    Given root: Node parses four source lines "left = a and b", "right = c or d", "first = p in group", and "second = q in other", in that order
+    When source_mutants is called
+    Then the condition_flip mutations change only "and" to "or" on the first line and only "or" to "and" on the second line, in that order
+    And the membership_change mutations make the third line "first = p not in group" and the fourth line "second = q not in other", in that order
+    And the four changes are separate records, each with a location spanning its exact original source text and a replacement that changes only its own site
+
+  # hd: python/honest-test/honest-test.hd::source_mutants
+  # spec: Honest Test §9.6 (as cited by the declaration)
+  Scenario: source_mutants emits separate constant replacements in traversal order
+    Given root: Node parses five assignments whose values in source order are 0, 1, True, False, and the string literal "text"
+    When source_mutants is called
+    Then the constant_replace records carry original text 0, 1, True, False, and "text", in that order, with replacement text 1, 0, False, True, and an empty string literal, respectively
+    And each record spans only its original literal and is separate from any other mutation of that literal
+
+  # hd: python/honest-test/honest-test.hd::source_mutants
+  Scenario: source_mutants returns a fault for an unparseable root
+    Given root: Node is the recovered Python root of malformed source
+    When source_mutants is called
+    Then it returns a Fault
+
+  # hd: python/honest-test/honest-test.hd::mutate_source
   Scenario: mutate_source generates every mechanical mutant of the source
     Given source: str
     When mutate_source is called

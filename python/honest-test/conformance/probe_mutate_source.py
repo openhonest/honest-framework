@@ -1,3 +1,5 @@
+# scenario: mutate_source generates every mechanical mutant of the source
+# inherits: hd=python/honest-test/honest-test.hd::mutate_source -> feature=specs/features/honest-test.feature::mutate_source generates every mechanical mutant of the source
 """honest-test conformance: mutate_source — the mechanical mutant generator.
 
 mutate_source(source) parses the source with tree-sitter and applies the seven
@@ -76,6 +78,16 @@ def probe_mutate_source():
             bad.append(f"mutant location {location!r} is not a span key the harness can splice at; original {m.get('original')!r}")
         elif spans[location] != m.get("original"):
             bad.append(f"mutant location {location!r} maps to {spans[location]!r}, not the mutant's original {m.get('original')!r}")
+
+    quoted = mutate_source('value = "kept"\n')
+    expected_string_change = {
+        "location": "Point(row=0, column=8)-Point(row=0, column=14)",
+        "change_kind": "constant_replace",
+        "original": '"kept"',
+        "replacement": '""',
+    }
+    if not isinstance(quoted, list) or expected_string_change not in quoted:
+        bad.append(f"mutate_source omitted the exact string replacement: {quoted!r}")
 
     # Unparseable source yields a Fault, never a mutant list.
     broken = mutate_source("def ((((\n")

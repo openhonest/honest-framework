@@ -6,6 +6,7 @@ the pure core and touch the world only through them.
 """
 
 import builtins
+import copy
 import importlib
 import json
 import subprocess
@@ -13,13 +14,23 @@ import sys
 import tomllib
 from pathlib import Path
 
+from honest_type import is_fault
 from honest_type.chains import chain_meta, is_chain, is_link, link_meta
 from honest_type.state_machine import transition
 
 from honest_test._util import _choose, _pick
-from honest_test.analyze import classify_mutant_result, mutate_source, resolve_supplied_config
-from honest_test.generate import adversarial_neighbors, enumerate_sets
-from honest_test.honesty import detect_mutation, test_body_violations, test_chain_contracts, verify_purity, verify_under_monitor
+from honest_test.analyze import classify_mutant_result, parse_source, resolve_supplied_config, source_mutants
+from honest_test.generate import adversarial_neighbors, enumerate_sets, enumerate_test_cases
+from honest_test.honesty import (
+    body_findings,
+    chain_contract_findings,
+    invoke_probe,
+    monitor_findings,
+    mutation_findings,
+    purity_findings,
+    read_monitored_link,
+    server_rejection,
+)
 from honest_test.machines import test_adversarial_state_machine, test_invalid_transitions, test_valid_transitions
 from honest_test.report import (
     build_coverage_report,
@@ -60,13 +71,29 @@ def read_template(path):
     return Path(path).read_text(encoding="utf-8")
 
 
+# inherits: hd=python/honest-test/honest-test.hd::load_under_test -> feature=specs/features/honest-test.feature::load_under_test reloads identical stems from the selected source directory -> test=python/honest-test/conformance/probe_load_under_test_distinct_directories.py::probe_load_under_test_distinct_directories
+# inherits: hd=python/honest-test/honest-test.hd::load_under_test -> feature=specs/features/honest-test.feature::load_under_test restores process import state after a failed import -> test=python/honest-test/conformance/probe_load_under_test_failed_import.py::probe_load_under_test_failed_import
+# hd: load_under_test
 def load_under_test(src_dir):
     """Import each module under src/ and read its live declarations (section 11): the
     vocabularies, bindings, links, link declarations, chains, machines, schemas, components,
     providers and gates. Loading runs each module's own top-level code, so this is a
     boundary."""
-    sys.path.insert(0, str(src_dir))
-    modules = [importlib.import_module(path.stem) for path in sorted(Path(src_dir).glob("*.py"))]
+    stems = [path.stem for path in sorted(Path(src_dir).glob("*.py"))]
+    cached_modules = {stem: sys.modules[stem] for stem in filter(sys.modules.__contains__, stems)}
+    original_path = sys.path
+    original_entries = list(original_path)
+    try:
+        for stem in stems:
+            sys.modules.pop(stem, None)
+        original_path.insert(0, str(src_dir))
+        modules = [importlib.import_module(stem) for stem in stems]
+    finally:
+        for stem in stems:
+            sys.modules.pop(stem, None)
+        sys.modules.update(cached_modules)
+        original_path[:] = original_entries
+        sys.path = original_path
     attributes = [value for module in modules for value in vars(module).values()]
     links = list(filter(is_link, attributes))
     vocabularies = list(filter(lambda value: hasattr(value, "get") and "base_types" in value, attributes))
@@ -206,39 +233,46 @@ def run_cli(src_dir):
     return run_suite(src_dir)
 
 
+# inherits: hd=python/honest-test/honest-test.hd::check_test_body -> feature=specs/features/honest-test.feature::check_test_body refuses a test body that rebinds a call target -> test=python/honest-test/conformance/probe_check_test_body.py::probe_check_test_body
+# hd: check_test_body
 def check_test_body(collector):
     """The pytest collection-time hook (section 4.8): read the collected module's source
     through the injected collector, run the pure verdict, and return the rejections —
     raising collection_failure when the list is non-empty, so a test body that rebinds a
     call target at runtime does not run."""
-    def _raise_collection(findings):
-        raise RuntimeError("collection_failure: " + "; ".join(finding["message"] for finding in findings))
-
     source = collector.path.read_text(encoding="utf-8")
     findings = run_body_check(source)
-    return _pick(len(findings) > 0, lambda: _raise_collection(findings), lambda: findings)
+    match bool(findings):
+        case True:
+            sites = "; ".join(f"{finding['location']}: {finding['message']}" for finding in findings)
+            raise RuntimeError(f"collection_failure: {sites}")
+    return findings
 
 
 # ---- orchestrators ---------------------------------------------------------
 
 
+# inherits: hd=python/honest-test/honest-test.hd::run_body_check -> feature=specs/features/honest-test.feature::run_body_check reports runtime rebinding in supplied source -> test=python/honest-test/conformance/probe_run_body_check_runtime_rebinding.py::probe_run_body_check_runtime_rebinding
+# inherits: hd=python/honest-test/honest-test.hd::run_body_check -> feature=specs/features/honest-test.feature::run_body_check runs the test-body verdict over one collected module's source -> test=python/honest-test/conformance/probe_run_body_check.py::probe_run_body_check
+# hd: run_body_check
 def run_body_check(source):
     """Run the test-body verdict over one collected module's source (section 4.8)."""
-    return test_body_violations(source)
+    return body_findings(parse_source(source))
 
 
+# inherits: hd=python/honest-test/honest-test.hd::run_suite -> feature=specs/features/honest-test.feature::run_suite drives the whole CLI run from source directory to report -> test=python/honest-test/conformance/probe_run_suite.py::probe_run_suite
+# hd: run_suite
 def run_suite(src_dir):
     """Drive the whole CLI run over a source directory (section 11): resolve the config,
     read and parse each source, and when every file parses, load the modules and drive the
     pure core — enumerate, measure coverage, tally mutation, assemble the RunReport, print
     it and write coverage.json. A file that does not parse comes back as the Fault
-    mutate_source answered, passed outward rather than swallowed."""
+    source_mutants answered, passed outward rather than swallowed."""
     def _is_fault(value):
         return hasattr(value, "get") and "problem" in value
 
     def _first_fault(sources):
-        results = [(text, mutate_source(text)) for _, text in sources]
-        return next(filter(lambda pair: _is_fault(pair[1]), results), None)
+        return next(filter(lambda pair: _is_fault(pair[1]), sources), None)
 
     def _vocab_coverage(live):
         return {str(index): coverage_ratio(len(enumerate_sets(vocab)), len(enumerate_sets(vocab)) or 1) for index, vocab in enumerate(live["vocabularies"])}
@@ -246,9 +280,9 @@ def run_suite(src_dir):
     def _mutation_tally(sources):
         caught = 0
         total = 0
-        for _, text in sources:
+        for text, mutants in sources:
             baseline = run_mutant_suite(text)
-            for mutant in mutate_source(text):
+            for mutant in mutants:
                 observation = run_mutant_suite(text.replace(mutant["original"], mutant["replacement"], 1))
                 verdict = classify_mutant_result(baseline["output"], observation["output"], observation["completed"])
                 total = total + 1
@@ -262,7 +296,15 @@ def run_suite(src_dir):
         return (not pair[1]["boundary"]) and _is_vocab(pair[1]["accepts"])
 
     def _link_findings(link, accepts):
-        return [found for manifest in enumerate_sets(accepts) for found in verify_purity(link, manifest) + detect_mutation(link, manifest)]
+        findings = []
+        for manifest in enumerate_sets(accepts):
+            first = invoke_probe(link, copy.deepcopy(manifest))
+            second = invoke_probe(link, copy.deepcopy(manifest))
+            findings.extend(purity_findings(first, second))
+            before = copy.deepcopy(manifest)
+            invoke_probe(link, manifest)
+            findings.extend(mutation_findings(before, manifest))
+        return findings
 
     def _honesty_failures(live):
         checkable = filter(_checkable, zip(live["links"], live["link_declarations"]))
@@ -271,7 +313,18 @@ def run_suite(src_dir):
 
     def _contract_failures(live):
         checkable = filter(lambda entry: _is_vocab(entry["vocab"]), live["chain_declarations"])
-        findings = [found for entry in checkable for found in test_chain_contracts(entry["links"], entry["vocab"], entry["binding"])]
+        findings = []
+        for entry in checkable:
+            links = entry["links"]
+            for upstream, downstream in zip(links, links[1:]):
+                for case in enumerate_test_cases(entry["vocab"], entry["binding"]):
+                    answer = invoke_probe(upstream, case)
+                    rejected = _pick(
+                        is_fault(answer),
+                        lambda: False,
+                        lambda: server_rejection(invoke_probe(downstream, answer)),
+                    )
+                    findings.extend(chain_contract_findings(rejected))
         return len(list(filter(lambda found: found["kind"] == "failure", findings)))
 
     def _machine_checks(machine):
@@ -300,8 +353,8 @@ def run_suite(src_dir):
             found = _pick(
                 len(manifests) == 0,
                 lambda: [],
-                lambda: verify_under_monitor(link, manifests[0], io_monitor, "io")
-                + verify_under_monitor(link, manifests[0], call_monitor, "nondeterminism"),
+                lambda: monitor_findings(link, read_monitored_link(io_monitor, link, manifests[0]), "io")
+                + monitor_findings(link, read_monitored_link(call_monitor, link, manifests[0]), "nondeterminism"),
             )
             findings.extend(found)
         return len(list(filter(lambda found: found["kind"] == "warning", findings)))
@@ -321,9 +374,10 @@ def run_suite(src_dir):
         return report
 
     resolve_supplied_config(read_config(str(Path(src_dir) / "honest-test.toml")))
-    sources = [(str(path), read_source(str(path))) for path in sorted(Path(src_dir).glob("*.py"))]
-    fault = _first_fault(sources)
-    return _pick(fault is not None, lambda: fault[1], lambda: _complete_run(sources))
+    sources = [read_source(str(path)) for path in sorted(Path(src_dir).glob("*.py"))]
+    sources_and_mutants = [(text, source_mutants(parse_source(text))) for text in sources]
+    fault = _first_fault(sources_and_mutants)
+    return _pick(fault is not None, lambda: fault[1], lambda: _complete_run(sources_and_mutants))
 
 
 # ---- sinks -----------------------------------------------------------------

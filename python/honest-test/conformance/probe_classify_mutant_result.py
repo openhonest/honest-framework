@@ -1,3 +1,5 @@
+# scenario: classify_mutant_result judges one mutant run against the baseline
+# inherits: hd=python/honest-test/honest-test.hd::classify_mutant_result -> feature=specs/features/honest-test.feature::classify_mutant_result judges one mutant run against the baseline
 """honest-test conformance: classify_mutant_result — the mutation verdict.
 
 classify_mutant_result(baseline_output, mutant_output, completed) judges one mutant
@@ -22,7 +24,7 @@ def _verdict(baseline, mutant, completed, want):
         return [f"classify_mutant_result({baseline!r}, {mutant!r}, {completed}) -> {got!r}, expected a MutantResult dict"]
     if got.get("verdict") != want:
         bad.append(f"classify_mutant_result({baseline!r}, {mutant!r}, {completed}).verdict = {got.get('verdict')!r}, expected {want!r}")
-    if want == "caught" and got.get("reason"):
+    if want == "caught" and got.get("reason") != "":
         bad.append(f"a caught verdict should carry an empty reason, got {got.get('reason')!r}")
     if want in ("set_aside", "undecided") and not got.get("reason"):
         bad.append(f"a {want} verdict should carry a reason naming the demonstration or the bound, got {got.get('reason')!r}")

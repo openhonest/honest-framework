@@ -1,3 +1,5 @@
+# scenario: vocabulary_binding_pairs
+# inherits: hd=python/honest-check/honest-check.hd::vocabulary_binding_pairs -> feature=specs/features/honest-check.feature::vocabulary_binding_pairs
 """Honest probe for honest-check's vocabulary_binding_pairs (feature Scenario: vocabulary_binding_pairs).
 
 Scenario: vocabulary_binding_pairs returns each (vocabulary calls, binding call) a
@@ -5,8 +7,8 @@ classify or link pairs by name: a classify(tokens, vocab, bind=b) pairs position
 with the `bind` keyword with the one vocab as its vocabulary list, and a
 link(accepts=v, emits=e, bind=b) pairs by its keywords (HC004, HC005).
 
-Two cases, one per call form. Each module constructs the vocabularies and binding,
-then calls classify or link naming them; the probe pins the resulting pair(s),
+The cases construct vocabularies and a binding, then call classify or link.
+Both resolved and unresolved references are exercised. The probe pins each pair,
 read back by the construction calls' source text. honest-parse is built; every node
 is a real tree-sitter node.
 
@@ -35,11 +37,11 @@ def _ctx(src):
 
 # classify(tokens, v, bind=b): positional 2 (v) pairs with the bind keyword (b),
 # the one vocab as the vocabulary list.
-_SRC_CLASSIFY = (
+_CLASSIFY_DECLARATIONS = (
     'v = vocabulary({"int": is_int})\n'
     'b = binding({"int": "slot"})\n'
-    "classify(tokens, v, bind=b)\n"
 )
+_SRC_CLASSIFY = _CLASSIFY_DECLARATIONS + "classify(tokens, v, bind=b)\n"
 _EXPECT_CLASSIFY = {
     (frozenset({'vocabulary({"int": is_int})'}), 'binding({"int": "slot"})'),
 }
@@ -61,6 +63,30 @@ _EXPECT_LINK = {
 _CASES = [
     {"src": _SRC_CLASSIFY, "expect": _EXPECT_CLASSIFY},
     {"src": _SRC_LINK, "expect": _EXPECT_LINK},
+    {
+        "src": _SRC_CLASSIFY + "classify(tokens, v, bind=missing)\n",
+        "expect": _EXPECT_CLASSIFY,
+    },
+    {
+        "src": _SRC_CLASSIFY + "classify(tokens, missing, bind=b)\n",
+        "expect": _EXPECT_CLASSIFY,
+    },
+    {
+        "src": _SRC_CLASSIFY + "classify(tokens, v.child, bind=b)\n",
+        "expect": _EXPECT_CLASSIFY,
+    },
+    {
+        "src": _CLASSIFY_DECLARATIONS + "link(accepts=v, bind=b)\n",
+        "expect": _EXPECT_CLASSIFY,
+    },
+    {
+        "src": _SRC_CLASSIFY + "link(bind=b)\n",
+        "expect": _EXPECT_CLASSIFY,
+    },
+    {
+        "src": _SRC_CLASSIFY + "link(accepts=v, bind=missing)\n",
+        "expect": _EXPECT_CLASSIFY,
+    },
 ]
 
 

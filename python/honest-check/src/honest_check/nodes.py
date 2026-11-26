@@ -7,7 +7,7 @@ from ._util import choose, pick, read_or
 
 # The framework construction calls canonical_name resolves a call site to.
 _CONSTRUCTORS = {
-    "vocabulary", "binding", "chain", "composed", "state_machine",
+    "vocabulary", "binding", "chain", "composed", "state_machine", "maybe",
 }
 
 
@@ -66,10 +66,17 @@ def call_arguments(ctx, call_node):
     return {"positionals": positionals, "keywords": keywords}
 
 
+# inherits: hd=python/honest-check/honest-check.hd::called_name -> feature=specs/features/honest-check.feature::called_name returns the final name of a qualified JavaScript call -> test=python/honest-check/conformance/probe_called_name_javascript_qualified.py::probe_called_name_javascript_qualified
+# hd: called_name
 def called_name(ctx, call_node):
     """The name a call invokes — a bare identifier or the final dotted attribute —
     or None for a call on a call's result (HC-P011)."""
-    return bare_or_final_name(_field(call_node, "function"))
+    function = _field(call_node, "function")
+    return pick(
+        function is not None and function.type == "member_expression",
+        lambda: _text(_field(function, "property")),
+        lambda: bare_or_final_name(function),
+    )
 
 
 def _is_dotted(node):
@@ -97,12 +104,16 @@ def dotted_target(ctx, call_node):
     return pick(_is_dotted(func), lambda: func.text.decode("utf-8"), lambda: None)
 
 
+# inherits: hd=python/honest-check/honest-check.hd::canonical_name -> feature=specs/features/honest-check.feature::canonical_name -> test=python/honest-check/conformance/probe_canonical_name.py::probe_canonical_name
+# hd: canonical_name
 def canonical_name(ctx, call_node):
     """The framework constructor name a call resolves to (direct or alias-resolved),
     or None when it is no framework constructor (section 3.3)."""
-    raw = bare_or_final_name(_field(call_node, "function"))
+    function = _field(call_node, "function")
+    raw = bare_or_final_name(function)
     resolved = read_or(ctx["aliases"], raw, raw)
-    return choose(resolved in _CONSTRUCTORS, resolved, None)
+    known = resolved in _CONSTRUCTORS and (resolved != "maybe" or function.type == "identifier")
+    return choose(known, resolved, None)
 
 
 def enclosing_function(node):
@@ -120,16 +131,26 @@ def enclosing_function(node):
     )
 
 
-_SCOPE_BOUNDARIES = {"function_definition", "lambda", "decorated_definition"}
+_JS_INLINE_SCOPES = {"arrow_function", "function_expression"}
+_SCOPE_BOUNDARIES = {
+    "function_definition", "lambda", "decorated_definition",
+    "function_declaration", "generator_function_declaration", "generator_function", "method_definition",
+} | _JS_INLINE_SCOPES
 
 
+# inherits: hd=python/honest-check/honest-check.hd::own_body -> feature=specs/features/honest-check.feature::own_body includes expression roots and excludes nested JavaScript bodies -> test=python/honest-check/conformance/probe_own_body_javascript.py::probe_own_body_javascript
+# hd: own_body
 def own_body(fdef):
-    """The descendants belonging to a function's own body, not descending into a
-    nested def, lambda or decorated def (§4.2)."""
-    block = _field(fdef, "body")
-    return pick(block is None, lambda: [], lambda: _descend(block))
+    """Collect the function's own body, including the root of an arrow expression."""
+    body = _field(fdef, "body")
+    expression = body is not None and fdef.type in _JS_INLINE_SCOPES and body.type != "statement_block"
+    root = choose(expression, [body], [])
+    descendants = pick(body is None or body.type in _SCOPE_BOUNDARIES, list, lambda: _descend(body))
+    return root + descendants
 
 
+# inherits: hd=python/honest-check/honest-check.hd::_descend -> feature=specs/features/honest-check.feature::_descend retains JavaScript scope nodes without visiting their bodies -> test=python/honest-check/conformance/probe_descend_javascript_scopes.py::probe_descend_javascript_scopes
+# hd: _descend
 def _descend(node):
     out = []
     for child in node.named_children:

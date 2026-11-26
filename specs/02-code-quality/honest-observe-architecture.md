@@ -550,7 +550,7 @@ payload: {
 
 honest-test emits one proof event per function on every conformance run. Where every other framework event records what happened during a *request* at runtime, a proof event records that a function's stated behaviour was *verified* — putting the static "is this requirement proved?" thread into the same log as the runtime "what happened to this request?" thread.
 
-The two threads use **different correlation keys**. Runtime events join on `request_id`. Proof events join on the function's fully-qualified name, which is also its one gherkin (the requirement statement, honest-gherkin §9.1) and its function-point unit (honest-gherkin §9.2). There is no `request_id` on a proof event — it is emitted at test time, outside any request.
+The two threads use **different correlation keys**. Runtime events join on `request_id`. Proof events join on the function's fully-qualified name, which links its Gherkin scenarios (honest-gherkin §9.1) to its function-point unit (honest-gherkin §9.2). There is no `request_id` on a proof event — it is emitted at test time, outside any request.
 
 **`hf.proof.checked`**
 ```

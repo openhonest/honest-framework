@@ -66,16 +66,22 @@ module honest-design
     type: Type
   }
 
+  set effect_directions = { "reads", "writes", "reads_writes" }
+  vocabulary EffectDirection = { effect_directions }
+
   type SideEffect = {
-    direction: str
+    direction: EffectDirection
     target: str
     module: str
     door: str
-  } note "one side of the world a function touches; module and door carry the halves of a dotted target, each an empty string when the target has no dot"
+  } note "one side of the world a function touches; module and door carry the halves of a colon-free target with one dot. Both are empty strings for a colon target, a dotless target or a target with more than one dot (spec 6)."
+
+  set grammar_roles = { "boundary_in", "reader", "orchestrator", "fn", "boundary_out", "edge" }
+  vocabulary GrammarRole = { grammar_roles }
 
   type Function = {
     name: str
-    role: str
+    role: GrammarRole
     params: list<Param>
     ret: Type
     side_effects: list<SideEffect>
@@ -84,7 +90,7 @@ module honest-design
     column: int
     awaited: bool
     note: str
-  }
+  } note "Function IR additionally carries pure_calls as an optional list of strings. It is absent when the declaration has no pure_call annotation. Each annotation contributes one target in source order, including repeated targets."
 
   type Env = {
     name: str
@@ -183,6 +189,7 @@ module honest-design
   type Module = {
     name: str
     layer: str
+    version: str
     note: str
     envs: list<Env>
     stores: list<Store>
@@ -201,7 +208,7 @@ module honest-design
     routes: list<Route>
     entries: list<Entry>
     html_attrs: list<HtmlAttr>
-  }
+  } note "version holds the architects authored free text without its enclosing quotes, or the empty string if the declaration omits version (spec 3.2.1 and 4)."
 
   type Rule = {
     id: str
@@ -286,11 +293,11 @@ module honest-design
 
   # --- Step 2, the paths: one orchestrator per door ----------------------------
 
-  orchestrator fn read_declaration : (source: str) -> Document | Fault invokes parse, _read_module, _read_rule, _read_actor, _read_flow, _document, ok, err, fault note "refuses a non-text source, asks honest-parse for the tree, and folds its top level into a Document; a malformed source comes back as a located fault"
+  orchestrator fn read_declaration : (source: str) -> Document | Fault invokes parse, _read_module, _read_rule, _read_actor, _read_flow, _document, ok, err, fault note "refuses a non-text source as hd_source_not_text before parsing. For text it asks honest-parse for the hd syntax tree. A parser Fault travels back as a Fault; a syntax error node produces hd_syntax_error. A successful syntax tree is folded by top-level declaration kind into a Document (spec 5 and 6)."
 
   orchestrator fn check_module : (module: Module) -> list<Fault> invokes _bad_surfaces, _missing_note, _unknown_links, _unknown_targets, _unknown_envs, _unknown_layer, _unknown_side_kind, _duplicate_names, _impure_pure_functions, _edge_role_withdrawn, _held_not_read, _fault_swallowed, _fault_shape, _reserved_field, _unawaited_caller, _door_called, _door_orchestrator, _reader_calls, _store_of_impure, _unknown_stores, _store_not_orchestrator, _surface_undeclared, _surface_unknown, _surface_unused, _boundary_without_surface, _door_takes_readable, _bad_projections, fault note "runs every check over one module and gathers the faults; refuses a document handed where a single module belongs"
 
-  orchestrator fn draw_module : (module: Module) -> Diagram invokes _column, _edges note "builds the four columns and the chain edges"
+  orchestrator fn draw_module : (module: Module) -> Diagram invokes _column, _edges note "builds the four columns in index order, 1 through 4, including empty columns, and the chain edges (spec 2, 4 and 7). Those four indices are the entire domain it passes to _column."
 
   orchestrator fn trace_reach : (module: Module, declarations: dict<str, Module>) -> Reach invokes _walk note "walks each door's path and reports what it touches"
 
@@ -298,7 +305,7 @@ module honest-design
 
   fn _document : (groups: dict<str, any>) -> Document note "assembles the four top-level lists into a Document"
 
-  fn _read_module : (node: Node, source: bytes) -> Module invokes _read_layer, _read_version, _read_env, _read_store, _read_surface, _read_type_decl, _read_set, _read_vocab, _read_dispatch, _read_surfaces, _read_example, _read_function, _read_chain, _read_expose, _read_route, _read_entry, _read_html_attr, _note note "folds one module node, each body declaration through its own reader"
+  fn _read_module : (node: Node, source: bytes) -> Module invokes _read_layer, _read_version, _read_env, _read_store, _read_surface, _read_type_decl, _read_set, _read_vocab, _read_dispatch, _read_surfaces, _read_example, _read_function, _read_chain, _read_expose, _read_route, _read_entry, _read_html_attr, _note note "folds one module node against the source bytes that produced it, each body declaration through its own reader. An optional group that is absent contributes no nodes and invokes no handler. With no version node, Module.version is the empty string and _read_version is not invoked. With a version node, Module.version is the text _read_version returns. A present node of a supported grammar kind is dispatched to its handler. An unknown keyword in source is malformed input and must produce a reader fault through read_declaration (spec 5)."
 
   fn _read_rule : (node: Node, source: bytes) -> Rule note "reads a workspace rule: its id, the module it binds when it names one, and the statement it makes"
   fn _read_actor : (node: Node, source: bytes) -> Actor note "reads an actor, a person or system the workspace names by name alone"
@@ -324,8 +331,9 @@ module honest-design
   fn _read_dispatch_entry : (node: Node, source: bytes) -> DispatchEntry note "reads one dispatch entry: the key, the handler it runs, and the field of the input the handler is fed, empty when none is declared"
   fn _read_example : (node: Node, source: bytes) -> Example note "reads an example: its name, the chain it runs, and its text"
 
-  fn _read_function : (node: Node, source: bytes) -> Function invokes _read_name_and_type, _read_side_effect, _read_type, _note note "reads a function in full: its role and the column that role sets, its signature, the sides of the world it touches, what it invokes and raises, whether it is awaited, and its note"
-  fn _read_side_effect : (node: Node, source: bytes) -> SideEffect note "splits a dotted target into the module and the door it enters; a colon names a kind, a dot names a path"
+  fn _read_function : (node: Node, source: bytes) -> Function invokes _read_name_and_type, _read_side_effect, _read_pure_call, _read_type, _note note "reads the grammar role, signature, sides, invokes, raises, awaited flag and note from a function node and its source bytes. Plain fn has role fn. The role sets the column: boundary_in and reader are 1, orchestrator is 2, fn is 3, boundary_out is 4. The grammar still reads edge as column 1; validation refuses it as edge_role_withdrawn. Absent awaited is false and an absent note is an empty string (spec 4 and 6)."
+  fn _read_pure_call : (node: Node, source: bytes) -> str note "reads the quoted target text of one pure_call annotation from the annotation node and its source bytes. Returns the target without enclosing quotes. The function fold keeps occurrences in source order and omits the pure_calls key entirely when there are none. Target syntax and resolution are checked by Honest Check, and this annotation creates no side effect (spec 3.2)."
+  fn _read_side_effect : (node: Node, source: bytes) -> SideEffect note "reads the direction and target against the source bytes and keeps the target intact. Any colon takes precedence: module and door are both empty, and all characters after the first colon belong to the free name. A colon-free target with exactly one dot splits into module and door. Dotless and multi-dot targets also leave both fields empty (spec 6)."
   fn _read_chain : (node: Node, source: bytes) -> Chain invokes _note note "reads a chain as its links in the order they run"
   fn _read_expose : (node: Node, source: bytes) -> Exposed invokes _note note "reads an exposed value: its kind and the name the module presents it under for the honest-test runner"
   fn _read_route : (node: Node, source: bytes) -> Route note "reads a route: its method, its path, the function it targets, and an optional label"
@@ -339,20 +347,20 @@ module honest-design
   fn _bad_surfaces : (module: Module) -> list<Fault> invokes fault note "every surfaces block declares at least one surface and names each id once, since an id names one element"
   fn _missing_note : (module: Module) -> list<Fault> invokes fault note "every function carries a note, the domain description written once at authoring time and read by every downstream tool"
   fn _unknown_links : (module: Module) -> list<Fault> invokes _declared_functions, fault note "every chain link names a function the module declares"
-  fn _unknown_targets : (module: Module) -> list<Fault> invokes _declared_functions, fault note "every route and entry targets a function the module declares"
+  fn _unknown_targets : (module: Module) -> list<Fault> invokes _declared_functions, fault note "checks each declared route and entry against the module function names. An absent route or entry contributes no check. A present declaration naming no declared function yields unknown_target. A present declaration naming a declared function satisfies this reference check (spec 6)."
   fn _unknown_envs : (module: Module) -> list<Fault> invokes _env_reads, fault note "every environment read names a declared env, so the deployment knows what it must supply"
   fn _unknown_layer : (module: Module) -> list<Fault> invokes fault note "a module's layer is one of the fixed set, never a word someone coined; a module with no layer is not this fault"
   fn _unknown_side_kind : (module: Module) -> list<Fault> invokes fault note "checks every declared side effect in the parsed module. The world-side kind is the target before its first colon, or the entire bare target. A kind outside the declared world-side set returns an unknown_side_kind fault whose detail names the function, its target, and the kind. A cross-module seam and a store target are governed by their own rules and do not produce this fault. Returns an empty list when every world-side kind is known."
   fn _duplicate_names : (module: Module) -> list<Fault> invokes fault note "names are unique within each kind of declaration"
-  fn _impure_pure_functions : (module: Module) -> list<Fault> invokes fault note "a pure function touches no side of the world; only a boundary may"
-  fn _held_not_read : (module: Module) -> list<Fault> invokes _handles, _type_names, fault note "a pure function never names a handle in its own signature, since a handle is held and passed to a boundary, never read"
+  fn _impure_pure_functions : (module: Module) -> list<Fault> invokes fault note "reports impure_pure_function for a declared side effect on either pure grammar role: fn or legacy edge. The edge withdrawal is a separate diagnostic (spec 2, 3.2 and 6)."
+  fn _held_not_read : (module: Module) -> list<Fault> invokes _handles, _type_names, fault note "reports handle_read when either pure grammar role, fn or legacy edge, names handle or an alias leading to it in its own signature. A handle nested in a record is held and may be passed to a boundary. The edge withdrawal is a separate diagnostic (spec 3.2 and 6)."
   fn _fault_swallowed : (module: Module) -> list<Fault> invokes _can_fault, _callees, fault note "a caller of a function that can fail can fail too, so the fault travels back by return to the door; only a door that says what it raises may stop it there"
   fn _fault_shape : (module: Module) -> list<Fault> invokes _can_fault, fault note "a module whose functions can fail declares Fault as a record with fields enough to say what went wrong and what to do instead"
-  fn _reserved_field : (module: Module) -> list<Fault> invokes fault note "only Fault declares is_err, the mark that tells the fault arm of a bare union from the value arm; a second record carrying it leaves the two arms indistinguishable"
-  fn _edge_role_withdrawn : (module: Module) -> list<Fault> invokes fault note "the edge role is withdrawn: a pure function the world reaches that nothing in this module calls belongs to whoever calls it, not to a module that merely hosts it"
+  fn _reserved_field : (module: Module) -> list<Fault> invokes fault note "checks record field declarations for is_err. Its absence passes, and a Fault record may declare it. A non-Fault record declaring it yields reserved_field. A vocabulary member with that spelling is outside this check. The diagnostic explains that is_err belongs to Fault and that a non-Fault record must remove or rename the field to keep success and fault distinguishable (honest-type spec 2, Reserved Fields; honest-design spec 6)."
+  fn _edge_role_withdrawn : (module: Module) -> list<Fault> invokes fault note "checks the role of each declared function in the module IR. A parsed edge role yields edge_role_withdrawn with category server, because the architect-owned declaration uses a withdrawn role. detail.function carries the offending declared function name. A reader or boundary_in also occupies column 1, but neither triggers this diagnostic; the remaining grammar roles do not trigger it either. The diagnostic explains that edge is withdrawn and directs the author to give the function a supported home according to its callers, or remove it when nothing reaches it (spec 4, 6 and 9.3). The replacement depends on reach: a single importing module can own the function as a plain fn called internally; multiple importers call for a shared utility; a function nobody reaches receives no inputs and has no defined finite testability (spec 6)."
   fn _unawaited_caller : (module: Module) -> list<Fault> invokes _callees, fault note "a caller of an awaited function is awaited too, along every path an answer travels back to the door"
   fn _door_called : (module: Module) -> list<Fault> invokes fault note "nothing inside the module calls a door; the world calls a door, and a read the program asks for is a reader"
-  fn _door_orchestrator : (module: Module) -> list<Fault> invokes _callees, fault note "every door hands its input to exactly one orchestrator: none puts logic in the wall, two split the single path the world takes in"
+  fn _door_orchestrator : (module: Module) -> list<Fault> invokes _callees, fault note "checks each boundary_in for exactly one orchestrator handoff, through invokes or by heading a chain to an orchestrator. Zero or multiple orchestrator handoffs yield door_orchestrator. An undeclared name cannot satisfy the handoff. A module with no boundary_in contributes no check (spec 6)."
   fn _reader_calls : (module: Module) -> list<Fault> invokes fault note "a reader answers the program and asks nothing of it: it invokes nothing and heads no chain"
   fn _store_of_impure : (module: Module) -> list<Fault> invokes _store_reads, fault note "a store keeps only a pure function's answers, since an answer from the world goes stale and an orchestrator's is a sequence"
   fn _unknown_stores : (module: Module) -> list<Fault> invokes _store_reads, fault note "every store a function reaches is one the module declares"
@@ -370,7 +378,7 @@ module honest-design
   fn _reaches_handle : (name: str, aliases: dict<str, Type>, budget: int) -> bool note "whether a name is the handle, or an alias that leads to it within a set number of steps, so a loop of aliases ends"
   fn _handles : (module: Module) -> set<str> invokes _reaches_handle note "the names that mean a handle in this module: the handle itself and every alias that leads to it"
   fn _can_fault : (module: Module) -> set<str> invokes _type_names note "the functions whose return says they can fail"
-  fn _callees : (module: Module) -> list<Call> note "every caller and callee pair whose answer comes back to the caller, through an invoke, a dispatch handler, or the next link of a chain, each pair once"
+  fn _callees : (module: Module) -> list<Call> note "reports each caller and callee pair whose answer comes back, through a direct invoke, every handler of an invoked dispatch table, or the next link in a chain. An absent invokes list contributes no explicit call; chain links still contribute. A name that resolves to no known callable cannot supply a callee role, return type or awaited flag (spec 3 and 6)."
   fn _store_reads : (module: Module) -> list<str> note "every function paired with each store it reaches by name"
   fn _world_targets : (f: Function, directions: list<str>) -> set<str> note "the sides of the world a function touches in the given directions, naming another module by the module and leaving out env and store, which their own declarations cover"
   fn _boundaries : (module: Module) -> list<Function> note "the functions that stand at the module's edge: doors, readers, and output boundaries"
@@ -380,7 +388,7 @@ module honest-design
   # --- the pure core: the renderer ---------------------------------------------
 
   fn _node : (f: Function) -> DiagramNode note "draws one function as a box on the diagram: its name, its role, and the sides of the world it touches"
-  fn _column : (module: Module, index: int) -> Column invokes _node note "fills one of the four columns with the functions whose role places them there"
+  fn _column : (module: Module, index: int) -> Column invokes _node note "fills one column of the supplied module IR, with one node for every function whose derived column matches index. The closed domain is integer 1 Input boundary, 2 Orchestrators, 3 Pure functions, 4 Output boundary (spec 2 and 4). The integer carrier can hold other values, but no other value names a column in a diagram. A column with no matching functions has an empty nodes list."
   fn _edges : (module: Module) -> list<Edge> note "draws each chain as arrows from each link to the next"
 
   # --- the pure core: reach ----------------------------------------------------
@@ -388,7 +396,7 @@ module honest-design
   fn _world : (function: Function, modules: dict<str, Module>) -> set<str> note "the sides of the world a function touches directly, leaving out seams, its own env and store, and the caller it was called by"
   fn _seams : (function: Function, modules: dict<str, Module>) -> list<Seam> note "every side of a function that enters another module, named by module and door; the door is empty when the side names only the module"
   fn _onward : (module: Module) -> dict<str, list<str>> note "who each function hands on to: what it invokes and the next link of any chain it is on, since a path written as a chain is still a path"
-  fn _walk : (module: Module, start: str, declarations: dict<str, Module>, seen: set<str>) -> Reached invokes _world, _seams, _onward note "follows one path from a function and gathers what it touches directly, what it reaches past a seam, and what it could not follow, entering each function once so a loop between modules ends"
+  fn _walk : (module: Module, start: str, declarations: dict<str, Module>, seen: set<str>) -> Reached invokes _world, _seams, _onward note "starts at the named function in module IR and uses declarations as the module-name lookup for seam targets. seen records visited function identities scoped by module so a cycle terminates and equal function names in different modules remain distinct. An already visited function contributes no additional reach. Distinguish a local name absent from the module from a seam that cannot be followed: the latter contributes to unfollowed (spec 6). A qualified seam names one door. A bare name matching a supplied module follows every boundary_in of that module and is counted separately in without_a_door. A bare name with no matching module is a world side. A qualified name remains a seam even when its module is missing (spec 6)."
 
   # --- the pure core: the Result constructors ----------------------------------
   # honest-check and honest-estimate import these three directly, so the world reaches the core
@@ -399,19 +407,13 @@ module honest-design
   fn err : (failure: Fault) -> Result note "wraps a fault as a failure"
   fn fault : (code: str, message: str, category: str, detail: dict<str, str>) -> Fault note "builds a fault as data, never raised: a code, a message, whether the client or the server is at fault, and the detail that names what went wrong"
 
-  # --- the pure core: the coupling question ------------------------------------
-  # couples_on is the one home for HC-REF009's question, whether a world side couples two modules
-  # through a shared resource. A caller imports it directly, as it imports the Result constructors
-  # above, so it is declared as what it is: a pure function with no door in front of it.
-
-  fn couples_on : (target: str) -> bool note "whether a world-side target couples two modules: a bare kind is ambient and couples nobody, a named kind couples, and the reserved name given never matches another"
-
   # --- the ways in -------------------------------------------------------------
   # read_hd is imported by honest-estimate and honest-check, so this entry is verifiable. validate,
   # render and reach are started by the Architecture Explorer, the host that runs honest-design from
   # outside the framework, so they carry call: entries the checker notes and does not verify.
 
   entry "import honest_design" -> read_hd
+  entry "import honest_design" -> render
   entry "call:architecture-explorer" -> validate
   entry "call:architecture-explorer" -> render
   entry "call:architecture-explorer" -> reach

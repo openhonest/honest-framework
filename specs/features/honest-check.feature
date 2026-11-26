@@ -100,6 +100,135 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
     When pair_source is called
     Then it joins one discovered path with its already-read bytes into a SourceFile, the record the whole-package cores are fed; it reads nothing, opens nothing and decides nothing, and returns the SourceFile carrying the path and the raw bytes
 
+  # hd: python/honest-check/honest-check.hd::_read_all
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: _read_all reads literal export names including an empty list
+    Given export_source: bytes contains one module-level __all__ assignment to ["read", "write", "read"] or []
+    When _read_all is called
+    Then it returns the set containing "read" and "write" for the first assignment and the empty set for the second
+
+  # hd: python/honest-check/honest-check.hd::_read_all
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: _read_all returns NOTHING when no unique literal export list is present
+    Given export_source: bytes is a nonempty initializer with no __all__ assignment, a computed assignment, multiple competing assignments, a list with a non-string item, a list with a nonliteral item, or malformed Python containing an otherwise literal-looking __all__ list
+    When _read_all is called
+    Then it returns NOTHING for each initializer
+
+  # hd: python/honest-check/honest-check.hd::_read_all
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: _read_all distinguishes direct export list writes from ordinary reads
+    Given export_source: bytes contains the literal module-level assignment __all__ = ["read"] followed in separate cases by __all__.extra = "write", __all__[0] = "write", the plain read alias = __all__.copy, or the assignment collector[__all__] = 1 that reads __all__ as a key
+    When _read_all is called
+    Then it returns NOTHING for each write attempt on __all__ and the set containing only "read" for each read of __all__
+
+  # hd: python/honest-check/honest-check.hd::_exported_names
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: _exported_names returns an empty set when export source is omitted
+    Given export_source: bytes is empty, the sentinel for no supplied initializer
+    When _exported_names is called
+    Then it returns the empty set
+
+  # hd: python/honest-check/honest-check.hd::_exported_names
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: _exported_names preserves the supplied initializer result
+    Given export_source: bytes is a nonempty initializer containing a literal list with "read", a literal empty list, or a computed export list
+    When _exported_names is called
+    Then it returns the set containing "read", the empty set, or NOTHING, respectively
+
+  # hd: python/honest-check/honest-check.hd::exported_exception_names
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: exported_exception_names recognizes explicit and builtin type exception classes
+    Given sources: list<SourceFile> supplies package definitions, and export_source: bytes has literal __all__ listing "ExplicitError" declared as a class inheriting Exception and "ConstructedError" assigned using the unshadowed builtin type with literal bases (Exception,)
+    When exported_exception_names is called
+    Then it returns the set containing only "ExplicitError" and "ConstructedError"
+
+  # hd: python/honest-check/honest-check.hd::exported_exception_names
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: exported_exception_names resolves a same-package from-import to its public alias
+    Given sources: list<SourceFile> includes a same-package file declaring LocalError as an Exception subclass and export_source: bytes lists "PublicError" in literal __all__ and binds it with a from-import alias of LocalError
+    And sources also supplies exactly one Python __init__.py whose bytes match export_source
+    When exported_exception_names is called
+    Then it returns the set containing only "PublicError"
+
+  # hd: python/honest-check/honest-check.hd::exported_exception_names
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: exported_exception_names excludes unresolved and non-exception bindings
+    Given sources: list<SourceFile> does not contain the source for one exported from-import and export_source: bytes lists that import, a dynamically rebound name, an ordinary class, and an ordinary function in literal __all__
+    When exported_exception_names is called
+    Then it returns an empty set
+
+  # hd: python/honest-check/honest-check.hd::exported_exception_names
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: exported_exception_names uses supplied initializer bytes for direct bindings
+    Given export_source: bytes contains a literal __all__ naming LocalError and directly declares LocalError as an Exception subclass, and sources: list<SourceFile> contains only an initializer whose bytes differ and whose LocalError is an ordinary class
+    When exported_exception_names is called
+    Then it returns the set containing only "LocalError", using the supplied initializer bytes
+
+  # hd: python/honest-check/honest-check.hd::exported_exception_names
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: exported_exception_names requires one byte-identical Python initializer for from-imports
+    Given export_source: bytes lists "PublicError" in literal __all__ and binds it with a from-import alias of LocalError, and sources: list<SourceFile> has matching LocalError exception definitions for the candidate packages
+    And separate cases supply no initializer, a mismatched Python initializer, only byte-identical non-Python source as the initializer, two byte-identical Python initializer paths in either order, a single matching Python initializer whose import target is supplied only as non-Python source, or a single matching Python initializer with a Python target and additional byte-identical non-Python source
+    When exported_exception_names is called
+    Then only the last case returns the set containing "PublicError" and the other cases return the empty set
+
+  # hd: python/honest-check/honest-check.hd::exported_exception_names
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: exported_exception_names follows only one same-package import hop
+    Given sources: list<SourceFile> has a unique Python initializer matching export_source: bytes, the initializer imports its listed public alias from one same-package Python file, and that file imports its binding from another same-package file containing an Exception subclass
+    When exported_exception_names is called
+    Then it returns the empty set because the exception requires a second import hop
+
+  # hd: python/honest-check/honest-check.hd::cross_declaration
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: cross_declaration accepts a verified raised exception export without function arity
+    Given sources: list<SourceFile> and export_source: bytes establish an actual exported exception class, declaration: Declaration names the same public binding in raises without a function card for it, and rule_ids: list<CrossingRule> contains only HC-REF005
+    When cross_declaration is called
+    Then it returns no HC-REF005 finding for that exception export
+
+  # hd: python/honest-check/honest-check.hd::cross_declaration
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: cross_declaration requires a verified exception export to be named in raises
+    Given sources: list<SourceFile> and export_source: bytes establish an actual exported exception class, declaration: Declaration omits its public name from raises and has no function card for it, and rule_ids: list<CrossingRule> contains only HC-REF005
+    When cross_declaration is called
+    Then it returns the HC-REF005 missing-declaration finding for that public name
+
+  # hd: python/honest-check/honest-check.hd::cross_declaration
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: cross_declaration keeps findings for unresolved exports and ordinary functions despite raises
+    Given sources: list<SourceFile> and export_source: bytes expose an unresolved from-import, an ordinary function with no function card, and an ordinary function whose definition and function card have different arity, declaration: Declaration names all three export names in raises, and rule_ids: list<CrossingRule> contains only HC-REF005
+    When cross_declaration is called
+    Then it returns missing-declaration findings for the unresolved binding and the ordinary function without a card, and the arity finding for the declared function
+
+  # hd: python/honest-check/honest-check.hd::cross_declaration
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: cross_declaration reports a supplied initializer with no export list
+    Given sources: list<SourceFile> and declaration: Declaration agree on the package functions, export_source: bytes is a supplied nonempty Python initializer without __all__, and rule_ids: list<CrossingRule> contains only HC-REF005
+    When cross_declaration is called
+    Then it returns an HC-REF005 error explaining that the package needs a literal export list
+
+  # hd: python/honest-check/honest-check.hd::cross_declaration
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: cross_declaration reports a supplied initializer with a computed export list
+    Given sources: list<SourceFile> and declaration: Declaration agree on the package functions, export_source: bytes is a supplied nonempty Python initializer assigning __all__ from a function call, and rule_ids: list<CrossingRule> contains only HC-REF005
+    When cross_declaration is called
+    Then it returns an HC-REF005 error explaining that the package needs a literal export list
+
+  # hd: python/honest-check/honest-check.hd::cross_declaration
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: cross_declaration uses a synthetic label for an invalid initializer without a known path
+    Given sources: list<SourceFile> supplies neither a known initializer path nor a package root, export_source: bytes supplies a nonempty invalid export declaration, declaration: Declaration has no source location identifying the package, and rule_ids: list<CrossingRule> contains only HC-REF005
+    When cross_declaration is called
+    Then it returns an HC-REF005 error for the invalid export list at the synthetic label "__init__.py"
+    And the diagnostic makes no claim that a file at that label exists
+
+  # hd: python/honest-check/honest-check.hd::cross_declaration
+  # spec: HC-REF005 (as cited by the declaration)
+  Scenario: cross_declaration preserves arity findings when the export list is invalid
+    Given sources: list<SourceFile> defines one function with two parameters, declaration: Declaration declares that function with one parameter, export_source: bytes contains a nonempty initializer with a computed __all__, and rule_ids: list<CrossingRule> contains only HC-REF005
+    When cross_declaration is called
+    Then it reports the invalid export list and the independent arity mismatch without inferring per-export findings from the invalid list
+
   Scenario: cross_declaration
     Given sources: list<SourceFile> and declaration: Declaration and export_source: bytes and rule_ids: list<CrossingRule>
     When cross_declaration is called
@@ -159,17 +288,20 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
 
   # --- The CLI orchestrator: one scenario per decision path ---------------------
 
-  Scenario: run_check
+  # hd: python/honest-check/honest-check.hd::run_check
+  Scenario: run_check runs in base mode
     Given argv: list<str> whose CliArgs.declaration is the empty string (base mode)
     When run_check is called
     Then it parses the arguments, builds the ProjectConfig with load_project_config and resolve_project_config, and discovers the source files with discover_files; in base mode it builds the RuleConfig with load_config and resolve_rule_config, and for each discovered file reads it with read_source, builds the CheckContext with build_context, and runs check_source over it with the nearest enclosing module .hd (read through read_declaration, or NOTHING when the file lies under none) as the declaration; it then runs check_references once over the whole template/stylesheet/script/code set (paired through pair_source), check_roles once per module-.hd group of code files, and check_auth once over all code files as one set, folding every finding into one list; it prepares the findings with prepare_report, renders with the by_format dispatch, writes to stdout with write_report, and returns the ExitCode resolve_exit_code decides
 
-  Scenario: run_check
+  # hd: python/honest-check/honest-check.hd::run_check
+  Scenario: run_check completes configured declaration crossing
     Given argv: list<str> whose CliArgs.declaration names an .hd that reads and parses (declaration-crossing mode)
     When run_check is called
     Then it parses the arguments, builds the ProjectConfig, and discovers the files; it pulls the one parsed module with read_declaration over CliArgs.declaration, reads the export module's text with read_source over CliArgs.exports when non-empty, reads each discovered file with read_source and pairs it through pair_source into a SourceFile, and runs cross_declaration once over the whole-package batch (crossing the one declaration against every file together, running only the crossing rules named in CliArgs.include_rules so HC-REF005 sees the entire defined-function set); it feeds the combined list into the same tail — prepare_report, by_format, write_report — and returns the ExitCode resolve_exit_code decides
 
-  Scenario: run_check
+  # hd: python/honest-check/honest-check.hd::run_check
+  Scenario: run_check returns a fault when the configured declaration cannot be read
     Given argv: list<str> whose CliArgs.declaration names an .hd that is missing or does not parse (crossing-mode read failure)
     When run_check is called
     Then read_declaration answers a raw read-failure reason (a str, not a Fault), and run_check checks nothing over a declaration it could not open: it assembles honest-check's Fault from that reason through the pure read_fault off the boundary and routes that Fault straight outward as its ExitCode | Fault answer, which the door discharges as exit code 2
@@ -183,10 +315,38 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
 
   # --- The cross-module seam rules (HC-REF006, HC-REF007) -----------------------
 
+  # hd: python/honest-check/honest-check.hd::_is_world
+  # spec: HC-REF006, HC-REF007 and HC-REF012
+  Scenario: _is_world identifies recognized world and resource targets
+    Given target: str is "DOM", "HTTP", "file", "env:POOL_SIZE", "honest-persist", or ""
+    When _is_world is called
+    Then it returns true for the four world or resource targets and false for "honest-persist" and the empty target
+
+  # hd: python/honest-check/honest-check.hd::_bare_seam
+  # spec: HC-REF006, HC-REF007 and HC-REF012
+  Scenario: _bare_seam keeps only a standalone bare module target
+    Given caller: str is "save" and effect: SideEffect is a parsed writes effect without module or door information
+    And the target is "", "file", "env:POOL_SIZE", "not a module", or "honest-persist"
+    When _bare_seam is called
+    Then it returns an empty list for the first four targets
+    And for "honest-persist" it returns one Seam with caller "save", module "honest-persist", an empty door, and direction writes
+
+  # hd: python/honest-check/honest-check.hd::_seam_of
+  # spec: HC-REF006, HC-REF007 and HC-REF012
+  Scenario: _seam_of preserves a qualified seam and skips an empty target
+    Given caller: str is "save" and effect: SideEffect is a parsed reads_writes effect targeting "honest-persist.open", the bare module "honest-persist", or ""
+    When _seam_of is called
+    Then the qualified effect returns one Seam with caller "save", module "honest-persist", door "open" and direction reads_writes
+    And the bare module returns the same record with an empty door, and the empty target returns an empty list
+
+  # hd: python/honest-check/honest-check.hd::declared_seams
   Scenario: declared_seams
-    Given module: Declaration
+    Given module: Declaration is parsed without semantic validation and its first function "save" declares targets "", "DOM", and "honest-persist" in that order, and its second function "load" declares targets "env:POOL_SIZE" and "honest-parse.parse_source" in that order
+    And "save" declares writes for the bare module and "load" declares reads for the qualified seam
     When declared_seams is called
-    Then for each function in the module and each side effect it declares, it skips a side effect whose module half is the empty string (it names the world and carries no module to resolve) and turns a side effect whose module half is non-empty into one Seam carrying the function name as caller, the named module, the door (the dotted target's door half, the empty string when the target named a module and no door) and the direction; it reads nothing, opens nothing, and returns the list of seams (empty when the module declares no cross-module side effect)
+    Then it returns, in order, one Seam for caller "save", module "honest-persist", empty door and direction writes, and one Seam for caller "load", module "honest-parse", door "parse_source" and direction reads
+    And it returns an empty list when the module has only empty or world targets
+    And it opens no file and does not certify side-effect validity
 
   Scenario: check_hc_ref006
     Given module: Declaration and declarations: dict<str, Declaration> and path: str
@@ -203,10 +363,68 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
     When run_seam_rules is called
     Then for each module named in in_scope (or every loaded module when in_scope is empty) it runs check_hc_ref006, check_hc_ref007 and check_ref012 over that module's declaration, the whole declarations map and the module's .hd path, handing check_ref012 the module's manifest_deps entry (the empty list when absent) and the workspace module names, concatenating their diagnostics in that order across every in-scope module; it resolves each in-scope module's seams against the complete declarations map, not the in-scope subset, so the gate's verdict on a module is the same whether a commit staged one module or swept the framework; it reads nothing, opens no file, returns the flat combined list<Diagnostic>, and raises nothing
 
+  # hd: python/honest-check/honest-check.hd::run_seam_rules
+  Scenario: run_seam_rules checks scoped pure calls alongside I/O seams
+    Given declarations: dict<str, Declaration> includes an in-scope caller with one pure call to a valid target, one pure call to a known target that fails the pure-role requirement, and an I/O seam to a missing door
+    And all target modules are outside the reporting scope and present in declarations
+    And paths: dict<str, str> gives the declaration paths, manifest_deps: dict<str, list<str>> names both pure-call targets' modules as dependencies of the caller, and in_scope: list<str> names only the caller
+    When run_seam_rules is called
+    Then it reports HC-REF007 for the invalid pure target and HC-REF012 for that dependency
+    And it reports no HC-REF012 for the dependency with a resolved pure call
+    And it reports HC-REF006 for the I/O seam to the missing door
+
+  # hd: python/honest-check/honest-check.hd::resolve_pure_calls
+  Scenario: resolve_pure_calls preserves resolved occurrences in declaration order
+    Given module: Declaration has a reader declaring "utils.answer", "utils.other" and "utils.answer" in that order followed by a function without pure_calls, and declarations: dict<str, Declaration> includes the boundaryless utils module whose answer and other functions are plain fn with no side effects
+    When resolve_pure_calls is called
+    Then it returns the three occurrences in order with the reader as caller, utils as module, and status resolved
+
+  # hd: python/honest-check/honest-check.hd::resolve_pure_calls
+  Scenario: resolve_pure_calls returns unresolved for malformed targets
+    Given module: Declaration contains a function declaring the unqualified pure_call target "answer", and declarations: dict<str, Declaration> holds the loaded declarations
+    When resolve_pure_calls is called
+    Then it returns one resolution with the authored target "answer", an empty module name and status unresolved
+
+  # hd: python/honest-check/honest-check.hd::resolve_pure_calls
+  Scenario: resolve_pure_calls returns unresolved for missing targets
+    Given module: Declaration named consumer contains a function declaring "absent.answer", "utils.unknown" and "consumer.answer", and declarations: dict<str, Declaration> contains utils with no function named unknown and consumer with answer but no module named absent
+    When resolve_pure_calls is called
+    Then it returns unresolved for all three occurrences in annotation order, preserving each authored target and parsed module name
+
+  # hd: python/honest-check/honest-check.hd::resolve_pure_calls
+  Scenario: resolve_pure_calls returns invalid_role for impure targets
+    Given module: Declaration contains a function declaring separate pure calls to a known boundary role, a plain fn declaring a side effect, and a side-effect-free plain fn in a module with a boundary, and declarations: dict<str, Declaration> includes those target modules and functions
+    When resolve_pure_calls is called
+    Then it returns invalid_role for each occurrence in annotation order
+
+  # hd: python/honest-check/honest-check.hd::pure_call_findings
+  Scenario: pure_call_findings reports ordered errors at the caller declaration path
+    Given calls: list<PureCallResolution> contains an invalid_role occurrence by caller "load" for "world.read", a resolved occurrence, and an unresolved occurrence by caller "build" for "absent.answer", and path: str is "consumer.hd"
+    When pure_call_findings is called
+    Then it returns two errors at "consumer.hd" in order, first HC-REF007 naming "load" and "world.read", then HC-REF006 naming "build" and "absent.answer"
+
   Scenario: check_seams
     Given declarations: dict<str, Declaration> and paths: dict<str, str> and manifest_deps: dict<str, list<str>> and in_scope: list<str>
     When check_seams is called
     Then it is the single door the honest-pre-commit dogfood gate reaches into the cross-module seam checks: it hands its four inputs straight to run_seam_rules and returns the combined diagnostic list, holding no resolution logic itself; the declarations arrive already parsed, so it opens no file; it returns the flat list of every HC-REF006, HC-REF007 and HC-REF012 Diagnostic over the in-scope modules (resolved against every declaration) and raises nothing
+
+  # hd: python/honest-check/honest-check.hd::distribution_pure_dependencies
+  Scenario: distribution_pure_dependencies includes only resolved calls from the caller distribution
+    Given module_name: str names the manifest owner, paths: dict<str, str> puts the owner and a sibling logical module in the same manifest directory and another logical module outside it, and calls_by_module: dict<str, list<PureCallResolution>> gives the owner a resolved call to "utils", the sibling a resolved call to "math" and failed calls to "missing" and "world", and the other logical module a resolved call to "external"
+    When distribution_pure_dependencies is called
+    Then it returns the set containing only "utils" and "math"
+
+  # hd: python/honest-check/honest-check.hd::check_seams
+  Scenario: check_seams accepts a resolved pure call as manifest dependency evidence
+    Given declarations: dict<str, Declaration> includes a manifest owner and its sibling logical module with a resolved pure call to a boundaryless dependency outside the reporting scope, paths: dict<str, str> puts the owner and sibling in the same manifest directory, manifest_deps: dict<str, list<str>> lists the dependency for the owner, and in_scope: list<str> names only the owner
+    When check_seams is called
+    Then it reports no HC-REF012 diagnostic for that dependency even without an I/O seam to it
+
+  # hd: python/honest-check/honest-check.hd::check_seams
+  Scenario: check_seams rejects a failed pure call as manifest dependency evidence
+    Given declarations: dict<str, Declaration> includes a caller with a pure call to a known target that fails the pure-role requirement and no seam to that dependency, paths: dict<str, str> supplies each declaration path, manifest_deps: dict<str, list<str>> names the dependency for the caller, and in_scope: list<str> includes the caller
+    When check_seams is called
+    Then it reports HC-REF007 for the invalid target and HC-REF012 for the dependency without valid evidence
 
   Scenario: check_ref012
     Given module: Declaration and manifest_deps: list<str> and workspace_module_names: list<str> and path: str
@@ -272,10 +490,33 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
     When called_name is called
     Then it returns the name a call invokes — a bare identifier, or the final attribute of a dotted call such as window.addEventListener — or NOTHING (HC-P011)
 
+  # hd: python/honest-check/honest-check.hd::called_name
+  # spec: HC-P011
+  Scenario: called_name returns the final name of a qualified JavaScript call
+    Given ctx: CheckContext for JavaScript source and call_node: Node for view.componentDidMount()
+    When called_name is called
+    Then it returns "componentDidMount"
+
   Scenario: own_body
     Given fdef: Node
     When own_body is called
     Then it returns the body descendants belonging to the function itself, not descending into a deeper nested def, lambda or decorated def, whose statements are the inner scope's own
+
+  # hd: python/honest-check/honest-check.hd::own_body
+  # spec: HC008
+  Scenario: own_body includes expression roots and excludes nested JavaScript bodies
+    Given fdef: Node is an inline JavaScript arrow with an expression body Math.random(), or a function expression with a block returning process.env and a nested function returning document.cookie
+    When own_body is called
+    Then the arrow result includes its Math.random() call node itself
+    And the block result includes its own return of process.env and excludes the nested return and document.cookie read
+
+  # hd: python/honest-check/honest-check.hd::_descend
+  # spec: HC008
+  Scenario: _descend retains JavaScript scope nodes without visiting their bodies
+    Given node: Node is a JavaScript block containing a direct statement, a nested function declaration with a distinct read in its body, and another direct statement, in that order
+    When _descend is called
+    Then it returns named descendants in source order including both direct statements and the nested function boundary node
+    And it omits the nested function descendants, including its read
 
   Scenario: nonlocal_names
     Given statements: list<Node>
@@ -337,10 +578,61 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
     When is_keyword_name is called
     Then it returns true when an identifier is a keyword argument's name — the `k` in f(k=v) — which names a parameter of the callee, not a global read (HC008)
 
+  # hd: python/honest-check/honest-check.hd::watched
   Scenario: watched
     Given target: Node and watch: set<str>
     When watched is called
-    Then it returns true when a call's dotted target is on the watch list — an exact entry matches by equality and an entry carrying a `*` matches as a glob (a trailing `.*` names any attribute of a module, a trailing `*` is a prefix, a `*` between dots is one segment)
+    Then it returns true when the bare or dotted spelling of a call target or supplied read reference is on the watch list — an exact entry matches by equality and an entry carrying a `*` matches as a glob (a trailing `.*` names any attribute of a module, a trailing `*` is a prefix, a `*` between dots is one segment)
+    And a supplied os.environ attribute matches an exact os.environ entry, a supplied __file__ identifier matches __file__, and the unqualified identifier environ does not match os.environ
+
+  # hd: python/honest-check/honest-check.hd::watched
+  # spec: HC008
+  Scenario: watched resolves static JavaScript member names independent of spacing
+    Given target: Node is Math.random, Math . random, Math["random"], or makeMath().random, and watch: set<str> contains only "Math.random"
+    When watched is called
+    Then it returns true for the first two references and false for the computed member and the call-result receiver
+
+  # hd: python/honest-check/honest-check.hd::watched
+  Scenario: watched matches static Ruby methods and Go selectors
+    Given target: Node is parsed from a Ruby File.read or IO.read call or a Go os.Open or ioutil.ReadFile selector, with the corresponding spelling on watch: set<str>
+    When watched is called
+    Then each target matches its own spelling
+    And a differently named receiver or operand does not match that spelling
+    And a Ruby static receiver spelling containing a namespace separator retains that separator for matching
+
+  # hd: python/honest-check/honest-check.hd::_call_target_watched
+  Scenario: _call_target_watched matches only supported static operation heads
+    Given ctx: CheckContext and call: Node for each matching static head, using Python os.open, JavaScript fetch and direct new XMLHttpRequest(), Ruby File.read and IO.read, and Go os.Open and ioutil.ReadFile
+    And watch: set<str> contains the corresponding static spellings
+    When _call_target_watched is called
+    Then each listed operation matches
+    And a JavaScript computed member or a member on a call result does not match the corresponding static spelling
+    And an operation with a different static head and a constructor with a different name do not match the supplied spellings
+
+  # hd: python/honest-check/honest-check.hd::_hc_p004
+  Scenario: _hc_p004 reports watched operations in named non-boundary host functions
+    Given ctx: CheckContext parses JavaScript named function declarations calling fetch and members of localStorage and sessionStorage or directly constructing XMLHttpRequest
+    And Ruby named methods and singleton methods call File.read and IO.read, and Go named functions and methods call os.Open and ioutil.ReadFile
+    And each language also has a non-watched call inside a named function and a watched operation outside a named callable
+    When _hc_p004 is called for each context
+    Then it returns one HC-P004 error at each watched operation in a named non-boundary function
+    And neither the non-watched calls nor the operations outside named callables produce HC-P004 errors
+
+  # hd: python/honest-check/honest-check.hd::_hc_p004
+  Scenario: _hc_p004 uses the nearest owner and its own boundary evidence
+    Given ctx: CheckContext contains a JavaScript named function declaration with a // honest: boundary comment immediately above it, and a separate named function declaration with the comment on its declaration line
+    And each contains a watched operation and an unmarked nested named function with another watched operation
+    And other cases contain a watched operation in a recognized named JavaScript, Ruby or Go function with a same-name companion declaration role of boundary_in, boundary_out or reader
+    And a separate JavaScript function containing a watched operation has the comment separated from its declaration by a blank line
+    When _hc_p004 is called for each context
+    Then the only HC-P004 errors occur at the watched operations in the unmarked nested functions and in the function separated from its comment by a blank line
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  Scenario: check_per_file reports HC-P004 for named JavaScript Ruby and Go functions
+    Given ctx: CheckContext parses a named non-boundary function calling fetch in JavaScript, File.read in Ruby, or os.Open in Go
+    And the same operation also appears inside a recognized same-name host function whose companion declaration marks it as a boundary
+    When check_per_file is called for each context
+    Then its HC-P004 findings contain one error at the watched call in the non-boundary function and none at the call in the declared boundary
 
   Scenario: is_main_guard
     Given ctx: CheckContext and node: Node
@@ -362,15 +654,43 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
     When is_empty_default is called
     Then it returns true when a parameter's default stands for absence rather than a baked-in value — None, False, a zero number, an empty string, an empty list/dict/tuple literal, or an empty-constructor call — and false for a populated literal or a non-zero number (HC-P015)
 
+  # hd: python/honest-check/honest-check.hd::_number_is_zero
+  # spec: HC-P015
+  Scenario: _number_is_zero recognizes zero by literal value and syntax
+    Given value: Node is the parsed Python expression for each case
+    When _number_is_zero is called
+    Then it returns true for `0`, `0_0`, `0x0`, `0O_0`, `0B_0`, `0.0`, `0e3`, `0J`, `(-0x0)`, and `((+0.0))`
+    And it returns false for `0x1`, `0o7`, `0b10`, `1e-3`, `1j`, `-(1)`, `(+0.5)`, `~0`, `0 + 0`, `zero`, and `make_zero()`
+    And it inspects each expression without evaluating it
+
+  # hd: python/honest-check/honest-check.hd::is_empty_default
+  # spec: HC-P015
+  Scenario: is_empty_default accepts zero spellings and rejects nonzero defaults
+    Given ctx: CheckContext is for Python and value: Node is a default expression for 0x0, 0O_0, 0B_0, 0_0, 0.0, 0e3, 0j, (-0), (+0.0), 0x2, -1.5, or 1j
+    When is_empty_default is called
+    Then the zero spellings including the signed and parenthesized zeros return true, and each nonzero default returns false
+
   Scenario: dotted_target
     Given ctx: CheckContext and call_node: Node
     When dotted_target is called
     Then it returns the dotted name a call invokes — `open`, `os.system`, `requests.get`, `urllib.request.urlopen` — or NOTHING when the target is not a plain or dotted name, such as a call on a call's result (HC008)
 
+  # hd: python/honest-check/honest-check.hd::link_is_impure
   Scenario: link_is_impure
     Given ctx: CheckContext and fdef: Node and watch: set<str> and mutable_globals: set<str>
     When link_is_impure is called
     Then it returns true when a link's own body calls a watched function or reads a module-level mutable global, the body search not descending into a nested def or lambda (HC008)
+    And with the corresponding watch entries and no file-local mutable globals, its own body reads of os.environ, sys.argv, sys.version, sys.path, __file__ or __name__ each make the link impure, including sys.argv as the base of sys.argv[0]
+    And string text, an attribute suffix alone, a name used only as a write target, and reads confined to a nested def or lambda do not make the link impure
+
+  # hd: python/honest-check/honest-check.hd::link_is_impure
+  # spec: HC008
+  Scenario: link_is_impure detects watched JavaScript calls and value reads
+    Given ctx: CheckContext is for JavaScript, fdef: Node is an inline link callback, watch: set<str> contains "Math.random", "process.env", "process.argv" and "document.cookie", and mutable_globals: set<str> is empty
+    And independent callback bodies call Math.random(), read process.env, read process.argv, read document.cookie, assign document.cookie without reading it, read the suffix env through another receiver, contain the string "process.env", or contain a nested callback whose body alone reads process.env
+    When link_is_impure is called
+    Then it returns true for the direct member call and the three own-body value reads
+    And it returns false for the write-only target, unrelated suffix, string and nested callback cases
 
   Scenario: has_decorator
     Given ctx: CheckContext and fdef: Node and name: str
@@ -417,6 +737,17 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
     When longest_shared_run is called
     Then it returns the length of the longest run of consecutive equivalent call names two call sequences share — a contiguous common substring over the two lists found by the standard row-by-row dynamic program — and 0 when they share no adjacent run (HC-OR003)
 
+  # hd: python/honest-check/honest-check.hd::longest_shared_run
+  # spec: HC-OR003 (as cited by the declaration)
+  Scenario: longest_shared_run counts only consecutive matches across both sequences
+    Given ctx: CheckContext and each pair of calls_a: list<str> and calls_b: list<str> below
+    When longest_shared_run is called
+    Then it returns 0 for `[]` and `["a"]`, for `["a"]` and `[]`, and for `["a", "b"]` and `["x", "y"]`
+    And it returns 1 for `["a"]` and `["a"]`
+    And it returns 2 for `["a", "b", "c"]` and `["x", "a", "b"]`, for those two lists in the opposite order, and for `["a", "b", "gap", "c"]` and `["a", "b", "c"]`
+    And it returns 3 for `["r", "gap", "r", "r", "s"]` and `["r", "r", "other", "r", "r", "s"]`
+    And it counts only consecutive matches, starting a new run after a mismatch
+
   Scenario: link_declares_emits
     Given ctx: CheckContext and fdef: Node
     When link_declares_emits is called
@@ -431,6 +762,7 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
     Given ctx: CheckContext
     When features_vocabulary is called
     Then it returns the feature-flag vocabulary this module declares — each flag name mapped to the set of states its FEATURES[flag]["states"] set names — read only from a module-scope FEATURES dict literal (HC-HF001, HC-HF002)
+    And both a readable empty FEATURES literal and no readable local FEATURES literal return an empty map
 
   Scenario: feature_state_flag
     Given ctx: CheckContext and call_node: Node
@@ -442,10 +774,47 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
     When module_dict_literals is called
     Then it returns each module-scope name bound to a dict literal, mapped to the set of string keys the literal declares; a name bound to anything but a module-scope dict literal is not included (HC-HF002)
 
+  # hd: python/honest-check/honest-check.hd::module_dict_literals
+  Scenario: module_dict_literals distinguishes an empty FEATURES literal from an unreadable binding
+    Given ctx: CheckContext is for source with FEATURES = {}, no FEATURES binding, or FEATURES assigned a call result
+    When module_dict_literals is called
+    Then the returned map contains FEATURES mapped to an empty set for the literal, and contains no FEATURES key in the other cases
+
+  # hd: python/honest-check/honest-check.hd::_value_names
+  Scenario: _value_names reads an optional capture base name
+    Given ctx: CheckContext resolves maybe imported by from honest_type import maybe to the Honest Type constructor, and node: Node | NOTHING is "Part", maybe("Part"), maybe(dynamic_name), unrelated.maybe("Part"), or NOTHING
+    When _value_names is called
+    Then it returns the singleton set containing "Part" for the literal and its canonical optional form, and an empty set for the dynamic, unrelated qualified or absent case
+
   Scenario: vocabulary_types
     Given ctx: CheckContext and vocab_call: Node
     When vocabulary_types is called
     Then it returns the type surface of a vocabulary(...) call — its base-type names, its composed-type names, the base names its composed types require, and the base names its composed types capture — reading the first-argument dictionary through base_types_of (HC004, HC005)
+
+  # hd: python/honest-check/honest-check.hd::vocabulary_types
+  Scenario: vocabulary_types preserves composed names from positional declarations
+    Given ctx: CheckContext and vocab_call: Node for a vocabulary declaring base type "Part" and composed type "Combined" in its second positional argument
+    When vocabulary_types is called
+    Then it returns base_names containing "Part" and composed_type_names containing "Combined"
+
+  # hd: python/honest-check/honest-check.hd::vocabulary_types
+  Scenario: vocabulary_types preserves composed names from keyword declarations
+    Given ctx: CheckContext and vocab_call: Node for a vocabulary declaring base type "Part" and composed type "Combined" in its composed_types keyword argument
+    When vocabulary_types is called
+    Then it returns base_names containing "Part" and composed_type_names containing "Combined"
+
+  # hd: python/honest-check/honest-check.hd::vocabulary_types
+  Scenario: vocabulary_types returns empty composed fields when declarations are omitted
+    Given ctx: CheckContext and vocab_call: Node for a vocabulary declaring base type "Part" with no composed declarations
+    When vocabulary_types is called
+    Then it returns base_names containing "Part" and empty composed_type_names and composed
+
+  # hd: python/honest-check/honest-check.hd::vocabulary_types
+  Scenario: vocabulary_types preserves the base name inside an optional capture
+    Given ctx: CheckContext contains a vocabulary with one composed type named by the literal "Combined" and a second with a dynamic name argument, both capturing maybe("Part") imported from Honest Type, and vocab_call: Node is that vocabulary call
+    When vocabulary_types is called
+    Then each composed declaration contains "Part" in captures_bases
+    And the first declaration carries its own "Combined" literal Node in name_node and the second carries NOTHING
 
   Scenario: binding_keys
     Given ctx: CheckContext and binding_call: Node
@@ -459,15 +828,277 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
 
   # --- The two rule sub-cores and the suppression pass --------------------------
 
+  # hd: python/honest-check/honest-check.hd::_links
+  # spec: HC008
+  Scenario: _links selects direct top-level JavaScript link callbacks
+    Given ctx: CheckContext contains program-scope const initializers link({}, () => Math.random()) and link({accepts: V}, function () { return process.env; })
+    And separate controls use a bare function declaration, lib.link, a referenced callback, a nested wrapper, a nonliteral options expression or literal options with an explicit boundary property
+    When _links is called
+    Then it returns only the two inline callbacks with statically readable metadata that omits boundary, including the expression and block bodies
+
+  # hd: python/honest-check/honest-check.hd::check_construction
   Scenario: check_construction
     Given ctx: CheckContext
     When check_construction is called
     Then it runs the construction-time rules — HC001, HC003, HC006, HC007, HC011 and the state-machine rules HC-SM01, HC-SM02, HC-SM05 — dispatched by the framework constructor each call site resolves to, reaching the shared vocabulary-and-binding helper layer (canonical_name, call_arguments, string_members, literal_string, base_types_of, vocabulary_types, binding_keys, construction_maps, vocabulary_binding_pairs) and building each finding with diagnostic; the per-rule logic nests here as data, it returns the construction-time findings, and it raises nothing
+    And for a recognized non-boundary Python link whose only impurity is reading a name on the Python watch list it returns one HC008 warning for the link
+    And a boundary link with the same watched read contributes no HC008 warning
+
+  # hd: python/honest-check/honest-check.hd::check_construction
+  # spec: HC008
+  Scenario: check_construction anchors JavaScript HC008 warnings to inline callbacks
+    Given ctx: CheckContext contains separate program-scope const direct links with static options omitting boundary and inline callbacks, one an arrow expression that calls Math.random() and another a function block that reads process.env
+    And other controls are an explicit boundary wrapper with the same watched call, a direct link whose only such read is nested, and a direct link without watched behavior
+    When check_construction is called
+    Then it returns exactly one HC008 warning anchored to each of the two impure inline callbacks and no HC008 warning for the controls
+
+  # hd: python/honest-check/honest-check.hd::check_construction
+  # spec: HC008, Honest Check §4.2
+  Scenario: check_construction warns for published JavaScript watch-list calls
+    Given ctx: CheckContext is for JavaScript source with a separate program-scope declaration `const name = link({}, () => expression)` for each call below
+    And the calls include `fs.readFile()`, `fsp.readFile()`, `fetch()`, `http.request()`, `https.request()`, and `navigator.sendBeacon()`
+    And the calls include `localStorage.getItem()`, `sessionStorage.setItem()`, `indexedDB.open()`, and `caches.open()`
+    And the calls include `process.stdout.write()`, `process.stderr.write()`, `process.stdin.read()`, `console.log()`, `console.error()`, `console.warn()`, `console.info()`, and `console.debug()`
+    And the calls include `pg.query()`, `mongodb.connect()`, `redis.createClient()`, `mysql.createConnection()`, and `sqlite3.open()`
+    And the calls include `Math.random()`, `crypto.getRandomValues()`, `crypto.randomUUID()`, `Date.now()`, `performance.now()`, and `process.cwd()`
+    When check_construction is called
+    Then it returns one HC008 warning anchored to each watched inline callback
+
+  # hd: python/honest-check/honest-check.hd::check_construction
+  Scenario: check_construction checks optional capture base names with HC006
+    Given ctx: CheckContext contains composed types named "First" and "Second" on different source lines, both capturing maybe("Part") imported from Honest Type, in a vocabulary that either declares "Part" as a base type or omits it
+    When check_construction is called
+    Then there is no HC006 error for the declared base
+    And the missing base produces two HC006 errors naming the unknown captured base "Part", one at the "First" literal name node and one at the "Second" literal name node
+
+  # hd: python/honest-check/honest-check.hd::_hc_p003
+  # spec: HC-P003, §5.3
+  Scenario: _hc_p003 reports implicit object inheritance when no actual Python base is declared
+    Given ctx: CheckContext parses four Python classes with no base list, an empty base list, only metaclass=ABCMeta, and only a keyword dictionary expansion
+    When _hc_p003 is called
+    Then it returns one HC-P003 error at each class declaration in source order
+    And each error identifies the absence of a declared base
+
+  # hd: python/honest-check/honest-check.hd::_hc_p003
+  # spec: HC-P003, §5.3
+  Scenario: _hc_p003 accepts the four approved direct Python bases
+    Given ctx: CheckContext parses separate Python classes directly inheriting TypedDict, Protocol, ABC, and Exception
+    And a fifth class directly inherits ABC and supplies metaclass=ABCMeta and a keyword dictionary expansion
+    When _hc_p003 is called
+    Then it returns no HC-P003 error
+
+  # hd: python/honest-check/honest-check.hd::_hc_p003
+  # spec: HC-P003, §5.3
+  Scenario: _hc_p003 reports each disallowed direct Python base in source order
+    Given ctx: CheckContext parses a Python class with direct bases TypedDict, NamedTuple, and Enum in that order
+    And a following class has direct bases ABCMeta and Exception in that order
+    When _hc_p003 is called
+    Then it returns two HC-P003 errors at the first class declaration naming NamedTuple and Enum in that order
+    And it returns one HC-P003 error at the second class declaration naming ABCMeta
+
+  # hd: python/honest-check/honest-check.hd::_hc_p003
+  # spec: HC-P003, §5.3
+  Scenario: _hc_p003 preserves class-level fallback for disputed and unresolved Python bases
+    Given ctx: CheckContext parses four Python classes whose base lists, in source order, are (BaseException), (typing.Protocol), (Protocol, BaseException), and (Protocol, typing.Protocol)
+    When _hc_p003 is called
+    Then it returns exactly two HC-P003 errors in source order, one anchored to each of the first two class declarations
+    And it returns no HC-P003 finding for either class with the approved direct Protocol sibling
 
   Scenario: check_per_file
     Given ctx: CheckContext
     When check_per_file is called
     Then it runs the static per-file rules — the HC-P purity rules including HC-P014, the chain and link rules HC009, HC010, HC004 and HC005, the per-file state rules HC-ST001 and HC-ST002, and the HC-HF feature-flag rules — folded over the declaration graph, reaching the shared AST helper layer (the scope, decorator, impurity, state and feature helpers) and building each finding with diagnostic; the per-rule logic nests here as data, it returns the per-file findings, and it raises nothing
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  # spec: HC-P003, §5.3
+  Scenario: check_per_file reports a disallowed Python base alongside an approved base
+    Given ctx: CheckContext parses a Python class with direct bases Protocol and Enum and metaclass=ABCMeta
+    When check_per_file is called
+    Then its HC-P003 findings contain exactly one error at the class declaration naming Enum
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  # spec: HC-P015
+  Scenario: check_per_file reports only real-valued Python numeric defaults
+    Given ctx: CheckContext contains a Python function whose distinct default parameters have values 0x0, 0O_0, 0B_0, 0_0, 0.0, 0e3, 0j, (-0), (+0.0), 0x2, -1.5, and 1j
+    When check_per_file is called
+    Then it returns one HC-P015 error at each of the last three default parameters and none at the zero defaults
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  # spec: HC-P011
+  Scenario: check_per_file reports qualified JavaScript lifecycle calls
+    Given ctx: CheckContext contains one JavaScript call to view.componentDidMount(), one to componentDidMount(), and one to view.render()
+    When check_per_file is called
+    Then each componentDidMount call produces one HC-P011 error at its call location naming the lifecycle hook
+    And the message directs the caller to HTMX attributes or server-rendered HTML
+    And view.render() produces no HC-P011 finding
+    And qualified componentWillUnmount and componentDidUpdate calls in JavaScript and qualified ngOnInit and ngOnDestroy calls in TypeScript each produce the same error naming their own hook
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  # spec: HC-P017 and Honest Page template rendering
+  Scenario: check_per_file identifies a declared template response without an emits vocabulary
+    Given ctx: CheckContext contains a Python function annotated to return TemplateResponse and it has no declared emits vocabulary
+    When check_per_file is called
+    Then it returns one HC-P017 error located at the response-producing function
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  Scenario: check_per_file reports an unknown literal flag against an explicitly empty FEATURES vocabulary
+    Given ctx: CheckContext contains a module-level FEATURES = {} and calls feature_state(state, "missing") and feature_state(state, dynamic_flag)
+    When check_per_file is called
+    Then the literal call produces one HC-HF001 error at the call naming "missing", and the nonliteral call produces no HC-HF001 error
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  Scenario: check_per_file skips local feature rules when FEATURES is absent or unreadable
+    Given ctx: CheckContext contains feature_state(state, "missing") and either lacks a local FEATURES binding or assigns FEATURES from a nonliteral expression
+    When check_per_file is called
+    Then it returns no HC-HF001 or HC-HF002 findings from those calls
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  Scenario: check_per_file reports an emitted type neither produced nor accepted without a companion declaration
+    Given ctx: CheckContext represents a source link declaring an emitted type absent from both its manifest assignments and its accepted types, with no companion .hd
+    When check_per_file is called
+    Then its findings include an HC010 warning for the missing type
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  Scenario: check_per_file allows an emitted type produced by a manifest assignment
+    Given ctx: CheckContext represents a source link whose only declared emitted type is produced by a manifest assignment
+    When check_per_file is called
+    Then its findings contain no HC010 warning
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  Scenario: check_per_file allows an emitted type accepted by the link
+    Given ctx: CheckContext represents a source link whose only declared emitted type is accepted by that link and is absent from its manifest assignments
+    When check_per_file is called
+    Then its findings contain no HC010 warning
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  Scenario: check_per_file does not warn on a link with no declared emitted types
+    Given ctx: CheckContext represents a source link with no declared emitted types
+    When check_per_file is called
+    Then its findings contain no HC010 warning
+
+  # hd: python/honest-check/honest-check.hd::check_construction
+  Scenario: check_construction leaves HC010 to the per-file rule group
+    Given ctx: CheckContext represents a source link declaring an emitted type absent from both its manifest assignments and its accepted types
+    When check_construction is called
+    Then its findings contain no HC010 warning
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  Scenario: check_per_file allows an explicit binding for a declared base type
+    Given ctx: CheckContext for an explicit binding whose key names a base type in the applicable vocabulary
+    When check_per_file is called
+    Then its findings contain no HC005 warning for that key
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  Scenario: check_per_file allows an explicit binding for a declared composed type
+    Given ctx: CheckContext for an explicit binding whose key names a composed type in the applicable vocabulary
+    When check_per_file is called
+    Then its findings contain no HC005 warning for that key
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  Scenario: check_per_file warns for an unknown explicit binding key
+    Given ctx: CheckContext for an explicit binding with one key absent from both the applicable base and composed names
+    When check_per_file is called
+    Then its findings include one HC005 warning naming that key
+
+  # hd: python/honest-check/honest-check.hd::check_per_file
+  Scenario: check_per_file skips automatic binding
+    Given ctx: CheckContext for a vocabulary use with automatic binding
+    When check_per_file is called
+    Then its findings contain no HC005 warning for that use
+
+  # hd: python/honest-check/honest-check.hd::check_construction
+  Scenario: check_construction leaves HC005 to the per-file rule group
+    Given ctx: CheckContext for a file with a vocabulary and an explicit binding
+    When check_construction is called
+    Then the construction-time findings contain no HC005 diagnostic
+
+  # hd: python/honest-check/honest-check.hd::_is_directive
+  # spec: Honest Check §7 (as cited by the declaration)
+  Scenario: _is_directive recognizes the stripped honest prefix
+    Given text: str is "  honest: ignore HC-P004", "honest:", "note: honest: ignore HC-P004", or "just a comment"
+    When _is_directive is called
+    Then it returns true for the first two strings and false for the last two
+
+  # hd: python/honest-check/honest-check.hd::_directive_record
+  # spec: Honest Check §7 (as cited by the declaration)
+  Scenario: _directive_record extracts recognized rules and reason presence
+    Given comment: Node is an actual comment at source line 2 containing "honest: disable HC-P004, HC-P005 HC-P011: a reason: with a colon"
+    When _directive_record is called
+    Then it returns the same node, line 2, verb disable, exactly the rule set HC-P004, HC-P005 and HC-P011, and has_reason true
+    And a recognized directive with an all-whitespace reason has has_reason false
+    And an unrecognized verb or empty rule list returns NOTHING
+
+  # hd: python/honest-check/honest-check.hd::_directives
+  # spec: Honest Check §7 (as cited by the declaration)
+  Scenario: _directives retains the ranges each recognized directive owns
+    Given ctx: CheckContext contains a disable of HC-P004 and HC-P005 on line 1, a repeated disable of HC-P004 on line 2, an enable of HC-P004 on line 4, and an ignore of HC-P011 on line 5
+    When _directives is called
+    Then it returns the four recognized directives in source order
+    And the first owns HC-P004 from line 2 through 3 and HC-P005 from line 2 through NOTHING
+    And the repeated disable and the enable own no ranges, and the ignore owns HC-P011 only on line 5
+
+  # hd: python/honest-check/honest-check.hd::_diag_line
+  # spec: Honest Check §7 (as cited by the declaration)
+  Scenario: _diag_line reads the line from the right of a source location
+    Given diag: Diagnostic has source_location "drive:folder/demo.py:17:4" or only "demo.py"
+    When _diag_line is called
+    Then it returns 17 for the location with a line and NOTHING for the file-only location
+
+  # hd: python/honest-check/honest-check.hd::_matches
+  # spec: Honest Check §7 (as cited by the declaration)
+  Scenario: _matches checks inclusive ranges and excludes policy findings
+    Given directive: ScopedSuppression owns HC-P004 from line 2 through 4, and diag: Diagnostic varies by rule and source line
+    When _matches is called
+    Then HC-P004 matches at lines 2 and 4 but not at lines 1 and 5, and a different rule or a location with no line does not match
+    And a diagnostic for HC-SUP001 or HC-SUP002 never matches, even when the directive names that rule and owns its line
+    And an enable with no ranges never matches
+
+  # hd: python/honest-check/honest-check.hd::_resolve_one
+  # spec: Honest Check §7 (as cited by the declaration)
+  Scenario: _resolve_one preserves findings while downgrading matching severity
+    Given diag: Diagnostic is an error with rule, location, message, context and fixability, and directives: list<ScopedSuppression> either contains a matching range or does not
+    When _resolve_one is called
+    Then in the matching case it returns a copy with severity info and all other fields unchanged
+    And in the unmatched case it returns the original finding unchanged
+
+  # hd: python/honest-check/honest-check.hd::_suppression_findings
+  # spec: Honest Check §7 (as cited by the declaration)
+  Scenario: _suppression_findings reports dead and missing reason findings in order
+    Given ctx: CheckContext contains a reasoned matching ignore, a blank-reason redundant disable with no owned range, a matching ignore without a reason, and an enable, in that source order
+    And directives: list<ScopedSuppression> contains their recognized directives and owned ranges and raw_diagnostics: list<Diagnostic> contains the original findings that match the two ignores
+    When _suppression_findings is called
+    Then it returns HC-SUP001 followed by HC-SUP002 at the redundant disable and HC-SUP002 at the matching reasonless ignore
+    And the reasoned matching ignore and the enable each contribute no policy finding
+
+  # hd: python/honest-check/honest-check.hd::apply_suppression
+  # spec: Honest Check §7 (as cited by the declaration)
+  Scenario: apply_suppression closes only the enabled rule in a mixed list
+    Given ctx: CheckContext has a top-of-file comment "honest: disable HC-P004, HC-P005 HC-P011: legacy behavior" on line 1 and "honest: enable HC-P004" on line 3
+    And raw_diagnostics: list<Diagnostic> contains an error for each listed rule on line 2 and each on line 4
+    When apply_suppression is called
+    Then all three line 2 findings become info
+    And on line 4 HC-P004 keeps error severity while HC-P005 and HC-P011 become info because their ranges never closed
+    And it preserves raw finding order and adds no policy finding
+
+  # hd: python/honest-check/honest-check.hd::apply_suppression
+  # spec: Honest Check §7 (as cited by the declaration)
+  Scenario: apply_suppression reports redundant disables and blank reasons
+    Given ctx: CheckContext has "honest: disable HC-P004: legacy I/O" on line 1 and a second disable for HC-P004 on line 2 whose reason after the colon is only whitespace
+    And raw_diagnostics: list<Diagnostic> contains one HC-P004 error on line 3
+    When apply_suppression is called
+    Then the original disable downgrades the line 3 finding to info
+    And the redundant disable does not replace its range or claim its finding
+    And the redundant directive adds HC-SUP001 followed by HC-SUP002 at line 2
+
+  # hd: python/honest-check/honest-check.hd::apply_suppression
+  # spec: Honest Check §7 (as cited by the declaration)
+  Scenario: apply_suppression ignores unrecognized verbs and preserves policy findings
+    Given ctx: CheckContext contains a comment "honest: reverb HC-P004: unrecognized verb" on line 1 and a comment "honest: ignore HC-SUP001, HC-SUP002: attempted suppression" on line 2
+    And raw_diagnostics: list<Diagnostic> contains one HC-P004 error on line 1 and the two policy errors HC-SUP001 and HC-SUP002 on line 2
+    When apply_suppression is called
+    Then all raw findings keep their severity and order
+    And reverb neither suppresses nor creates a policy finding
+    And the recognized ignore adds one HC-SUP001 for matching no eligible finding
 
   Scenario: apply_suppression
     Given ctx: CheckContext and raw_diagnostics: list<Diagnostic>

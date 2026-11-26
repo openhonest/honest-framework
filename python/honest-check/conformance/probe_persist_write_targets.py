@@ -1,3 +1,5 @@
+# scenario: persist_write_targets
+# inherits: hd=python/honest-check/honest-check.hd::persist_write_targets -> feature=specs/features/honest-check.feature::persist_write_targets
 """Conformance probe for honest-check's persist_write_targets.
 
 Scenario (specs/features/honest-check.feature, Scenario: persist_write_targets):
@@ -39,6 +41,10 @@ _CASES = [
     {
         "src": "def save(rows):\n    transaction(rows)\n",
         "expect": set(),  # bare transaction, no honest_persist import binds it
+    },
+    {
+        "src": "from unrelated import transaction as save\ndef step(rows):\n    save(rows)\n",
+        "expect": set(),
     },
     {
         "src": "import os\ndef save(rows):\n    os.getcwd()\n",

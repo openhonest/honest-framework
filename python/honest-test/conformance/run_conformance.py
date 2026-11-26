@@ -14,23 +14,33 @@ the value oracle compares.
 """
 
 import importlib
+import os
 import sys
 from pathlib import Path
 
 _HERE = Path(__file__).parent
 
 
-def run():
+def run(stop_on_failure):
     sys.path.insert(0, str(_HERE))
     names = sorted(path.stem for path in _HERE.glob("probe_*.py"))
+    if stop_on_failure:
+        # A complete CLI integration calls generators repeatedly. Let their narrow
+        # probes report failures first, before the integration can hit a bound.
+        names.sort(key=lambda name: name == "probe_run_suite")
     failed = 0
     for name in names:
         module = importlib.import_module(name)
-        failed += 1 if module.run() else 0
+        if module.run():
+            failed += 1
+            # Section 9.6 requires one observed failure. A subsequent stalled probe
+            # must not replace an already observed failure with a timeout.
+            if stop_on_failure:
+                return 1
     passed = len(names) - failed
     print(f"honest-test conformance: {passed} passed, {failed} failed, {len(names)} total")
     return 0 if failed == 0 else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    raise SystemExit(run(os.environ.get("HONEST_MUTATION") == "1"))

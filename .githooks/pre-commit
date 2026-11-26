@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pre-commit — Verification First: no commit lands while the framework fails its own checker,
-# its conformance suites, its 100% dogfooding bar, or its function-point invariant (one gherkin
-# scenario per function). Each gate fires only when its inputs are staged; a commit that touches
+# its conformance suites, its 100% dogfooding bar, or its function-point invariant (one or more
+# Gherkin scenarios per function). Each gate fires only when its inputs are staged; a commit that touches
 # neither Python nor a feature file is never blocked.
 #
 # This file is the tracked source of the gate, not necessarily the file git runs: git runs

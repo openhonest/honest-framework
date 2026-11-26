@@ -1,3 +1,5 @@
+# scenario: dom_collect_names
+# inherits: hd=python/honest-check/honest-check.hd::dom_collect_names -> feature=specs/features/honest-check.feature::dom_collect_names
 """Conformance probe for honest-check's dom_collect_names.
 
 Scenario (specs/features/honest-check.feature, Scenario: dom_collect_names):
@@ -22,6 +24,7 @@ _CASES = [
     {"src": 'import { collect } from "honest-dom";', "expect": {"collect"}},
     {"src": 'import { collect as read } from "honest-dom";', "expect": {"read"}},
     {"src": 'import { collect } from "other-lib";', "expect": set()},   # not a honest-dom module
+    {"src": "import { collect as saved } from 'honest-dom';", "expect": {"saved"}},
     {"src": 'import { render } from "honest-dom";', "expect": set()},   # honest-dom, but not collect
     {"src": 'const x = 1;', "expect": set()},                          # no imports at all
 ]

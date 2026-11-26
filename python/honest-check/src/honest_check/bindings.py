@@ -52,42 +52,62 @@ def base_types_of(ctx, dictionary_node):
     return out
 
 
+# inherits: hd=python/honest-check/honest-check.hd::_value_names -> feature=specs/features/honest-check.feature::_value_names reads an optional capture base name -> test=python/honest-check/conformance/probe_value_names_optional_capture.py::probe_value_names_optional_capture
+# hd: _value_names
 def _value_names(ctx, node):
-    return pick(
-        node is None,
-        lambda: set(),
-        lambda: pick(
-            node is not None and node.type == "string",
-            lambda: {literal_string(node)},
-            lambda: set(string_members(ctx, node)),
-        ),
-    )
+    """Read a literal capture name or the literal name inside an Honest Type maybe."""
+    match node is not None and node.type:
+        case "string":
+            return {literal_string(node)}
+        case "call":
+            arguments = call_arguments(ctx, node)
+            positionals = list(filter(lambda arg: arg.type != "comment", arguments["positionals"]))
+            optional_literal = (
+                canonical_name(ctx, node) == "maybe"
+                and not arguments["keywords"]
+                and len(positionals) == 1
+                and positionals[0].type == "string"
+            )
+            return pick(optional_literal, lambda: {literal_string(positionals[0])}, set)
+        case _:
+            return set()
 
 
-def _one_composed(ctx, call):
-    arguments = call_arguments(ctx, call)
-    requires = read_or(arguments["keywords"], "requires", None)
-    captures = read_or(arguments["keywords"], "captures", None)
-    return {
-        "requires_bases": _dict_string_keys(requires),
-        "captures_bases": _value_names(ctx, captures),
-    }
-
-
-def _read_composed(ctx, node):
-    elements = pick(node is None, lambda: [], lambda: list(node.named_children))
-    calls = filter(lambda e: e.type == "call", elements)
-    return [_one_composed(ctx, c) for c in calls]
-
-
+# inherits: hd=python/honest-check/honest-check.hd::vocabulary_types -> feature=specs/features/honest-check.feature::vocabulary_types preserves composed names from keyword declarations -> test=python/honest-check/conformance/probe_vocabulary_types_composed_keyword.py::probe_vocabulary_types_composed_keyword
+# inherits: hd=python/honest-check/honest-check.hd::vocabulary_types -> feature=specs/features/honest-check.feature::vocabulary_types returns empty composed fields when declarations are omitted -> test=python/honest-check/conformance/probe_vocabulary_types_composed_omitted.py::probe_vocabulary_types_composed_omitted
+# inherits: hd=python/honest-check/honest-check.hd::vocabulary_types -> feature=specs/features/honest-check.feature::vocabulary_types preserves composed names from positional declarations -> test=python/honest-check/conformance/probe_vocabulary_types_composed_positional.py::probe_vocabulary_types_composed_positional
+# inherits: hd=python/honest-check/honest-check.hd::vocabulary_types -> feature=specs/features/honest-check.feature::vocabulary_types preserves the base name inside an optional capture -> test=python/honest-check/conformance/probe_vocabulary_types_optional_capture.py::probe_vocabulary_types_optional_capture
+# hd: vocabulary_types
 def vocabulary_types(ctx, vocab_call):
-    """The type surface of a vocabulary(...) call: its base-type names, the base map,
-    and the base names its composed types require and capture (§HC004, §HC005)."""
+    """Read base and composed names, the base map, and composed base references."""
     arguments = call_arguments(ctx, vocab_call)
-    first = _first(arguments["positionals"])
+    positionals = arguments["positionals"]
+    first = _first(positionals)
     base = pick(first is None, lambda: {}, lambda: base_types_of(ctx, first))
-    composed = _read_composed(ctx, read_or(arguments["keywords"], "composed_types", None))
-    return {"base_names": set(base.keys()), "base_types": base, "composed": composed}
+    collection = read_or(arguments["keywords"], "composed_types", _first(positionals[1:]))
+    elements = pick(collection is None, lambda: [], lambda: collection.named_children)
+    composed_type_names = set()
+    composed = []
+    for call in filter(lambda element: element.type == "call", elements):
+        declaration = call_arguments(ctx, call)
+        positionals = declaration["positionals"]
+        keywords = declaration["keywords"]
+        name = _first(positionals)
+        name_node = choose(name is not None and name.type == "string", name, None)
+        composed_type_names.update(pick(name_node is not None, lambda: [literal_string(name_node)], list))
+        requires = read_or(keywords, "requires", _first(positionals[1:]))
+        captures = read_or(keywords, "captures", _first(positionals[2:]))
+        composed.append({
+            "name_node": name_node,
+            "requires_bases": _dict_string_keys(requires),
+            "captures_bases": _value_names(ctx, captures),
+        })
+    return {
+        "base_names": set(base),
+        "base_types": base,
+        "composed_type_names": composed_type_names,
+        "composed": composed,
+    }
 
 
 def binding_keys(ctx, binding_call):
@@ -224,6 +244,8 @@ def features_vocabulary(ctx):
     }
 
 
+# inherits: hd=python/honest-check/honest-check.hd::module_dict_literals -> feature=specs/features/honest-check.feature::module_dict_literals distinguishes an empty FEATURES literal from an unreadable binding -> test=python/honest-check/conformance/probe_module_dict_literals_empty_features.py::probe_module_dict_literals_empty_features
+# hd: module_dict_literals
 def module_dict_literals(ctx):
     """Each module-scope name bound to a dict literal, mapped to its string-key set
     (§7, HC-HF002)."""

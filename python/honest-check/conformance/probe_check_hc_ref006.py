@@ -1,3 +1,5 @@
+# scenario: check_hc_ref006
+# inherits: hd=python/honest-check/honest-check.hd::check_hc_ref006 -> feature=specs/features/honest-check.feature::check_hc_ref006
 """Honest probe for honest-check's check_hc_ref006 (feature Scenario: check_hc_ref006).
 
 check_hc_ref006 runs HC-REF006 over the seams one module declares: for a seam
@@ -17,10 +19,10 @@ cross-module door rules are check_hc_ref006 and check_hc_ref007 (feature +
 honest-check.hd), probed in their own files.
 """
 
-# caller.c reaches target.ghost; target declares no ghost -> HC-REF006.
+# caller.calling_step reaches target.ghost; target declares no ghost -> HC-REF006.
 _SRC_CALLER_GHOST = (
     "module caller\n\n"
-    '  fn c : (x: str) -> str side_effect reads "target.ghost"\n'
+    '  fn calling_step : (x: str) -> str side_effect reads "target.ghost"\n'
 )
 # caller.c reaches target.present; target declares present -> resolved, no finding.
 _SRC_CALLER_PRESENT = (
@@ -35,6 +37,16 @@ _SRC_TARGET = (
 # Each case: caller .hd, the target module .hd that gets keyed into declarations,
 # and the (rule_id, severity) pairs check_hc_ref006 must return.
 _CASES = [
+    {
+        "caller": 'module caller\n\n  fn c : () -> str side_effect reads "target"\n',
+        "target": _SRC_TARGET,
+        "expect": [],
+    },
+    {
+        "caller": 'module caller\n\n  fn c : () -> str side_effect reads "not-loaded.door"\n',
+        "target": _SRC_TARGET,
+        "expect": [],
+    },
     {"caller": _SRC_CALLER_GHOST, "target": _SRC_TARGET, "expect": [("HC-REF006", "error")]},
     # Absence: every door the module names resolves to a function in the target.
     {"caller": _SRC_CALLER_PRESENT, "target": _SRC_TARGET, "expect": []},
@@ -58,6 +70,13 @@ def probe_check_hc_ref006():
         target = read_hd(case["target"])["ok"]["modules"][0]
         declarations = {caller["name"]: caller, target["name"]: target}
         got = check_hc_ref006(module=caller, declarations=declarations, path="target/target.hd")
+        for finding in got:
+            if not all(word in finding["message"] for word in ("calling_step", "target.ghost")):
+                bad.append(f"unexpected seam message: {finding!r}")
+            if finding["source_location"] != "target/target.hd":
+                bad.append(f"incorrect seam diagnostic location: {finding!r}")
+            if finding["context"] != "" or finding["fixable"] is not False:
+                bad.append(f"unexpected context or automatic fix on seam finding: {finding!r}")
         pairs = [(d["rule_id"], d["severity"]) for d in got]
         if pairs != case["expect"]:
             bad.append(

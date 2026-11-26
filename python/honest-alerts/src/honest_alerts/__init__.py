@@ -1,100 +1,50 @@
-"""honest-alerts: actor-model message passing (section 1).
+"""honest-alerts - the message-passing layer (unit 1): an actor model where messages pass between
+actors through three doors (send, acknowledge, register_message_type), land in a delivery queue, and
+persist until a declared termination condition is met. Mailboxes are pure projections over the
+honest-observe event log, reached by import, never a door (honest-alerts.hd, section 1, 4.1).
 
-Messages pass between actors; no actor shares state with another. A message lands in a recipient's
-mailbox and persists there until a declared termination condition is met. The pure core recognizes and
-validates envelopes, routes a message to its channels, and projects the mailbox as a fold over
-honest-observe's event log. The module owns its boundaries: the clock and a random source, the routing
-table and the delivery queue in honest-persist, the alert events in honest-observe, and the six
-delivery channels on the network. The orchestrators run one path each, and the doors are what the world
-calls. No capability is handed in as an object.
+The wildcard exports are send, acknowledge, register_message_type, advance, mailbox,
+is_terminated, and alert_tables_schema. Other existing bindings are available through
+explicit named imports.
 """
 
-from honest_alerts.actors import ACTOR_TYPES, validate_actor_ref
-from honest_alerts.boundaries import (
-    await_reply,
-    deliver_dom,
-    deliver_posted,
-    emit_event,
-    mark_delivery,
-    new_message_id,
-    new_resume_token,
-    now,
-    read_events,
-    read_pending,
-    read_raw_config,
-    read_routes,
-    write_delivery,
+from honest_alerts.faults import alert_tables_schema, alerts_fault
+from honest_alerts.pure import (
+    NOTHING,
+    advance,
+    build_ack_event,
+    build_message,
+    build_registered_type,
+    is_terminated,
+    mailbox,
+    supervise,
+    terminated_actor,
+    terminated_broadcast,
+    terminated_session,
 )
-from honest_alerts.config import ALERT_CONFIG_DEFAULTS, load_config, resolve_config, start
-from honest_alerts.dispatch import build_message, run_send, run_send_and_wait, send, send_and_wait
-from honest_alerts.events import ALERT_AGGREGATE, ALERT_EVENTS, alert_event
-from honest_alerts.lifecycle import LIFECYCLE_EVENTS, advance, alert_lifecycle
-from honest_alerts.mailbox import ACK_SCOPES, TERMINATION_CONDITIONS, is_terminated, mailbox, recipient_matches
-from honest_alerts.message import CHANNELS, DOM_SURFACES, REPLY_STYLES, validate_message, validate_reply_option, validate_termination
-from honest_alerts.routing import validate_alert_route, validate_channel_config, validate_escalation_rule
-from honest_alerts.supervisor import delivery_plan, matching_routes, message_type_matches, run_deliveries, tick
-from honest_alerts.surfaces import SURFACE_DEFAULT_TERMINATION, handle_reply, record_reply, render_mailbox, render_surface, serve_mailbox
+from honest_alerts.boundary import (
+    acknowledge,
+    emit,
+    new_message_id,
+    now,
+    read_registered_type,
+    read_routes,
+    register_message_type,
+    run_acknowledge,
+    run_register_message_type,
+    run_send,
+    send,
+    write_delivery,
+    write_registered_type,
+)
 
+# inherits: hd=python/honest-alerts/honest-alerts.hd::send -> feature=specs/features/honest-alerts.feature::send is available as an honest_alerts public export -> test=python/honest-alerts/conformance/laws_send_public_export.py::probe_send_public_export
 __all__ = [
-    # Pure core
-    "build_message",
-    "validate_message",
-    "validate_actor_ref",
-    "validate_termination",
-    "validate_reply_option",
-    "validate_channel_config",
-    "validate_escalation_rule",
-    "validate_alert_route",
+    "send",
+    "acknowledge",
+    "register_message_type",
     "advance",
-    "message_type_matches",
-    "matching_routes",
-    "delivery_plan",
-    "alert_event",
     "mailbox",
     "is_terminated",
-    "recipient_matches",
-    "render_surface",
-    "resolve_config",
-    # Readers
-    "now",
-    "new_message_id",
-    "new_resume_token",
-    "read_routes",
-    "read_pending",
-    "read_events",
-    "await_reply",
-    "read_raw_config",
-    # Output boundaries
-    "write_delivery",
-    "mark_delivery",
-    "emit_event",
-    "deliver_dom",
-    "deliver_posted",
-    # Orchestrators
-    "run_send",
-    "run_send_and_wait",
-    "run_deliveries",
-    "record_reply",
-    "render_mailbox",
-    "load_config",
-    # Doors
-    "send",
-    "send_and_wait",
-    "handle_reply",
-    "serve_mailbox",
-    "tick",
-    "start",
-    # Vocabularies and tables
-    "TERMINATION_CONDITIONS",
-    "ACK_SCOPES",
-    "ACTOR_TYPES",
-    "DOM_SURFACES",
-    "REPLY_STYLES",
-    "CHANNELS",
-    "LIFECYCLE_EVENTS",
-    "alert_lifecycle",
-    "ALERT_AGGREGATE",
-    "ALERT_EVENTS",
-    "ALERT_CONFIG_DEFAULTS",
-    "SURFACE_DEFAULT_TERMINATION",
+    "alert_tables_schema",
 ]

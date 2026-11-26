@@ -5,7 +5,11 @@
 # that file rather than its whole module. (CI runs mutate-all.sh as the whole-tree backstop.)
 set -uo pipefail
 cd "$(dirname "$0")"
-args=$(git diff --cached --name-only --diff-filter=ACM \
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+args=$(printf '%s\n' "$staged" \
        | sed -nE 's#^python/honest-([a-z_]+)/src/.*/([^/]+\.py)$#\1:\2#p' | sort -u)
+if [ -n "$args" ] || printf '%s\n' "$staged" | grep -qxE 'python/(mutate\.py|honest-test/conformance/check_mutation_worker_reload\.py)'; then
+    uv run --all-packages python honest-test/conformance/check_mutation_worker_reload.py || exit 1
+fi
 [ -z "$args" ] && { echo "mutate-affected: no staged module source — nothing to mutate."; exit 0; }
-uv run python mutate.py $args
+uv run --all-packages python mutate.py $args

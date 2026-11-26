@@ -1,3 +1,5 @@
+# scenario: body_statement_count
+# inherits: hd=python/honest-check/honest-check.hd::body_statement_count -> feature=specs/features/honest-check.feature::body_statement_count
 """Honest probe for honest-check's body_statement_count (Scenario: body_statement_count).
 
 body_statement_count returns the count of statements in a function's own body,
@@ -14,16 +16,17 @@ every case.
 from honest_parse import parse, walk
 
 
-def _fdef(src):
-    root = parse(src.encode("utf-8"), "python").root_node
+def _fdef(src, language):
+    root = parse(src.encode("utf-8"), language).root_node
     for n in walk(root):
-        if n.type == "function_definition":
+        if n.type in {"function_definition", "function_declaration"}:
             return n
     return None
 
 
 # Each case: a real source and the count of statements in the function's own body.
 _CASES = [
+    {"source": "package sample\n\nfunc assembly(value int) int\n", "language": "go", "expect": 0},
     {"source": "def f():\n    a = 1\n    b = 2\n", "expect": 2},
     {"source": "def f():\n    pass\n", "expect": 1},
     {
@@ -44,7 +47,7 @@ def probe_body_statement_count():
 
     bad = []
     for case in _CASES:
-        fdef = _fdef(case["source"])
+        fdef = _fdef(case["source"], case.get("language", "python"))
         if fdef is None:
             bad.append(f"test setup: no function_definition in {case['source']!r}")
             continue

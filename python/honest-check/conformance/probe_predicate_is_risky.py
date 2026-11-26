@@ -1,3 +1,5 @@
+# scenario: predicate_is_risky
+# inherits: hd=python/honest-check/honest-check.hd::predicate_is_risky -> feature=specs/features/honest-check.feature::predicate_is_risky
 """Conformance probe for honest-check's predicate_is_risky.
 
 Scenario (specs/features/honest-check.feature, Scenario: predicate_is_risky):
@@ -22,6 +24,7 @@ _CASES = [
     {"src": "r = lambda x: x[0]", "expect": True},      # subscript throws on short/empty
     {"src": "r = lambda x: a / x", "expect": True},     # division throws on zero
     {"src": "r = lambda x: a // x", "expect": True},    # floor division throws on zero
+    {"src": "r = lambda x: x + 1", "expect": False},
     {"src": "r = lambda x: x == 5", "expect": False},   # comparison never throws (absence/safe)
     {"src": "r = lambda x: x in items", "expect": False},  # membership never throws (safe)
 ]

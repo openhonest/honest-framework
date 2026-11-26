@@ -1,0 +1,22 @@
+module honest-parse-tree
+
+  layer foundation
+
+  note "Pure inspection of a tree-sitter node already returned by Honest Parse. The same Python package publishes these helpers."
+
+  type Node = foreign "tree-sitter"
+
+  type Position = {
+    line: int
+    col: int
+  }
+
+  fn line_col : (node: Node) -> Position note "return the node start line and column, each counted from one."
+
+  fn walk : (node: Node) -> list<Node> note "return every node from the subtree in depth-first order, parents before children."
+
+  fn first_error_node : (root: Node) -> Node | NOTHING invokes walk note "the first error or missing node, or nothing when the tree is clean"
+
+  entry "export honest_parse" -> line_col
+  entry "export honest_parse" -> walk
+  entry "export honest_parse" -> first_error_node

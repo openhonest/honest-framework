@@ -1,0 +1,8 @@
+module honest-design-side-policy
+
+  layer tooling
+  note "The boundaryless Honest Design policy for whether one declared world side can couple two modules. The Architecture Explorer uses it to match shared sides, and HC-REF009 uses the same rule."
+
+  fn couples_on : (target: str) -> bool note "target is a declared world-side target. A bare kind such as clock is ambient and returns false. A named target such as file:design/data returns true. The reserved runtime-supplied name given returns false for any kind, such as database:given. A caller filters cross-module seams before applying this predicate. It reads no state and returns only the boolean classification."
+
+  entry "call:architecture-explorer" -> couples_on

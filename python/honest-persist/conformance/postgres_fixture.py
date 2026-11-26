@@ -2,11 +2,10 @@
 
 The spec's testing rule is a real database with no mocks (spec section 8.6): the SQLite path already
 runs against a real in-memory SQLite, and PostgreSQL must be no different. PostgreSQL has no
-in-memory mode, so this fixture provisions a real server: it prefers one already running locally, and
-if none is reachable it spins up a throwaway cluster with initdb + pg_ctl on a temporary datadir and
-unix socket, tearing it down at exit. `postgres_connection()` returns a connection to a clean test
-database adapted to persist's duck-typed boundary, or None when no PostgreSQL can be provisioned at
-all (no server and no postgres binaries) — the one case where the PostgreSQL probes cannot run.
+in-memory mode, so this fixture provisions a throwaway cluster with initdb + pg_ctl on a temporary
+datadir and private Unix socket, tearing it down at exit. `postgres_connection()` returns a
+connection to a clean test database adapted to persist's duck-typed boundary, or None when the
+PostgreSQL binaries are unavailable.
 
 Conformance fixtures are not linted, so the psycopg adapter class lives here rather than in src.
 """
@@ -21,9 +20,10 @@ import tempfile
 import psycopg
 from psycopg.rows import dict_row
 
-# Provisioning is done once per suite run and cached: {"admin_dsn": ...} once a server is found or a
-# cluster is started, or {"unavailable": reason} when neither is possible.
+# Provision one private cluster per suite run.
 _STATE = {}
+_CLUSTER_PORT = 5432  # Socket filename only. The cluster has no TCP listener.
+_CLUSTER_USER = "postgres"
 
 # persist's queries use :name placeholders (SQLite pyformat); psycopg wants %(name)s.
 _NAMED_PARAM = re.compile(r":(\w+)")
@@ -43,30 +43,27 @@ def _pg_binary(name):
     return None
 
 
-def _running_server_dsn():
-    """An admin DSN for a PostgreSQL server already running locally, or None."""
-    for dsn in ("dbname=postgres", "host=/tmp dbname=postgres", "host=localhost dbname=postgres"):
-        try:
-            psycopg.connect(dsn, connect_timeout=2).close()
-            return dsn
-        except Exception:
-            continue
-    return None
-
-
 def _start_cluster():
     """Spin up a throwaway PostgreSQL cluster and return its admin DSN, or None if the binaries are
     not installed. The socket lives under /tmp so its path stays inside the 103-byte limit."""
     initdb, pg_ctl = _pg_binary("initdb"), _pg_binary("pg_ctl")
     if not initdb or not pg_ctl:
         return None
-    datadir = tempfile.mkdtemp(prefix="hp_pgdata_")
-    socket = tempfile.mkdtemp(prefix="hpg", dir="/tmp")
-    subprocess.run([initdb, "-D", datadir, "--no-locale", "--encoding=UTF8", "-A", "trust"], check=True, capture_output=True)
-    subprocess.run([pg_ctl, "-D", datadir, "-o", f"-k {socket} -h ''", "-l", os.path.join(datadir, "log"), "-w", "start"], check=True, capture_output=True)
+    workspace = os.environ.get("HONEST_MUTATION_POSTGRES_ROOT")
+    if workspace:
+        datadir = os.path.join(workspace, "data")
+        socket = os.path.join(workspace, "socket")
+        os.mkdir(socket)
+        with open(os.path.join(workspace, "pg_ctl"), "w", encoding="utf-8") as control:
+            control.write(os.path.abspath(pg_ctl))
+    else:
+        datadir = tempfile.mkdtemp(prefix="hp_pgdata_")
+        socket = tempfile.mkdtemp(prefix="hpg", dir="/tmp")
     _STATE["cluster_dir"] = datadir
     _STATE["socket"] = socket
-    return f"host={socket} dbname=postgres"
+    subprocess.run([initdb, "-D", datadir, "--no-locale", "--encoding=UTF8", "-A", "trust", "-U", _CLUSTER_USER], check=True, capture_output=True)
+    subprocess.run([pg_ctl, "-D", datadir, "-o", f"-k {socket} -h '' -p {_CLUSTER_PORT}", "-l", os.path.join(datadir, "log"), "-w", "start"], check=True, capture_output=True)
+    return f"host={socket} hostaddr='' port={_CLUSTER_PORT} user={_CLUSTER_USER} dbname=postgres"
 
 
 @atexit.register
@@ -81,14 +78,14 @@ def _teardown():
 
 
 def _admin_dsn():
-    """A DSN to a provisioned PostgreSQL server (running or throwaway), or None if none is possible."""
+    """The admin DSN of the private cluster, or None when the binaries are unavailable."""
     if "admin_dsn" in _STATE:
         return _STATE["admin_dsn"]
     if "unavailable" in _STATE:
         return None
-    dsn = _running_server_dsn() or _start_cluster()
+    dsn = _start_cluster()
     if dsn is None:
-        _STATE["unavailable"] = "no running PostgreSQL and no postgres binaries"
+        _STATE["unavailable"] = "PostgreSQL server binaries unavailable"
         return None
     _STATE["admin_dsn"] = dsn
     return dsn
@@ -145,25 +142,6 @@ def postgres_connection():
 _TARGET_COUNT = {"n": 0}
 
 
-def _host_of(dsn):
-    """The host= value out of a libpq keyword DSN, or None for the default socket."""
-    for field in dsn.split():
-        if field.startswith("host="):
-            return field[len("host="):]
-    return None
-
-
-def _asyncpg_url(name, dsn):
-    """A postgresql:// URL asyncpg accepts for the database `name`, carrying the admin DSN's host so a
-    throwaway cluster on a unix socket is reached as well as a default local server."""
-    host = _host_of(dsn)
-    if host is None:
-        return f"postgresql:///{name}"
-    if host.startswith("/"):
-        return f"postgresql:///{name}?host={host}"
-    return f"postgresql://{host}/{name}"
-
-
 def postgres_target():
     """A real PostgreSQL target string persist's own opener (asyncpg) connects to, naming a clean, empty
     test database, or None when no PostgreSQL is available. This is what exercises persist's postgresql
@@ -180,16 +158,17 @@ def postgres_target():
     admin.execute(f"CREATE DATABASE {name}")
     admin.close()
     _STATE.setdefault("targets", []).append(name)
-    return _asyncpg_url(name, dsn)
+    return f"postgresql://{_CLUSTER_USER}@/{name}?host={_STATE['socket']}&port={_CLUSTER_PORT}"
 
 
 @atexit.register
 def _drop_targets():
     """Drop every test database postgres_target() created in this process."""
     dsn = _STATE.get("admin_dsn")
-    if dsn is None:
+    targets = _STATE.get("targets", [])
+    if dsn is None or not targets:
         return
-    admin = psycopg.connect(dsn, autocommit=True)
-    for name in _STATE.get("targets", []):
-        admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
-    admin.close()
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        for name in targets:
+            admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+    targets.clear()

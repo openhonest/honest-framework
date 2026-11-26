@@ -1,3 +1,5 @@
+# scenario: own_body
+# inherits: hd=python/honest-check/honest-check.hd::own_body -> feature=specs/features/honest-check.feature::own_body
 """Honest probe for honest-check's own_body (Scenario: own_body).
 
 own_body returns the body descendants belonging to a function itself, not
@@ -50,4 +52,7 @@ def probe_own_body():
             f"own_body(def f) -> texts {sorted(texts)!r}, wrongly descended into "
             f"nested def g and carried 'y = 2'"
         )
+    decorated = _fdef("def f():\n    @tag(decorated_marker)\n    def g():\n        return nested_value\n")
+    if any(node.text in {b"nested_value", b"decorated_marker"} for node in own_body(decorated)):
+        bad.append("own_body descended into a nested decorated function")
     return bad

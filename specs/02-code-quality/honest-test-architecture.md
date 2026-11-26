@@ -787,7 +787,7 @@ Feature: Create user
 
 A gherkin is not reserved for chains. **Every roled function — `@link`, `@recognizer`, `@boundary`, `@helper` — carries at least one gherkin scenario** stating its behavior, more where the function branches, and each scenario is implemented by one or more tests. A pure internal helper is specified by a gherkin just as a top-level chain is. The governing model is honest-gherkin-architecture.md §9.
 
-Chain-level gherkins are filed one `.feature` file per chain, named after the chain; function-level gherkins are filed alongside their function (a spoke fixes the exact layout). Either way the mapping is one function, one gherkin.
+Chain-level gherkins are filed one `.feature` file per chain, named after the chain; function-level gherkins are filed alongside their function (a spoke fixes the exact layout). Each function has one or more scenarios.
 
 ```
 features/
@@ -856,7 +856,7 @@ Then the response and the previous response share the same session cookie value
 
 A gherkin states a function's behaviour; auto-generation proves it; but a passing run is, by itself, anonymous — it shows the function is sound, not *which stated behaviour was verified* or *whether every requirement has a proof*. To make the requirement→proof thread traceable, and to put it in the same place as the runtime fault thread, honest-test emits one **proof event** per function on every conformance run.
 
-For each roled function it proves, honest-test emits `hf.proof.checked` (honest-observe §4.8). The event is keyed by the function's fully-qualified name — which is its one gherkin (the requirement) and its function-point unit — and carries the gherkin scenario name, the number of cases run, `proved` or `failed`, and the function's line and branch coverage.
+For each roled function it proves, honest-test emits `hf.proof.checked` (honest-observe §4.8). The event is keyed by the function's fully-qualified name — which links its scenarios to the function-point unit — and carries the gherkin scenario name, the number of cases run, `proved` or `failed`, and the function's line and branch coverage.
 
 **Emitted through an injected runtime, never an import.** honest-test's core does not depend on honest-observe. The conformance runner wires an observe `emit` (honest-observe §3) into the run; honest-test calls it per function. A pure local run with no runtime injected emits nothing — the dependency runs one way (test → observe, at the run boundary only), with no cycle and no build-order change to honest-test's module dependencies.
 
@@ -1001,6 +1001,10 @@ Coverage (§9.1–9.4) measures whether the suite reaches every line; it does no
 | Line removed | delete one statement or one branch arm |
 | Membership or key changed | `in` ↔ `not in`, a dict key → a sibling key |
 
+For the increment pass over Python source, use each integer literal’s numeric value. Hexadecimal, octal and binary prefixes are case-insensitive, and underscores retain their Python digit-separator meaning. Unprefixed tokens use decimal interpretation, including leading-zero digit sequences accepted by the parser. Emit the successor as decimal text and retain the original literal text and span. Unary operators stay outside the literal span. An imaginary literal ending in `j` or `J` is outside this integer pass, even when the syntax tree labels its node `integer`. Emit the integer increments in tree traversal order, in the existing position of the number-shift pass.
+
+For the Python `and` ↔ `or` condition flip, use the parsed operator token as the mutation site. Emit one mutant per token in source order. Its location spans only that token, its original is the token text, and its replacement is the other operator. Applying the mutant retains every operand and all whitespace and punctuation outside the token span. Operator words inside strings or comments are outside this pass. Keep the Boolean flips in the existing condition-flip position among the mutation families.
+
 Each change is a `Mutant`: the `location` in the source (the tree-sitter node's span), the `change_kind` naming which row of the table applied, the `original` text, and the `replacement` text. Running a mutant against the suite yields one result from a closed set: `caught` (at least one case failed), `set_aside` (the change left the suite's observed output identical, demonstrated not asserted), or `undecided` (the run hit the time or memory bound and produced no verdict). A `set_aside` or `undecided` mutant carries its reason or the bound it hit, so every judgment stands on the record by name.
 
 For each module, honest-test parses the source with tree-sitter, makes one such change at a time, and runs the module's conformance suite against the changed source. A change is **caught** when at least one case fails; the gate requires every change to be caught. This is measured only against a suite that **already passes on the unchanged source** — a suite failing for any other reason registers every change as caught and proves nothing. A change that cannot alter the result is **set aside** — but only when that is *demonstrated* (the change leaves the suite's observed output identical), never merely asserted, since an unjustified set-aside re-creates the self-checking gap this measure exists to close. Such changes are not rare; they fall into a few recurring kinds — a guard on a value the parser always supplies (a tree-sitter field that is never absent on a well-formed node), a trailing return that falls through to the same value, a constant shifted in a way that preserves order, an unreachable fallback, two operations reordered that commute — each listed by name with its reason, never left to pass unnoticed. The count of changes caught (plus those set aside) must equal the total, enforced as a gate alongside coverage. A change that passes every test is the one thing coverage cannot report: the line ran, but no test would fail if it were wrong.
@@ -1010,6 +1014,8 @@ A change whose run does not complete is **undecided**. Each run is bounded in ti
 Adequacy therefore requires two things, not one: caught plus set aside equals the total, **and** no change is left undecided. An undecided change is disclosed by name with the bound it hit, the way a set-aside change is, and it fails the gate exactly as an unexamined change does, because a change nothing judged is not evidence that the suite would catch it. A change that genuinely does not halt is then declared in the set-aside record with that as its reason, which puts the judgment on the record and with a person rather than inferring it from a clock.
 
 The check that the suite passes on the unchanged source runs through the same path that judges every change. A check that reaches the suite by another route cannot see a fault in the route that does the judging, and this is the one measurement the rest of the gate rests on.
+
+A warm mutation worker reloads the target package and the conformance modules that bind its callables before each run. A probe must observe the source selected for that run. Resource fixtures that hold disposable database connections or credentials may stay alive across runs when they do not import the code under mutation.
 
 ---
 

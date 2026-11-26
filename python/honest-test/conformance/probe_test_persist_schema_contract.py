@@ -1,3 +1,6 @@
+# scenario: test_persist_schema_contract checks a schema against a real in-memory database
+# inherits: hd=python/honest-test/honest-test.hd::test_persist_schema_contract -> feature=specs/features/honest-test.feature::test_persist_schema_contract checks a schema against a real in-memory database
+
 """honest-test conformance: test_persist_schema_contract.
 
 test_persist_schema_contract(schema, connect) -> list<Finding> checks, for every table in

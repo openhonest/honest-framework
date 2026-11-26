@@ -1,3 +1,5 @@
+# scenario: canonical_name
+# inherits: hd=python/honest-check/honest-check.hd::canonical_name -> feature=specs/features/honest-check.feature::canonical_name
 """Honest probe for honest-check's canonical_name (feature Scenario: canonical_name).
 
 canonical_name reads the framework constructor name a call resolves to: a direct
@@ -40,6 +42,7 @@ _CASES = [
     {"src": "vocabulary({})", "aliases": {}, "expect": "vocabulary"},        # direct constructor name
     {"src": "v({})", "aliases": {"v": "vocabulary"}, "expect": "vocabulary"},  # aliased, resolved through import
     {"src": "print(x)", "aliases": {}, "expect": None},                      # not a framework constructor -> NOTHING
+    {"src": "composed('Combined', {}, 'Part')", "aliases": {}, "expect": "composed"},
 ]
 
 

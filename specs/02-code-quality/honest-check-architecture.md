@@ -596,26 +596,37 @@ A module's `.hd` declares its surface: `fn name : (params) -> result` for each f
 
 **The rule reads three sets, and the host language supplies the third.** The declared set is the `fn` names in the module's `.hd`, read through honest-design. The defined set is the functions the module's source defines, read through honest-parse. The exported set is the surface the module publishes. It is read from the export declaration the host language already carries: Python's `__all__`, JavaScript's `export`, Rust's `pub`. That export declaration is the module's internal marker, and it is a list the author wrote. A function is internal because it is absent from that list, never because of the shape of its name. A leading underscore is a convention, and a convention cannot carry a gate: `parse` is public by any reading and carries no underscore.
 
-```
-FUNCTION check_HC_REF005(hd_module, source_functions, export_declaration):
-    IF export_declaration is absent OR not a literal list:
-        EMIT error(HC-REF005, export_declaration.location or module_root,
-            f"{module} publishes no literal export list, so its surface is inferred "
-            "rather than declared and this rule cannot read it. Write the list.")
-        RETURN
+A statically resolved exported exception class is declared by its name in a `raises` clause. It is not a function or subject to function arity. This exception applies only when the package binding resolves to an exception class and the declaration names it in `raises`. An unresolved export or a function binding of that name still requires a function declaration.
 
+For Python, empty `export_source` bytes mean the caller supplied no initializer. In that case skip export checks. A nonempty supplied initializer without an unambiguous literal string list in `__all__` produces one export-list error and no per-export findings. In either case, independent function arity checks still run. Use the verified initializer path for the export-list diagnostic when available, otherwise a known package root. With neither, use the synthetic label `__init__.py`, which makes no filesystem claim. A direct module-scope write attempt to `__all__`, including assignment to an attribute or element of the list, invalidates an otherwise literal list. A plain attribute read does not invalidate it.
+
+The explicit initializer bytes are authoritative for direct export bindings. Only Python files may supply exception binding evidence. A same-package from-import can be verified only when exactly one supplied Python `__init__.py` path has bytes identical to `export_source` and the import resolves in one hop to a unique supplied Python file. A mismatched or unrelated initializer supplies no origin, and competing candidates cannot be selected by input order. Direct bindings in the explicit bytes remain eligible without a file path.
+
+```
+FUNCTION check_HC_REF005(hd_module, sources, source_functions, export_source):
     declared ← { d.name FOR d IN hd_module.fn_declarations }
     defined  ← { f.name FOR f IN source_functions }
-    exported ← { n FOR n IN export_declaration.names }
+    exported ← {}
+    exceptions ← {}
 
-    FOR EACH name IN exported - declared:
+    IF export_source is not empty bytes:
+        export_declaration ← literal_export_list(export_source)
+        IF export_declaration is absent, ambiguous or not a literal string list:
+            EMIT error(HC-REF005, verified_initializer_path or known_module_root or "__init__.py",
+                "The package initializer requires one literal export list in __all__.")
+        ELSE:
+            exported ← { n FOR n IN export_declaration.names }
+            raised ← { name FOR d IN hd_module.fn_declarations FOR name IN d.raises }
+            exceptions ← statically_resolved_exception_exports(sources, export_source) & raised
+
+    FOR EACH name IN exported - declared - exceptions:
         EMIT error(HC-REF005, source_location_of(name),
             f"'{name}' is exported by the module and declared in no .hd. "
             "Declare it, or stop exporting it.")
 
     # declared - defined is the allowed lag (the .hd runs ahead of the code) and emits nothing.
 
-    FOR EACH name IN declared & defined:
+    FOR EACH name IN (declared & defined) - exceptions:
         IF arity(hd_module.declaration(name)) ≠ arity(source_function(name)):
             EMIT error(HC-REF005, source_location_of(name),
                 f"'{name}' is declared with {n} parameters and defined with {m}.")
@@ -666,6 +677,8 @@ FUNCTION check_seams(caller, declarations, path):
 **A module not in view is skipped, not assumed absent.** A workspace holds the modules it holds, and a declaration may name one from outside it. Reporting a dead reference because the file was not loaded would make the rule depend on how it was invoked, and a gate whose answer changes with its arguments is not a gate. The caller supplies the declarations and the rule judges only those.
 
 #### HC-REF008: a cross-module side effect names its door
+
+For `pure_call`, HC-REF006 reports an unresolved or malformed qualified target and HC-REF007 reports a target that is not a plain function without side effects in a boundaryless module. Resolving a `pure_call` does not satisfy an I/O seam or other world-side obligation. HC-REF008 still applies to cross-module side effects.
 
 HC-REF006 and HC-REF007 both resolve a door name. A side effect that names another module but no door carries no name for them to resolve, so both rules pass it in silence. That is the state of the framework today. honest-observe declares `writes "honest-persist"`, honest-persist is a real module with four boundaries, and nothing checks that the write reaches any of them. The rule that would catch a write landing nowhere never runs, because the seam never said where it lands. Measured across both trees on 18 October 2026: no seam anywhere names a door, so HC-REF006 and HC-REF007 have never fired.
 
@@ -759,6 +772,8 @@ FUNCTION check_HC_REF011(workspace_roots, exempt):
 **Absence is a finding, never permission, and the two absences are kept apart.** A reader that returns the same empty answer for "a module that declares nothing" and "a module whose `.hd` will not parse" hides the second case inside the first, and the module passes on an error the gate should have raised. The decision keeps them apart: a member with no `.hd` is this rule's finding, and a member whose `.hd` is present but unreadable is a syntax finding (HC-SYN), not silent agreement. Collapsing the two into one empty value is the exact defect this tier exists to remove, so the reader reports which of the two it found.
 
 #### HC-REF012: an import is a declared seam
+
+A resolved `pure_call` counts toward the caller distribution's workspace dependency. An unresolved or invalid pure target provides no dependency evidence. A distribution with several logical modules may declare that dependency in the module that actually calls it.
 
 A module's packaging manifest names the other modules it depends on: `pyproject.toml` lists them, `package.json` lists them, and a dependency on another workspace module is a real coupling, because the code imports and calls across it. HC-REF006, HC-REF007 and HC-REF008 each act on a seam the declaration already wrote, so an import the declaration names no seam onto gives them nothing: the coupling lives in the packaging alone and the `.hd` is silent about it. Eleven modules import honest-type and one declares a seam onto it. The other ten couple to it invisibly, and the seam rules see none of them. A dependency nobody declared is a reach into another module that answers to no rule, the same hiding place the withdrawal of the `edge` role closed for a function no declaration reached.
 

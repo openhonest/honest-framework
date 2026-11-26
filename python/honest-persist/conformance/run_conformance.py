@@ -12,6 +12,7 @@ reports how many are latent, then runs the behavioural laws in laws_hp.py, which
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -38,5 +39,5 @@ if __name__ == "__main__":
 
     default = str(Path(__file__).parent / "suite.json")
     suite_status = run(sys.argv[1] if len(sys.argv) > 1 else default)
-    laws_status = laws_hp.run()
+    laws_status = laws_hp.run(os.environ.get("HONEST_MUTATION") == "1")
     raise SystemExit(suite_status or laws_status)

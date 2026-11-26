@@ -1,3 +1,5 @@
+# scenario: check_gate_honesty rejects a gate with no proof or an unbound proof
+# inherits: hd=python/honest-test/honest-test-pure.hd::check_gate_honesty -> feature=specs/features/honest-test.feature::check_gate_honesty rejects a gate with no proof or an unbound proof
 """honest-test conformance: check_gate_honesty rejects a gate with no proof or an unbound proof.
 
 Spec section 4.9, feature "check_gate_honesty rejects a gate with no proof or an unbound
@@ -50,6 +52,8 @@ def probe_check_gate_honesty():
         bad.append(f"a gate with no proof should yield one gate_unverified rejection, got {unverified!r}")
     elif unverified[0].get("kind") != "rejection":
         bad.append(f"a gate_unverified finding must be graded a rejection, got kind {unverified[0].get('kind')!r}")
+    elif "session_guard" not in unverified[0]["message"] or "no proof" not in unverified[0]["message"]:
+        bad.append(f"the rejection should identify the gate and its missing proof: {unverified!r}")
 
     unbound = check_gate_honesty([_UNBOUND_GATE])
     if _codes(unbound) != ["gate_proof_unbound"]:
@@ -59,10 +63,12 @@ def probe_check_gate_honesty():
         )
     elif unbound[0].get("kind") != "rejection":
         bad.append(f"a gate_proof_unbound finding must be graded a rejection, got kind {unbound[0].get('kind')!r}")
+    elif "marker_selected" not in unbound[0]["message"] or "specific failure" not in unbound[0]["message"]:
+        bad.append(f"the rejection should identify the gate and its unbound proof: {unbound!r}")
 
     both = check_gate_honesty([_UNVERIFIED_GATE, _UNBOUND_GATE])
-    if set(_codes(both)) != {"gate_unverified", "gate_proof_unbound"}:
-        bad.append(f"two dishonest gates should each yield their rejection, got {both!r}")
+    if sorted(_codes(both)) != ["gate_proof_unbound", "gate_unverified"]:
+        bad.append(f"two dishonest gates should each yield one rejection, got {both!r}")
 
     return bad
 

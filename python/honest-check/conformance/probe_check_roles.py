@@ -1,3 +1,5 @@
+# scenario: check_roles
+# inherits: hd=python/honest-check/honest-check.hd::check_roles -> feature=specs/features/honest-check.feature::check_roles
 """Honest probe for honest-check's check_roles (feature Scenario: check_roles).
 
 check_roles runs the whole-program orphan rule HC-R001 over a module's code files and its
@@ -102,10 +104,47 @@ _NON_TABLE_ASSIGNMENTS_SOURCE = (
 # Each case: the package's code (bytes), and the HC-R001 count it must produce. declaration is NOTHING.
 _CASES = [
     {"desc": "an unreachable, unroled function is one orphan", "source": _ORPHAN_SOURCE, "expect_hc_r001": 1},
+    {
+        "desc": "a module expression combining a dict with another value does not bind a dispatch table",
+        "source": (
+            b"@orchestrator\ndef root(kind): return handlers[kind]\n"
+            b"def stranded(): pass\n"
+            b"handlers = {}\n"
+            b"handlers | {'x': stranded}\n"
+        ),
+        "expect_hc_r001": 1,
+    },
+    {
+        "desc": "a computed dictionary comprehension does not declare a literal dispatch table",
+        "source": (
+            b"@orchestrator\ndef root(kind): return handlers[kind]\n"
+            b"def stranded(): pass\n"
+            b"handlers = {name: stranded for name in ()}\n"
+        ),
+        "expect_hc_r001": 1,
+    },
+    *[
+        {
+            "desc": f"@{role} starts reachability while orphan stays unroled",
+            "source": b"@" + role.encode() + b"\ndef root(): pass\ndef orphan(): pass\n",
+            "expect_hc_r001": 1,
+        }
+        for role in ("link", "recognizer", "boundary", "helper")
+    ],
     {"desc": "every function is roled or reachable", "source": _CLEAN_SOURCE, "expect_hc_r001": 0},
     {"desc": "no roles adopted at all stands the rule down", "source": _NO_ROLES_SOURCE, "expect_hc_r001": 0},
     {"desc": "a handler reached only through a referenced dispatch dict is not an orphan", "source": _DISPATCH_REACHED_SOURCE, "expect_hc_r001": 0},
     {"desc": "a function in a dict nothing references stays an orphan", "source": _DISPATCH_UNREFERENCED_SOURCE, "expect_hc_r001": 1},
+    {
+        "desc": "a referenced dispatch table does not make a same-named function reachable",
+        "source": (
+            b"@orchestrator\ndef run(kind): return handlers[kind]\n"
+            b"def handlers(): pass\n"
+            b"def picked(): pass\n"
+            b"handlers = {'only': picked}\n"
+        ),
+        "expect_hc_r001": 1,
+    },
     {"desc": "non-dict and non-function-valued module assignments contribute no dispatch node", "source": _NON_TABLE_ASSIGNMENTS_SOURCE, "expect_hc_r001": 0},
 ]
 
@@ -121,6 +160,11 @@ def probe_check_roles():
     for case in _CASES:
         sources = [pair_source(path="mod.py", text=case["source"])]
         got = check_roles(sources=sources, declaration=None)
+        for finding in got:
+            if finding["rule_id"] != "HC-R001" or finding["severity"] != "error":
+                bad.append(f"unexpected orphan finding: {finding!r}")
+            if not finding["message"].strip():
+                bad.append(f"orphan finding has no explanation: {finding!r}")
         hc_r001 = [d["rule_id"] for d in got if d["rule_id"] == "HC-R001"]
         if len(hc_r001) != case["expect_hc_r001"]:
             bad.append(
@@ -128,4 +172,17 @@ def probe_check_roles():
                 f"(all rule_ids {[d['rule_id'] for d in got]}), "
                 f"expected {case['expect_hc_r001']}"
             )
+    from honest_design import read_hd
+
+    declared = read_hd(
+        'module demo\n  layer correctness\n  fn root : () -> int note "receives calls by declaration"\n'
+    )["ok"]["modules"][0]
+    declared_sources = [
+        pair_source(path="mod.py", text=b"def root(): return 1\ndef orphan(): return 2\n")
+    ]
+    findings = check_roles(sources=declared_sources, declaration=declared)
+    declared_ids = [(finding["rule_id"], finding["severity"], "orphan" in finding["message"])
+                    for finding in findings]
+    if declared_ids != [("HC-R001", "error", True)]:
+        bad.append(f"the declaration makes only root reachable; expected orphan, got {findings!r}")
     return bad

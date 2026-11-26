@@ -1,3 +1,5 @@
+# scenario: check_auth
+# inherits: hd=python/honest-check/honest-check.hd::check_auth -> feature=specs/features/honest-check.feature::check_auth
 """Honest probe for honest-check's check_auth (feature Scenario: check_auth).
 
 check_auth runs the two whole-program identity rules over the project's code as one set. A
@@ -68,6 +70,12 @@ def probe_check_auth():
     for case in _CASES:
         sources = [pair_source(path="svc.py", text=case["source"])]
         got = check_auth(sources=sources)
+        for finding in got:
+            expected_severity = {"HC-A001": "warning", "HC-A002": "error"}
+            if finding["severity"] != expected_severity.get(finding["rule_id"]):
+                bad.append(f"unexpected identity finding: {finding!r}")
+            if not finding["message"].strip():
+                bad.append(f"identity finding has no explanation: {finding!r}")
         ids = [d["rule_id"] for d in got]
         if len(got) != case["expect_total"]:
             bad.append(
@@ -77,4 +85,15 @@ def probe_check_auth():
             bad.append(
                 f"check_auth({case['desc']}) -> {ids}, expected a {case['must_contain']} finding"
             )
+    python_link = pair_source("link.py", b"@link(authorizes=True)\ndef gated(request): return request\n")
+    js_provider = pair_source("provider.js", b"register_auth_provider(provider);\n")
+    cross_file = check_auth([js_provider, python_link])
+    actual = [(finding["rule_id"], finding["severity"]) for finding in cross_file]
+    if actual != [("HC-A002", "error")]:
+        bad.append(f"a provider call in another code file should govern the Python link, got {cross_file!r}")
+    for decorator in (b"@helper(authorizes=True)", b"@link(authorizes=False)"):
+        source = pair_source("case.py", decorator + b"\ndef ordinary(request): return request\n")
+        findings = check_auth([source])
+        if findings:
+            bad.append(f"{decorator!r} does not authorize a link, got {findings!r}")
     return bad

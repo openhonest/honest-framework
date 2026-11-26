@@ -10,7 +10,7 @@
 set -uo pipefail
 cd "$(dirname "$0")"            # -> python/
 
-SRC=honest_alerts,honest_auth,honest_check,honest_design,honest_estimate,honest_state,honest_errors,honest_features,honest_gherkin,honest_observe,honest_page,honest_parse,honest_persist,honest_rca,honest_test,honest_type,honest_utilities
+SRC=honest_alerts,honest_auth,honest_check,honest_design,honest_estimate,honest_state,honest_errors,honest_features,honest_gherkin,honest_observe,honest_page,honest_parse,honest_persist,honest_rca,honest_render,honest_test,honest_type,honest_utilities
 # The whole workspace, every time. A `uv run --package X` anywhere before this trims the shared
 # environment to X's closure, and then thirteen suites here failed on a missing import that had
 # nothing to do with the staged change (2026-09-05). The gate must not depend on what the last
@@ -45,6 +45,14 @@ for runner in "${runners[@]}"; do
     fi
 done
 
+# Exercise the real subprocess deadline once for workspace coverage. The standalone
+# probe stays outside conformance discovery so each unrelated mutant does not wait 15s.
+timeout_probe=honest-test/conformance/check_run_mutant_suite_timeout.py
+if ! $COV run --append --branch --source=honest_test "$timeout_probe"; then
+    echo "coverage-all: the Honest Test subprocess deadline probe failed." >&2
+    status=1
+fi
+
 # The CLI's `if __name__ == "__main__"` entry shim only executes when the module is run
 # as a script. Run it as a module under coverage so even the entry point is exercised —
 # the gate then needs no source exclusions at all.
@@ -63,20 +71,27 @@ mkdir -p "$tmp/tsrc"
 coverage_file=${COVERAGE_FILE:-.coverage}
 case "$coverage_file" in /*) ;; *) coverage_file="$PWD/$coverage_file";; esac
 workspace=$PWD
-printf 'import honest_test.__main__\nimport honest_test.pytest_plugin\n' > "$tmp/import_test_entries.py"
+printf 'from honest_check.cli import entry_point\nimport honest_test.__main__\nimport honest_test.pytest_plugin\n\nassert callable(entry_point)\n' > "$tmp/import_cli_entries.py"
 if ! (
     cd "$tmp" || exit 1
     export COVERAGE_FILE="$coverage_file"
     uv run --project "$workspace" --all-packages --with coverage coverage run --append --branch --source="$SRC" -m honest_test "$tmp/tsrc" &&
-    uv run --project "$workspace" --all-packages --with coverage coverage run --append --branch --source="$SRC" "$tmp/import_test_entries.py"
+    uv run --project "$workspace" --all-packages --with coverage coverage run --append --branch --source="$SRC" "$tmp/import_cli_entries.py"
 ) >/dev/null 2>&1; then
-    echo "coverage-all: Honest Test CLI or plugin entry failed." >&2
+    echo "coverage-all: a CLI or plugin entry failed." >&2
     status=1
 fi
 rm -rf "$tmp"
 
 if [ "$status" -ne 0 ]; then
     echo "coverage-all: a conformance suite failed — gate blocked." >&2
+    exit 1
+fi
+
+# Value cases run centrally because module runners cannot import their own dependant.
+# Include their executed lines in the same workspace coverage report.
+if ! $COV run --append --branch --source="$SRC" value-check.py; then
+    echo "coverage-all: value-oracle gate failed — a value case asserts the wrong output." >&2
     exit 1
 fi
 
@@ -87,11 +102,3 @@ if ! $COV report -m --fail-under=100; then
     exit 1
 fi
 echo "coverage-all: 100% line+branch coverage — every line is dogfooded."
-
-# The value-oracle gate (honest-test §8.6): every module's suite.json value cases must prove. A
-# module cannot run the oracle on itself (it would import its own dependant), so this is checked
-# centrally here, where honest-test is available.
-if ! uv run --all-packages python value-check.py; then
-    echo "coverage-all: value-oracle gate failed — a value case asserts the wrong output." >&2
-    exit 1
-fi

@@ -1,3 +1,5 @@
+# scenario: is_empty_default
+# inherits: hd=python/honest-check/honest-check.hd::is_empty_default -> feature=specs/features/honest-check.feature::is_empty_default
 """Honest probe for honest-check's is_empty_default (feature Scenario: is_empty_default).
 
 Scenario: is_empty_default returns true when a parameter's default stands for
@@ -19,6 +21,7 @@ from honest_parse import parse, walk
 _CASES = [
     {"default": "None", "expect": True},       # None
     {"default": "False", "expect": True},      # False
+    {"default": "True", "expect": False},      # a present boolean literal
     {"default": "0", "expect": True},          # a zero number
     {"default": '""', "expect": True},         # an empty string
     {"default": "[]", "expect": True},         # an empty list literal
@@ -26,6 +29,16 @@ _CASES = [
     {"default": "()", "expect": True},         # an empty tuple literal
     {"default": "list()", "expect": True},     # an empty-constructor call
     {"default": "dict()", "expect": True},     # an empty-constructor call
+    {"default": "0.0", "expect": True},
+    {"default": "0.5", "expect": False},
+    {"default": "set()", "expect": True},
+    {"default": "tuple()", "expect": True},
+    {"default": "frozenset()", "expect": True},
+    {"default": "list([1])", "expect": False},
+    {"default": "tuple([1])", "expect": False},
+    {"default": "custom()", "expect": False},
+    {"default": "{1}", "expect": False},
+    {"default": "(1,)", "expect": False},
     {"default": "[1]", "expect": False},       # a populated literal
     {"default": "30", "expect": False},        # a non-zero number
     {"default": '"text"', "expect": False},    # a populated (non-empty) string literal

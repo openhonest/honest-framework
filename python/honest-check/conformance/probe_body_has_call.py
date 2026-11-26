@@ -1,3 +1,5 @@
+# scenario: body_has_call
+# inherits: hd=python/honest-check/honest-check.hd::body_has_call -> feature=specs/features/honest-check.feature::body_has_call
 """Honest probe for honest-check's body_has_call (Scenario: body_has_call).
 
 body_has_call returns true when a function's own body contains a call — the mark
@@ -14,10 +16,10 @@ case fails a stub that returns False.
 from honest_parse import parse, walk
 
 
-def _fdef(src):
-    root = parse(src.encode("utf-8"), "python").root_node
+def _fdef(src, language):
+    root = parse(src.encode("utf-8"), language).root_node
     for n in walk(root):
-        if n.type == "function_definition":
+        if n.type in {"function_definition", "function_declaration"}:
             return n
     return None
 
@@ -26,6 +28,7 @@ def _fdef(src):
 # contains a call.
 _CASES = [
     {"source": "def f():\n    g()\n", "expect": True},
+    {"source": "function f() { return g(); }", "language": "javascript", "expect": True},
     {"source": "def f():\n    x = 1\n", "expect": False},
     {
         # The only call sits inside a nested def, not in f's own body.
@@ -44,7 +47,7 @@ def probe_body_has_call():
 
     bad = []
     for case in _CASES:
-        fdef = _fdef(case["source"])
+        fdef = _fdef(case["source"], case.get("language", "python"))
         if fdef is None:
             bad.append(f"test setup: no function_definition in {case['source']!r}")
             continue

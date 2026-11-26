@@ -154,6 +154,7 @@ module honest-type
 
   # The reserved-word test and the data constructors.
   fn is_reserved : (token: str) -> bool note "true when a token is a framework, cross-language, or language reserved word"
+  fn is_reserved_field : (name: str) -> bool note "checks a declared record field name for exact membership in the shared RESERVED_FIELDS set (spec 2). Returns true for is_err, the field reserved to Fault as the discriminator of a bare value-or-fault union, and false for every other name, including code. This is a pure field-name check; vocabulary token reservations and whether a particular record owns a field are separate checks."
   fn ticket : (type_name: str, value: str) -> Ticket note "the result of classifying one token: its matched type name and original value"
   fn rejection : (token: str, reason: Reason, detail: str) -> Rejection note "a token that could not be classified or bound, carried as data"
   fn fault : (code: str, message: str, category: Category, results: list<Result>, detail: dict<str, any>) -> Fault note "a processing error carried as data; every field is passed explicitly, results empty unless a validate_all fault and detail empty unless there is structured context, so nothing is defaulted (spec 13.2)"
@@ -163,15 +164,16 @@ module honest-type
   # The world arrives here. A sibling module imports these names (verified below), or the host
   # application calls them (noted, not verifiable by import). Functions reached only by another
   # function on this list need no entry; the call that reaches them is their arrival.
-  entry "import honest_type" -> classify
+  entry "export honest_type" -> classify
   entry "import honest_type" -> vocabulary
   entry "import honest_type" -> binding
   entry "import honest_type" -> maybe
   entry "import honest_type" -> link
   entry "import honest_type" -> link_meta
-  entry "import honest_type" -> chain_meta
-  entry "import honest_type" -> execute_chain
+  entry "export honest_type" -> chain_meta
+  entry "export honest_type" -> execute_chain
   entry "import honest_type" -> is_fault
+  entry "call:conformance value oracle" -> is_reserved_field
   entry "import honest_type" -> ok
   entry "import honest_type" -> err
   entry "import honest_type" -> state_machine

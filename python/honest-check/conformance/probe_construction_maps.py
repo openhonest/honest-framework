@@ -1,3 +1,5 @@
+# scenario: construction_maps
+# inherits: hd=python/honest-check/honest-check.hd::construction_maps -> feature=specs/features/honest-check.feature::construction_maps
 """Honest probe for honest-check's construction_maps (feature Scenario: construction_maps).
 
 Scenario: construction_maps returns each file-local variable bound to a
@@ -37,6 +39,11 @@ _SRC = (
     'b = binding({"int": "slot"})\n'
     "x = 5\n"
     "y = other({})\n"
+    "registry.v = vocabulary({})\n"
+    "registry.b = binding({})\n"
+    "register(v)\n"
+    "names = []\n"
+    "names += vocabulary({'part': {'one'}})\n"
 )
 _EXPECT_KEYS = {"v", "b"}
 _EXPECT_TEXT = {"v": 'vocabulary({"int": is_int})', "b": 'binding({"int": "slot"})'}

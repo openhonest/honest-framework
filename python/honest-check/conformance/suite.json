@@ -144,6 +144,13 @@
     },
 
     {
+      "id": "HC-P007-100",
+      "description": "Public constructor attributes and assignments outside the constructor do not meet the hidden-constructor-state rule. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC-P007",
+      "input": {"language": "python", "source": "class Box(ABC):\n    def __init__(self, value):\n        self.value = value\n    def reset(self, value):\n        self._value = value"},
+      "expected": {"diagnostics": []}
+    },
+    {
       "id": "HC-P007-001",
       "description": "Instance state assigned in a constructor fires HC-P007; the ABC base keeps HC-P003 silent",
       "category": "HC-P007",
@@ -325,6 +332,13 @@
       "expected": { "diagnostics": [ { "rule": "HC004", "severity": "warning", "line": 1 } ] }
     },
     {
+      "id": "HC004-002",
+      "description": "Required and captured base names are live through a composed type; only the unbound, uncomposed base warns. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC004",
+      "input": { "language": "python", "source": "from honest_type import binding, classify, composed, vocabulary\ncards = vocabulary({'protocol': {'https'}, 'host': {'example.com'}, 'method': {'GET'}, 'unused': {'other'}}, composed_types=[composed('url', requires={'protocol': 'https'}, captures='host')])\nslots = binding({'method': 'request_method'})\nclassify(['https', 'example.com', 'GET'], cards, bind=slots)" },
+      "expected": { "diagnostics": [ { "rule": "HC004", "severity": "warning", "line": 2 } ] }
+    },
+    {
       "id": "HC004-100",
       "description": "A vocabulary whose every base type the paired binding binds fires nothing",
       "category": "HC004",
@@ -341,6 +355,19 @@
     },
 
     {
+      "id": "HC005-100",
+      "description": "A composed type is a declared binding key and produces no unused-binding warning. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC005",
+      "input": {
+        "language": "python",
+        "source": "from honest_type import binding, classify, composed, vocabulary\n\nroutes = vocabulary(\n    {'protocol': {'https'}, 'host': {'example.com'}},\n    composed_types=[composed('url', requires={'protocol': 'https'}, captures='host')],\n)\nslots = binding({'url': 'destination'})\nclassify(['https', 'example.com'], routes, bind=slots)\n"
+      },
+      "expected": {
+        "diagnostics": []
+      }
+    },
+
+    {
       "id": "HC008-001",
       "description": "A link that is not a boundary and reads the clock in its body is impure; time.time() is nondeterministic, not I/O, so HC-P004 stays silent and only HC008 fires",
       "category": "HC008",
@@ -349,11 +376,240 @@
     },
 
     {
+      "id": "HC008-011",
+      "description": "A non-boundary link is impure for each published I/O call in filesystem. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC008",
+      "input": {"language": "python", "source": "@link()\ndef check_0():\n    return open(path)\n\n@link()\ndef check_4():\n    return pathlib.Path.open(path)\n\n@link()\ndef check_8():\n    return pathlib.Path.read_text(path)\n\n@link()\ndef check_12():\n    return pathlib.Path.write_text(path, contents)\n\n@link()\ndef check_16():\n    return pathlib.Path.read_bytes(path)\n\n@link()\ndef check_20():\n    return pathlib.Path.write_bytes(path, contents)\n\n@link()\ndef check_24():\n    return os.open(path, flags)\n\n@link()\ndef check_28():\n    return os.read(fd, size)\n\n@link()\ndef check_32():\n    return os.write(fd, data)\n\n@link()\ndef check_36():\n    return os.remove(path)\n\n@link()\ndef check_40():\n    return os.rename(source, target)\n\n@link()\ndef check_44():\n    return os.mkdir(path)\n\n@link()\ndef check_48():\n    return os.rmdir(path)\n\n@link()\ndef check_52():\n    return os.listdir(path)\n\n@link()\ndef check_56():\n    return os.walk(path)\n\n@link()\ndef check_60():\n    return shutil.copy(source, target)\n\n@link()\ndef check_64():\n    return shutil.move(source, target)\n\n@link()\ndef check_68():\n    return shutil.rmtree(path)\n\n@link()\ndef check_72():\n    return tempfile.TemporaryDirectory()\n\n@link()\ndef check_76():\n    return mmap.mmap(fd, size)\n"},
+      "expected": { "diagnostics": [
+        {"rule": "HC008", "severity": "warning", "line": 2},
+        {"rule": "HC-P004", "severity": "error", "line": 3},
+        {"rule": "HC008", "severity": "warning", "line": 6},
+        {"rule": "HC008", "severity": "warning", "line": 10},
+        {"rule": "HC008", "severity": "warning", "line": 14},
+        {"rule": "HC008", "severity": "warning", "line": 18},
+        {"rule": "HC008", "severity": "warning", "line": 22},
+        {"rule": "HC008", "severity": "warning", "line": 26},
+        {"rule": "HC-P004", "severity": "error", "line": 27},
+        {"rule": "HC008", "severity": "warning", "line": 30},
+        {"rule": "HC-P004", "severity": "error", "line": 31},
+        {"rule": "HC008", "severity": "warning", "line": 34},
+        {"rule": "HC-P004", "severity": "error", "line": 35},
+        {"rule": "HC008", "severity": "warning", "line": 38},
+        {"rule": "HC-P004", "severity": "error", "line": 39},
+        {"rule": "HC008", "severity": "warning", "line": 42},
+        {"rule": "HC-P004", "severity": "error", "line": 43},
+        {"rule": "HC008", "severity": "warning", "line": 46},
+        {"rule": "HC-P004", "severity": "error", "line": 47},
+        {"rule": "HC008", "severity": "warning", "line": 50},
+        {"rule": "HC-P004", "severity": "error", "line": 51},
+        {"rule": "HC008", "severity": "warning", "line": 54},
+        {"rule": "HC-P004", "severity": "error", "line": 55},
+        {"rule": "HC008", "severity": "warning", "line": 58},
+        {"rule": "HC-P004", "severity": "error", "line": 59},
+        {"rule": "HC008", "severity": "warning", "line": 62},
+        {"rule": "HC-P004", "severity": "error", "line": 63},
+        {"rule": "HC008", "severity": "warning", "line": 66},
+        {"rule": "HC-P004", "severity": "error", "line": 67},
+        {"rule": "HC008", "severity": "warning", "line": 70},
+        {"rule": "HC-P004", "severity": "error", "line": 71},
+        {"rule": "HC008", "severity": "warning", "line": 74},
+        {"rule": "HC008", "severity": "warning", "line": 78}
+      ] }
+    },
+
+    {
+      "id": "HC008-012",
+      "description": "A non-boundary link is impure for each published I/O call in process and shell. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC008",
+      "input": {"language": "python", "source": "@link()\ndef check_0():\n    return subprocess.run(command)\n\n@link()\ndef check_4():\n    return subprocess.Popen(command)\n\n@link()\ndef check_8():\n    return subprocess.call(command)\n\n@link()\ndef check_12():\n    return subprocess.check_output(command)\n\n@link()\ndef check_16():\n    return os.system(command)\n\n@link()\ndef check_20():\n    return os.popen(command)\n\n@link()\ndef check_24():\n    return os.execvp(path, argv)\n\n@link()\ndef check_28():\n    return os.spawnv(mode, path, args)\n\n@link()\ndef check_32():\n    return os.fork()\n"},
+      "expected": { "diagnostics": [
+        {"rule": "HC008", "severity": "warning", "line": 2},
+        {"rule": "HC-P004", "severity": "error", "line": 3},
+        {"rule": "HC008", "severity": "warning", "line": 6},
+        {"rule": "HC-P004", "severity": "error", "line": 7},
+        {"rule": "HC008", "severity": "warning", "line": 10},
+        {"rule": "HC-P004", "severity": "error", "line": 11},
+        {"rule": "HC008", "severity": "warning", "line": 14},
+        {"rule": "HC-P004", "severity": "error", "line": 15},
+        {"rule": "HC008", "severity": "warning", "line": 18},
+        {"rule": "HC-P004", "severity": "error", "line": 19},
+        {"rule": "HC008", "severity": "warning", "line": 22},
+        {"rule": "HC-P004", "severity": "error", "line": 23},
+        {"rule": "HC008", "severity": "warning", "line": 26},
+        {"rule": "HC-P004", "severity": "error", "line": 27},
+        {"rule": "HC008", "severity": "warning", "line": 30},
+        {"rule": "HC-P004", "severity": "error", "line": 31},
+        {"rule": "HC008", "severity": "warning", "line": 34},
+        {"rule": "HC-P004", "severity": "error", "line": 35}
+      ] }
+    },
+
+    {
+      "id": "HC008-013",
+      "description": "A non-boundary link is impure for each published I/O call in network clients. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC008",
+      "input": {"language": "python", "source": "@link()\ndef check_0():\n    return socket.create_connection(address)\n\n@link()\ndef check_4():\n    return http.client.HTTPConnection(host)\n\n@link()\ndef check_8():\n    return urllib.request.urlopen(url)\n\n@link()\ndef check_12():\n    return urllib.urlopen(url)\n\n@link()\ndef check_16():\n    return requests.get(url)\n\n@link()\ndef check_20():\n    return httpx.get(url)\n\n@link()\ndef check_24():\n    return aiohttp.ClientSession()\n\n@link()\ndef check_28():\n    return urllib3.PoolManager()\n\n@link()\ndef check_32():\n    return smtplib.SMTP(host)\n\n@link()\ndef check_36():\n    return ftplib.FTP(host)\n\n@link()\ndef check_40():\n    return poplib.POP3(host)\n\n@link()\ndef check_44():\n    return imaplib.IMAP4(host)\n\n@link()\ndef check_48():\n    return telnetlib.Telnet(host)\n\n@link()\ndef check_52():\n    return ssl.create_default_context()\n"},
+      "expected": { "diagnostics": [
+        {"rule": "HC008", "severity": "warning", "line": 2},
+        {"rule": "HC-P004", "severity": "error", "line": 3},
+        {"rule": "HC008", "severity": "warning", "line": 6},
+        {"rule": "HC008", "severity": "warning", "line": 10},
+        {"rule": "HC008", "severity": "warning", "line": 14},
+        {"rule": "HC-P004", "severity": "error", "line": 15},
+        {"rule": "HC008", "severity": "warning", "line": 18},
+        {"rule": "HC-P004", "severity": "error", "line": 19},
+        {"rule": "HC008", "severity": "warning", "line": 22},
+        {"rule": "HC008", "severity": "warning", "line": 26},
+        {"rule": "HC008", "severity": "warning", "line": 30},
+        {"rule": "HC008", "severity": "warning", "line": 34},
+        {"rule": "HC008", "severity": "warning", "line": 38},
+        {"rule": "HC008", "severity": "warning", "line": 42},
+        {"rule": "HC008", "severity": "warning", "line": 46},
+        {"rule": "HC008", "severity": "warning", "line": 50},
+        {"rule": "HC008", "severity": "warning", "line": 54}
+      ] }
+    },
+
+    {
+      "id": "HC008-014",
+      "description": "A non-boundary link is impure for each published I/O call in standard streams and logging. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC008",
+      "input": {"language": "python", "source": "@link()\ndef check_0():\n    return print(value)\n\n@link()\ndef check_4():\n    return input(prompt)\n\n@link()\ndef check_8():\n    return sys.stdout.write(text)\n\n@link()\ndef check_12():\n    return sys.stderr.write(text)\n\n@link()\ndef check_16():\n    return sys.stdin.read()\n\n@link()\ndef check_20():\n    return logging.info(text)\n"},
+      "expected": { "diagnostics": [
+        {"rule": "HC008", "severity": "warning", "line": 2},
+        {"rule": "HC008", "severity": "warning", "line": 6},
+        {"rule": "HC-P004", "severity": "error", "line": 7},
+        {"rule": "HC008", "severity": "warning", "line": 10},
+        {"rule": "HC008", "severity": "warning", "line": 14},
+        {"rule": "HC008", "severity": "warning", "line": 18},
+        {"rule": "HC008", "severity": "warning", "line": 22}
+      ] }
+    },
+
+    {
+      "id": "HC008-015",
+      "description": "A non-boundary link is impure for each published I/O call in database drivers. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC008",
+      "input": {"language": "python", "source": "@link()\ndef check_0():\n    return psycopg2.connect(dsn)\n\n@link()\ndef check_4():\n    return psycopg.connect(dsn)\n\n@link()\ndef check_8():\n    return asyncpg.connect(dsn)\n\n@link()\ndef check_12():\n    return sqlite3.connect(path)\n\n@link()\ndef check_16():\n    return aiosqlite.connect(path)\n\n@link()\ndef check_20():\n    return pymongo.MongoClient(uri)\n\n@link()\ndef check_24():\n    return redis.Redis()\n"},
+      "expected": { "diagnostics": [
+        {"rule": "HC008", "severity": "warning", "line": 2},
+        {"rule": "HC008", "severity": "warning", "line": 6},
+        {"rule": "HC008", "severity": "warning", "line": 10},
+        {"rule": "HC008", "severity": "warning", "line": 14},
+        {"rule": "HC008", "severity": "warning", "line": 18},
+        {"rule": "HC008", "severity": "warning", "line": 22},
+        {"rule": "HC008", "severity": "warning", "line": 26}
+      ] }
+    },
+
+    {
+      "id": "HC008-021",
+      "description": "A non-boundary link is impure for each published nondeterministic call in random values and identity. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC008",
+      "input": {"language": "python", "source": "@link()\ndef check_0():\n    return random.random()\n\n@link()\ndef check_4():\n    return secrets.token_hex()\n\n@link()\ndef check_8():\n    return uuid.uuid1()\n\n@link()\ndef check_12():\n    return uuid.uuid3(namespace, name)\n\n@link()\ndef check_16():\n    return uuid.uuid4()\n\n@link()\ndef check_20():\n    return uuid.uuid5(namespace, name)\n\n@link()\ndef check_24():\n    return os.urandom(size)\n\n@link()\ndef check_28():\n    return id(value)\n"},
+      "expected": { "diagnostics": [
+        {"rule": "HC008", "severity": "warning", "line": 2},
+        {"rule": "HC008", "severity": "warning", "line": 6},
+        {"rule": "HC008", "severity": "warning", "line": 10},
+        {"rule": "HC008", "severity": "warning", "line": 14},
+        {"rule": "HC008", "severity": "warning", "line": 18},
+        {"rule": "HC008", "severity": "warning", "line": 22},
+        {"rule": "HC008", "severity": "warning", "line": 26},
+        {"rule": "HC-P004", "severity": "error", "line": 27},
+        {"rule": "HC008", "severity": "warning", "line": 30}
+      ] }
+    },
+
+    {
+      "id": "HC008-022",
+      "description": "A non-boundary link is impure for each published nondeterministic call in clocks. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC008",
+      "input": {"language": "python", "source": "@link()\ndef check_0():\n    return time.time()\n\n@link()\ndef check_4():\n    return time.time_ns()\n\n@link()\ndef check_8():\n    return time.monotonic()\n\n@link()\ndef check_12():\n    return time.perf_counter()\n\n@link()\ndef check_16():\n    return time.process_time()\n\n@link()\ndef check_20():\n    return time.sleep(seconds)\n\n@link()\ndef check_24():\n    return datetime.datetime.now()\n\n@link()\ndef check_28():\n    return datetime.datetime.utcnow()\n\n@link()\ndef check_32():\n    return datetime.datetime.today()\n\n@link()\ndef check_36():\n    return datetime.date.today()\n"},
+      "expected": { "diagnostics": [
+        {"rule": "HC008", "severity": "warning", "line": 2},
+        {"rule": "HC008", "severity": "warning", "line": 6},
+        {"rule": "HC008", "severity": "warning", "line": 10},
+        {"rule": "HC008", "severity": "warning", "line": 14},
+        {"rule": "HC008", "severity": "warning", "line": 18},
+        {"rule": "HC008", "severity": "warning", "line": 22},
+        {"rule": "HC008", "severity": "warning", "line": 26},
+        {"rule": "HC008", "severity": "warning", "line": 30},
+        {"rule": "HC008", "severity": "warning", "line": 34},
+        {"rule": "HC008", "severity": "warning", "line": 38}
+      ] }
+    },
+
+    {
+      "id": "HC008-023",
+      "description": "A non-boundary link is impure for each published nondeterministic call in environment and process information. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC008",
+      "input": {"language": "python", "source": "@link()\ndef check_0():\n    return os.getenv(key)\n\n@link()\ndef check_4():\n    return os.getlogin()\n\n@link()\ndef check_8():\n    return os.getpid()\n\n@link()\ndef check_12():\n    return os.getppid()\n\n@link()\ndef check_16():\n    return os.getcwd()\n\n@link()\ndef check_20():\n    return os.uname()\n\n@link()\ndef check_24():\n    return os.environ.get(key)\n\n@link()\ndef check_28():\n    return getpass.getpass()\n\n@link()\ndef check_32():\n    return getpass.getuser()\n\n@link()\ndef check_36():\n    return platform.system()\n"},
+      "expected": { "diagnostics": [
+        {"rule": "HC008", "severity": "warning", "line": 2},
+        {"rule": "HC-P004", "severity": "error", "line": 3},
+        {"rule": "HC008", "severity": "warning", "line": 6},
+        {"rule": "HC-P004", "severity": "error", "line": 7},
+        {"rule": "HC008", "severity": "warning", "line": 10},
+        {"rule": "HC-P004", "severity": "error", "line": 11},
+        {"rule": "HC008", "severity": "warning", "line": 14},
+        {"rule": "HC-P004", "severity": "error", "line": 15},
+        {"rule": "HC008", "severity": "warning", "line": 18},
+        {"rule": "HC-P004", "severity": "error", "line": 19},
+        {"rule": "HC008", "severity": "warning", "line": 22},
+        {"rule": "HC-P004", "severity": "error", "line": 23},
+        {"rule": "HC008", "severity": "warning", "line": 26},
+        {"rule": "HC008", "severity": "warning", "line": 30},
+        {"rule": "HC008", "severity": "warning", "line": 34},
+        {"rule": "HC008", "severity": "warning", "line": 38}
+      ] }
+    },
+
+    {
+      "id": "HC008-024",
+      "description": "A non-boundary link is impure for each published nondeterministic call in thread and event-loop state. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC008",
+      "input": {"language": "python", "source": "@link()\ndef check_0():\n    return threading.current_thread()\n\n@link()\ndef check_4():\n    return threading.get_ident()\n\n@link()\ndef check_8():\n    return threading.active_count()\n\n@link()\ndef check_12():\n    return multiprocessing.current_process()\n\n@link()\ndef check_16():\n    return multiprocessing.cpu_count()\n\n@link()\ndef check_20():\n    return asyncio.get_event_loop()\n\n@link()\ndef check_24():\n    return asyncio.current_task()\n"},
+      "expected": { "diagnostics": [
+        {"rule": "HC008", "severity": "warning", "line": 2},
+        {"rule": "HC008", "severity": "warning", "line": 6},
+        {"rule": "HC008", "severity": "warning", "line": 10},
+        {"rule": "HC008", "severity": "warning", "line": 14},
+        {"rule": "HC008", "severity": "warning", "line": 18},
+        {"rule": "HC008", "severity": "warning", "line": 22},
+        {"rule": "HC008", "severity": "warning", "line": 26}
+      ] }
+    },
+
+    {
       "id": "HC010-001",
       "description": "A link declaring an emits type its body never produces fires HC010; the link returns its input manifest unchanged, so the emit type is phantom",
       "category": "HC010",
       "input": { "language": "python", "source": "inp = vocabulary({'in_t': {'a'}})\noutp = vocabulary({'out_t': {'b'}})\nslots = binding({'in_t': 'in_slot', 'out_t': 'out_slot'})\n@link(accepts=inp, emits=outp, bind=slots)\ndef step(manifest):\n    return manifest" },
       "expected": { "diagnostics": [ { "rule": "HC010", "severity": "warning", "line": 5 } ] }
+    },
+
+    {
+      "id": "HC010-100",
+      "description": "The declared output slot is produced in the returned manifest literal. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import binding, link, vocabulary\ninp = vocabulary({'in_t': {'a'}})\noutp = vocabulary({'out_t': {'b'}})\nslots = binding({'in_t': 'in_slot', 'out_t': 'out_slot'})\n@link(accepts=inp, emits=outp, bind=slots)\ndef step(manifest):\n    return {'out_slot': 'b'}" },
+      "expected": { "diagnostics": [] }
+    },
+
+    {
+      "id": "HC010-101",
+      "description": "The declared output slot is produced by assignment on the manifest parameter. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import binding, link, vocabulary\ninp = vocabulary({'in_t': {'a'}})\noutp = vocabulary({'out_t': {'b'}})\nslots = binding({'in_t': 'in_slot', 'out_t': 'out_slot'})\n@link(accepts=inp, emits=outp, bind=slots)\ndef step(manifest):\n    manifest['out_slot'] = 'b'\n    return manifest" },
+      "expected": { "diagnostics": [] }
+    },
+
+    {
+      "id": "HC010-002",
+      "description": "Writing the declared output slot into a local dictionary leaves the manifest emission absent. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC010",
+      "input": { "language": "python", "source": "from honest_type import binding, link, vocabulary\ninp = vocabulary({'in_t': {'a'}})\noutp = vocabulary({'out_t': {'b'}})\nslots = binding({'in_t': 'in_slot', 'out_t': 'out_slot'})\n@link(accepts=inp, emits=outp, bind=slots)\ndef step(manifest):\n    local = {}\n    local['out_slot'] = 'b'\n    return manifest" },
+      "expected": { "diagnostics": [{"rule": "HC010", "severity": "warning", "line": 6}] }
     },
 
     {
@@ -372,6 +628,13 @@
     },
 
     {
+      "id": "HC-P010-100",
+      "description": "A pure function may return a TypedDict record. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC-P010",
+      "input": {"language": "python", "source": "class Record(TypedDict):\n    answer: int\ndef build():\n    return Record(answer=42)"},
+      "expected": {"diagnostics": []}
+    },
+    {
       "id": "HC-P010-001",
       "description": "A pure function returning an instance of an in-file class fires HC-P010 at the return; the ABC base keeps HC-P003 silent and the instance is neither a TypedDict nor a read-only mapping",
       "category": "HC-P010",
@@ -379,6 +642,13 @@
       "expected": { "diagnostics": [ { "rule": "HC-P010", "severity": "error", "line": 4 } ] }
     },
 
+    {
+      "id": "HC-P013-002",
+      "description": "Both tenant identity and credentials require a bounded recognizer when bound to database routing slots. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC-P013",
+      "input": {"language": "python", "source": "v = vocabulary({'tenant': predicate(lambda value: True), 'token': predicate(lambda value: True)})\nb = binding({'tenant': 'tenant_id', 'token': 'credential'})\nclassify('x', v, bind=b)"},
+      "expected": {"diagnostics": [{"rule": "HC011", "severity": "info", "line": 1}, {"rule": "HC011", "severity": "info", "line": 1}, {"rule": "HC-P013", "severity": "error", "line": 1}, {"rule": "HC-P013", "severity": "error", "line": 1}]}
+    },
     {
       "id": "HC-P013-001",
       "description": "A routing-key slot (db_id) bound to a predicate recognizer lets an arbitrary identifier reach the pool; HC-P013 fires, and the same predicate draws the HC011 info",
@@ -468,6 +738,48 @@
       "category": "HC-P017",
       "input": { "language": "python", "source": "def serialize(data) -> Response:\n    return data" },
       "expected": { "diagnostics": [ { "rule": "HC-P017", "severity": "error", "line": 1 } ] }
+    },
+    {
+      "id": "HC-P003-102",
+      "description": "A typed fault inherits from the approved Exception base. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC-P003",
+      "input": {"language": "python", "source": "class SaveFailed(Exception):\n    pass"},
+      "expected": {"diagnostics": []}
+    },
+    {
+      "id": "HC-P005-002",
+      "description": "Business logic cannot substitute a type call for declarative validation. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC-P005",
+      "input": {"language": "python", "source": "def validate(value):\n    return type(value)"},
+      "expected": {"diagnostics": [{"rule": "HC-P005", "severity": "warning", "line": 2}]}
+    },
+    {
+      "id": "HC-P006-002",
+      "description": "An unprofiled cache decorator triggers the cache warning. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC-P006",
+      "input": {"language": "python", "source": "@cache\ndef collect(value):\n    return value"},
+      "expected": {"diagnostics": [{"rule": "HC-P006", "severity": "warning", "line": 1}]}
+    },
+    {
+      "id": "HC-P011-002",
+      "description": "Both effect hooks trigger separate findings. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC-P011",
+      "input": {"language": "javascript", "source": "useEffect(effect);\nuseLayoutEffect(layout);"},
+      "expected": {"diagnostics": [{"rule": "HC-P011", "severity": "error", "line": 1}, {"rule": "HC-P011", "severity": "error", "line": 2}]}
+    },
+    {
+      "id": "HC-P015-002",
+      "description": "Adding a type annotation does not exempt a real-valued default. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC-P015",
+      "input": {"language": "python", "source": "def f(value: int = 5):\n    return value"},
+      "expected": {"diagnostics": [{"rule": "HC-P015", "severity": "error", "line": 1}]}
+    },
+    {
+      "id": "HC-P017-002",
+      "description": "An HTML or JSON response producer needs a declared link and emits vocabulary. # inherits: hd=python/honest-check/honest-check.hd::check_source -> feature=specs/features/honest-check.feature::check_source",
+      "category": "HC-P017",
+      "input": {"language": "python", "source": "def html(data) -> HTMLResponse:\n    return data\n\ndef json(data) -> JSONResponse:\n    return data"},
+      "expected": {"diagnostics": [{"rule": "HC-P017", "severity": "error", "line": 1}, {"rule": "HC-P017", "severity": "error", "line": 4}]}
     },
     {
       "id": "HC-P017-100",

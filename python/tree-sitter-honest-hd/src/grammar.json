@@ -1224,6 +1224,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "pure_call"
+        },
+        {
+          "type": "SYMBOL",
           "name": "note"
         },
         {
@@ -1349,6 +1353,23 @@
               }
             ]
           }
+        },
+        {
+          "type": "FIELD",
+          "name": "target",
+          "content": {
+            "type": "SYMBOL",
+            "name": "string"
+          }
+        }
+      ]
+    },
+    "pure_call": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "pure_call"
         },
         {
           "type": "FIELD",

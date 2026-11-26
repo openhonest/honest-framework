@@ -1,5 +1,5 @@
 Feature: honest-design — reading, checking, drawing and tracing .hd itself
-  One scenario per function. Four doors face the world: read_hd folds source into the IR, validate
+  One or more scenarios per function. Four doors face the world: read_hd folds source into the IR, validate
   checks a module, render draws it, reach traces what each door touches. One reader asks honest-parse
   for the tree. Four orchestrators carry the four paths. The rest is the pure core: the fold, the
   checks and their shared helpers, the renderer, the reach walk, and the Result constructors.
@@ -68,6 +68,20 @@ Feature: honest-design — reading, checking, drawing and tracing .hd itself
     Given a module node and the source
     When _read_module reads each body declaration through its own reader
     Then it returns a Module carrying its layer, envs, stores, surface, types, functions, chains and the rest
+
+  # hd: python/honest-design/honest-design.hd::_read_module
+  # spec: 5 (as cited by the declaration)
+  Scenario: _read_module preserves the authored version
+    Given node: Node for a module declaring version "internal preview 7" and source: bytes for that exact declaration
+    When _read_module is called
+    Then it returns a Module whose version is "internal preview 7"
+
+  # hd: python/honest-design/honest-design.hd::_read_module
+  # spec: 5 (as cited by the declaration)
+  Scenario: _read_module returns an empty version when omitted
+    Given node: Node for a module without a version declaration and source: bytes for that exact declaration
+    When _read_module is called
+    Then it returns a Module whose version is the empty string
 
   Scenario: _read_rule folds one rule node into a Rule
     Given a rule node and the source
@@ -176,11 +190,36 @@ Feature: honest-design — reading, checking, drawing and tracing .hd itself
     When _read_function reads the role, parameters, return, side effects, invokes, raises and awaited word
     Then it returns a Function carrying all of them and the column its role derives
 
+  # hd: python/honest-design/honest-design.hd::_read_function
+  # spec: 4 and 6 (as cited by the declaration)
+  Scenario: _read_function preserves the legacy edge role in column 1
+    Given node: Node for a function declared with the legacy edge role and source: bytes for that exact declaration
+    When _read_function is called
+    Then it returns a Function whose role is "edge" and whose column is 1
+
   # hd: python/honest-design/honest-design.hd::_read_name_and_type
   Scenario: _read_name_and_type folds a function parameter into a Param
     Given node: Node for one parameter and source: bytes for its declaration
     When _read_name_and_type is called
     Then it returns the declared parameter name and the complete type union in the supplied order
+
+  # hd: python/honest-design/honest-design.hd::_read_pure_call
+  Scenario: _read_pure_call returns the target without enclosing quotes
+    Given node: Node for a pure_call annotation with the target "utils.answer" and source: bytes for that exact annotation
+    When _read_pure_call is called
+    Then it returns the text utils.answer without the enclosing quotes
+
+  # hd: python/honest-design/honest-design.hd::_read_function
+  Scenario: _read_function preserves repeated pure calls in source order
+    Given node: Node for a function with pure_call annotations "utils.answer", "utils.other" and "utils.answer" in that order and source: bytes for that exact declaration
+    When _read_function is called
+    Then its pure_calls field is ["utils.answer", "utils.other", "utils.answer"] and the annotations add no side effects
+
+  # hd: python/honest-design/honest-design.hd::_read_function
+  Scenario: _read_function omits pure_calls when no annotation is present
+    Given node: Node for a function without a pure_call annotation and source: bytes for that exact declaration
+    When _read_function is called
+    Then the function record has no pure_calls key
 
   Scenario: _read_side_effect folds one side effect, splitting a dotted target
     Given a side effect node and the source
@@ -261,10 +300,31 @@ Feature: honest-design — reading, checking, drawing and tracing .hd itself
     When _impure_pure_functions checks each plain fn
     Then it faults a pure fn that declares any side effect, because only a boundary may
 
+  # hd: python/honest-design/honest-design.hd::_impure_pure_functions
+  # spec: honest-design §§2, 3.2 and 6 (as cited by the declaration)
+  Scenario: _impure_pure_functions faults a legacy edge that declares a side effect
+    Given module: Module has a function with the legacy edge role and a declared side effect
+    When _impure_pure_functions is called
+    Then it returns a impure_pure_function diagnostic
+
   Scenario: _held_not_read faults a pure fn that names a handle in its signature
     Given a module's functions and the names that mean a handle
     When _held_not_read checks each pure fn's signature
     Then it faults a pure fn that names a handle, because a handle is held and passed to a boundary, never read
+
+  # hd: python/honest-design/honest-design.hd::_held_not_read
+  # spec: honest-design §§3.2 and 6 (as cited by the declaration)
+  Scenario: _held_not_read faults a legacy edge that names handle directly
+    Given module: Module has a function with the legacy edge role and a signature naming handle
+    When _held_not_read is called
+    Then it returns a handle_read diagnostic
+
+  # hd: python/honest-design/honest-design.hd::_held_not_read
+  # spec: honest-design §§3.2 and 6 (as cited by the declaration)
+  Scenario: _held_not_read faults a legacy edge that names an alias leading to handle
+    Given module: Module has a function with the legacy edge role and a signature naming an alias that resolves to handle
+    When _held_not_read is called
+    Then it returns a handle_read diagnostic
 
   Scenario: _fault_swallowed faults a caller that cannot return the fault its callee can
     Given a module's call graph and the functions whose return says they can fault
@@ -276,15 +336,57 @@ Feature: honest-design — reading, checking, drawing and tracing .hd itself
     When _fault_shape reads the Fault type
     Then it faults a Fault declared as a bare name or with fewer than two fields to say what went wrong and what to do instead
 
+  # hd: python/honest-design/honest-design.hd::_reserved_field
+  # spec: honest-type §2 Reserved Fields and honest-design §6 (as cited by the declaration)
   Scenario: _reserved_field faults a record other than Fault that declares is_err
-    Given a module's declared types
-    When _reserved_field reads each record's field names
-    Then it faults a type other than Fault declaring is_err, the mark that tells the fault arm of a bare union from the value arm, and says nothing about Fault's own
+    Given module: Module declares a record other than Fault with an is_err field
+    When _reserved_field is called
+    Then it returns a reserved_field diagnostic for that declaration
+    And the diagnostic explains that is_err belongs to Fault and tells the author to remove or rename the field to keep success and fault distinguishable
 
+  # hd: python/honest-design/honest-design.hd::_reserved_field
+  # spec: honest-type §2 Reserved Fields and honest-design §6 (as cited by the declaration)
+  Scenario: _reserved_field accepts records without is_err
+    Given module: Module declares records without an is_err field
+    When _reserved_field is called
+    Then it returns an empty list
+
+  # hd: python/honest-design/honest-design.hd::_reserved_field
+  # spec: honest-type §2 Reserved Fields and honest-design §6 (as cited by the declaration)
+  Scenario: _reserved_field accepts is_err on the Fault record
+    Given module: Module declares an is_err field only on the Fault record
+    When _reserved_field is called
+    Then it returns an empty list
+
+  # hd: python/honest-design/honest-design.hd::_reserved_field
+  # spec: honest-type §2 Reserved Fields and honest-design §6 (as cited by the declaration)
+  Scenario: _reserved_field ignores the vocabulary member named is_err
+    Given module: Module declares is_err as a vocabulary member and no record declares an is_err field
+    When _reserved_field is called
+    Then it returns an empty list
+
+  # hd: python/honest-design/honest-design.hd::_edge_role_withdrawn
+  # spec: honest-design §§4, 6 and 9.3 (as cited by the declaration)
   Scenario: _edge_role_withdrawn faults a function declared an edge
-    Given a module's declared functions
-    When _edge_role_withdrawn reads each function's role
-    Then it faults every function declared an edge, and says where the function belongs instead: a utility module of its own when many modules import it, the importing module as a plain fn when one does, and nowhere at all when nothing reaches it
+    Given module: Module has a function named find with the legacy edge role preserved in the read IR
+    When _edge_role_withdrawn is called
+    Then it returns an edge_role_withdrawn diagnostic with category server and detail.function equal to "find"
+    And the diagnostic explains that edge is withdrawn and directs the author to give the function a supported home according to its callers, or remove it if nothing reaches it
+    And the diagnostic explains that a function no path reaches receives no input and has no defined finite testability
+
+  # hd: python/honest-design/honest-design.hd::_edge_role_withdrawn
+  # spec: honest-design §§4, 6 and 9.3 (as cited by the declaration)
+  Scenario: _edge_role_withdrawn accepts reader and boundary_in in column 1
+    Given module: Module has a reader and a boundary_in in column 1 and no edge role
+    When _edge_role_withdrawn is called
+    Then it returns an empty list
+
+  # hd: python/honest-design/honest-design.hd::_edge_role_withdrawn
+  # spec: honest-design §§4, 6 and 9.3 (as cited by the declaration)
+  Scenario: _edge_role_withdrawn accepts the other supported roles
+    Given module: Module has an orchestrator, a plain fn and a boundary_out and no edge role
+    When _edge_role_withdrawn is called
+    Then it returns an empty list
 
   Scenario: _unawaited_caller faults a caller of an awaited function that is not awaited
     Given a module's awaited functions and its call graph
@@ -504,6 +606,7 @@ Feature: honest-design — reading, checking, drawing and tracing .hd itself
     When _door_orchestrator follows each door's calls
     Then it returns a door_orchestrator fault for a door that reaches no orchestrator or more than one
 
+  # hd: python/honest-design/honest-design-side-policy.hd::couples_on
   Scenario: couples_on says whether a world-side target couples two modules
     Given a world-side target
     When couples_on reads it

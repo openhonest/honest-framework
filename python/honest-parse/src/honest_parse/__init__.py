@@ -19,7 +19,7 @@ import tree_sitter_javascript as ts_javascript
 import tree_sitter_php as ts_php
 import tree_sitter_python as ts_python
 import tree_sitter_ruby as ts_ruby
-from tree_sitter import Language, Parser
+from tree_sitter import Language, Parser, Tree
 
 # Compiled grammars are immutable. They are exposed only through a read-only mapping
 # (MappingProxyType), so there is no module-level mutable container here at all. A tree-sitter
@@ -58,11 +58,15 @@ _LANGUAGES = types.MappingProxyType(
 _TWO_ROW = {True: lambda t, f: t, False: lambda t, f: f}
 
 
+# inherits: hd=python/honest-parse/honest-parse.hd::_pick -> feature=specs/features/honest-parse.feature::_pick invokes only the thunk selected by truthiness -> test=python/honest-parse/conformance/probe__pick_truthiness.py::probe__pick_truthiness
+# hd: _pick
 def _pick(flag, when_true, when_false):
     """Run the thunk the flag selects and return its result; the other thunk never runs."""
     return _TWO_ROW[bool(flag)](when_true, when_false)()
 
 
+# inherits: hd=python/honest-parse/honest-parse.hd::_unknown_grammar -> feature=specs/features/honest-parse.feature::_unknown_grammar reports the request and sorted supported names -> test=python/honest-parse/conformance/probe__unknown_grammar_sorted_names.py::probe__unknown_grammar_sorted_names
+# hd: _unknown_grammar
 def _unknown_grammar(language):
     """The unknown_grammar fault, returned as data for a grammar this module does not carry.
 
@@ -80,24 +84,46 @@ def _unknown_grammar(language):
     }
 
 
+# inherits: hd=python/honest-parse/honest-parse.hd::grammar_for -> feature=specs/features/honest-parse.feature::grammar_for returns the known grammar handle -> test=python/honest-parse/conformance/probe_grammar_for_known.py::probe_grammar_for_known
+# inherits: hd=python/honest-parse/honest-parse.hd::grammar_for -> feature=specs/features/honest-parse.feature::grammar_for returns a fault for a missing grammar -> test=python/honest-parse/conformance/probe_grammar_for_missing.py::probe_grammar_for_missing
+# hd: grammar_for
+def grammar_for(language):
+    """Return the configured grammar or a fault naming the unknown language."""
+    match language in _LANGUAGES:
+        case True:
+            return _LANGUAGES[language]
+        case _:
+            return _unknown_grammar(language)
+
+
+# inherits: hd=python/honest-parse/honest-parse.hd::read_tree -> feature=specs/features/honest-parse.feature::read_tree parses the bytes using the resolved grammar -> test=python/honest-parse/conformance/probe_read_tree_python.py::probe_read_tree_python
+# hd: read_tree
+def read_tree(source, grammar):
+    """Run a fresh parser with the resolved grammar and return its tree."""
+    return Parser(grammar).parse(source)
+
+
+# inherits: hd=python/honest-parse/honest-parse.hd::read_by_language -> feature=specs/features/honest-parse.feature::read_by_language returns the original recovered tree -> test=python/honest-parse/conformance/probe_read_by_language_recovered.py::probe_read_by_language_recovered
+# inherits: hd=python/honest-parse/honest-parse.hd::read_by_language -> feature=specs/features/honest-parse.feature::read_by_language returns the missing grammar fault -> test=python/honest-parse/conformance/probe_read_by_language_unsupported.py::probe_read_by_language_unsupported
+# hd: read_by_language
+def read_by_language(source, language):
+    """Resolve the requested grammar and retain tree-sitter's recovery nodes."""
+    grammar = grammar_for(language)
+    match grammar:
+        case Language():
+            return read_tree(source, grammar)
+        case fault:
+            return fault
+
+
+# inherits: hd=python/honest-parse/honest-parse.hd::parse_root_node -> feature=specs/features/honest-parse.feature::parse_root_node returns the root for the explicit grammar -> test=python/honest-parse/conformance/probe_parse_root_node_explicit_grammar.py::probe_parse_root_node_explicit_grammar
+# inherits: hd=python/honest-parse/honest-parse.hd::parse_root_node -> feature=specs/features/honest-parse.feature::parse_root_node preserves recovery nodes for malformed source -> test=python/honest-parse/conformance/probe_parse_root_node_recovery.py::probe_parse_root_node_recovery
+# inherits: hd=python/honest-parse/honest-parse.hd::parse_root_node -> feature=specs/features/honest-parse.feature::parse_root_node returns the unknown grammar fault -> test=python/honest-parse/conformance/probe_parse_root_node_unknown_grammar.py::probe_parse_root_node_unknown_grammar
+# inherits: hd=python/honest-parse/honest-parse.hd::parse -> feature=specs/features/honest-parse.feature::parse turns source into a syntax tree -> test=python/honest-parse/conformance/laws_parse.py::_law_language_vocabulary
+# hd: parse
 def parse(source: bytes, language: str):
-    """Parse source bytes under the named grammar: the tree-sitter tree, or an unknown_grammar fault
-    for a language the table does not hold."""
-    return _pick(
-        language in _LANGUAGES,
-        lambda: Parser(_LANGUAGES[language]).parse(source),
-        lambda: _unknown_grammar(language),
-    )
-
-
-
-
-
-
-
-
-
-
+    """Return the tree or fault for a public grammar-directed parse."""
+    return read_by_language(source, language)
 
 
 def line_col(node) -> tuple[int, int]:
@@ -174,6 +200,8 @@ def language_of(path: str):
     )
 
 
+# inherits: hd=python/honest-parse/honest-parse.hd::_syntax_error -> feature=specs/features/honest-parse.feature::_syntax_error reports the first recovery node location -> test=python/honest-parse/conformance/probe__syntax_error_first_recovery.py::probe__syntax_error_first_recovery
+# hd: _syntax_error
 def _syntax_error(root, path: str, language: str):
     """The located syntax_error fault for a tree that already carries a parse error. Pure: it reads
     the already-built tree and touches no world."""
@@ -188,6 +216,9 @@ def _syntax_error(root, path: str, language: str):
     }
 
 
+# inherits: hd=python/honest-parse/honest-parse.hd::_checked_tree -> feature=specs/features/honest-parse.feature::_checked_tree returns a located fault for a recovered tree -> test=python/honest-parse/conformance/probe__checked_tree_broken.py::probe__checked_tree_broken
+# inherits: hd=python/honest-parse/honest-parse.hd::_checked_tree -> feature=specs/features/honest-parse.feature::_checked_tree wraps the original clean tree -> test=python/honest-parse/conformance/probe__checked_tree_clean.py::probe__checked_tree_clean
+# hd: _checked_tree
 def _checked_tree(tree, path: str, language: str):
     """ok(tree) for a clean tree, or the located syntax_error fault. Pure: it reads the already-built
     tree and touches no world."""
@@ -198,19 +229,21 @@ def _checked_tree(tree, path: str, language: str):
     )
 
 
+# inherits: hd=python/honest-parse/honest-parse.hd::place_source -> feature=specs/features/honest-parse.feature::place_source reads source under the grammar its path names -> test=python/honest-parse/conformance/laws_parse.py::_law_language_of_and_parse_source
+# hd: place_source
 def place_source(source: bytes, path: str):
-    """The tree for source read under the grammar its path names: ok(tree), or the chooser's err.
-
-    The module's one orchestrator. It reads the extension through `language_of` and hands the
-    language to `parse`, so the choice of grammar happens in one place and the world is touched in
-    one other. It holds the routing and nothing else does.
-    """
+    """Resolve the grammar from the source path and check the resulting tree."""
     language = language_of(path)
-    return _pick(
+    grammar = _pick(
         "ok" in language,
-        lambda: _checked_tree(parse(source, language["ok"]), path, language["ok"]),
+        lambda: grammar_for(language["ok"]),
         lambda: language,
     )
+    match grammar:
+        case Language():
+            return _checked_tree(read_tree(source, grammar), path, language["ok"])
+        case fault:
+            return fault
 
 
 def parse_source(source: bytes, path: str):
@@ -223,11 +256,46 @@ def parse_source(source: bytes, path: str):
     return place_source(source, path)
 
 
+# inherits: hd=python/honest-parse/honest-parse.hd::parse_root_node -> feature=specs/features/honest-parse.feature::parse_root_node returns the root for the explicit grammar -> test=python/honest-parse/conformance/probe_parse_root_node_explicit_grammar.py::probe_parse_root_node_explicit_grammar
+# inherits: hd=python/honest-parse/honest-parse.hd::parse_root_node -> feature=specs/features/honest-parse.feature::parse_root_node preserves recovery nodes for malformed source -> test=python/honest-parse/conformance/probe_parse_root_node_recovery.py::probe_parse_root_node_recovery
+# inherits: hd=python/honest-parse/honest-parse.hd::parse_root_node -> feature=specs/features/honest-parse.feature::parse_root_node returns the unknown grammar fault -> test=python/honest-parse/conformance/probe_parse_root_node_unknown_grammar.py::probe_parse_root_node_unknown_grammar
+# hd: parse_root_node
+def parse_root_node(source: bytes, language: str):
+    """Return the parser root for an explicit grammar, including recovery nodes."""
+    return read_root_node(source, language)
+
+
+# inherits: hd=python/honest-parse/honest-parse.hd::read_root_node -> feature=specs/features/honest-parse.feature::read_root_node returns the recovered root for the requested grammar -> test=python/honest-parse/conformance/probe_read_root_node_recovery.py::probe_read_root_node_recovery
+# inherits: hd=python/honest-parse/honest-parse.hd::read_root_node -> feature=specs/features/honest-parse.feature::read_root_node returns the fault for an unknown grammar -> test=python/honest-parse/conformance/probe_read_root_node_unknown_grammar.py::probe_read_root_node_unknown_grammar
+# hd: read_root_node
+def read_root_node(source: bytes, language: str):
+    """Parse with the requested grammar and return its root or fault."""
+    grammar = grammar_for(language)
+    match grammar:
+        case Language():
+            return root_node_or_fault(read_tree(source, grammar))
+        case fault:
+            return fault
+
+
+# inherits: hd=python/honest-parse/honest-parse.hd::root_node_or_fault -> feature=specs/features/honest-parse.feature::root_node_or_fault passes through the unknown grammar fault -> test=python/honest-parse/conformance/probe_root_node_or_fault_fault.py::probe_root_node_or_fault_fault
+# inherits: hd=python/honest-parse/honest-parse.hd::root_node_or_fault -> feature=specs/features/honest-parse.feature::root_node_or_fault preserves recovery descendants -> test=python/honest-parse/conformance/probe_root_node_or_fault_recovery.py::probe_root_node_or_fault_recovery
+# inherits: hd=python/honest-parse/honest-parse.hd::root_node_or_fault -> feature=specs/features/honest-parse.feature::root_node_or_fault returns the actual tree root -> test=python/honest-parse/conformance/probe_root_node_or_fault_tree.py::probe_root_node_or_fault_tree
+# hd: root_node_or_fault
+def root_node_or_fault(result):
+    """Return the actual tree root or pass the parser's fault through unchanged."""
+    match result:
+        case Tree(root_node=root):
+            return root
+        case fault:
+            return fault
+
 __all__ = [
     "first_error_node",
     "language_of",
     "line_col",
     "parse",
+    "parse_root_node",
     "parse_source",
     "place_source",
     "walk",

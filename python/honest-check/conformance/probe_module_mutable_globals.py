@@ -1,3 +1,5 @@
+# scenario: module_mutable_globals
+# inherits: hd=python/honest-check/honest-check.hd::module_mutable_globals -> feature=specs/features/honest-check.feature::module_mutable_globals
 """Honest probe for honest-check's module_mutable_globals (feature Scenario: module_mutable_globals).
 
 Scenario: module_mutable_globals returns the module-level names bound to a mutable
@@ -36,12 +38,16 @@ def _ctx(src):
 _SRC = (
     "import os\n"
     "CONST = 42\n"
+    "CONST + increment()\n"
     "CACHE = {}\n"
     "ITEMS = []\n"
+    "config.items = []\n"
+    "register()\n"
+    "REGISTERED = register()\n"
     "def f():\n    pass\n"
     "class C:\n    pass\n"
 )
-_EXPECT = {"CACHE", "ITEMS"}
+_EXPECT = {"CACHE", "ITEMS", "REGISTERED"}
 
 
 def probe_module_mutable_globals():

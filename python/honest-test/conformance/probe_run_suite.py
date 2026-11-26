@@ -1,3 +1,5 @@
+# scenario: run_suite drives the whole CLI run from source directory to report
+# inherits: hd=python/honest-test/honest-test.hd::run_suite -> feature=specs/features/honest-test.feature::run_suite drives the whole CLI run from source directory to report
 """honest-test conformance: run_suite, the CLI orchestrator.
 
 run_suite drives the whole run over a source directory and returns a RunReport,
@@ -15,7 +17,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from honest_test import run_suite
+from honest_test import adversarial_neighbors, run_suite
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -84,6 +86,14 @@ def probe_run_suite():
             for field in _COUNT_FIELDS:
                 if field in report and not isinstance(report[field], int):
                     bad.append(f"RunReport.{field} should be an int, got {report.get(field)!r}")
+            expected_counts = {
+                "chains": 0, "links": 0, "vocabularies": 0, "permutations": 0,
+                "failures": 0, "adversarial_rejected": 0, "warnings": 0,
+                "mutation_caught": 0, "mutation_total": 1,
+            }
+            actual_counts = {key: report.get(key) for key in expected_counts}
+            if actual_counts != expected_counts:
+                bad.append(f"trivial source counts: got {actual_counts!r}, expected {expected_counts!r}")
             coverage = report.get("coverage")
             if not isinstance(coverage, dict) or "version" not in coverage:
                 bad.append(f"RunReport.coverage should be a CoverageReport dict with a version: {coverage!r}")
@@ -113,6 +123,8 @@ def probe_run_suite():
     else:
         if honest.get("links", 0) < 1:
             bad.append(f"run_suite should discover the honest adopter's links, found {honest.get('links')!r}")
+        if honest.get("permutations") != 6:
+            bad.append(f"the honest adopter's three actions and two roles yield six permutations: {honest!r}")
         if honest.get("failures") != 0:
             bad.append(f"the honest adopter has no dishonest link, so failures should be 0, got {honest.get('failures')!r}")
 
@@ -188,6 +200,34 @@ def probe_run_suite():
         if chain_untyped.get("failures") != 0:
             bad.append(f"a chain with no upstream vocabulary is skipped, so failures should be 0, got {chain_untyped.get('failures')!r}")
 
+    with tempfile.TemporaryDirectory() as src_dir:
+        source = Path(src_dir) / "upstream_fault.py"
+        source.write_text(
+            "from honest_type import binding, chain, fault, link, vocabulary\n"
+            "access = vocabulary({'action': {'read'}})\n"
+            "bind = binding({'action': 'action'})\n"
+            "@link(accepts=access, binds=bind)\n"
+            "def reject(manifest):\n"
+            "    return fault('invalid_input', 'input is invalid', 'client', [], {})\n"
+            "@link(accepts=access, binds=bind)\n"
+            "def downstream(manifest):\n"
+            "    return dict(manifest)\n"
+            "pipeline = chain(reject, downstream)\n",
+            encoding="utf-8",
+        )
+        upstream_fault = _run_in(src_dir)
+    actual_upstream = (upstream_fault.get("chains"), upstream_fault.get("failures"))
+    if actual_upstream != (1, 0):
+        bad.append(f"an upstream fault does not constitute a failed chain join, got {actual_upstream!r}")
+
+    with tempfile.TemporaryDirectory() as src_dir:
+        source = Path(src_dir) / "observed_change.py"
+        source.write_text("print(0)\n", encoding="utf-8")
+        observed_change = _run_in(src_dir)
+    actual_mutation = (observed_change.get("mutation_caught"), observed_change.get("mutation_total"))
+    if actual_mutation != (2, 2):
+        bad.append(f"both generated changes alter the observed output, got caught and total {actual_mutation!r}")
+
     # run_suite must discover state machines and drive the §5 checks over them. A valid
     # machine driven with honest-type's correct transition cannot fail, so the observable
     # is the adversarial-rejection count: every adversarial neighbor of a state or event
@@ -206,6 +246,23 @@ def probe_run_suite():
                 f"neighbors are all rejected, so adversarial_rejected should be > 0, got {machine.get('adversarial_rejected')!r}"
             )
 
+    # Both state names are legal, but each is an adversarial neighbor of the other.
+    # The real transition boundary therefore cannot reject those two inputs as invalid.
+    with tempfile.TemporaryDirectory() as src_dir:
+        module = Path(src_dir) / "overlap_machine.py"
+        module.write_text(
+            "from honest_type import state_machine\n"
+            "order_machine = state_machine({'bat', 'cat'}, {'go'}, "
+            "{('bat', 'go'): 'cat'}, 'bat')\n",
+            encoding="utf-8",
+        )
+        overlap = _run_in(src_dir)
+    total_neighbors = sum(len(adversarial_neighbors(name)) for name in ("bat", "cat", "go"))
+    expected_overlap = (2, total_neighbors - 2)
+    actual_overlap = (overlap.get("failures"), overlap.get("adversarial_rejected"))
+    if actual_overlap != expected_overlap:
+        bad.append(f"overlapping states: got {actual_overlap!r}, expected {expected_overlap!r}")
+
     # run_suite must drive the boundary-isolation check (§4.4): a non-boundary link that
     # performs I/O raises an io_detected warning. The dishonest adopter opens a file, so it
     # reports at least one warning; the honest adopter does no I/O, so it reports zero.
@@ -219,6 +276,22 @@ def probe_run_suite():
             "run_suite must drive boundary isolation: a non-boundary link that opens a file "
             f"should raise an io_detected warning, so warnings should be >= 1, got {io_bad.get('warnings')!r}"
         )
+
+    with tempfile.TemporaryDirectory() as src_dir:
+        source = Path(src_dir) / "one_case.py"
+        source.write_text(
+            "from honest_type import link, vocabulary\n"
+            "access = vocabulary({'action': {'read'}})\n"
+            "@link(accepts=access)\n"
+            "def load(manifest):\n"
+            "    with open(__file__):\n"
+            "        pass\n"
+            "    return dict(manifest)\n",
+            encoding="utf-8",
+        )
+        single = _run_in(src_dir)
+        if single.get("permutations") != 1 or single.get("warnings") != 1:
+            bad.append(f"run_suite must monitor the only case of a link: {single!r}")
 
     io_ok = _run_in(str(_FIXTURES / "adopter_honest"))
     if isinstance(io_ok, dict) and io_ok.get("warnings") != 0:
