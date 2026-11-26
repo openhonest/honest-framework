@@ -1,3 +1,5 @@
+# scenario: dotted_target
+# inherits: hd=python/honest-check/honest-check.hd::dotted_target -> feature=specs/features/honest-check.feature::dotted_target
 """Honest probe for honest-check's dotted_target (feature Scenario: dotted_target).
 
 dotted_target reads the full dotted name a call invokes — `open`, `os.system`,
@@ -12,15 +14,15 @@ Nodes are real tree-sitter nodes parsed by honest-parse; none is fabricated.
 from honest_parse import parse, walk
 
 
-def _ctx(src):
-    root = parse(src.encode(), "python").root_node
+def _ctx(src, language):
+    root = parse(src.encode(), language).root_node
     return {
         "root": root,
         "nodes": walk(root),
         "aliases": {},
         "roles": {},
         "source": src.encode(),
-        "path": "probe.py",
+        "path": {"python": "probe.py", "ruby": "probe.rb"}[language],
         "rule_config": {"HC-OR003": {"min_run": 3}},
     }
 
@@ -50,11 +52,15 @@ def probe_dotted_target():
 
     bad = []
     for case in _CASES:
-        ctx = _ctx(case["src"])
+        ctx = _ctx(case["src"], "python")
         node = _first_call(ctx)
         got = dotted_target(ctx, node)
         if got != case["expect"]:
             bad.append(
                 f"dotted_target(<{case['src']!r}>) -> {got!r}, expected {case['expect']!r}"
             )
+    ruby = _ctx("Factory.build().run()", "ruby")
+    got = dotted_target(ruby, _first_call(ruby))
+    if got is not None:
+        bad.append(f"dotted_target on a Ruby call with a computed receiver -> {got!r}, expected None")
     return bad

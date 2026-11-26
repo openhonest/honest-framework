@@ -11,6 +11,8 @@ def probe_p004_call_target_watched_static():
         ("case.js", 'fetch("/path")', "call_expression", "fetch", True),
         ("case.js", "new XMLHttpRequest()", "new_expression", "XMLHttpRequest", True),
         ("case.js", "new WebSocket()", "new_expression", "XMLHttpRequest", False),
+        # A member-expression constructor is not the statically supported constructor form.
+        ("case.js", "new localStorage.getItem()", "new_expression", "localStorage.getItem", False),
         ("case.js", 'localStorage["getItem"]("k")', "call_expression", "localStorage.getItem", False),
         ("case.js", 'getStorage().getItem("k")', "call_expression", "localStorage.getItem", False),
         ("case.rb", "File.read('path')", "call", "File.read", True),

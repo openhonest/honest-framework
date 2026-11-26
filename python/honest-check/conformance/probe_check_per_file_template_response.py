@@ -5,12 +5,18 @@ from honest_check import build_context, check_per_file
 
 
 def probe_check_per_file_template_response():
-    source = b"def render() -> TemplateResponse:\n    return make_page()\n"
+    source = (
+        b"def render() -> TemplateResponse:\n    return make_page()\n"
+        # A qualified annotation exercises the nested identifier walk used by
+        # the same HTTP-response rule as the bare TemplateResponse case.
+        b"def render_json() -> list[JSONResponse]:\n    return make_json()\n"
+        b"def ordinary() -> int:\n    return 1\n"
+    )
     ctx = build_context(source, "case.py", {})
     observed = [
         (finding["severity"], finding["source_location"])
         for finding in check_per_file(ctx)
         if finding["rule_id"] == "HC-P017"
     ]
-    expected = [("error", "case.py:1:1")]
+    expected = [("error", "case.py:1:1"), ("error", "case.py:3:1")]
     return [] if observed == expected else [f"expected located TemplateResponse error {expected!r}, got {observed!r}"]

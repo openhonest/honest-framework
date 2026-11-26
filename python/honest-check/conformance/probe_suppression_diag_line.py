@@ -5,7 +5,13 @@
 def probe_suppression_diag_line():
     from honest_check.rules import _diag_line
 
-    cases = (("drive:folder/demo.py:17:4", 17), ("demo.py", None))
+    cases = (
+        ("drive:folder/demo.py:17:4", 17),
+        # A file:line location without the required column is incomplete and
+        # must not be mistaken for a complete file:line:column location.
+        ("drive:folder/demo.py:17", None),
+        ("demo.py", None),
+    )
     return [
         f"location {path!r} -> {actual!r}, expected {expected!r}"
         for path, expected in cases

@@ -30,6 +30,21 @@ _CASES = [
         "must_contain": None,
         "must_be_empty": True,
     },
+    {
+        # A one-element transition key is malformed but parseable.  The
+        # transition reader must return NOTHING for its missing event rather
+        # than indexing past the end of the tuple.
+        "desc": "a transition missing its event reports HC-SM02",
+        "source": (
+            b"from honest_type import vocabulary, state_machine\n"
+            b"machine = state_machine("
+            b"states=vocabulary({'s': {'pending'}}), "
+            b"events=vocabulary({'e': {'pay'}}), initial='pending', "
+            b"transitions={('pending',): 'pending'})\n"
+        ),
+        "must_contain": "HC-SM02",
+        "must_be_empty": False,
+    },
 ]
 
 

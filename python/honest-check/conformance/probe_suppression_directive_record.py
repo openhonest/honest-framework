@@ -8,6 +8,8 @@ def probe_suppression_directive_record():
 
     cases = (
         ("mixed", "# honest: disable HC-P004, HC-P005 HC-P011: a reason: with a colon", "disable", {"HC-P004", "HC-P005", "HC-P011"}, True),
+        ("whitespace separated", "# honest: disable HC-P004 HC-P005: reason", "disable", {"HC-P004", "HC-P005"}, True),
+        ("comma without space", "# honest: disable HC-P004,HC-P005: reason", "disable", {"HC-P004", "HC-P005"}, True),
         ("blank", "# honest: ignore HC-P004:  ", "ignore", {"HC-P004"}, False),
         ("verb", "# honest: reverb HC-P004: reason", None, set(), False),
         ("empty", "# honest: ignore : reason", None, set(), False),

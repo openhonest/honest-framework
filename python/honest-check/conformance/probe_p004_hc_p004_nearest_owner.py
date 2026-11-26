@@ -46,4 +46,16 @@ def probe_p004_hc_p004_nearest_owner():
             ctx["roles"] = {entry["name"]: entry["role"] for entry in declaration["functions"]}
             if findings := _hc_p004(ctx):
                 failures.append(f"{path} {role} companion should exempt its matching function, got {findings!r}")
+    go_source = (
+        b'package example\n'
+        b'func load() {\n'
+        b'  os.Open("outer")\n'
+        b'  func() { os.Open("anonymous") }()\n'
+        b'}\n'
+    )
+    ctx = build_context(go_source, "case.go", {})
+    assert not ctx["root"].has_error, ctx["root"]
+    locations = [entry["source_location"] for entry in _hc_p004(ctx)]
+    if locations != ["case.go:3:3"]:
+        failures.append(f"Go function literal and its named outer function produced {locations!r}")
     return failures
