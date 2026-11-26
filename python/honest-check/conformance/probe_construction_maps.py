@@ -38,6 +38,7 @@ _SRC = (
     'v = vocabulary({"int": is_int})\n'
     'b = binding({"int": "slot"})\n'
     "x = 5\n"
+    "pending: int\n"
     "y = other({})\n"
     "registry.v = vocabulary({})\n"
     "registry.b = binding({})\n"

@@ -47,6 +47,13 @@ _CASES = [
         "expect": set(),
     },
     {
+        "src": (
+            "from honest_persist import transaction as honest_persist\n"
+            "from honest_persist import insert\n"
+        ),
+        "expect": {"honest_persist"},
+    },
+    {
         "src": "import os\ndef save(rows):\n    os.getcwd()\n",
         "expect": set(),  # unrelated import and call
     },
