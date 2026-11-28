@@ -1104,3 +1104,83 @@ Feature: honest-check — generated, one scenario per function (87 functions, 89
     Given ctx: CheckContext and raw_diagnostics: list<Diagnostic>
     When apply_suppression is called
     Then it reads the inline and file-level suppression directives off the parse in ctx and applies them to raw_diagnostics: a suppressed finding is downgraded to info rather than dropped, a directive that suppressed nothing is reported as HC-SUP001 (dead directive) and a directive carrying no reason as HC-SUP002, each built with diagnostic; it returns the suppression-resolved diagnostics and raises nothing
+
+  # --- The generalized HC-REF012 cross-module pure dependency (§HC-REF012) -------
+
+  # hd: python/honest-check/honest-check.hd::pure_target_is_callable
+  Scenario: pure_target_is_callable
+    Given target: str is one qualified "<module>.<function>" pure_call string and declarations: dict<str, Declaration> is every loaded module's parsed .hd keyed by module name
+    When pure_target_is_callable is called
+    Then it splits target once on the first dot into the target module name and the target function name, reads the target module's Declaration off declarations without constructing one, touches no world and opens no file, and returns the single boolean, true only when the target module name is a key in declarations and that module declares a function of the target name whose role is the plain fn, declares no side effect at all, and is published by the target module as a pure way in through a valid entry or export; it raises nothing
+
+  # hd: python/honest-check/honest-check.hd::pure_target_is_callable
+  Scenario: pure_target_is_callable returns true for a published pure fn
+    Given target: str is "utils.answer" and declarations: dict<str, Declaration> includes utils, which declares answer as a plain fn with no side effects and publishes it through a valid entry or export
+    When pure_target_is_callable is called
+    Then it returns true, because the target names a function another module publishes as a pure way in, the same published-pure-function evidence HC-REF007 and the entry checker resolve
+
+  # hd: python/honest-check/honest-check.hd::pure_target_is_callable
+  Scenario: pure_target_is_callable returns false for a target the module does not declare
+    Given target: str is "utils.absent" and declarations: dict<str, Declaration> includes utils, which declares no function named absent
+    When pure_target_is_callable is called
+    Then it returns false, because the function does not exist and a missing function is not callable
+
+  # hd: python/honest-check/honest-check.hd::pure_target_is_callable
+  Scenario: pure_target_is_callable returns false for a side-effecting target
+    Given target: str is "utils.read_file" and declarations: dict<str, Declaration> includes utils, which declares read_file with at least one declared side effect
+    When pure_target_is_callable is called
+    Then it returns false, because a side-effecting target is a side-effect seam and not a pure dependency, and naming a world-touching call as a pure dependency would hide the I/O it does
+
+  # hd: python/honest-check/honest-check.hd::pure_target_is_callable
+  Scenario: pure_target_is_callable returns false for a target whose role is edge
+    Given target: str is "utils.edgefn" and declarations: dict<str, Declaration> includes utils, which declares edgefn with the retired edge role
+    When pure_target_is_callable is called
+    Then it returns false, because the edge role names no new surface and is refused here the way the spec retires it
+
+  # hd: python/honest-check/honest-check.hd::pure_target_is_callable
+  Scenario: pure_target_is_callable returns false for an interior unpublished function
+    Given target: str is "utils.helper" and declarations: dict<str, Declaration> includes utils, which declares helper as a plain fn with no side effects but exposes it through no entry or export, so no entry reaches it
+    When pure_target_is_callable is called
+    Then it returns false, because a pure dependency onto an unexported interior function is the same reach into the core HC-REF007 refuses for a seam
+
+  # hd: python/honest-check/honest-check.hd::pure_target_is_callable
+  Scenario: pure_target_is_callable returns false for a malformed target with no module half
+    Given target: str is "answer" with no dot and declarations: dict<str, Declaration> holds the loaded declarations
+    When pure_target_is_callable is called
+    Then it returns false, because a string with no dot has no module half and is not a callable target
+
+  # hd: python/honest-check/honest-check.hd::resolve_pure_calls
+  Scenario: resolve_pure_calls returns invalid_role for an edge target
+    Given module: Declaration contains a function declaring a pure call to a target whose function exists in a module in view but carries the retired edge role, and declarations: dict<str, Declaration> includes that target module and function
+    When resolve_pure_calls is called
+    Then it returns invalid_role for the occurrence, because the function exists but is not the plain fn role, so pure_target_is_callable says false and the occurrence provides no dependency evidence
+
+  # hd: python/honest-check/honest-check.hd::resolve_pure_calls
+  Scenario: resolve_pure_calls returns invalid_role for an interior unpublished target
+    Given module: Declaration contains a function declaring a pure call to a plain side-effect-free fn in a module in view that no entry or export publishes, and declarations: dict<str, Declaration> includes that target module and function
+    When resolve_pure_calls is called
+    Then it returns invalid_role for the occurrence, because the function exists but is interior and unpublished, so pure_target_is_callable says false and the occurrence provides no dependency evidence
+
+  # hd: python/honest-check/honest-check.hd::check_ref012
+  Scenario: check_ref012 accepts a resolved pure call as dependency evidence
+    Given module: Declaration has a manifest dependency onto a workspace module its declaration couples to only through a resolved pure_call onto that module's published pure fn, manifest_deps: list<str> is the dependencies the orchestrator has left after subtracting every dependency a resolved pure dependency evidences, workspace_module_names: list<str> holds the workspace modules, and path: str is the module's .hd path
+    When check_ref012 is called
+    Then it emits no HC-REF012 error for that dependency, because the resolved pure dependency satisfies the manifest dependency the same way a side-effect seam does, the orchestrator having already removed it from manifest_deps before this function runs
+
+  # hd: python/honest-check/honest-check.hd::check_ref012
+  Scenario: check_ref012 errors on a dependency with neither a seam nor a pure call
+    Given module: Declaration has a manifest dependency onto a workspace module its declaration covers with neither a declared side-effect seam nor a resolved cross-module pure_call onto it, manifest_deps: list<str> still carries that dependency, workspace_module_names: list<str> includes the dependency module, and path: str is the module's .hd path
+    When check_ref012 is called
+    Then it emits one HC-REF012 error naming the module and that dependency at error severity, because a dependency reaching this function is covered by neither kind of coupling, telling the author to name it as a side-effect seam if the call touches the world or as a pure dependency with a pure_call if the call is pure
+
+  # hd: python/honest-check/honest-check.hd::check_ref012
+  Scenario: check_ref012 errors on a dependency whose only pure call is non-callable
+    Given module: Declaration has a manifest dependency onto a workspace module its declaration couples to only through a pure_call whose target is non-callable (does not exist, is side-effecting, is edge, or is interior and unpublished), so resolve_pure_calls returned invalid_role and the orchestrator subtracted nothing, leaving that dependency in manifest_deps: list<str>, with workspace_module_names: list<str> including the dependency module and path: str the module's .hd path
+    When check_ref012 is called
+    Then it emits one HC-REF012 error naming the module and that dependency at error severity, because an invalid_role pure call satisfies the dependency with neither kind of coupling
+
+  # hd: python/honest-check/honest-check.hd::check_ref012
+  Scenario: check_ref012 needs no honest-parse deferral once honest-parse publishes its pure functions
+    Given module: Declaration is honest-check, which imports honest-parse's pure functions and couples to honest-parse only through resolved pure_call annotations onto them, honest-parse now publishes each of those pure functions as a valid way in through an entry or export, manifest_deps: list<str> is the dependencies left after the orchestrator subtracts every dependency a resolved pure dependency evidences, workspace_module_names: list<str> includes honest-parse, and path: str is honest-check's .hd path
+    When check_ref012 is called
+    Then it emits no HC-REF012 error for the honest-parse dependency, because honest-check's resolved pure_call onto honest-parse's published pure functions satisfies the manifest dependency, so the honest-check to honest-parse HC-REF012 coupling needs no hardcoded per-module deferral or exemption
