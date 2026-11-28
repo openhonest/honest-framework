@@ -771,34 +771,58 @@ FUNCTION check_HC_REF011(workspace_roots, exempt):
 
 **Absence is a finding, never permission, and the two absences are kept apart.** A reader that returns the same empty answer for "a module that declares nothing" and "a module whose `.hd` will not parse" hides the second case inside the first, and the module passes on an error the gate should have raised. The decision keeps them apart: a member with no `.hd` is this rule's finding, and a member whose `.hd` is present but unreadable is a syntax finding (HC-SYN), not silent agreement. Collapsing the two into one empty value is the exact defect this tier exists to remove, so the reader reports which of the two it found.
 
-#### HC-REF012: an import is a declared seam
+#### HC-REF012: every workspace dependency is a declared seam or a declared pure dependency
 
-A resolved `pure_call` counts toward the caller distribution's workspace dependency. An unresolved or invalid pure target provides no dependency evidence. A distribution with several logical modules may declare that dependency in the module that actually calls it.
+HC-REF012 generalises from "a manifest dependency must be a side-effect seam" to "a manifest dependency must be a declared coupling of one of two kinds, a side-effect seam or a pure dependency", and it carries no per-module exemption (see the honest-parse note below). The narrower rule this section replaces lives in code at `python/honest-check/src/honest_check/seams.py:135-170` (`check_ref012` and `_ref012_one`, reading `declared_seams` at `python/honest-check/src/honest_check/seams.py:53-64`); this prose overwrites its prior version.
 
-A module's packaging manifest names the other modules it depends on: `pyproject.toml` lists them, `package.json` lists them, and a dependency on another workspace module is a real coupling, because the code imports and calls across it. HC-REF006, HC-REF007 and HC-REF008 each act on a seam the declaration already wrote, so an import the declaration names no seam onto gives them nothing: the coupling lives in the packaging alone and the `.hd` is silent about it. Eleven modules import honest-type and one declares a seam onto it. The other ten couple to it invisibly, and the seam rules see none of them. A dependency nobody declared is a reach into another module that answers to no rule, the same hiding place the withdrawal of the `edge` role closed for a function no declaration reached.
+A module's packaging manifest names the other modules it depends on: `pyproject.toml` lists them, `package.json` lists them, and a dependency on another workspace module is a real coupling, because the code imports and calls across it. A coupling the manifest names but the declaration does not is a reach into another module that answers to no rule, the hiding place the withdrawal of the `edge` role closed for a function no declaration reached. Eleven modules import honest-type and one declares any coupling onto it; the other ten couple to it invisibly.
 
-HC-REF012 requires the seam. For each workspace module a module's manifest depends on, the module's declaration must name at least one cross-module seam onto it: a side effect whose target, before the dot, is that module. A manifest dependency on a workspace module that the declaration names no seam onto is the fault. A dependency on a package outside the workspace is untouched, the way HC-REF008 leaves a world target alone: it names no module in view, so there is no seam to hold it to.
+A cross-module coupling is one of two kinds, and the declaration states which. A coupling that touches the world on the callee's side is a side-effect seam: a side effect whose target, before the dot, is that module (`reads "honest-parse.parse_source"`). A coupling that touches no world is a pure dependency: a call into a pure function another module owns, declared with the pure-dependency form in the honest-design spec (section 3.2.1a, the `pure_call "<module>.<function>"` annotation). The two are not interchangeable: writing a pure call as a side-effect seam claims an I/O that does not happen, and writing an I/O call as a pure dependency hides the world it touches.
 
-The manifest is a second input the rule reads beside the declarations. honest-check already reads the manifest to decide workspace membership (HC-REF011) and reads it again here for the dependency list; the set of workspace module names is the same set HC-REF006 through HC-REF009 resolve against.
+HC-REF012, general form: for each workspace module a module's manifest depends on, the declaration must name at least one declared coupling onto it, a side-effect seam or a pure dependency. A manifest dependency on a workspace module the declaration names neither onto is the fault. A dependency on a package outside the workspace is untouched, the way HC-REF008 leaves a world target alone: it names no module in view, so there is no coupling to hold it to.
+
+For a pure dependency the checker verifies the named target is callable under the framework rules, not merely named. The target must be a pure function the target module publishes as a way in: a declared `fn` the target module exposes through a valid `entry` or `export`, the same published-pure-function evidence HC-REF007 and the entry checker already resolve. The target must not be a side-effecting function, because a side-effect target is a seam and not a pure dependency; must not be `edge`, because that role is retired and names no new surface; and must not be a private or interior function no entry reaches, because a pure dependency onto an unexported interior function is the same reach into the core HC-REF007 refuses for a seam. An unresolved target, or a target of any of those disallowed kinds, provides no dependency evidence and does not satisfy the manifest dependency.
+
+The manifest is a second input the rule reads beside the declarations, the same set of workspace module names HC-REF006 through HC-REF011 resolve against.
 
 ```
-FUNCTION check_ref012(module, workspace_module_names, path):
-    declared_seams ← { side.module_name
-                       FOR function IN module.functions
-                       FOR side IN function.side_effects
-                       IF side.module_name IS NOT "" }
+FUNCTION check_ref012(module, declarations, workspace_module_names, path):
+    seam_modules     ← { side.module_name
+                         FOR function IN module.functions
+                         FOR side IN function.side_effects
+                         IF side.module_name IS NOT "" }
+    pure_dep_modules ← { module_before_dot(call)
+                         FOR function IN module.functions
+                         FOR call IN function.pure_calls           // the "<module>.<function>" annotations (honest-design IR Function.pure_calls)
+                         IF pure_target_is_callable(call, declarations) }
+    satisfied ← seam_modules UNION pure_dep_modules
     FOR EACH dependency IN module.manifest_dependencies:
-        IF dependency NOT IN workspace_module_names THEN CONTINUE   // an external package, no seam to hold it to
-        IF dependency NOT IN declared_seams:
+        IF dependency NOT IN workspace_module_names THEN CONTINUE   // external package, no coupling to hold it to
+        IF dependency NOT IN satisfied:
             EMIT error(HC-REF012, path, module.location,
-                f"'{module.name}' depends on '{dependency}' in its package manifest and declares no seam "
-                f"onto it, so the coupling lives only in the import. Name the function it enters, as a side "
-                f"effect '{dependency}.<door>'.")
+                f"'{module.name}' depends on '{dependency}' in its package manifest and declares no coupling "
+                f"onto it. Name it as a side-effect seam '{dependency}.<door>' if the call touches the world, "
+                f"or as a pure dependency '{dependency}.<function>' with a pure_call if the call is pure.")
+
+FUNCTION pure_target_is_callable(call, declarations):
+    // call is the string "<module>.<function>": split once on the dot into module and function.
+    // The target module must be in view and must publish the function as a pure way in, a declared
+    // fn reached by a valid entry or export, not side-effecting, not edge, not an unexported
+    // interior function.
+    (target_module, target_fn) ← split_once(call, ".")
+    IF target_module NOT IN declarations: RETURN FALSE
+    fn ← declarations[target_module].function(target_fn)
+    RETURN fn EXISTS
+       AND fn.role IS "fn"
+       AND fn.side_effects IS EMPTY
+       AND published_as_entry_or_export(fn, declarations[target_module])
 ```
 
-It fails the build, where HC-REF009 only asks. A manifest dependency is a definite coupling, not a resource two modules might share by chance, so an undeclared seam onto it is a fault the gate refuses rather than a question the reader answers.
+It fails the build, where HC-REF009 only asks. A manifest dependency is a definite coupling, not a resource two modules might share by chance, so an undeclared coupling onto it is a fault the gate refuses rather than a question the reader answers.
 
-HC-REF012 is the rule the other seam rules stand on. It reads the import and insists the declaration name it; HC-REF008 then insists that seam name the door it enters; HC-REF007 adjudicates where that door may land. The chain runs import, seam, door, landing, and HC-REF012 is its first link: without it the later three rule only on the seams someone happened to write down, one in eleven for honest-type. It is also what keeps HC-REF007 honest once a seam may land on any pure function of a boundary-less library. That permissive landing is safe only because HC-REF012 has already forced the call onto the record, so a landing the gate allows is never one the record missed; drop HC-REF012 and the permissive landing becomes the next hiding place.
+No per-module exemption. The general rule carries no allow-list and no hardcoded pass for any pair of modules. honest-pre-commit.sh today defers exactly one HC-REF012 finding by hand, the honest-check to honest-parse coupling (`python/honest-pre-commit.sh:104-106`), because honest-check calls honest-parse's reader functions purely while the declarations and the entry still disagree on the handoff. Under the general rule that coupling is satisfied honestly rather than deferred: honest-check declares a pure dependency onto the honest-parse function it calls, and the rule passes once honest-parse publishes that function as a pure way in. The callability check is what retires the deferral and also what gates it: the three functions honest-check imports out of honest-parse (`node_text`, `line_col`, `first_error_node`) are interior in honest-parse today and are reached by no entry, so publishing them as pure ways in, or routing honest-check through a published honest-parse door, is the work that lets the one-line deferral be deleted. The deferral is removed as part of landing this rule, never kept as a standing exception; until honest-parse publishes the targets, the general rule reports the honest-parse coupling like any other unsatisfied dependency.
+
+HC-REF012 is the rule the other seam rules stand on. It reads the coupling and insists the declaration name it; HC-REF008 then insists a side-effect seam name the door it enters; HC-REF007 adjudicates where that door may land. For a pure dependency the callability check above plays HC-REF007's part, refusing a landing on an interior or side-effecting function. Without HC-REF012 the later rules judge only the couplings someone happened to write down.
 
 #### HC004 — Dead vocabulary type
 

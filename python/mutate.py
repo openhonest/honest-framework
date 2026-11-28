@@ -423,6 +423,8 @@ def _mutants(module, only=None):
         spans = _spans(source)
         source_bytes = source.encode("utf-8")
         for change in changes:
+            if change["replacement"] == change["original"]:
+                continue  # an identity mutant changes nothing, so it can never be killed; never schedule it
             mutated = _apply(source_bytes, spans, change)
             label = f"{relpath}:{change['change_kind']} {change['original']}->{change['replacement']}@{change['location']}"
             if mutated is None:

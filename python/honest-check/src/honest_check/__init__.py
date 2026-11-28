@@ -100,6 +100,7 @@ from .seams import (
     check_ref012,
     check_seams,
     declared_seams,
+    pure_target_is_callable,
     run_seam_rules,
 )
 
@@ -115,5 +116,6 @@ __all__ = [
     "run_check",
     "main",
     "check_seams",
+    "pure_target_is_callable",
     "resolve_aliases",
 ]

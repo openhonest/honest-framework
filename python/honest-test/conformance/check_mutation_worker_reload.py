@@ -172,9 +172,32 @@ def check_completed_failure():
     return 0
 
 
+def check_identity_mutant_skipped():
+    """A mutant whose replacement text equals its original text changes nothing, so it can never be
+    killed and must never be scheduled (Honest Test §9.6): scheduling it reports a false survivor. An
+    empty-string literal "" yields a constant_replace ""->"", the identity case this guards. The gate
+    generates every mutant of a one-constant fixture and asserts none reproduces the original source."""
+    sys.path.insert(0, str(_PYTHON_ROOT))
+    import mutate
+
+    with TemporaryDirectory() as temp:
+        mutate.ROOT = Path(temp)
+        package = mutate.ROOT / "honest-idfix" / "src" / "honest_idfix"
+        package.mkdir(parents=True)
+        source = 'def f():\n    value = ""\n    return value\n'
+        (package / "__init__.py").write_text(source, encoding="utf-8")
+        mutants, _unspliced = mutate._mutants("idfix")
+        identity = [m for m in mutants if m["source"] == source]
+        if identity:
+            print(f"FAIL identity mutant scheduled (replacement == original): {[m['label'] for m in identity]}")
+            return 1
+    return 0
+
+
 def run():
     """Isolate each probe layout and start order in a fresh worker process."""
     failed = bool(check_completed_failure())
+    failed |= bool(check_identity_mutant_skipped())
     for probe_name in _PROBE_NAMES:
         for order in _RUNS:
             result = subprocess.run([sys.executable, __file__, probe_name, order], timeout=45, check=False)

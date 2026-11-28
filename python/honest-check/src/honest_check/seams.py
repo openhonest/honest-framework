@@ -164,6 +164,45 @@ _HD_IDENTIFIER = r"[a-zA-Z_][a-zA-Z0-9_]*(?:-[a-zA-Z0-9_]+)*"
 _PURE_CALL_TARGET = re.compile(rf"{_HD_IDENTIFIER}\.{_HD_IDENTIFIER}")
 
 
+# inherits: hd=python/honest-check/honest-check.hd::pure_target_is_callable -> feature=specs/features/honest-check.feature::pure_target_is_callable -> test=python/honest-check/conformance/probe_pure_target_is_callable.py::probe_pure_target_is_callable
+# hd: pure_target_is_callable
+def pure_target_is_callable(target, declarations):
+    """Whether a resolved pure_call names a function another module publishes as a
+    pure way in (§HC-REF012): the module half is in view, declares a function of
+    the target name whose role is the plain `fn`, that function declares no side
+    effect, and the module publishes it through a valid entry or export."""
+    target_module, dot, target_name = target.partition(".")
+    declaration = read_or(declarations, target_module, None)
+    functions = pick(
+        bool(dot) and declaration is not None,
+        lambda: declaration["functions"],
+        lambda: [],
+    )
+    callee = next(filter(lambda function: function["name"] == target_name, functions), None)
+    entry_targets = set(
+        entry["target"] for entry in read_or(declaration or {}, "entries", [])
+    )
+    exports = set(read_or(declaration or {}, "exports", None) or []) | set(
+        read_or(declaration or {}, "__all__", None) or []
+    )
+    # Published as a pure way in means named by the target module's own surface —
+    # an entry or export target (§HC-REF005, §HC-REF007) — or, when the module
+    # declares no boundary and no explicit surface, every one of its functions,
+    # because a boundaryless module with no declared surface restricts nothing.
+    surface = entry_targets | exports
+    has_boundary = any(
+        function["role"] in ("boundary_in", "boundary_out")
+        for function in functions
+    )
+    published = target_name in surface or (len(surface) == 0 and not has_boundary)
+    return bool(
+        callee is not None
+        and callee["role"] == "fn"
+        and not read_or(callee, "side_effects", [])
+        and published
+    )
+
+
 # inherits: hd=python/honest-check/honest-check.hd::resolve_pure_calls -> feature=specs/features/honest-check.feature::resolve_pure_calls returns invalid_role for impure targets -> test=python/honest-check/conformance/probe_resolve_pure_calls_impure.py::probe_resolve_pure_calls_impure
 # inherits: hd=python/honest-check/honest-check.hd::resolve_pure_calls -> feature=specs/features/honest-check.feature::resolve_pure_calls returns unresolved for malformed targets -> test=python/honest-check/conformance/probe_resolve_pure_calls_malformed.py::probe_resolve_pure_calls_malformed
 # inherits: hd=python/honest-check/honest-check.hd::resolve_pure_calls -> feature=specs/features/honest-check.feature::resolve_pure_calls returns unresolved for missing targets -> test=python/honest-check/conformance/probe_resolve_pure_calls_missing.py::probe_resolve_pure_calls_missing
@@ -184,12 +223,8 @@ def resolve_pure_calls(module, declarations):
                 lambda: [],
             )
             callee = next(filter(lambda function: function["name"] == target_name, functions), None)
-            pure = (
-                callee is not None
-                and not read_or(callee, "side_effects", [])
-                and all(function["role"] == "fn" for function in functions)
-            )
-            status = choose(callee is None, "unresolved", choose(pure, "resolved", "invalid_role"))
+            callable_target = callee is not None and pure_target_is_callable(target, declarations)
+            status = choose(callee is None, "unresolved", choose(callable_target, "resolved", "invalid_role"))
             resolutions.append({
                 "caller": caller["name"],
                 "target": target,
